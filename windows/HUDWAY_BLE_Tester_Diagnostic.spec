@@ -1,7 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
+# Bleak imports a number of WinRT projection modules dynamically.  PyInstaller
+# cannot reliably infer them, so keep both broad collection and an explicit
+# safety list for the modules used by Bleak's Windows scanner/client backend.
 hiddenimports = collect_submodules('bleak') + collect_submodules('winrt')
+hiddenimports += ['winrt.windows.devices.bluetooth', 'winrt.windows.devices.bluetooth.advertisement', 'winrt.windows.devices.bluetooth.genericattributeprofile', 'winrt.windows.devices.enumeration', 'winrt.windows.foundation', 'winrt.windows.foundation.collections', 'winrt.windows.storage.streams']
+
 datas = collect_data_files('bleak')
 
 a = Analysis(

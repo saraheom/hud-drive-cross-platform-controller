@@ -66,3 +66,12 @@ The Windows build now publishes two executables:
 When **Scan** is clicked, the GUI log must immediately show `SCAN BUTTON: clicked`, then `Starting BLE scan...`, then discovery events. The dropdown is intentionally **not HUDWAY-only**; it displays every BLE advertiser returned by Windows. Nordic UART Service advertisers are marked with a star when that UUID is present in the advertising packet.
 
 If Windows Settings can discover devices but the normal tester returns zero devices or reports a WinRT error, run the Diagnostic build and capture both the GUI log and console text.
+
+
+## Windows PyWinRT packaging note
+
+The Windows executable explicitly installs and bundles the PyWinRT projection
+packages required by Bleak. In particular, `winrt-Windows.Foundation.Collections`
+provides `winrt.windows.foundation.collections`, which is imported dynamically by
+Bleak when advertisement packets are received. Both PyInstaller spec files carry
+explicit hidden imports, and GitHub Actions verifies these imports before building.

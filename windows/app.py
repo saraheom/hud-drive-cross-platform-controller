@@ -1,3 +1,4 @@
+import sys
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +11,25 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from bleak import BleakClient, BleakScanner
+
+
+# PyInstaller/WinRT safeguard:
+# Bleak loads several Windows Runtime projections dynamically when advertisements
+# arrive. Explicit imports ensure one-file builds carry the modules.
+if sys.platform == "win32":
+    try:
+        import winrt.windows.devices.bluetooth  # noqa: F401
+        import winrt.windows.devices.bluetooth.advertisement  # noqa: F401
+        import winrt.windows.devices.bluetooth.genericattributeprofile  # noqa: F401
+        import winrt.windows.devices.enumeration  # noqa: F401
+        import winrt.windows.foundation  # noqa: F401
+        import winrt.windows.foundation.collections  # noqa: F401
+        import winrt.windows.storage.streams  # noqa: F401
+        WINRT_IMPORT_ERROR = None
+    except Exception as _winrt_exc:
+        WINRT_IMPORT_ERROR = repr(_winrt_exc)
+else:
+    WINRT_IMPORT_ERROR = None
 import bleak
 
 import protocol as p

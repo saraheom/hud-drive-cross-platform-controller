@@ -41,6 +41,11 @@ jobs:
       - name: Run protocol tests
         run: python -m pytest -q
 
+      - name: Verify Windows BLE runtime imports
+        run: |
+          python -c "import bleak; import winrt.windows.devices.bluetooth; import winrt.windows.devices.bluetooth.advertisement; import winrt.windows.devices.bluetooth.genericattributeprofile; import winrt.windows.devices.enumeration; import winrt.windows.foundation; import winrt.windows.foundation.collections; import winrt.windows.storage.streams; print('Bleak/PyWinRT imports OK')"
+          python -m pip show bleak winrt-runtime winrt-Windows.Foundation.Collections
+
       - name: Build Windows executable
         working-directory: windows
         run: |
