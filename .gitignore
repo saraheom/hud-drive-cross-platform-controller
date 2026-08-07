@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+windows/build/
+windows/dist/
+windows/*.spec.bak
+artifacts/
+android/.gradle/
+android/**/build/
+ios/node_modules/
+ios/.expo/
+*.log
+.DS_Store

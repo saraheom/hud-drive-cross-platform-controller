@@ -1,0 +1,63 @@
+name: Build Windows BLE Tester
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'windows/**'
+      - 'tests/**'
+      - '.github/workflows/windows-build.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - 'tests/**'
+      - '.github/workflows/windows-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: windows/requirements-dev.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r windows/requirements-dev.txt
+
+      - name: Run protocol tests
+        run: python -m pytest -q
+
+      - name: Build Windows executable
+        working-directory: windows
+        run: pyinstaller --clean --noconfirm HUDWAY_BLE_Tester.spec
+
+      - name: Create distribution ZIP
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item windows/dist/HUDWAY_BLE_Tester.exe artifacts/HUDWAY_BLE_Tester.exe
+          Copy-Item README.md artifacts/README.md
+          Compress-Archive -Path artifacts/HUDWAY_BLE_Tester.exe, artifacts/README.md -DestinationPath artifacts/HUDWAY_BLE_Tester-windows-x64.zip -Force
+
+      - name: Upload executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HUDWAY-BLE-Tester-Windows
+          path: |
+            artifacts/HUDWAY_BLE_Tester.exe
+            artifacts/HUDWAY_BLE_Tester-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30

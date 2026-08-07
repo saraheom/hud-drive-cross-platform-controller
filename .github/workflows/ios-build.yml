@@ -1,0 +1,53 @@
+name: Build iOS App with EAS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check iOS project status
+        id: project
+        run: |
+          if [ -f ios/package.json ] && [ -f ios/eas.json ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "iOS Expo/EAS project is not implemented yet; workflow exits successfully."
+          fi
+
+      - name: Set up Node.js
+        if: steps.project.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ios/package-lock.json
+
+      - name: Set up EAS
+        if: steps.project.outputs.ready == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        if: steps.project.outputs.ready == 'true'
+        working-directory: ios
+        run: npm ci
+
+      - name: Start EAS iOS build
+        if: steps.project.outputs.ready == 'true'
+        working-directory: ios
+        run: eas build --platform ios --profile development --non-interactive --no-wait

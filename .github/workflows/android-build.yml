@@ -1,0 +1,51 @@
+name: Build Android App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Android project status
+        id: project
+        run: |
+          if [ -f android/gradlew ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Android project is not implemented yet; workflow exits successfully."
+          fi
+
+      - name: Set up JDK 17
+        if: steps.project.outputs.ready == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Build debug APK
+        if: steps.project.outputs.ready == 'true'
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        if: steps.project.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: HUDWAY-Android-Debug
+          path: android/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
