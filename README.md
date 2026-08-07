@@ -75,3 +75,9 @@ packages required by Bleak. In particular, `winrt-Windows.Foundation.Collections
 provides `winrt.windows.foundation.collections`, which is imported dynamically by
 Bleak when advertisement packets are received. Both PyInstaller spec files carry
 explicit hidden imports, and GitHub Actions verifies these imports before building.
+
+## v4 workflow correction
+
+The Windows workflow now runs `py_compile` before tests/PyInstaller. This catches
+syntax/import-order problems immediately. `from __future__ import annotations`
+is kept as the first executable statement in `windows/app.py`.

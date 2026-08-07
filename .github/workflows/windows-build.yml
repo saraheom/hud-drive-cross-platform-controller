@@ -38,6 +38,11 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r windows/requirements-dev.txt
 
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile windows/app.py windows/protocol.py
+          echo "Python syntax OK"
+
       - name: Run protocol tests
         run: python -m pytest -q
 
