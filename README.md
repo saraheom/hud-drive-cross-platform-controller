@@ -92,3 +92,15 @@ the Android app to send a KeepAlive and reset its 20-second watchdog.
 
 The Windows tester now mirrors that behavior automatically and logs unexpected
 GATT disconnects explicitly.
+
+## v6 serialized BLE TX
+
+The original `HudNetworkManager` serializes all outgoing data: one packet is
+active at a time and its 19-byte chunks are advanced only after the Android GATT
+write callback. v6 mirrors that requirement with one async TX lock. Automatic
+keep-alives are queued behind an in-progress maneuver instead of being allowed
+to interleave with its chunks.
+
+For protocol discovery, v6 also adds conservative no-response write pacing and
+numbers every transaction (`TX#1`, `TX#2`, ...), making interleaving visible in
+logs.

@@ -90,3 +90,13 @@ def is_uart_connection_event(data: bytes) -> bool:
         return len(body) >= 3 and body[0] == 3 and body[1] == 1 and body[2] == 1
     except ValueError:
         return False
+
+
+def uart_connection_mode(data: bytes):
+    """Return the signed 32-bit kivicMode carried by UartConnectionEventPacket."""
+    if not is_uart_connection_event(data):
+        return None
+    body = unescape_frame(data)
+    if len(body) < 7:
+        return None
+    return struct.unpack(">i", body[3:7])[0]

@@ -47,6 +47,10 @@ class BleWorker:
         self._scanning = False
         self._disconnect_requested = False
         self._auto_keepalive_tasks = set()
+        # HUDWAY's Android transport serializes every packet/chunk. Never let
+        # a keepalive interleave with a multi-chunk maneuver packet.
+        self._tx_lock = asyncio.Lock()
+        self._tx_sequence = 0
         threading.Thread(target=self._run, daemon=True, name="HUDWAY-BLE-Asyncio").start()
 
     def _run(self):
@@ -160,7 +164,8 @@ class BleWorker:
         # every UartConnectionEventPacket resets its 20 s watchdog and causes
         # an immediate KeepAliveCommandPacket to be sent back to the HUD.
         if p.is_uart_connection_event(packet):
-            self.events.put(("log", "RX UART connection event -> automatic KeepAlive"))
+            mode = p.uart_connection_mode(packet)
+            self.events.put(("log", f"RX UART connection event (kivicMode={mode}) -> queue automatic KeepAlive"))
             try:
                 task = asyncio.create_task(self.send(p.cmd_keep_alive(), "Auto KeepAlive"))
                 self._auto_keepalive_tasks.add(task)
@@ -176,13 +181,31 @@ class BleWorker:
         self.events.put(("log", "Disconnected."))
 
     async def send(self, data: bytes, label="Raw"):
-        if not self.client or not self.client.is_connected:
-            raise RuntimeError("Not connected")
-        self.events.put(("log", f"TX {label}: {p.hexstr(data)}"))
-        for i, c in enumerate(p.chunks(data, 19), 1):
-            await self.client.write_gatt_char(p.TX_UUID, c, response=False)
-            self.events.put(("log", f"  chunk {i}: {p.hexstr(c)}"))
-            await asyncio.sleep(0.04)
+        # The original Android HudNetworkManager has one global packet queue.
+        # It sends a single 19-byte chunk and only advances on the GATT write
+        # callback. Without this lock, an RX-triggered Auto KeepAlive can splice
+        # itself into the middle of a maneuver frame and corrupt the UART stream.
+        async with self._tx_lock:
+            if not self.client or not self.client.is_connected:
+                raise RuntimeError("Not connected")
+
+            self._tx_sequence += 1
+            seq = self._tx_sequence
+            chunks = list(p.chunks(data, 19))
+            self.events.put(("log", f"TX#{seq} {label}: {p.hexstr(data)}"))
+
+            for i, c in enumerate(chunks, 1):
+                if not self.client or not self.client.is_connected:
+                    raise RuntimeError(f"Disconnected during TX#{seq} chunk {i}/{len(chunks)}")
+                await self.client.write_gatt_char(p.TX_UUID, c, response=False)
+                self.events.put(("log", f"  TX#{seq} chunk {i}/{len(chunks)}: {p.hexstr(c)}"))
+                # Bleak/WinRT's write coroutine can complete before the peripheral
+                # has consumed a no-response write. A conservative gap approximates
+                # the Android callback-driven pacing during protocol discovery.
+                await asyncio.sleep(0.060)
+
+            # Prevent the next queued command from starting in the same BLE burst.
+            await asyncio.sleep(0.040)
 
     async def initialize(self):
         now = int(time.time() * 1000)
