@@ -28,3 +28,13 @@ def test_maneuver_contains_expected_header_and_chunks():
 
 def test_parse_hex():
     assert p.parse_hex('02, 7D-7F 03') == bytes([0x02, 0x7D, 0x7F, 0x03])
+
+
+def test_uart_connection_check_packet():
+    assert p.hexstr(p.cmd_uart_connection_check()) == "02 7D 7F 06 00 03"
+
+
+def test_uart_connection_event_detection():
+    packet = bytes.fromhex("02 7D 7E 01 01 FF FF FF FF 03")
+    assert p.is_uart_connection_event(packet)
+    assert p.unescape_frame(packet) == bytes.fromhex("03 01 01 FF FF FF FF")

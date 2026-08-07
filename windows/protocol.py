@@ -32,6 +32,7 @@ def chunks(data: bytes, n: int=19):
 
 
 def cmd_keep_alive(): return frame(2,15,0)
+def cmd_uart_connection_check(): return frame(2,6,0)
 def cmd_nav_state(enabled: bool): return frame(2,101,0,struct.pack('>i',1 if enabled else 0))
 def cmd_auto_brightness(enabled: bool): return frame(2,2,1,bytes([1 if enabled else 0]))
 def cmd_manual_brightness(value: int): return frame(2,2,5,struct.pack('>i',value))
@@ -61,3 +62,31 @@ def hexstr(data: bytes) -> str: return ' '.join(f'{b:02X}' for b in data)
 def parse_hex(text: str) -> bytes:
     compact=text.replace('0x','').replace(',',' ').replace('-',' ')
     return bytes(int(x,16) for x in compact.split())
+
+
+def unescape_frame(data: bytes) -> bytes:
+    """Return the unescaped frame body (without STX/ETX)."""
+    if len(data) < 2 or data[0] != STX or data[-1] != ETX:
+        raise ValueError("Not a complete HUDWAY frame")
+    out = bytearray()
+    i = 1
+    while i < len(data) - 1:
+        b = data[i]
+        if b == ESC:
+            i += 1
+            if i >= len(data) - 1:
+                raise ValueError("Dangling escape byte")
+            out.append(data[i] ^ ESC)
+        else:
+            out.append(b)
+        i += 1
+    return bytes(out)
+
+
+def is_uart_connection_event(data: bytes) -> bool:
+    """HUD event 3/1/1 (UartConnectionEventPacket)."""
+    try:
+        body = unescape_frame(data)
+        return len(body) >= 3 and body[0] == 3 and body[1] == 1 and body[2] == 1
+    except ValueError:
+        return False

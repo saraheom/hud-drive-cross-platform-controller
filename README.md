@@ -81,3 +81,14 @@ explicit hidden imports, and GitHub Actions verifies these imports before buildi
 The Windows workflow now runs `py_compile` before tests/PyInstaller. This catches
 syntax/import-order problems immediately. `from __future__ import annotations`
 is kept as the first executable statement in `windows/app.py`.
+
+## v5 HUD connection watchdog fix
+
+The original Android app does not treat the Nordic-UART GATT connection alone as
+a fully alive HUD session. Immediately after connection it sends
+`UartConnectionCheckCommandPacket` (`02 7D 7F 06 00 03`). The HUD responds with
+`UartConnectionEventPacket` (`03/01/01` after unescaping). Every such event causes
+the Android app to send a KeepAlive and reset its 20-second watchdog.
+
+The Windows tester now mirrors that behavior automatically and logs unexpected
+GATT disconnects explicitly.

@@ -45,6 +45,8 @@ class BleWorker:
         self._loop_ready = threading.Event()
         self._scan_lock = threading.Lock()
         self._scanning = False
+        self._disconnect_requested = False
+        self._auto_keepalive_tasks = set()
         threading.Thread(target=self._run, daemon=True, name="HUDWAY-BLE-Asyncio").start()
 
     def _run(self):
@@ -118,12 +120,16 @@ class BleWorker:
 
     async def connect(self, address):
         self.events.put(("log", f"Connecting to {address}..."))
+        self._disconnect_requested = False
         if self.client and self.client.is_connected:
             await self.client.disconnect()
-        self.client = BleakClient(
-            address,
-            disconnected_callback=lambda _: self.events.put(("status", "Disconnected")),
-        )
+
+        def on_disconnected(_client):
+            reason = "requested by tester" if self._disconnect_requested else "remote/link loss"
+            self.events.put(("log", f"*** GATT DISCONNECTED ({reason}) ***"))
+            self.events.put(("status", "Disconnected"))
+
+        self.client = BleakClient(address, disconnected_callback=on_disconnected)
         await self.client.connect(timeout=20)
         self.events.put(("log", "GATT connection established."))
 
@@ -141,10 +147,29 @@ class BleWorker:
         self.events.put(("status", f"Connected: {address}"))
         self.events.put(("log", f"RX notifications enabled on {p.RX_UUID}"))
 
+        # This is the first command sent by the original Android application
+        # after GATT connection. The HUD replies with UartConnectionEventPacket.
+        await self.send(p.cmd_uart_connection_check(), "UART connection check")
+        self.events.put(("log", "HUD connection watchdog handshake started."))
+
     def _notify(self, _, data):
-        self.events.put(("rx", p.hexstr(bytes(data))))
+        packet = bytes(data)
+        self.events.put(("rx", p.hexstr(packet)))
+
+        # Original HUDWAY Android behavior:
+        # every UartConnectionEventPacket resets its 20 s watchdog and causes
+        # an immediate KeepAliveCommandPacket to be sent back to the HUD.
+        if p.is_uart_connection_event(packet):
+            self.events.put(("log", "RX UART connection event -> automatic KeepAlive"))
+            try:
+                task = asyncio.create_task(self.send(p.cmd_keep_alive(), "Auto KeepAlive"))
+                self._auto_keepalive_tasks.add(task)
+                task.add_done_callback(self._auto_keepalive_tasks.discard)
+            except Exception as exc:
+                self.events.put(("log", f"Auto KeepAlive scheduling error: {type(exc).__name__}: {exc}"))
 
     async def disconnect(self):
+        self._disconnect_requested = True
         if self.client:
             await self.client.disconnect()
         self.events.put(("status", "Disconnected"))
