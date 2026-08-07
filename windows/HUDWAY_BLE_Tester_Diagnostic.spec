@@ -1,13 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 hiddenimports = collect_submodules('bleak') + collect_submodules('winrt')
+datas = collect_data_files('bleak')
 
 a = Analysis(
     ['app.py'],
     pathex=['.'],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -22,12 +23,12 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='HUDWAY_BLE_Tester',
+    name='HUDWAY_BLE_Tester_Diagnostic',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

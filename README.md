@@ -55,3 +55,14 @@ windows/dist/HUDWAY_BLE_Tester.exe
 ## Safety
 
 Test while parked. Do not interact with this software while driving. Keep the original HUDWAY application disconnected during protocol tests because the HUD may accept only one BLE central connection.
+
+## Windows BLE scan diagnostics
+
+The Windows build now publishes two executables:
+
+- `HUDWAY_BLE_Tester.exe` — normal GUI build.
+- `HUDWAY_BLE_Tester_Diagnostic.exe` — same GUI plus a console window for WinRT/Bleak diagnostics.
+
+When **Scan** is clicked, the GUI log must immediately show `SCAN BUTTON: clicked`, then `Starting BLE scan...`, then discovery events. The dropdown is intentionally **not HUDWAY-only**; it displays every BLE advertiser returned by Windows. Nordic UART Service advertisers are marked with a star when that UUID is present in the advertising packet.
+
+If Windows Settings can discover devices but the normal tester returns zero devices or reports a WinRT error, run the Diagnostic build and capture both the GUI log and console text.
