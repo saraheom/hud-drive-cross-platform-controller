@@ -25,7 +25,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${HUDWAY_BUNDLE_ID}
-        PRODUCT_NAME: HUDWAY Controller
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
     scheme:

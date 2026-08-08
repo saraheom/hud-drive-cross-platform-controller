@@ -139,3 +139,10 @@ Highlights:
 - GitHub Actions for simulator CI, signed Ad Hoc IPA, and TestFlight.
 
 See `docs/IOS_APPLE_DEVELOPER_SETUP.md`.
+
+## v11 iOS CI test-host correction
+
+The visible app label remains `HUDWAY Controller` through `CFBundleDisplayName`,
+but the executable product now keeps the target name `HUDWAYController`. This
+matches XcodeGen's generated unit-test host path and avoids the prior
+`Could not find test host` error.
