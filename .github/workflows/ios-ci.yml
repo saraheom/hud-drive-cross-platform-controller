@@ -28,6 +28,13 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
+      - name: Sanity-check UIKit usage
+        run: |
+          if grep -R "UIDevice" ios/HUDWAYController --include='*.swift' >/dev/null; then
+            grep -R "import UIKit" ios/HUDWAYController --include='*.swift' >/dev/null
+          fi
+          echo "UIKit sanity check OK"
+
       - name: Build for iOS Simulator
         working-directory: ios
         run: |

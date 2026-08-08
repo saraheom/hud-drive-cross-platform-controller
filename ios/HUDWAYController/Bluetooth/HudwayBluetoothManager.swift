@@ -1,5 +1,6 @@
 import Foundation
 import CoreBluetooth
+import UIKit
 import Observation
 
 @MainActor
