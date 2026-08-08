@@ -123,3 +123,19 @@ New test functions:
   experimentation. This does **not** claim to alter the HUD firmware's true
   power-on/boot animation; no dedicated boot-animation packet was found in
   the decompiled Android client.
+
+
+## iOS v0.1
+
+A native SwiftUI iPhone client is now under `ios/`.
+
+Highlights:
+- validated HUDWAY BLE protocol and connection watchdog;
+- serialized 19-byte transport;
+- manual and simulated navigation pipeline;
+- HUD-style dashboard controls;
+- persistent shareable logs;
+- Shortcuts/App Intents scaffold;
+- GitHub Actions for simulator CI, signed Ad Hoc IPA, and TestFlight.
+
+See `docs/IOS_APPLE_DEVELOPER_SETUP.md`.
