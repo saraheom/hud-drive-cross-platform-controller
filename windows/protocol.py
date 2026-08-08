@@ -51,6 +51,31 @@ def cmd_maneuver(distance_m: int, maneuver_type: int, direction: int, street: st
              initial_heading,final_heading,exit_index)+bytes([1 if right_side_driving else 0]))
     return frame(2,100,1,payload)
 
+
+def cmd_display_time_weather(enabled: bool):
+    """DisplayTimeCommandPacket: command=2, p1=9, p2=4, boolean payload."""
+    return frame(2, 9, 4, bytes([1 if enabled else 0]))
+
+
+def cmd_dashboard(left: str, center: str, right: str, navigation_layout: bool=False):
+    """HudWidgetCommandPacket: left/center/right writeUTF strings + int type."""
+    payload = (
+        java_write_utf(left)
+        + java_write_utf(center)
+        + java_write_utf(right)
+        + struct.pack(">i", 1 if navigation_layout else 0)
+    )
+    return frame(2, 111, 0, payload)
+
+
+DASHBOARD_PRESETS = {
+    "Classic home": ("Speedo", "Simple", "Time", False),
+    "Navigation home": ("Speedo", "Navigation", "Time", True),
+    "Minimal": ("Empty", "Simple", "Empty", False),
+    "Weather focus": ("Weather", "Simple", "Time", False),
+    "Driving stats": ("AvgSpeedo", "Digits", "MaxSpeedo", False),
+}
+
 MANEUVERS={
  'Straight':(2,4),'Slight right':(2,3),'Right':(2,2),'Sharp right':(2,1),
  'Slight left':(2,5),'Left':(2,6),'Sharp left':(2,7),'U-turn':(2,8),

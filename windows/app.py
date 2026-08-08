@@ -51,6 +51,8 @@ class BleWorker:
         # a keepalive interleave with a multi-chunk maneuver packet.
         self._tx_lock = asyncio.Lock()
         self._tx_sequence = 0
+        self._route_sim_task = None
+        self._ui_sequence_task = None
         threading.Thread(target=self._run, daemon=True, name="HUDWAY-BLE-Asyncio").start()
 
     def _run(self):
@@ -226,6 +228,93 @@ class BleWorker:
             await asyncio.sleep(0.12)
 
 
+    async def run_route_simulator(self):
+        """Five-leg manual navigation simulation with 1 Hz distance updates."""
+        if self._route_sim_task and not self._route_sim_task.done():
+            self.events.put(("log", "Route simulator is already running."))
+            return
+
+        async def _run():
+            legs = [
+                ("Straight", 2, 4, "Continue straight\nOak Avenue\n", 120),
+                ("Right", 2, 2, "Turn right\nMain St\nOak Avenue", 100),
+                ("Keep left", 8, 5, "Keep left\nUS-1 North\nMain St", 140),
+                ("Exit right", 7, 2, "Take exit 12B\nMarket Street\nUS-1 North", 120),
+                ("Left", 2, 6, "Turn left\nDestination Drive\nMarket Street", 80),
+            ]
+            try:
+                self.events.put(("log", "=== ROUTE SIMULATOR START ==="))
+                await self.send(p.cmd_nav_state(True), "Simulator Navigation ON")
+                await asyncio.sleep(0.3)
+
+                for leg_no, (name, typ, direction, text, start_m) in enumerate(legs, 1):
+                    self.events.put(("log", f"SIM LEG {leg_no}/5: {name} | {text.splitlines()[1]}"))
+                    # Six 1-second updates per leg; distance visibly counts down.
+                    distances = [start_m, int(start_m*0.80), int(start_m*0.60),
+                                 int(start_m*0.40), int(start_m*0.20), 5]
+                    for distance in distances:
+                        await self.send(
+                            p.cmd_maneuver(distance, typ, direction, text),
+                            f"SIM {leg_no}/5 {name} {distance}m"
+                        )
+                        await asyncio.sleep(1.0)
+
+                await self.send(
+                    p.cmd_maneuver(0, 17, 4, "You have arrived\nDestination Drive\n"),
+                    "SIM Destination"
+                )
+                await asyncio.sleep(2.0)
+                self.events.put(("log", "=== ROUTE SIMULATOR COMPLETE ==="))
+            except asyncio.CancelledError:
+                self.events.put(("log", "=== ROUTE SIMULATOR STOPPED ==="))
+                raise
+            finally:
+                self._route_sim_task = None
+
+        self._route_sim_task = asyncio.create_task(_run())
+        await self._route_sim_task
+
+    async def stop_route_simulator(self):
+        task = self._route_sim_task
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._route_sim_task = None
+
+    async def run_ui_sequence(self):
+        """Scripted dashboard transitions; this is not the firmware boot animation."""
+        if self._ui_sequence_task and not self._ui_sequence_task.done():
+            self.events.put(("log", "UI sequence is already running."))
+            return
+
+        async def _run():
+            sequence = [
+                ("Minimal", p.cmd_dashboard("Empty", "Simple", "Empty", False), 1.2),
+                ("Classic", p.cmd_dashboard("Speedo", "Simple", "Time", False), 1.2),
+                ("Stats", p.cmd_dashboard("AvgSpeedo", "Digits", "MaxSpeedo", False), 1.2),
+                ("Navigation layout", p.cmd_dashboard("Speedo", "Navigation", "Time", True), 1.2),
+            ]
+            try:
+                self.events.put(("log", "=== SCRIPTED UI SEQUENCE START ==="))
+                await self.send(p.cmd_display_time_weather(False), "Hide time/weather panel")
+                for label, packet, delay in sequence:
+                    await self.send(packet, f"UI sequence: {label}")
+                    await asyncio.sleep(delay)
+                await self.send(p.cmd_display_time_weather(True), "Show time/weather panel")
+                self.events.put(("log", "=== SCRIPTED UI SEQUENCE COMPLETE ==="))
+            except asyncio.CancelledError:
+                self.events.put(("log", "=== SCRIPTED UI SEQUENCE STOPPED ==="))
+                raise
+            finally:
+                self._ui_sequence_task = None
+
+        self._ui_sequence_task = asyncio.create_task(_run())
+        await self._ui_sequence_task
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -253,8 +342,10 @@ class App(tk.Tk):
         nav = ttk.Frame(nb, padding=10)
         bright = ttk.Frame(nb, padding=10)
         raw = ttk.Frame(nb, padding=10)
+        ui = ttk.Frame(nb, padding=10)
         nb.add(nav, text="Navigation")
         nb.add(bright, text="Brightness / Init")
+        nb.add(ui, text="Dashboard / UI")
         nb.add(raw, text="Raw Packets")
 
         ttk.Button(nav, text="Initialize HUD", command=lambda: self.run(self.worker.submit(self.worker.initialize()))).grid(row=0, column=0, pady=5, sticky="ew")
@@ -275,7 +366,10 @@ class App(tk.Tk):
         self.exit = tk.StringVar(value="0")
         ttk.Entry(nav, textvariable=self.exit).grid(row=4, column=1, sticky="ew")
         ttk.Button(nav, text="Send Maneuver", command=self.send_maneuver).grid(row=5, column=0, columnspan=2, pady=10, sticky="ew")
-        ttk.Button(nav, text="Demo: ON + Right 150 ft", command=self.demo).grid(row=5, column=2, columnspan=2, padx=5, sticky="ew")
+        ttk.Button(nav, text="Single Demo: Right 150 ft", command=self.demo).grid(row=5, column=2, columnspan=2, padx=5, sticky="ew")
+        ttk.Button(nav, text="START 5-Leg Navigation Simulator", command=self.start_route_sim).grid(row=6, column=0, columnspan=3, pady=6, sticky="ew")
+        ttk.Button(nav, text="STOP Simulator", command=self.stop_route_sim).grid(row=6, column=3, padx=5, sticky="ew")
+        ttk.Label(nav, text="Simulator sends a new maneuver/distance every second across 5 streets.").grid(row=7, column=0, columnspan=4, sticky="w", pady=(0,8))
         for i in range(4):
             nav.columnconfigure(i, weight=1)
 
@@ -290,6 +384,24 @@ class App(tk.Tk):
         ttk.Button(bright, text="Full Screen OFF", command=lambda: self.send(p.cmd_full_screen(False), "Full screen OFF")).grid(row=4, column=1, sticky="ew", padx=5)
         bright.columnconfigure(0, weight=1)
         bright.columnconfigure(1, weight=1)
+
+        ttk.Label(ui, text="Time / Weather bottom panel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,5))
+        ttk.Button(ui, text="Time + Weather ON", command=lambda: self.send(p.cmd_display_time_weather(True), "Time/weather panel ON")).grid(row=1, column=0, sticky="ew")
+        ttk.Button(ui, text="Time + Weather OFF", command=lambda: self.send(p.cmd_display_time_weather(False), "Time/weather panel OFF")).grid(row=1, column=1, sticky="ew", padx=5)
+
+        ttk.Separator(ui, orient="horizontal").grid(row=2, column=0, columnspan=2, sticky="ew", pady=12)
+        ttk.Label(ui, text="Dashboard preset").grid(row=3, column=0, sticky="w")
+        self.dashboard_preset = ttk.Combobox(ui, values=list(p.DASHBOARD_PRESETS), state="readonly")
+        self.dashboard_preset.set("Classic home")
+        self.dashboard_preset.grid(row=3, column=1, sticky="ew")
+        ttk.Button(ui, text="Send Dashboard Preset", command=self.send_dashboard_preset).grid(row=4, column=0, columnspan=2, sticky="ew", pady=6)
+
+        ttk.Separator(ui, orient="horizontal").grid(row=5, column=0, columnspan=2, sticky="ew", pady=12)
+        ttk.Label(ui, text="Scripted UI transition (test sequence; not firmware boot animation)").grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Button(ui, text="Run Custom UI Sequence", command=self.start_ui_sequence).grid(row=7, column=0, columnspan=2, sticky="ew", pady=6)
+
+        ui.columnconfigure(0, weight=1)
+        ui.columnconfigure(1, weight=1)
 
         ttk.Label(raw, text="Hex bytes (already framed, or any raw BLE value)").pack(anchor="w")
         self.raw = tk.Text(raw, height=7)
@@ -371,6 +483,29 @@ class App(tk.Tk):
             self.run(self.worker.submit(x()))
         except Exception as e:
             self.ui_log(f"DEMO SCHEDULING ERROR: {type(e).__name__}: {e}")
+
+    def start_route_sim(self):
+        try:
+            self.run(self.worker.submit(self.worker.run_route_simulator()))
+        except Exception as e:
+            self.ui_log(f"SIMULATOR SCHEDULING ERROR: {type(e).__name__}: {e}")
+
+    def stop_route_sim(self):
+        try:
+            self.run(self.worker.submit(self.worker.stop_route_simulator()))
+        except Exception as e:
+            self.ui_log(f"SIMULATOR STOP ERROR: {type(e).__name__}: {e}")
+
+    def send_dashboard_preset(self):
+        name = self.dashboard_preset.get()
+        left, center, right, navi = p.DASHBOARD_PRESETS[name]
+        self.send(p.cmd_dashboard(left, center, right, navi), f"Dashboard preset: {name}")
+
+    def start_ui_sequence(self):
+        try:
+            self.run(self.worker.submit(self.worker.run_ui_sequence()))
+        except Exception as e:
+            self.ui_log(f"UI SEQUENCE ERROR: {type(e).__name__}: {e}")
 
     def send_raw(self):
         try:

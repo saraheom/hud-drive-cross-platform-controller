@@ -43,3 +43,15 @@ def test_uart_connection_event_detection():
 def test_uart_connection_mode():
     packet = bytes.fromhex("02 7D 7E 01 01 FF FF FF FF 03")
     assert p.uart_connection_mode(packet) == -1
+
+
+def test_display_time_weather_packets():
+    assert p.hexstr(p.cmd_display_time_weather(True)) == "02 7D 7F 09 04 01 03"
+    assert p.hexstr(p.cmd_display_time_weather(False)) == "02 7D 7F 09 04 00 03"
+
+
+def test_dashboard_packet_body():
+    packet = p.cmd_dashboard("Empty", "Simple", "Time", False)
+    body = p.unescape_frame(packet)
+    assert body[:3] == bytes([2, 111, 0])
+    assert body.endswith(bytes.fromhex("00 00 00 00"))

@@ -104,3 +104,22 @@ to interleave with its chunks.
 For protocol discovery, v6 also adds conservative no-response write pacing and
 numbers every transaction (`TX#1`, `TX#2`, ...), making interleaving visible in
 logs.
+
+## v7 Navigation simulator and HUD UI controls
+
+New test functions:
+
+- **START 5-Leg Navigation Simulator**: enables navigation and runs five
+  hard-coded maneuver legs. Distance is updated once per second, and the
+  maneuver/street text changes between legs.
+- **Time + Weather ON/OFF**: sends the real `DisplayTimeCommandPacket`
+  (`2/9/4`, boolean payload). Despite the packet class name, the Android
+  proxy method is named `showHideTimeWeatherPanel`, indicating this is the
+  bottom time/weather panel control.
+- **Dashboard presets**: sends `HudWidgetCommandPacket` (`2/111/0`) with the
+  same widget names used by the Android application, including `Empty`,
+  `Simple`, `Navigation`, `Speedo`, `Weather`, and `Time`.
+- **Custom UI Sequence**: a timed sequence of dashboard commands for visual
+  experimentation. This does **not** claim to alter the HUD firmware's true
+  power-on/boot animation; no dedicated boot-animation packet was found in
+  the decompiled Android client.
