@@ -28,6 +28,22 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
+      - name: Validate App Shortcut utterances
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, sys
+          path = Path("ios/HUDWAYController/Shortcuts/HudwayShortcuts.swift")
+          text = path.read_text()
+          for match in re.finditer(r'phrases:\s*\[(.*?)\]', text, re.S):
+              strings = re.findall(r'"([^"]+)"', match.group(1))
+              bad = [s for s in strings if r'\(.applicationName)' not in s]
+              if bad:
+                  print("Invalid App Shortcut phrases:", bad)
+                  sys.exit(1)
+          print("App Shortcut utterances OK")
+          PY
+
       - name: Sanity-check UIKit usage
         run: |
           if grep -R "UIDevice" ios/HUDWAYController --include='*.swift' >/dev/null; then

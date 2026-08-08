@@ -39,9 +39,9 @@ struct NavigationOnIntent: AppIntent {
 struct HUDWAYShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: InitializeHUDIntent(),
-                    phrases: ["Initialize \(.applicationName)", "Initialize my HUD"])
+                    phrases: ["Initialize \(.applicationName)", "Initialize my HUD with \(.applicationName)"])
         AppShortcut(intent: StartDemoRouteIntent(),
-                    phrases: ["Start demo route in \(.applicationName)", "Test my HUD navigation"])
+                    phrases: ["Start demo route in \(.applicationName)", "Test my HUD navigation in \(.applicationName)"])
         AppShortcut(intent: NavigationOnIntent(),
                     phrases: ["Turn on HUD navigation in \(.applicationName)"])
     }
