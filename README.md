@@ -1,4 +1,4 @@
-# HUDWAY Cross-Platform Controller
+# HUD Cross-Platform Controller
 
 A GitHub-first development repository for understanding and testing the HUDWAY Drive hardware BLE protocol before implementing production Android and iOS clients.
 
