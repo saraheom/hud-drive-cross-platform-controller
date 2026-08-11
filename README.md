@@ -1,4 +1,4 @@
-# HUD Cross-Platform Controller
+# HUDWAY Cross-Platform Controller
 
 A GitHub-first development repository for understanding and testing the HUDWAY Drive hardware BLE protocol before implementing production Android and iOS clients.
 
@@ -157,3 +157,11 @@ initialization, per-app filters, notification timeout, and message-line count.
 A Maps experiment section enables Google Maps, Apple Maps, and Waze filters for
 hardware testing. Classic ANCS remains accessory-facing: HUDWAY Drive receives
 the notification content directly from iOS.
+
+
+## v13 — TestFlight signing identity correction
+
+The signed archive workflows now explicitly use `Apple Distribution` as the
+code-signing identity. A pre-archive diagnostic step lists available signing
+identities and verifies the provisioning profile's name, Team ID, and
+application identifier before Xcode archives the app.

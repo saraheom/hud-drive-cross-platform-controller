@@ -47,6 +47,21 @@ jobs:
           cp "$RUNNER_TEMP/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
 
+      - name: Verify signing identity and provisioning profile
+        run: |
+          set -euo pipefail
+          echo "Available code-signing identities:"
+          security find-identity -v -p codesigning
+
+          echo "Provisioning profile summary:"
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          /usr/libexec/PlistBuddy -c "Print :Name" "$RUNNER_TEMP/profile.plist"
+          /usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$RUNNER_TEMP/profile.plist"
+          /usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$RUNNER_TEMP/profile.plist"
+
+          security find-identity -v -p codesigning | grep -q "Apple Distribution"
+          echo "Apple Distribution identity is available."
+
       - name: Archive
         working-directory: ios
         run: |
@@ -61,6 +76,7 @@ jobs:
             PRODUCT_BUNDLE_IDENTIFIER="$HUDWAY_BUNDLE_ID" \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             archive
 
