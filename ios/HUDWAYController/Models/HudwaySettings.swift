@@ -26,6 +26,7 @@ final class HudwaySettings {
     var minimizeWidgets = false
     var selectedPreset = DashboardPreset.presets[0]
 
+    var notifyAll = false
     var notifyCalls = true
     var notifyMessages = true
     var notifyCalendar = true
@@ -33,6 +34,9 @@ final class HudwaySettings {
     var notifyWeChat = true
     var notifyKakaoTalk = true
     var notifySpotify = true
+    var notifyGoogleMaps = false
+    var notifyAppleMaps = false
+    var notifyWaze = false
     var notificationExposureSeconds = 10
     var notificationLines = 5
 }

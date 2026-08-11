@@ -27,6 +27,50 @@ enum HudwayCommands {
         HudwayProtocol.frame(command: 2, p1: 9, p2: 4, payload: Data([enabled ? 1 : 0]))
     }
 
+
+    // MARK: - HUD notification / ANCS display configuration
+
+    static func notificationSettingsInit() -> Data {
+        HudwayProtocol.frame(command: 2, p1: 9, p2: 6)
+    }
+
+    static func notificationsMasterEnabled(_ enabled: Bool) -> Data {
+        HudwayProtocol.frame(
+            command: 2, p1: 9, p2: 7,
+            payload: Data([enabled ? 1 : 0])
+        )
+    }
+
+    static func notificationFilter(
+        enabled: Bool,
+        textColor: Int32 = -1,
+        icon: Int32 = 0,
+        identifiers: [String]
+    ) -> Data {
+        var payload = Data([enabled ? 1 : 0])
+        payload.append(HudwayProtocol.int32(textColor))
+        payload.append(HudwayProtocol.int32(icon))
+        payload.append(HudwayProtocol.int32(Int32(identifiers.count)))
+        for identifier in identifiers {
+            payload.append(HudwayProtocol.javaWriteUTF(identifier))
+        }
+        return HudwayProtocol.frame(command: 2, p1: 9, p2: 8, payload: payload)
+    }
+
+    static func notificationTimeout(seconds: Int) -> Data {
+        HudwayProtocol.frame(
+            command: 2, p1: 9, p2: 1,
+            payload: HudwayProtocol.int32(Int32(max(1, seconds)))
+        )
+    }
+
+    static func notificationLineCount(_ count: Int) -> Data {
+        HudwayProtocol.frame(
+            command: 2, p1: 116, p2: 0,
+            payload: HudwayProtocol.int32(Int32(max(1, count)))
+        )
+    }
+
     static func phoneName(_ name: String) -> Data {
         HudwayProtocol.frame(command: 2, p1: 123, p2: 0, payload: HudwayProtocol.javaWriteUTF(name))
     }

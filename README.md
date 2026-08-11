@@ -146,3 +146,14 @@ The visible app label remains `HUDWAY Controller` through `CFBundleDisplayName`,
 but the executable product now keeps the target name `HUDWAYController`. This
 matches XcodeGen's generated unit-test host path and avoids the prior
 `Could not find test host` error.
+
+
+## v12 — iPhone notifications / ANCS configuration
+
+The iOS client now implements the HUD firmware's notification configuration
+packets discovered in the decompiled client: global enable, filter
+initialization, per-app filters, notification timeout, and message-line count.
+
+A Maps experiment section enables Google Maps, Apple Maps, and Waze filters for
+hardware testing. Classic ANCS remains accessory-facing: HUDWAY Drive receives
+the notification content directly from iOS.

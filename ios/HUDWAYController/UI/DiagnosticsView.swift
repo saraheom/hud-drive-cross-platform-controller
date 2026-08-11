@@ -11,6 +11,16 @@ struct DiagnosticsView: View {
                 LabeledContent("Last RX", value: state.bluetooth.lastRX.isEmpty ? "—" : state.bluetooth.lastRX)
             }
 
+
+            Section("ANCS / Notification diagnostics") {
+                Text("HUDWAY Drive consumes iPhone notifications directly through Apple's ANCS accessory service.")
+                Text("Enable iOS Settings → Bluetooth → HUDWAY Drive ⓘ → Share Notifications.")
+                    .font(.caption)
+                Text("The app logs every notification-filter packet it sends. ANCS notification bodies will only appear in this app if HUD firmware independently forwards them back over the proprietary RX channel.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Current session log") {
                 if let url = state.logger.currentFileURL {
                     ShareLink(item: url) {

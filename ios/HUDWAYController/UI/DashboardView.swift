@@ -61,7 +61,7 @@ struct DashboardView: View {
                     }
 
                     sectionTitle("NOTIFICATIONS TO DISPLAY ON HUD")
-                    NotificationSettingsCard(settings: state.settings)
+                    NotificationSettingsCard(state: state)
 
                     NavigationLink("Advanced / Diagnostics") {
                         DiagnosticsView(state: state)
