@@ -5,13 +5,20 @@ on:
 
 jobs:
   adhoc:
-    runs-on: macos-15
+    runs-on: macos-26
     env:
       HUDWAY_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
       DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_26.6.app/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
 
       - name: Install XcodeGen
         run: brew install xcodegen

@@ -165,3 +165,18 @@ The signed archive workflows now explicitly use `Apple Distribution` as the
 code-signing identity. A pre-archive diagnostic step lists available signing
 identities and verifies the provisioning profile's name, Team ID, and
 application identifier before Xcode archives the app.
+
+
+## v14 — App Store Connect validation correction
+
+The TestFlight archive/export had already succeeded, but App Store Connect
+rejected the IPA for three metadata/build-environment reasons. v14:
+
+- moves iOS GitHub jobs to `macos-26`;
+- explicitly selects Xcode 26.6 and verifies the iPhoneOS SDK is 26+;
+- marks HUDWAY Controller as iPhone-only (`TARGETED_DEVICE_FAMILY = 1`);
+- declares supported iPhone orientations;
+- uses the modern `UILaunchScreen` Info.plist declaration.
+
+This avoids the previous iPad multitasking validation path and satisfies
+Apple's current SDK minimum for App Store Connect uploads.
