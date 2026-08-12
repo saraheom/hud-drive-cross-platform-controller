@@ -245,3 +245,29 @@ It adds:
 
 This separates ordinary HUD transport from ANCS authorization instead of making
 ANCS a prerequisite for the transport itself.
+
+
+## v19 — restore known-good connection; retain app-level auto-connect
+
+Physical iPhone logs from v18 showed CoreBluetooth rejecting the connection
+request immediately with `One or more parameters were invalid`. The HUD itself
+was advertising normally at approximately -53 dBm.
+
+v19 therefore restores the exact connection form that already worked on the
+physical iPhone:
+
+`central.connect(peripheral, options: nil)`
+
+Remembered-device behavior remains implemented independently:
+
+1. after the first successful connection, save `CBPeripheral.identifier`;
+2. on later app launches call `retrievePeripherals(withIdentifiers:)`;
+3. if iOS returns the HUD, call the same known-good `connect(..., options: nil)`;
+4. otherwise fall back to scanning.
+
+This provides launch-time auto-connect without depending on CoreBluetooth's
+system auto-reconnect connection option.
+
+ANCS authorization observation remains enabled (`CBPeripheral.ancsAuthorized`
+and `didUpdateANCSAuthorizationFor`), but ANCS is not made a prerequisite for
+the normal HUD transport.

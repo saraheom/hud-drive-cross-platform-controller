@@ -57,17 +57,6 @@ final class HudwayBluetoothManager: NSObject {
         ])
     }
 
-    private var hudConnectionOptions: [String: Any] {
-        [
-            // Keep the normal HUDWAY NUS connection available. Requiring ANCS
-            // here can leave CoreBluetooth's connection request pending when
-            // ANCS authorization/bonding has not already been established.
-            CBConnectPeripheralOptionEnableAutoReconnect: true,
-            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
-            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true
-        ]
-    }
-
     private func saveConnectedHUD(_ peripheral: CBPeripheral) {
         UserDefaults.standard.set(
             peripheral.identifier.uuidString,
@@ -87,6 +76,11 @@ final class HudwayBluetoothManager: NSObject {
         UserDefaults.standard.removeObject(forKey: savedPeripheralIDKey)
         UserDefaults.standard.removeObject(forKey: savedPeripheralNameKey)
         logger.log("BLE MEMORY", "Forgot saved HUD")
+    }
+
+    func reconnectSavedHUD() {
+        attemptedSavedReconnect = false
+        reconnectSavedHUDIfPossible()
     }
 
     private func reconnectSavedHUDIfPossible() {
@@ -113,11 +107,11 @@ final class HudwayBluetoothManager: NSObject {
             ?? UserDefaults.standard.string(forKey: savedPeripheralNameKey)
             ?? "HUDWAY Drive"
 
-        logger.log("BLE AUTO", "Retrieved \(name); auto-connecting")
+        logger.log("BLE AUTO", "Retrieved \(name); app-level auto-connect using options=nil")
         peripheral = saved
         saved.delegate = self
         state = .connecting
-        central.connect(saved, options: hudConnectionOptions)
+        central.connect(saved, options: nil)
     }
 
     func scan() {
@@ -154,9 +148,9 @@ final class HudwayBluetoothManager: NSObject {
         state = .connecting
         peripheral = device.peripheral
         peripheral?.delegate = self
-        logger.log("BLE", "Connecting to \(device.name) with normal NUS + auto-reconnect options")
+        logger.log("BLE", "Connecting to \(device.name) with baseline CoreBluetooth options=nil")
         logger.log("ANCS", "Pre-connect ANCS authorization state = \(device.peripheral.ancsAuthorized)")
-        central.connect(device.peripheral, options: hudConnectionOptions)
+        central.connect(device.peripheral, options: nil)
     }
 
     func disconnect() {

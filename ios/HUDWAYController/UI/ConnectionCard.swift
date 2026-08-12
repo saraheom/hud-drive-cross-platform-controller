@@ -30,6 +30,11 @@ struct ConnectionCard: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Spacer()
+                            Button("Reconnect") {
+                                state.bluetooth.reconnectSavedHUD()
+                            }
+                            .font(.caption)
+
                             Button("Forget") {
                                 state.bluetooth.forgetSavedHUD()
                             }
