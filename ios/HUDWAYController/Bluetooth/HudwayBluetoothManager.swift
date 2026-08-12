@@ -54,9 +54,13 @@ final class HudwayBluetoothManager: NSObject {
         }
         devices.removeAll()
         state = .scanning
-        logger.log("BLE", "Scanning for HUDWAY Drive")
+        logger.log("BLE", "Scanning for all BLE advertisers (HUDWAY is name-prioritized; NUS verified after connection)")
+        // Do not filter by the Nordic UART service at discovery time.
+        // HUDWAY Drive does not reliably include the NUS UUID in its advertising
+        // packet. Windows testing showed that it can advertise only its local
+        // name, then expose NUS after GATT connection.
         central.scanForPeripherals(
-            withServices: [CBUUID(string: HudwayProtocol.serviceUUID)],
+            withServices: nil,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
         Task {
@@ -64,7 +68,10 @@ final class HudwayBluetoothManager: NSObject {
             await MainActor.run {
                 self.central.stopScan()
                 if self.state == .scanning { self.state = .idle }
-                self.logger.log("BLE", "Scan complete: \(self.devices.count) HUD-compatible device(s)")
+                self.logger.log("BLE", "Scan complete: \(self.devices.count) named BLE device(s) shown in picker")
+                if self.devices.isEmpty {
+                    self.logger.log("BLE", "No named devices discovered. Check Bluetooth permission and that HUDWAY is powered/not connected to another phone.")
+                }
             }
         }
     }
@@ -162,17 +169,39 @@ extension HudwayBluetoothManager: CBCentralManagerDelegate {
                                     advertisementData: [String : Any],
                                     rssi RSSI: NSNumber) {
         Task { @MainActor in
-            let name = peripheral.name
-                ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
-                ?? "HUDWAY Drive"
-            let device = Device(id: peripheral.identifier, name: name, rssi: RSSI.intValue, peripheral: peripheral)
+            let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+            let name = peripheral.name ?? advertisedName ?? "(unnamed)"
+
+            let advertisedServices = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+            let serviceText = advertisedServices.map(\.uuidString).joined(separator: ",")
+
+            self.logger.log(
+                "BLE FOUND",
+                "\(name) | \(peripheral.identifier) | RSSI \(RSSI) | services=[\(serviceText)]"
+            )
+
+            // Keep the UI useful instead of filling it with every anonymous BLE
+            // beacon. Always show named devices; HUDWAY devices sort to the top.
+            guard name != "(unnamed)" else { return }
+
+            let device = Device(
+                id: peripheral.identifier,
+                name: name,
+                rssi: RSSI.intValue,
+                peripheral: peripheral
+            )
             if let index = self.devices.firstIndex(where: { $0.id == device.id }) {
                 self.devices[index] = device
             } else {
                 self.devices.append(device)
             }
-            self.devices.sort { ($0.name.contains("HUDWAY") ? 0 : 1, -$0.rssi) < ($1.name.contains("HUDWAY") ? 0 : 1, -$1.rssi) }
-            self.logger.log("BLE FOUND", "\(name) | \(peripheral.identifier) | RSSI \(RSSI)")
+
+            self.devices.sort {
+                let lhsHud = $0.name.localizedCaseInsensitiveContains("HUDWAY")
+                let rhsHud = $1.name.localizedCaseInsensitiveContains("HUDWAY")
+                if lhsHud != rhsHud { return lhsHud && !rhsHud }
+                return $0.rssi > $1.rssi
+            }
         }
     }
 

@@ -180,3 +180,18 @@ rejected the IPA for three metadata/build-environment reasons. v14:
 
 This avoids the previous iPad multitasking validation path and satisfies
 Apple's current SDK minimum for App Store Connect uploads.
+
+
+## v15 — iOS HUD discovery correction
+
+The iPhone scanner no longer requires the HUDWAY Nordic UART Service UUID to
+appear in the BLE advertisement. Physical Windows testing showed HUDWAY Drive
+can advertise only its local name and expose NUS after GATT connection.
+
+iOS now:
+- scans all BLE advertisements;
+- logs every discovery including advertised service UUIDs;
+- shows named peripherals in the picker;
+- sorts HUDWAY-named devices first;
+- automatically selects the first HUDWAY device;
+- verifies the NUS service only after connecting.

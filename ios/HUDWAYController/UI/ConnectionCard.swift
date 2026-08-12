@@ -48,5 +48,11 @@ struct ConnectionCard: View {
                 }
             }
         }
+        .onChange(of: state.bluetooth.devices) { _, devices in
+            if selectedDeviceID == nil,
+               let hud = devices.first(where: { $0.name.localizedCaseInsensitiveContains("HUDWAY") }) {
+                selectedDeviceID = hud.id
+            }
+        }
     }
 }
