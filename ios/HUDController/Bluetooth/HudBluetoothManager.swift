@@ -42,10 +42,22 @@ final class HudBluetoothManager: NSObject {
     private let savedPeripheralNameKey = "HUD.savedPeripheralName"
     private var attemptedSavedReconnect = false
 
+    // App-level reconnect watchdog. We intentionally keep CoreBluetooth
+    // connection options=nil because that is the known-good physical-device path.
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectAttempt = 0
+    private var userRequestedDisconnect = false
+    private var autoReconnectEnabled = true
+
     var savedHUDName: String? {
         UserDefaults.standard.string(forKey: savedPeripheralNameKey)
     }
 
+    var reconnectStatus: String {
+        if userRequestedDisconnect { return "Paused by user" }
+        if reconnectTask != nil { return "Retrying automatically" }
+        return autoReconnectEnabled ? "Enabled" : "Disabled"
+    }
 
     let logger: LogManager
 
@@ -70,23 +82,44 @@ final class HudBluetoothManager: NSObject {
             "BLE MEMORY",
             "Saved HUD \(peripheral.name ?? "HUD Drive") | \(peripheral.identifier)"
         )
+        reconnectAttempt = 0
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        userRequestedDisconnect = false
+        autoReconnectEnabled = true
     }
 
     func forgetSavedHUD() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectAttempt = 0
+        autoReconnectEnabled = false
+        userRequestedDisconnect = true
         UserDefaults.standard.removeObject(forKey: savedPeripheralIDKey)
         UserDefaults.standard.removeObject(forKey: savedPeripheralNameKey)
-        logger.log("BLE MEMORY", "Forgot saved HUD")
+        logger.log("BLE MEMORY", "Forgot saved HUD and stopped auto-reconnect")
     }
 
     func reconnectSavedHUD() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectAttempt = 0
+        userRequestedDisconnect = false
+        autoReconnectEnabled = true
         attemptedSavedReconnect = false
         reconnectSavedHUDIfPossible()
     }
 
     private func reconnectSavedHUDIfPossible() {
-        guard central.state == .poweredOn else { return }
-        guard !attemptedSavedReconnect else { return }
-        attemptedSavedReconnect = true
+        guard central.state == .poweredOn else {
+            logger.log("BLE AUTO", "Reconnect deferred: Bluetooth is not powered on")
+            return
+        }
+        guard autoReconnectEnabled, !userRequestedDisconnect else {
+            logger.log("BLE AUTO", "Reconnect skipped: disabled or user-requested disconnect")
+            return
+        }
+        guard state != .connected && state != .connecting else { return }
 
         guard let raw = UserDefaults.standard.string(forKey: savedPeripheralIDKey),
               let uuid = UUID(uuidString: raw) else {
@@ -95,11 +128,11 @@ final class HudBluetoothManager: NSObject {
         }
 
         logger.log("BLE AUTO", "Looking for saved HUD \(raw)")
-
         let retrieved = central.retrievePeripherals(withIdentifiers: [uuid])
+
         guard let saved = retrieved.first else {
-            logger.log("BLE AUTO", "Saved HUD not currently retrievable; falling back to scan")
-            scan()
+            logger.log("BLE AUTO", "Saved HUD is not currently retrievable")
+            scheduleReconnect(reason: "saved peripheral not retrievable")
             return
         }
 
@@ -107,14 +140,52 @@ final class HudBluetoothManager: NSObject {
             ?? UserDefaults.standard.string(forKey: savedPeripheralNameKey)
             ?? "HUD Drive"
 
-        logger.log("BLE AUTO", "Retrieved \(name); app-level auto-connect using options=nil")
+        logger.log(
+            "BLE AUTO",
+            "Retrieved \(name); auto-connect attempt \(reconnectAttempt + 1) using options=nil"
+        )
+
         peripheral = saved
         saved.delegate = self
         state = .connecting
         central.connect(saved, options: nil)
     }
 
+    private func scheduleReconnect(reason: String) {
+        guard autoReconnectEnabled, !userRequestedDisconnect else { return }
+        guard reconnectTask == nil else { return }
+        guard central.state == .poweredOn else { return }
+
+        // 1s, 2s, 4s, 8s, 15s, then 30s thereafter.
+        let delays: [Double] = [1, 2, 4, 8, 15, 30]
+        let delay = delays[min(reconnectAttempt, delays.count - 1)]
+        reconnectAttempt += 1
+
+        logger.log(
+            "BLE AUTO",
+            "Scheduling reconnect in \(Int(delay))s (reason: \(reason), attempt \(reconnectAttempt))"
+        )
+
+        reconnectTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled else { return }
+            self.reconnectTask = nil
+            self.reconnectSavedHUDIfPossible()
+        }
+    }
+
+    private func cancelReconnect(reason: String) {
+        if reconnectTask != nil {
+            logger.log("BLE AUTO", "Cancelled pending reconnect: \(reason)")
+        }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+    }
+
     func scan() {
+        userRequestedDisconnect = false
+        autoReconnectEnabled = true
+        cancelReconnect(reason: "manual scan")
         guard central.state == .poweredOn else {
             logger.log("BLE", "Cannot scan: Bluetooth state \(central.state.rawValue)")
             return
@@ -144,6 +215,10 @@ final class HudBluetoothManager: NSObject {
     }
 
     func connect(_ device: Device) {
+        cancelReconnect(reason: "manual connect")
+        reconnectAttempt = 0
+        userRequestedDisconnect = false
+        autoReconnectEnabled = true
         central.stopScan()
         state = .connecting
         peripheral = device.peripheral
@@ -154,6 +229,10 @@ final class HudBluetoothManager: NSObject {
     }
 
     func disconnect() {
+        logger.log("BLE", "User requested disconnect; automatic reconnect paused")
+        userRequestedDisconnect = true
+        autoReconnectEnabled = false
+        cancelReconnect(reason: "user requested disconnect")
         if let peripheral {
             central.cancelPeripheralConnection(peripheral)
         }
@@ -230,7 +309,12 @@ extension HudBluetoothManager: CBCentralManagerDelegate {
         Task { @MainActor in
             self.logger.log("BLE", "Central state = \(central.state.rawValue)")
             if central.state == .poweredOn {
-                self.reconnectSavedHUDIfPossible()
+                self.attemptedSavedReconnect = false
+                if self.autoReconnectEnabled && !self.userRequestedDisconnect {
+                    self.reconnectSavedHUDIfPossible()
+                }
+            } else {
+                self.cancelReconnect(reason: "Bluetooth state changed")
             }
         }
     }
@@ -279,6 +363,10 @@ extension HudBluetoothManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         Task { @MainActor in
             self.logger.log("BLE", "GATT connected: \(peripheral.name ?? peripheral.identifier.uuidString)")
+            self.cancelReconnect(reason: "GATT connected")
+            self.reconnectAttempt = 0
+            self.userRequestedDisconnect = false
+            self.autoReconnectEnabled = true
             self.connectedName = peripheral.name ?? "HUD Drive"
             self.ancsAuthorized = peripheral.ancsAuthorized
             self.logger.log("ANCS", "Post-connect ancsAuthorized = \(peripheral.ancsAuthorized)")
@@ -297,6 +385,9 @@ extension HudBluetoothManager: CBCentralManagerDelegate {
                 "BLE ERROR",
                 "Failed to connect \(peripheral.name ?? peripheral.identifier.uuidString): \(error?.localizedDescription ?? "unknown error")"
             )
+            if self.autoReconnectEnabled && !self.userRequestedDisconnect {
+                self.scheduleReconnect(reason: "connection attempt failed")
+            }
         }
     }
 
@@ -323,7 +414,14 @@ extension HudBluetoothManager: CBCentralManagerDelegate {
             self.txQueue.removeAll()
             self.currentChunks.removeAll()
             self.writing = false
-            self.logger.log("BLE", "Disconnected: \(error?.localizedDescription ?? "no error")")
+            let reason = error?.localizedDescription ?? "no error"
+            self.logger.log("BLE", "Disconnected: \(reason)")
+
+            if self.userRequestedDisconnect {
+                self.logger.log("BLE AUTO", "No reconnect: disconnect was user-requested")
+            } else if self.autoReconnectEnabled {
+                self.scheduleReconnect(reason: "unexpected disconnect: \(reason)")
+            }
         }
     }
 
@@ -377,7 +475,9 @@ extension HudBluetoothManager: CBPeripheralDelegate {
             }
             if self.txCharacteristic != nil && self.rxCharacteristic != nil {
                 self.state = .connected
-                self.logger.log("BLE", "HUD transport ready")
+                self.cancelReconnect(reason: "HUD transport ready")
+                self.reconnectAttempt = 0
+                self.logger.log("BLE", "HUD transport ready; reconnect watchdog armed")
                 self.enqueue(HudCommands.uartConnectionCheck(), label: "UART connection check")
             }
         }

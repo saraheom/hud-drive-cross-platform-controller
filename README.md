@@ -317,3 +317,26 @@ objects are not UI state and should not be observed.
 `SPTConfiguration` and `SPTAppRemote` are now marked with
 `@ObservationIgnored`, preserving them as normal lazy stored properties while
 the user-visible status/track/artist properties remain observable.
+
+
+## v23 — unexpected-disconnect reconnect watchdog
+
+v23 adds an app-level reconnect watchdog while preserving the physical-device
+connection path that has already proven stable:
+
+`central.connect(peripheral, options: nil)`
+
+Behavior:
+
+- the first successful HUD connection remains persisted by CoreBluetooth UUID;
+- if the link drops unexpectedly, the app schedules reconnect attempts;
+- retry backoff is 1s → 2s → 4s → 8s → 15s → 30s, then every 30s;
+- successful GATT/transport connection resets the backoff;
+- reopening the app still retrieves and auto-connects the saved HUD;
+- pressing Disconnect explicitly pauses automatic reconnect;
+- pressing Scan, Connect, or Reconnect re-enables automatic reconnect;
+- Forget clears the saved HUD and disables retries.
+
+The reconnect loop does not use CoreBluetooth's
+`CBConnectPeripheralOptionEnableAutoReconnect`, since physical testing showed
+that option was rejected for this accessory.

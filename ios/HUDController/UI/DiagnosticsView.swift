@@ -10,6 +10,7 @@ struct DiagnosticsView: View {
                 LabeledContent("Device", value: state.bluetooth.connectedName ?? "None")
                 LabeledContent("Last RX", value: state.bluetooth.lastRX.isEmpty ? "—" : state.bluetooth.lastRX)
                 LabeledContent("ANCS authorized", value: state.bluetooth.ancsAuthorized ? "Yes" : "No")
+                LabeledContent("Auto reconnect", value: state.bluetooth.reconnectStatus)
             }
 
 
