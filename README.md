@@ -420,3 +420,14 @@ v28 keeps all v27 mph behavior and adds Spotify App Remote persistence:
 
 Spotify generally needs to be actively playing for App Remote to connect while
 Spotify itself is backgrounded.
+
+
+## v29 — mph tuple compile fix
+
+The first v28 CI run exposed one stale field name left behind by the mph
+conversion. `parseMaxSpeed` now returns `(mph, sourceWasMph)`, while
+`makeSegment` still referenced the former `isMph` tuple member.
+
+v29 updates that reference to `parsed.sourceWasMph`.
+
+No runtime behavior changes were made; all v28 features remain intact.

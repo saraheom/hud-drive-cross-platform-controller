@@ -180,7 +180,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
               let geometry = element.geometry, geometry.count >= 2 else { return nil }
         return Segment(
             speedMph: parsed.mph,
-            isMph: parsed.isMph,
+            isMph: parsed.sourceWasMph,
             points: geometry.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
         )
     }

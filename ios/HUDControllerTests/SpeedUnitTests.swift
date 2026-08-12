@@ -24,4 +24,16 @@ final class SpeedUnitTests: XCTestCase {
         XCTAssertTrue(source.contains("0.62137119223733"))
         XCTAssertFalse(source.contains("* 3.6"))
     }
+
+    func testSpeedParserTupleMemberNamesMatch() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("parsed.sourceWasMph"))
+        XCTAssertFalse(source.contains("parsed.isMph"))
+    }
+
 }
