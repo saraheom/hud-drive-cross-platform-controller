@@ -20,24 +20,62 @@ struct DashboardPreset: Identifiable, Hashable {
 @MainActor
 @Observable
 final class HudSettings {
-    var autoBrightness = false
-    var brightness = 50
-    var showTimeWeather = true
-    var minimizeWidgets = false
-    var selectedPreset = DashboardPreset.presets[0]
+    private let defaults = UserDefaults.standard
 
-    var notifyAll = false
-    var notifyCalls = true
-    var notifyMessages = true
-    var notifyCalendar = true
-    var notifyGmail = true
-    var notifyWeChat = true
-    var notifyKakaoTalk = true
-    // These are retained as future-source settings, not ANCS filters.
-    var mediaSpotifyEnabled = false
-    var navigationGoogleMapsEnabled = false
-    var navigationAppleMapsEnabled = false
-    var navigationWazeEnabled = false
-    var notificationExposureSeconds = 10
-    var notificationLines = 5
+    var autoBrightness: Bool { didSet { defaults.set(autoBrightness, forKey: "HUD.Settings.autoBrightness") } }
+    var brightness: Int { didSet { defaults.set(brightness, forKey: "HUD.Settings.brightness") } }
+    var showTimeWeather: Bool { didSet { defaults.set(showTimeWeather, forKey: "HUD.Settings.showTimeWeather") } }
+    var minimizeWidgets: Bool { didSet { defaults.set(minimizeWidgets, forKey: "HUD.Settings.minimizeWidgets") } }
+    var selectedPreset: DashboardPreset {
+        didSet { defaults.set(selectedPreset.name, forKey: "HUD.Settings.selectedPreset") }
+    }
+
+    var notifyAll: Bool { didSet { defaults.set(notifyAll, forKey: "HUD.Settings.notifyAll") } }
+    var notifyCalls: Bool { didSet { defaults.set(notifyCalls, forKey: "HUD.Settings.notifyCalls") } }
+    var notifyMessages: Bool { didSet { defaults.set(notifyMessages, forKey: "HUD.Settings.notifyMessages") } }
+    var notifyCalendar: Bool { didSet { defaults.set(notifyCalendar, forKey: "HUD.Settings.notifyCalendar") } }
+    var notifyGmail: Bool { didSet { defaults.set(notifyGmail, forKey: "HUD.Settings.notifyGmail") } }
+    var notifyWeChat: Bool { didSet { defaults.set(notifyWeChat, forKey: "HUD.Settings.notifyWeChat") } }
+    var notifyKakaoTalk: Bool { didSet { defaults.set(notifyKakaoTalk, forKey: "HUD.Settings.notifyKakaoTalk") } }
+
+    var mediaSpotifyEnabled: Bool { didSet { defaults.set(mediaSpotifyEnabled, forKey: "HUD.Settings.mediaSpotifyEnabled") } }
+    var navigationGoogleMapsEnabled: Bool { didSet { defaults.set(navigationGoogleMapsEnabled, forKey: "HUD.Settings.navigationGoogleMapsEnabled") } }
+    var navigationAppleMapsEnabled: Bool { didSet { defaults.set(navigationAppleMapsEnabled, forKey: "HUD.Settings.navigationAppleMapsEnabled") } }
+    var navigationWazeEnabled: Bool { didSet { defaults.set(navigationWazeEnabled, forKey: "HUD.Settings.navigationWazeEnabled") } }
+
+    var notificationExposureSeconds: Int { didSet { defaults.set(notificationExposureSeconds, forKey: "HUD.Settings.notificationExposureSeconds") } }
+    var notificationLines: Int { didSet { defaults.set(notificationLines, forKey: "HUD.Settings.notificationLines") } }
+
+    init() {
+        func bool(_ key: String, default fallback: Bool) -> Bool {
+            defaults.object(forKey: key) == nil ? fallback : defaults.bool(forKey: key)
+        }
+        func integer(_ key: String, default fallback: Int) -> Int {
+            defaults.object(forKey: key) == nil ? fallback : defaults.integer(forKey: key)
+        }
+
+        autoBrightness = bool("HUD.Settings.autoBrightness", default: false)
+        brightness = integer("HUD.Settings.brightness", default: 50)
+        showTimeWeather = bool("HUD.Settings.showTimeWeather", default: true)
+        minimizeWidgets = bool("HUD.Settings.minimizeWidgets", default: false)
+
+        let presetName = defaults.string(forKey: "HUD.Settings.selectedPreset") ?? "Freeride"
+        selectedPreset = DashboardPreset.presets.first(where: { $0.name == presetName }) ?? DashboardPreset.presets[0]
+
+        notifyAll = bool("HUD.Settings.notifyAll", default: false)
+        notifyCalls = bool("HUD.Settings.notifyCalls", default: true)
+        notifyMessages = bool("HUD.Settings.notifyMessages", default: true)
+        notifyCalendar = bool("HUD.Settings.notifyCalendar", default: true)
+        notifyGmail = bool("HUD.Settings.notifyGmail", default: true)
+        notifyWeChat = bool("HUD.Settings.notifyWeChat", default: true)
+        notifyKakaoTalk = bool("HUD.Settings.notifyKakaoTalk", default: true)
+
+        mediaSpotifyEnabled = bool("HUD.Settings.mediaSpotifyEnabled", default: false)
+        navigationGoogleMapsEnabled = bool("HUD.Settings.navigationGoogleMapsEnabled", default: false)
+        navigationAppleMapsEnabled = bool("HUD.Settings.navigationAppleMapsEnabled", default: false)
+        navigationWazeEnabled = bool("HUD.Settings.navigationWazeEnabled", default: false)
+
+        notificationExposureSeconds = integer("HUD.Settings.notificationExposureSeconds", default: 10)
+        notificationLines = integer("HUD.Settings.notificationLines", default: 5)
+    }
 }

@@ -25,6 +25,24 @@ struct DashboardView: View {
                             .tint(HudTheme.accent)
                             .onChange(of: state.settings.brightness) { _, _ in state.applyBrightness() }
                         }
+
+                        Divider()
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("HUD light / auto-brightness raw")
+                                Spacer()
+                                Text(state.bluetooth.hudAmbientRawValue.map(String.init) ?? "—")
+                                    .monospacedDigit()
+                            }
+                            Slider(
+                                value: .constant(Double(state.bluetooth.hudAmbientRawValue ?? 0)),
+                                in: 0...255
+                            )
+                            .disabled(true)
+                            Text("Experimental raw firmware value (event 3/30/0). We will verify during physical light/dark testing before treating this as calibrated lux.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     sectionTitle("SET UP YOUR HUD VIEWS")

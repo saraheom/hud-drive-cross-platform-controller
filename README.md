@@ -431,3 +431,19 @@ conversion. `parseMaxSpeed` now returns `(mph, sourceWasMph)`, while
 v29 updates that reference to `parsed.sourceWasMph`.
 
 No runtime behavior changes were made; all v28 features remain intact.
+
+
+## v30 — iOS 27 capture + reliability
+
+- fixes Spotify manual re-authorization getting trapped on a stale saved token;
+- adds richer Spotify App Remote error logging;
+- BLEDOM timeout now supports 1–30 seconds and uses CoreBluetooth state restoration;
+- exposes experimental HUD auto-brightness/light raw event value;
+- OBD UI now has persistent Freeride + Navigation left/right widget profiles;
+- fixes OBD UI "searching" state being overwritten after already connected;
+- adds iOS 27 ScreenCaptureKit full-display capture at ~1 Hz;
+- adds Vision OCR + Google Maps maneuver parser;
+- adds Photos screenshot OCR mode for testing away from the car;
+- persists user-configurable settings immediately.
+
+See `docs/V30_IOS27_CAPTURE_AND_RELIABILITY.md`.

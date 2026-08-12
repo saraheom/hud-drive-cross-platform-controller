@@ -39,26 +39,38 @@ struct VehicleView: View {
                             )
 
                             Divider()
-                            Text("HUD OBD widgets").font(.headline)
-
-                            Picker("Left side", selection: Binding(
-                                get: { state.obd.leftItem },
-                                set: { state.obd.leftItem = $0 }
+                            Text("Freeride HUD widgets").font(.headline)
+                            Picker("Freeride left", selection: Binding(
+                                get: { state.obd.freerideLeft },
+                                set: { state.obd.freerideLeft = $0 }
                             )) {
                                 ForEach(HudOBDItem.allCases) { Text($0.displayName).tag($0) }
                             }
-
-                            Picker("Right side", selection: Binding(
-                                get: { state.obd.rightItem },
-                                set: { state.obd.rightItem = $0 }
+                            Picker("Freeride right", selection: Binding(
+                                get: { state.obd.freerideRight },
+                                set: { state.obd.freerideRight = $0 }
                             )) {
                                 ForEach(HudOBDItem.allCases) { Text($0.displayName).tag($0) }
                             }
+                            Button("Apply Freeride Widgets") { state.obd.applyFreerideWidgets() }
+                                .buttonStyle(.borderedProminent)
 
-                            Button("Apply Left / Right OBD Widgets") {
-                                state.obd.applyWidgetSelection()
+                            Divider()
+                            Text("Navigation HUD widgets").font(.headline)
+                            Picker("Navigation left", selection: Binding(
+                                get: { state.obd.navigationLeft },
+                                set: { state.obd.navigationLeft = $0 }
+                            )) {
+                                ForEach(HudOBDItem.allCases) { Text($0.displayName).tag($0) }
                             }
-                            .buttonStyle(.borderedProminent)
+                            Picker("Navigation right", selection: Binding(
+                                get: { state.obd.navigationRight },
+                                set: { state.obd.navigationRight = $0 }
+                            )) {
+                                ForEach(HudOBDItem.allCases) { Text($0.displayName).tag($0) }
+                            }
+                            Button("Apply Navigation Widgets") { state.obd.applyNavigationWidgets() }
+                                .buttonStyle(.borderedProminent)
 
                             Text("""
                             This uses the original app's HUD-managed OBD packets. The phone tells the HUD which Bluetooth OBD device name to connect to; the HUD reports OBD connection status and supported PIDs back to the app.
@@ -131,7 +143,7 @@ struct VehicleView: View {
                                     get: { state.ambientLight.absenceTimeoutSeconds },
                                     set: { state.ambientLight.absenceTimeoutSeconds = $0 }
                                 ),
-                                in: 5...60
+                                in: 1...30
                             )
 
                             LabeledContent("Status", value: state.ambientLight.status)

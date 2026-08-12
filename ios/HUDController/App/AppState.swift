@@ -12,6 +12,7 @@ final class AppState {
     let speedEngine: OriginalSpeedLimitEngine
     let ambientLight: AmbientLightMonitor
     let settings = HudSettings()
+    private(set) var externalCapture27: Any?
 
     init() {
         let logger = LogManager()
@@ -25,6 +26,9 @@ final class AppState {
         self.obd = obd
         self.speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)
         self.ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
+        if #available(iOS 27.0, *) {
+            self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
+        }
 
         spotify.onTrackChanged = { [weak bluetooth] artist, track in
             guard let bluetooth, bluetooth.state == .connected else { return }

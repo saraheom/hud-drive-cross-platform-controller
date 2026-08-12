@@ -11,11 +11,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
     private(set) var lastRSSI: Int?
     private(set) var lightPresent = false
 
-    var enabled = false {
-        didSet { enabled ? start() : stop() }
+    var enabled: Bool {
+        didSet {
+            UserDefaults.standard.set(enabled, forKey: "HUD.Ambient.enabled")
+            enabled ? start() : stop()
+        }
     }
-    var targetName = UserDefaults.standard.string(forKey: "HUD.Ambient.targetName") ?? "BLEDOM"
-    var absenceTimeoutSeconds = 15
+    var targetName: String {
+        didSet { UserDefaults.standard.set(targetName, forKey: "HUD.Ambient.targetName") }
+    }
+    var absenceTimeoutSeconds: Int {
+        didSet { UserDefaults.standard.set(absenceTimeoutSeconds, forKey: "HUD.Ambient.timeout") }
+    }
 
     private var central: CBCentralManager!
     private let bluetooth: HudBluetoothManager
@@ -26,20 +33,23 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
     init(bluetooth: HudBluetoothManager, logger: LogManager) {
         self.bluetooth = bluetooth
         self.logger = logger
+        let d = UserDefaults.standard
+        self.enabled = d.object(forKey: "HUD.Ambient.enabled") == nil ? false : d.bool(forKey: "HUD.Ambient.enabled")
+        self.targetName = d.string(forKey: "HUD.Ambient.targetName") ?? "BLEDOM"
+        self.absenceTimeoutSeconds = d.object(forKey: "HUD.Ambient.timeout") == nil ? 5 : max(1, d.integer(forKey: "HUD.Ambient.timeout"))
         super.init()
-        // The BLEDOM presence monitor does not need CoreBluetooth state
-        // restoration. Supplying a restoration identifier requires implementing
-        // centralManager(_:willRestoreState:) and causes CoreBluetooth to assert
-        // at launch if that delegate callback is absent.
+
+        // Restoration is now implemented rather than disabled. Combined with
+        // UIBackgroundModes bluetooth-central this gives iOS the best chance
+        // to relaunch/continue the BLE central while backgrounded.
         central = CBCentralManager(
             delegate: self,
             queue: nil,
-            options: nil
+            options: [CBCentralManagerOptionRestoreIdentifierKey: "HUDAmbientCentral"]
         )
     }
 
     func start() {
-        UserDefaults.standard.set(targetName, forKey: "HUD.Ambient.targetName")
         guard central.state == .poweredOn else {
             status = "Waiting for Bluetooth"
             return
@@ -60,7 +70,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
         status = "Stopped"
     }
 
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String : Any]) {
+        Task { @MainActor in
+            self.logger.log("AMBIENT BG", "CoreBluetooth restored ambient central state")
+            if self.enabled && central.state == .poweredOn {
+                self.start()
+            }
+        }
+    }
+
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         Task { @MainActor in
             self.logger.log("AMBIENT", "Central state \(central.state.rawValue)")
             if self.enabled && central.state == .poweredOn {
@@ -88,15 +107,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
 
             if !self.lightPresent {
                 self.lightPresent = true
-                self.logger.log(
-                    "AMBIENT",
-                    "\(name) became present (\(peripheral.identifier)); enabling HUD auto brightness"
-                )
+                self.logger.log("AMBIENT", "\(name) became present; enabling HUD auto brightness")
                 if self.bluetooth.state == .connected {
-                    self.bluetooth.enqueue(
-                        HudCommands.autoBrightness(true),
-                        label: "Ambient trigger → Auto brightness ON"
-                    )
+                    self.bluetooth.enqueue(HudCommands.autoBrightness(true), label: "Ambient trigger → Auto brightness ON")
                 }
             }
         }
@@ -106,22 +119,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
         watchdogTask?.cancel()
         watchdogTask = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .milliseconds(500))
                 guard self.enabled else { continue }
-
                 if self.lightPresent &&
                     Date().timeIntervalSince(self.lastSeen) > Double(self.absenceTimeoutSeconds) {
                     self.lightPresent = false
                     self.status = "\(self.targetName) absent"
-                    self.logger.log(
-                        "AMBIENT",
-                        "\(self.targetName) absent for \(self.absenceTimeoutSeconds)s; disabling HUD auto brightness"
-                    )
+                    self.logger.log("AMBIENT", "\(self.targetName) absent for \(self.absenceTimeoutSeconds)s; disabling HUD auto brightness")
                     if self.bluetooth.state == .connected {
-                        self.bluetooth.enqueue(
-                            HudCommands.autoBrightness(false),
-                            label: "Ambient trigger → Auto brightness OFF"
-                        )
+                        self.bluetooth.enqueue(HudCommands.autoBrightness(false), label: "Ambient trigger → Auto brightness OFF")
                     }
                 }
             }

@@ -28,6 +28,8 @@ final class HudBluetoothManager: NSObject {
     private(set) var connectedName: String?
     private(set) var lastRX: String = ""
     private(set) var ancsAuthorized = false
+    private(set) var hudAmbientRawValue: Int?
+    private(set) var hudAmbientLastUpdated: Date?
 
     var onOBDConnectionEvent: ((Bool, String) -> Void)?
     var onTransportReady: (() -> Void)?
@@ -304,6 +306,18 @@ final class HudBluetoothManager: NSObject {
 
     private func parseVehicleEvent(_ frame: Data) {
         guard let body = HudProtocol.unescape(frame), body.count >= 3 else { return }
+
+        // Experimental brightness diagnostic. Captured traffic contains
+        // event command=3, p1=30, p2=0 followed by a big-endian int32.
+        // The decompiled app identifies a brightness auto-calculated event.
+        // We expose the raw number first and validate it physically before
+        // calling it lux or assuming a sensor calibration.
+        if body[0] == 3, body[1] == 30, body[2] == 0, body.count >= 7 {
+            let value = (Int(body[3]) << 24) | (Int(body[4]) << 16) | (Int(body[5]) << 8) | Int(body[6])
+            hudAmbientRawValue = value
+            hudAmbientLastUpdated = Date()
+            logger.log("HUD LIGHT", "Auto-brightness/sensor raw value = \(value)")
+        }
 
         // Decompiled OBDConnectionEventPacket:
         // EventPacket(command=3, p1=100, p2=0)
