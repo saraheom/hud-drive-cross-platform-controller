@@ -37,6 +37,15 @@ final class HudwayBluetoothManager: NSObject {
     private var currentLabel = ""
     private var writing = false
 
+    private let savedPeripheralIDKey = "HUDWAY.savedPeripheralIdentifier"
+    private let savedPeripheralNameKey = "HUDWAY.savedPeripheralName"
+    private var attemptedSavedReconnect = false
+
+    var savedHUDName: String? {
+        UserDefaults.standard.string(forKey: savedPeripheralNameKey)
+    }
+
+
     let logger: LogManager
 
     init(logger: LogManager) {
@@ -45,6 +54,74 @@ final class HudwayBluetoothManager: NSObject {
         central = CBCentralManager(delegate: self, queue: nil, options: [
             CBCentralManagerOptionRestoreIdentifierKey: "HUDWAYControllerCentral"
         ])
+    }
+
+    private var hudConnectionOptions: [String: Any] {
+        [
+            // This is the key missing from our previous iOS builds. It tells
+            // CoreBluetooth that this connection requires Apple Notification
+            // Center Service support from iOS for the accessory.
+            CBConnectPeripheralOptionRequiresANCS: true,
+
+            // Ask iOS to restore the BLE link automatically after transient
+            // radio/link loss.
+            CBConnectPeripheralOptionEnableAutoReconnect: true,
+
+            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true
+        ]
+    }
+
+    private func saveConnectedHUD(_ peripheral: CBPeripheral) {
+        UserDefaults.standard.set(
+            peripheral.identifier.uuidString,
+            forKey: savedPeripheralIDKey
+        )
+        UserDefaults.standard.set(
+            peripheral.name ?? "HUDWAY Drive",
+            forKey: savedPeripheralNameKey
+        )
+        logger.log(
+            "BLE MEMORY",
+            "Saved HUD \(peripheral.name ?? "HUDWAY Drive") | \(peripheral.identifier)"
+        )
+    }
+
+    func forgetSavedHUD() {
+        UserDefaults.standard.removeObject(forKey: savedPeripheralIDKey)
+        UserDefaults.standard.removeObject(forKey: savedPeripheralNameKey)
+        logger.log("BLE MEMORY", "Forgot saved HUD")
+    }
+
+    private func reconnectSavedHUDIfPossible() {
+        guard central.state == .poweredOn else { return }
+        guard !attemptedSavedReconnect else { return }
+        attemptedSavedReconnect = true
+
+        guard let raw = UserDefaults.standard.string(forKey: savedPeripheralIDKey),
+              let uuid = UUID(uuidString: raw) else {
+            logger.log("BLE AUTO", "No previously saved HUD")
+            return
+        }
+
+        logger.log("BLE AUTO", "Looking for saved HUD \(raw)")
+
+        let retrieved = central.retrievePeripherals(withIdentifiers: [uuid])
+        guard let saved = retrieved.first else {
+            logger.log("BLE AUTO", "Saved HUD not currently retrievable; falling back to scan")
+            scan()
+            return
+        }
+
+        let name = saved.name
+            ?? UserDefaults.standard.string(forKey: savedPeripheralNameKey)
+            ?? "HUDWAY Drive"
+
+        logger.log("BLE AUTO", "Retrieved \(name); auto-connecting")
+        peripheral = saved
+        saved.delegate = self
+        state = .connecting
+        central.connect(saved, options: hudConnectionOptions)
     }
 
     func scan() {
@@ -81,8 +158,9 @@ final class HudwayBluetoothManager: NSObject {
         state = .connecting
         peripheral = device.peripheral
         peripheral?.delegate = self
-        logger.log("BLE", "Connecting to \(device.name)")
-        central.connect(device.peripheral, options: nil)
+        logger.log("BLE", "Connecting to \(device.name) with ANCS-required + auto-reconnect options")
+        logger.log("ANCS", "Requesting ANCS-capable CoreBluetooth connection")
+        central.connect(device.peripheral, options: hudConnectionOptions)
     }
 
     func disconnect() {
@@ -161,6 +239,9 @@ extension HudwayBluetoothManager: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         Task { @MainActor in
             self.logger.log("BLE", "Central state = \(central.state.rawValue)")
+            if central.state == .poweredOn {
+                self.reconnectSavedHUDIfPossible()
+            }
         }
     }
 
@@ -209,6 +290,7 @@ extension HudwayBluetoothManager: CBCentralManagerDelegate {
         Task { @MainActor in
             self.logger.log("BLE", "GATT connected: \(peripheral.name ?? peripheral.identifier.uuidString)")
             self.connectedName = peripheral.name ?? "HUDWAY Drive"
+            self.saveConnectedHUD(peripheral)
             peripheral.delegate = self
             peripheral.discoverServices([CBUUID(string: HudwayProtocol.serviceUUID)])
         }
@@ -233,6 +315,16 @@ extension HudwayBluetoothManager: CBCentralManagerDelegate {
                                     willRestoreState dict: [String : Any]) {
         Task { @MainActor in
             self.logger.log("BLE", "CoreBluetooth restoration callback")
+            if let peripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral],
+               let restored = peripherals.first {
+                self.logger.log(
+                    "BLE AUTO",
+                    "Restored peripheral \(restored.name ?? restored.identifier.uuidString)"
+                )
+                self.peripheral = restored
+                restored.delegate = self
+                self.saveConnectedHUD(restored)
+            }
         }
     }
 }

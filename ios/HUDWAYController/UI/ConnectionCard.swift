@@ -24,6 +24,19 @@ struct ConnectionCard: View {
                 }
 
                 if state.bluetooth.state != .connected {
+                    if let savedName = state.bluetooth.savedHUDName {
+                        HStack {
+                            Label("Saved: \(savedName)", systemImage: "bolt.horizontal.circle")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Forget") {
+                                state.bluetooth.forgetSavedHUD()
+                            }
+                            .font(.caption)
+                        }
+                    }
+
                     Picker("Device", selection: $selectedDeviceID) {
                         Text("Select HUD").tag(UUID?.none)
                         ForEach(state.bluetooth.devices) { device in

@@ -205,3 +205,22 @@ iOS now:
   generated app `Info.plist` as `CFBundleVersion` after XcodeGen runs.
 - The workflow verifies the archived `.app` has that exact build number before
   exporting/uploading the IPA.
+
+
+## v17 — ANCS connection mode + remembered HUD auto-connect
+
+Physical iPhone testing showed all proprietary notification-filter packets were
+sent successfully, but the BLE connection itself had never been established
+with CoreBluetooth's ANCS requirement.
+
+v17 connects with:
+
+- `CBConnectPeripheralOptionRequiresANCS = true`
+- `CBConnectPeripheralOptionEnableAutoReconnect = true`
+
+After the first successful HUD connection, the app saves the CoreBluetooth
+peripheral UUID in `UserDefaults`. On future launches it calls
+`retrievePeripherals(withIdentifiers:)` and connects automatically without a
+manual scan when iOS can retrieve the same HUD.
+
+A "Forget" button clears the remembered HUD.

@@ -14,7 +14,7 @@ struct DiagnosticsView: View {
 
             Section("ANCS / Notification diagnostics") {
                 Text("HUDWAY Drive consumes iPhone notifications directly through Apple's ANCS accessory service.")
-                Text("Enable iOS Settings → Bluetooth → HUDWAY Drive ⓘ → Share Notifications.")
+                Text("The app connects with CBConnectPeripheralOptionRequiresANCS. After first connection, check iOS Settings → Bluetooth → HUDWAY Drive ⓘ for the notification-sharing switch.")
                     .font(.caption)
                 Text("The app logs every notification-filter packet it sends. ANCS notification bodies will only appear in this app if HUD firmware independently forwards them back over the proprietary RX channel.")
                     .font(.caption)
