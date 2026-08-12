@@ -19,7 +19,10 @@ struct RootView: View {
         }
         .tint(HudTheme.accent)
         .preferredColorScheme(.dark)
-        .onAppear { consumePendingShortcut() }
+        .onAppear {
+            consumePendingShortcut()
+            state.spotify.autoConnectIfPossible()
+        }
         .onOpenURL { url in
             if state.spotify.handleCallback(url) {
                 state.logger.log("MEDIA", "Handled Spotify callback URL")
@@ -27,7 +30,15 @@ struct RootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             state.logger.log("APP LIFECYCLE", "Scene phase \(String(describing: phase))")
-            if phase == .active { consumePendingShortcut() }
+            switch phase {
+            case .active:
+                consumePendingShortcut()
+                state.spotify.appBecameActive()
+            case .background:
+                state.spotify.appEnteredBackground()
+            default:
+                break
+            }
         }
     }
 

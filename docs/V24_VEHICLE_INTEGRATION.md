@@ -39,7 +39,7 @@ The original Android `SpeedLimitEngine` uses:
 
 v24 reproduces that architecture on iOS:
 - CoreLocation speed → native HUD SpeedNotificationPacket (category 14)
-- Overpass maxspeed geometry → heading/distance road matching
+- Overpass maxspeed geometry → mph normalization → heading/distance road matching
 - native HudSpeedLimitAndToleranceCommandPacket → HUD sign
 - DisplaySpeedWarningCommandPacket → warning threshold
 
@@ -76,3 +76,18 @@ MusicNotificationPacket:
 - package name = `com.spotify.client`
 
 Use `Send Native HUD Music Test` first, then change Spotify tracks.
+
+
+## v27 mph normalization
+
+The complete app-side speed path now uses miles per hour:
+
+- CoreLocation m/s → mph;
+- OSM values explicitly tagged `mph` stay unchanged;
+- bare OSM numeric `maxspeed` values are treated as km/h per OSM convention and converted to mph;
+- OSM `knots` values are converted to mph;
+- speed-limit warning tolerance is expressed in mph;
+- HUD current-speed and speed-limit packets receive mph values;
+- Vehicle UI/logs display mph consistently.
+
+The HUD-managed OBD connection/custom-widget packet protocol is unchanged.

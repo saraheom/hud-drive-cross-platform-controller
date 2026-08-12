@@ -27,7 +27,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     struct Segment {
-        let speedKmh: Int
+        let speedMph: Int
         let isMph: Bool
         let points: [CLLocationCoordinate2D]
     }
@@ -42,8 +42,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var lastSentSpeed = -1
     private var lastSentLimit = -1
 
-    private(set) var currentSpeedKmh = 0
-    private(set) var currentSpeedLimitKmh = 0
+    private(set) var currentSpeedMph = 0
+    private(set) var currentSpeedLimitMph = 0
     private(set) var status = "Waiting for location"
 
     var enabled = false {
@@ -111,32 +111,32 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     private func process(_ location: CLLocation) {
         let speedMS = max(0, location.speed)
-        currentSpeedKmh = Int((speedMS * 3.6).rounded())
+        currentSpeedMph = Int((speedMS * 2.2369362920544).rounded())
 
-        if currentSpeedKmh != lastSentSpeed, bluetooth.state == .connected {
-            lastSentSpeed = currentSpeedKmh
+        if currentSpeedMph != lastSentSpeed, bluetooth.state == .connected {
+            lastSentSpeed = currentSpeedMph
             bluetooth.enqueue(
-                HudCommands.speedNotification(kmh: currentSpeedKmh),
-                label: "Vehicle speed \(currentSpeedKmh) km/h"
+                HudCommands.speedNotification(kmh: currentSpeedMph),
+                label: "Vehicle speed \(currentSpeedMph) mph"
             )
         }
 
         if let limit = bestSpeedLimit(at: location) {
-            currentSpeedLimitKmh = limit
+            currentSpeedLimitMph = limit
             if showSpeedLimit, limit != lastSentLimit, bluetooth.state == .connected {
                 lastSentLimit = limit
                 bluetooth.enqueue(
                     HudCommands.speedLimit(limit: limit, tolerance: speedTolerance),
-                    label: "Speed limit \(limit) km/h"
+                    label: "Speed limit \(limit) mph"
                 )
                 bluetooth.enqueue(
                     HudCommands.speedWarningThreshold(limit + speedTolerance),
                     label: "Speed warning \(limit + speedTolerance)"
                 )
             }
-            status = "GPS \(currentSpeedKmh) km/h • limit \(limit) km/h"
+            status = "GPS \(currentSpeedMph) mph • limit \(limit) mph"
         } else {
-            status = "GPS \(currentSpeedKmh) km/h • finding speed limit…"
+            status = "GPS \(currentSpeedMph) mph • finding speed limit…"
         }
 
         Task { await updateSegmentsIfNeeded(at: location) }
@@ -179,40 +179,60 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
               let parsed = parseMaxSpeed(maxspeed),
               let geometry = element.geometry, geometry.count >= 2 else { return nil }
         return Segment(
-            speedKmh: parsed.kmh,
+            speedMph: parsed.mph,
             isMph: parsed.isMph,
             points: geometry.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
         )
     }
 
-    private static func parseMaxSpeed(_ raw: String) -> (kmh: Int, isMph: Bool)? {
+    private static func parseMaxSpeed(_ raw: String) -> (mph: Int, sourceWasMph: Bool)? {
         let value = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
         if value.contains(";") {
             for part in value.split(separator: ";") {
                 if let parsed = parseMaxSpeed(String(part)) { return parsed }
             }
         }
 
-        // Original engine handles values such as "35 mph".
-        let number = value.split(whereSeparator: { !$0.isNumber && $0 != "." }).first.flatMap { Double($0) }
+        let number = value
+            .split(whereSeparator: { !$0.isNumber && $0 != "." })
+            .first
+            .flatMap { Double($0) }
+
         if let number {
+            // US/UK style OSM values such as "35 mph" remain unchanged.
             if value.contains("mph") {
-                return (Int((number * 1.609344).rounded()), true)
+                return (Int(number.rounded()), true)
             }
+
+            // Knots -> mph.
             if value.contains("knots") {
-                return (Int((number * 1.852).rounded()), false)
+                return (Int((number * 1.150779448).rounded()), false)
             }
-            return (Int(number.rounded()), false)
+
+            // Bare numeric maxspeed values in OSM are km/h by convention.
+            // Convert them to mph for the entire HUD pipeline.
+            return (Int((number * 0.62137119223733).rounded()), false)
         }
 
-        // A compact subset of the decompiled engine's symbolic maxspeed table.
-        let defaults: [String: Int] = [
-            "us:urban": 40, "us:rural": 80,
-            "de:urban": 50, "de:rural": 100,
-            "fr:urban": 50, "fr:rural": 80,
-            "gb:nsl_single": 97, "gb:nsl_dual": 113
+        // Symbolic defaults represented in mph.
+        // These are intentionally conservative fallbacks corresponding to
+        // common defaults used by the original engine's symbolic mapping.
+        let defaultsMph: [String: Int] = [
+            "us:urban": 25,
+            "us:rural": 50,
+            "de:urban": 31,
+            "de:rural": 62,
+            "fr:urban": 31,
+            "fr:rural": 50,
+            "gb:nsl_single": 60,
+            "gb:nsl_dual": 70
         ]
-        if let speed = defaults[value] { return (speed, false) }
+
+        if let mph = defaultsMph[value] {
+            return (mph, value.hasPrefix("us:") || value.hasPrefix("gb:"))
+        }
+
         return nil
     }
 
@@ -238,7 +258,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 }
 
                 if best == nil || score < best!.score {
-                    best = (score, segment.speedKmh)
+                    best = (score, segment.speedMph)
                 }
             }
         }

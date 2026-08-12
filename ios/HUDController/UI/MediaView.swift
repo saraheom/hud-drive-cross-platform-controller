@@ -27,7 +27,7 @@ struct MediaView: View {
                             }
 
                             HStack {
-                                Button("Connect / Authorize Spotify") {
+                                Button("Connect / Re-authorize Spotify") {
                                     state.spotify.connectOrAuthorize()
                                 }
                                 .buttonStyle(.borderedProminent)
@@ -46,7 +46,7 @@ struct MediaView: View {
                             .buttonStyle(.borderedProminent)
 
                             Text("""
-                            Spotify track changes now use the HUD firmware's native MusicNotificationPacket (category 12) directly over BLE. This bypasses iOS local notifications/ANCS for music.
+                            After the first authorization, HUD Controller stores the Spotify App Remote token in Keychain and reconnects automatically when the app becomes active. Manual authorization is only needed initially or if Spotify invalidates the saved authorization. Track changes use the HUD firmware's native MusicNotificationPacket directly over BLE.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

@@ -389,3 +389,34 @@ supports app-level BLE scanning for `BLEDOM`; only CoreBluetooth state
 restoration for that secondary scanner is removed.
 
 All v24/v25 vehicle features remain unchanged.
+
+
+## v27 — mph conversion
+
+All app-side vehicle speed and posted speed-limit behavior now uses **mph**.
+
+- GPS speed is converted from m/s to mph.
+- OSM `maxspeed="35 mph"` remains 35.
+- Bare OSM numeric speed limits are interpreted as km/h and converted to mph.
+- Speed-limit tolerance/warning values are mph.
+- HUD current-speed and speed-limit packets are sent mph values.
+- Vehicle UI and logs consistently show mph.
+
+The HUD-managed OBD packet protocol itself is unchanged.
+
+
+## v28 — mph + Spotify automatic reconnect
+
+v28 keeps all v27 mph behavior and adds Spotify App Remote persistence:
+
+- first authorization remains user-driven;
+- the App Remote access token is stored in iOS Keychain;
+- subsequent app launches restore the saved token;
+- HUD Controller automatically calls `appRemote.connect()` when the app becomes active;
+- app backgrounding disconnects App Remote, following Spotify's lifecycle guidance;
+- returning active automatically reconnects;
+- transient Spotify disconnects retry after three seconds;
+- if authorization is no longer accepted, use the Media tab to authorize again.
+
+Spotify generally needs to be actively playing for App Remote to connect while
+Spotify itself is backgrounded.

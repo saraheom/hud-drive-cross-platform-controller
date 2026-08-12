@@ -81,7 +81,7 @@ struct VehicleView: View {
                             ))
 
                             Stepper(
-                                "Warning tolerance: \(state.speedEngine.speedTolerance) km/h",
+                                "Warning tolerance: \(state.speedEngine.speedTolerance) mph",
                                 value: Binding(
                                     get: { state.speedEngine.speedTolerance },
                                     set: { state.speedEngine.speedTolerance = $0 }
@@ -89,11 +89,11 @@ struct VehicleView: View {
                                 in: 0...30
                             )
 
-                            LabeledContent("GPS speed", value: "\(state.speedEngine.currentSpeedKmh) km/h")
+                            LabeledContent("GPS speed", value: "\(state.speedEngine.currentSpeedMph) mph")
                             LabeledContent(
                                 "Posted limit",
-                                value: state.speedEngine.currentSpeedLimitKmh > 0
-                                    ? "\(state.speedEngine.currentSpeedLimitKmh) km/h" : "—"
+                                value: state.speedEngine.currentSpeedLimitMph > 0
+                                    ? "\(state.speedEngine.currentSpeedLimitMph) mph" : "—"
                             )
                             Text(state.speedEngine.status)
                                 .font(.caption)
