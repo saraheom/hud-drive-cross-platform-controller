@@ -224,3 +224,24 @@ peripheral UUID in `UserDefaults`. On future launches it calls
 manual scan when iOS can retrieve the same HUD.
 
 A "Forget" button clears the remembered HUD.
+
+
+## v18 — restore normal BLE connection; observe ANCS authorization
+
+Physical testing showed `CBConnectPeripheralOptionRequiresANCS = true` caused
+the HUD connection to remain pending indefinitely before ANCS authorization was
+established. v18 removes ANCS as a hard connection requirement.
+
+The app retains:
+- saved HUD peripheral UUID;
+- launch-time `retrievePeripherals(withIdentifiers:)`;
+- `CBConnectPeripheralOptionEnableAutoReconnect = true`.
+
+It adds:
+- `CBPeripheral.ancsAuthorized` logging before/after connection;
+- `centralManager(_:didUpdateANCSAuthorizationFor:)` logging;
+- `didFailToConnect` diagnostics;
+- an "ANCS authorized" field in Diagnostics.
+
+This separates ordinary HUD transport from ANCS authorization instead of making
+ANCS a prerequisite for the transport itself.

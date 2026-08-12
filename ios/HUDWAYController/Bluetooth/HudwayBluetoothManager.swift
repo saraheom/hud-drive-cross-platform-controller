@@ -27,6 +27,7 @@ final class HudwayBluetoothManager: NSObject {
     private(set) var devices: [Device] = []
     private(set) var connectedName: String?
     private(set) var lastRX: String = ""
+    private(set) var ancsAuthorized = false
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -58,15 +59,10 @@ final class HudwayBluetoothManager: NSObject {
 
     private var hudConnectionOptions: [String: Any] {
         [
-            // This is the key missing from our previous iOS builds. It tells
-            // CoreBluetooth that this connection requires Apple Notification
-            // Center Service support from iOS for the accessory.
-            CBConnectPeripheralOptionRequiresANCS: true,
-
-            // Ask iOS to restore the BLE link automatically after transient
-            // radio/link loss.
+            // Keep the normal HUDWAY NUS connection available. Requiring ANCS
+            // here can leave CoreBluetooth's connection request pending when
+            // ANCS authorization/bonding has not already been established.
             CBConnectPeripheralOptionEnableAutoReconnect: true,
-
             CBConnectPeripheralOptionNotifyOnConnectionKey: true,
             CBConnectPeripheralOptionNotifyOnDisconnectionKey: true
         ]
@@ -158,8 +154,8 @@ final class HudwayBluetoothManager: NSObject {
         state = .connecting
         peripheral = device.peripheral
         peripheral?.delegate = self
-        logger.log("BLE", "Connecting to \(device.name) with ANCS-required + auto-reconnect options")
-        logger.log("ANCS", "Requesting ANCS-capable CoreBluetooth connection")
+        logger.log("BLE", "Connecting to \(device.name) with normal NUS + auto-reconnect options")
+        logger.log("ANCS", "Pre-connect ANCS authorization state = \(device.peripheral.ancsAuthorized)")
         central.connect(device.peripheral, options: hudConnectionOptions)
     }
 
@@ -290,9 +286,34 @@ extension HudwayBluetoothManager: CBCentralManagerDelegate {
         Task { @MainActor in
             self.logger.log("BLE", "GATT connected: \(peripheral.name ?? peripheral.identifier.uuidString)")
             self.connectedName = peripheral.name ?? "HUDWAY Drive"
+            self.ancsAuthorized = peripheral.ancsAuthorized
+            self.logger.log("ANCS", "Post-connect ancsAuthorized = \(peripheral.ancsAuthorized)")
             self.saveConnectedHUD(peripheral)
             peripheral.delegate = self
             peripheral.discoverServices([CBUUID(string: HudwayProtocol.serviceUUID)])
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager,
+                                    didFailToConnect peripheral: CBPeripheral,
+                                    error: Error?) {
+        Task { @MainActor in
+            self.state = .idle
+            self.logger.log(
+                "BLE ERROR",
+                "Failed to connect \(peripheral.name ?? peripheral.identifier.uuidString): \(error?.localizedDescription ?? "unknown error")"
+            )
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager,
+                                    didUpdateANCSAuthorizationFor peripheral: CBPeripheral) {
+        Task { @MainActor in
+            self.ancsAuthorized = peripheral.ancsAuthorized
+            self.logger.log(
+                "ANCS",
+                "Authorization changed: ancsAuthorized = \(peripheral.ancsAuthorized)"
+            )
         }
     }
 
@@ -302,6 +323,7 @@ extension HudwayBluetoothManager: CBCentralManagerDelegate {
         Task { @MainActor in
             self.state = .idle
             self.connectedName = nil
+            self.ancsAuthorized = false
             self.txCharacteristic = nil
             self.rxCharacteristic = nil
             self.txQueue.removeAll()

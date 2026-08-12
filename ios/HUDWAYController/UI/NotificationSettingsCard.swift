@@ -70,7 +70,7 @@ struct NotificationSettingsCard: View {
                 .padding(.top, 14)
 
                 Text("""
-                ANCS setup: connect HUDWAY using this app. The connection now explicitly requests ANCS from iOS. If iOS presents a Bluetooth notification-sharing/pairing prompt, allow it. Then check Settings → Bluetooth → ⓘ next to HUDWAY Drive and enable “Share System Notifications” / “Show Notifications” if that switch appears. After that, apply the filters above.
+                ANCS setup: connect HUDWAY normally first. In Diagnostics, check “ANCS authorized”. If iOS presents a pairing or notification-sharing prompt, allow it. Also check Settings → Bluetooth → ⓘ next to HUDWAY Drive for “Share System Notifications” / “Show Notifications”. The HUD notification filters only take effect after iOS has actually authorized ANCS for the accessory.
                 """)
                 .font(.caption)
                 .foregroundStyle(.secondary)
