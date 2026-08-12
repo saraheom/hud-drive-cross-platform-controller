@@ -12,6 +12,8 @@ struct RootView: View {
                 .tabItem { Label("Dashboard", systemImage: "rectangle.inset.filled") }
             MediaView(state: state)
                 .tabItem { Label("Media", systemImage: "music.note") }
+            VehicleView(state: state)
+                .tabItem { Label("Vehicle", systemImage: "car") }
             LogsView(state: state)
                 .tabItem { Label("My trips", systemImage: "clock.arrow.circlepath") }
         }

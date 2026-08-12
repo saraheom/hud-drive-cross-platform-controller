@@ -40,13 +40,13 @@ struct MediaView: View {
 
                             Divider()
 
-                            Button("Send Media Test Notification") {
-                                state.spotify.sendMediaTestNotification()
+                            Button("Send Native HUD Music Test") {
+                                state.sendNativeMusicTest()
                             }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(.borderedProminent)
 
                             Text("""
-                            This bridge mirrors Spotify track changes into a local iOS notification. Since normal app notifications have already been verified through the HUD notification path, the test button lets us validate that bridge independently of Spotify authorization.
+                            Spotify track changes now use the HUD firmware's native MusicNotificationPacket (category 12) directly over BLE. This bypasses iOS local notifications/ANCS for music.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

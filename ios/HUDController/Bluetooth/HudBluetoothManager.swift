@@ -29,6 +29,9 @@ final class HudBluetoothManager: NSObject {
     private(set) var lastRX: String = ""
     private(set) var ancsAuthorized = false
 
+    var onOBDConnectionEvent: ((Bool, String) -> Void)?
+    var onTransportReady: (() -> Void)?
+
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
@@ -37,6 +40,7 @@ final class HudBluetoothManager: NSObject {
     private var currentChunks: [Data] = []
     private var currentLabel = ""
     private var writing = false
+    private var rxBuffer = Data()
 
     private let savedPeripheralIDKey = "HUD.savedPeripheralIdentifier"
     private let savedPeripheralNameKey = "HUD.savedPeripheralName"
@@ -298,6 +302,32 @@ final class HudBluetoothManager: NSObject {
         }
     }
 
+    private func parseVehicleEvent(_ frame: Data) {
+        guard let body = HudProtocol.unescape(frame), body.count >= 3 else { return }
+
+        // Decompiled OBDConnectionEventPacket:
+        // EventPacket(command=3, p1=100, p2=0)
+        // payload = DataInputStream.readUTF(supportedPids) + boolean connected
+        guard body[0] == 3, body[1] == 100, body[2] == 0 else { return }
+
+        var index = 3
+        guard body.count >= index + 2 else { return }
+        let length = Int(body[index]) << 8 | Int(body[index + 1])
+        index += 2
+        guard body.count >= index + length + 1 else {
+            logger.log("OBD EVENT", "Malformed OBD event frame")
+            return
+        }
+
+        let textData = body.subdata(in: index..<(index + length))
+        let supported = String(data: textData, encoding: .utf8) ?? ""
+        index += length
+        let connected = body[index] != 0
+
+        logger.log("OBD EVENT", "connected=\(connected), supported=\(supported)")
+        onOBDConnectionEvent?(connected, supported)
+    }
+
     private func onUARTEvent() {
         logger.log("HUD EVENT", "UART connection event -> queue KeepAlive")
         enqueue(HudCommands.keepAlive(), label: "Auto KeepAlive")
@@ -479,6 +509,7 @@ extension HudBluetoothManager: CBPeripheralDelegate {
                 self.reconnectAttempt = 0
                 self.logger.log("BLE", "HUD transport ready; reconnect watchdog armed")
                 self.enqueue(HudCommands.uartConnectionCheck(), label: "UART connection check")
+                self.onTransportReady?()
             }
         }
     }
@@ -489,9 +520,16 @@ extension HudBluetoothManager: CBPeripheralDelegate {
         Task { @MainActor in
             guard let data = characteristic.value else { return }
             self.lastRX = HudProtocol.hex(data)
-            self.logger.log("RX", self.lastRX)
-            if HudProtocol.isUARTConnectionEvent(data) {
-                self.onUARTEvent()
+            self.logger.log("RX CHUNK", self.lastRX)
+
+            self.rxBuffer.append(data)
+            let frames = HudProtocol.extractFrames(from: &self.rxBuffer)
+            for frame in frames {
+                self.logger.log("RX", HudProtocol.hex(frame))
+                if HudProtocol.isUARTConnectionEvent(frame) {
+                    self.onUARTEvent()
+                }
+                self.parseVehicleEvent(frame)
             }
         }
     }

@@ -14,6 +14,7 @@ final class SpotifyMediaController: NSObject {
 
     private let logger: LogManager
     private var lastNotifiedTrackURI: String?
+    var onTrackChanged: ((String, String) -> Void)?
 
     @ObservationIgnored
     private lazy var configuration: SPTConfiguration = {
@@ -152,11 +153,7 @@ final class SpotifyMediaController: NSObject {
         lastNotifiedTrackURI = track.uri
 
         logger.log("MEDIA", "Spotify track: \(artistName) — \(trackTitle)")
-
-        postHUDNotification(
-            title: "Now Playing",
-            body: "\(artistName) — \(trackTitle)"
-        )
+        onTrackChanged?(artistName, trackTitle)
     }
 }
 

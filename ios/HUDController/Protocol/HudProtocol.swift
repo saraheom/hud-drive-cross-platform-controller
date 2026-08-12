@@ -36,6 +36,21 @@ enum HudProtocol {
         return withUnsafeBytes(of: u) { Data($0) }
     }
 
+    static func uint16(_ value: UInt16) -> Data {
+        let u = value.bigEndian
+        return withUnsafeBytes(of: u) { Data($0) }
+    }
+
+    /// NotificationPacket writes title/message as UTF-8 bytes preceded by
+    /// unsigned-short byte counts (packageName itself uses Java writeUTF).
+    static func javaNotificationString(_ string: String) -> Data {
+        let bytes = Data(string.utf8)
+        precondition(bytes.count <= 65535, "notification string too long")
+        var result = uint16(UInt16(bytes.count))
+        result.append(bytes)
+        return result
+    }
+
     /// Java DataOutputStream.writeUTF-compatible Modified UTF-8 for BMP/non-BMP strings.
     static func javaWriteUTF(_ string: String) -> Data {
         var encoded = Data()
@@ -82,6 +97,24 @@ enum HudProtocol {
             i += 1
         }
         return out
+    }
+
+    static func extractFrames(from buffer: inout Data) -> [Data] {
+        var frames: [Data] = []
+        while true {
+            guard let stxIndex = buffer.firstIndex(of: stx) else {
+                buffer.removeAll()
+                break
+            }
+            if stxIndex > buffer.startIndex {
+                buffer.removeSubrange(buffer.startIndex..<stxIndex)
+            }
+            guard let etxIndex = buffer.dropFirst().firstIndex(of: etx) else { break }
+            let frame = buffer.subdata(in: buffer.startIndex...etxIndex)
+            frames.append(frame)
+            buffer.removeSubrange(buffer.startIndex...etxIndex)
+        }
+        return frames
     }
 
     static func isUARTConnectionEvent(_ packet: Data) -> Bool {

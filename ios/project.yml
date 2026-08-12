@@ -23,7 +23,9 @@ targets:
       path: HUDController/Info.plist
       properties:
         CFBundleDisplayName: HUD Controller
-        NSBluetoothAlwaysUsageDescription: HUD Controller uses Bluetooth to communicate with your HUD Drive hardware.
+        NSBluetoothAlwaysUsageDescription: HUD Controller uses Bluetooth to communicate with your HUD and nearby BLE vehicle accessories.
+        NSLocationWhenInUseUsageDescription: HUD Controller uses GPS speed and road position to reproduce the original HUD speed and speed-limit behavior.
+        NSLocationAlwaysAndWhenInUseUsageDescription: HUD Controller uses location while driving so HUD speed and posted speed limits can continue updating in the background.
         SPOTIFY_CLIENT_ID: ""
         SPOTIFY_REDIRECT_URI: "jjunnyy-hud-login://spotify-callback"
         LSApplicationQueriesSchemes:
@@ -34,6 +36,7 @@ targets:
               - jjunnyy-hud-login
         UIBackgroundModes:
           - bluetooth-central
+          - location
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}

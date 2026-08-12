@@ -102,4 +102,75 @@ enum HudCommands {
         payload.append(1) // right-side driving
         return HudProtocol.frame(command: 2, p1: 100, p2: 1, payload: payload)
     }
+
+    // MARK: - Original vehicle integration packets
+
+    /// Decompiled Android OBDIIInternalPacket:
+    /// InternalPacket(command=0, p1=7, p2=1)
+    /// payload = boolean connect + int32 obdType + DataOutputStream.writeUTF(name)
+    static func obdConnection(enabled: Bool, deviceName: String = "OBDII", obdType: Int32 = 0) -> Data {
+        var payload = Data([enabled ? 1 : 0])
+        payload.append(HudProtocol.int32(obdType))
+        payload.append(HudProtocol.javaWriteUTF(deviceName))
+        return HudProtocol.frame(command: 0, p1: 7, p2: 1, payload: payload)
+    }
+
+    /// Decompiled OBDIICustomItemInternalPacket:
+    /// InternalPacket(command=0, p1=7, p2=2)
+    /// payload = int32 position + int32 ObdItemType ordinal
+    static func obdCustomItem(position: Int32, itemIndex: Int32) -> Data {
+        var payload = HudProtocol.int32(position)
+        payload.append(HudProtocol.int32(itemIndex))
+        return HudProtocol.frame(command: 0, p1: 7, p2: 2, payload: payload)
+    }
+
+    /// Decompiled SpeedNotificationPacket (Notification category 14).
+    static func speedNotification(kmh: Int) -> Data {
+        notificationPacket(
+            category: 14,
+            packageName: "",
+            title: String(max(0, kmh)),
+            message: ""
+        )
+    }
+
+    /// Decompiled MusicNotificationPacket (Notification category 12).
+    static func musicNotification(artist: String, track: String, packageName: String = "com.spotify.client") -> Data {
+        notificationPacket(
+            category: 12,
+            packageName: packageName,
+            title: artist,
+            message: track
+        )
+    }
+
+    private static func notificationPacket(
+        category: UInt8,
+        packageName: String,
+        title: String,
+        message: String
+    ) -> Data {
+        var payload = HudProtocol.javaWriteUTF(packageName)
+        payload.append(HudProtocol.javaNotificationString(title))
+        payload.append(HudProtocol.javaNotificationString(message))
+        return HudProtocol.frame(command: 1, p1: category, p2: 0, payload: payload)
+    }
+
+    /// Decompiled HudSpeedLimitAndToleranceCommandPacket
+    /// CommandPacket(command=2, p1=101, p2=2)
+    static func speedLimit(limit: Int, tolerance: Int = 0, squareStyle: Bool = false) -> Data {
+        var payload = HudProtocol.int32(Int32(max(0, limit)))
+        payload.append(HudProtocol.int32(Int32(max(0, tolerance))))
+        payload.append(HudProtocol.int32(squareStyle ? 1 : 0))
+        return HudProtocol.frame(command: 2, p1: 101, p2: 2, payload: payload)
+    }
+
+    /// Decompiled DisplaySpeedWarningCommandPacket(command=2, p1=9, p2=9)
+    static func speedWarningThreshold(_ value: Int) -> Data {
+        HudProtocol.frame(
+            command: 2, p1: 9, p2: 9,
+            payload: HudProtocol.int32(Int32(max(0, value)))
+        )
+    }
+
 }

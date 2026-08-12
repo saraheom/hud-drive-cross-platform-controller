@@ -1,0 +1,285 @@
+import Foundation
+import CoreLocation
+import Observation
+
+@MainActor
+@Observable
+final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
+    struct Coordinate: Decodable {
+        let lat: Double
+        let lon: Double
+    }
+
+    struct Tags: Decodable {
+        let highway: String?
+        let maxspeed: String?
+    }
+
+    struct Element: Decodable {
+        let type: String
+        let id: Int64
+        let geometry: [Coordinate]?
+        let tags: Tags?
+    }
+
+    struct Response: Decodable {
+        let elements: [Element]
+    }
+
+    struct Segment {
+        let speedKmh: Int
+        let isMph: Bool
+        let points: [CLLocationCoordinate2D]
+    }
+
+    private let locationManager = CLLocationManager()
+    private let bluetooth: HudBluetoothManager
+    private let logger: LogManager
+
+    private var segments: [Segment] = []
+    private var lastQueryLocation: CLLocation?
+    private var requestInFlight = false
+    private var lastSentSpeed = -1
+    private var lastSentLimit = -1
+
+    private(set) var currentSpeedKmh = 0
+    private(set) var currentSpeedLimitKmh = 0
+    private(set) var status = "Waiting for location"
+
+    var enabled = false {
+        didSet {
+            if enabled { start() } else { stop() }
+        }
+    }
+    var speedTolerance = 0
+    var showSpeedLimit = true
+
+    init(bluetooth: HudBluetoothManager, logger: LogManager) {
+        self.bluetooth = bluetooth
+        self.logger = logger
+        super.init()
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        locationManager.activityType = .automotiveNavigation
+        locationManager.distanceFilter = 4
+        locationManager.pausesLocationUpdatesAutomatically = false
+    }
+
+    func start() {
+        logger.log("SPEED", "Starting original-style GPS + OSM speed engine")
+        locationManager.requestAlwaysAuthorization()
+        locationManager.startUpdatingLocation()
+    }
+
+    func stop() {
+        locationManager.stopUpdatingLocation()
+        status = "Disabled"
+    }
+
+    func refreshNow() {
+        if let location = locationManager.location {
+            lastQueryLocation = nil
+            Task { await updateSegmentsIfNeeded(at: location) }
+        }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor in
+            self.logger.log("LOCATION", "Authorization state \(manager.authorizationStatus.rawValue)")
+            if self.enabled,
+               manager.authorizationStatus == .authorizedAlways ||
+               manager.authorizationStatus == .authorizedWhenInUse {
+                manager.startUpdatingLocation()
+            }
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        Task { @MainActor in
+            guard self.enabled else { return }
+            self.process(location)
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        Task { @MainActor in
+            self.status = error.localizedDescription
+            self.logger.log("LOCATION ERROR", error.localizedDescription)
+        }
+    }
+
+    private func process(_ location: CLLocation) {
+        let speedMS = max(0, location.speed)
+        currentSpeedKmh = Int((speedMS * 3.6).rounded())
+
+        if currentSpeedKmh != lastSentSpeed, bluetooth.state == .connected {
+            lastSentSpeed = currentSpeedKmh
+            bluetooth.enqueue(
+                HudCommands.speedNotification(kmh: currentSpeedKmh),
+                label: "Vehicle speed \(currentSpeedKmh) km/h"
+            )
+        }
+
+        if let limit = bestSpeedLimit(at: location) {
+            currentSpeedLimitKmh = limit
+            if showSpeedLimit, limit != lastSentLimit, bluetooth.state == .connected {
+                lastSentLimit = limit
+                bluetooth.enqueue(
+                    HudCommands.speedLimit(limit: limit, tolerance: speedTolerance),
+                    label: "Speed limit \(limit) km/h"
+                )
+                bluetooth.enqueue(
+                    HudCommands.speedWarningThreshold(limit + speedTolerance),
+                    label: "Speed warning \(limit + speedTolerance)"
+                )
+            }
+            status = "GPS \(currentSpeedKmh) km/h • limit \(limit) km/h"
+        } else {
+            status = "GPS \(currentSpeedKmh) km/h • finding speed limit…"
+        }
+
+        Task { await updateSegmentsIfNeeded(at: location) }
+    }
+
+    private func updateSegmentsIfNeeded(at location: CLLocation) async {
+        if let lastQueryLocation, lastQueryLocation.distance(from: location) <= 300 {
+            return
+        }
+        guard !requestInFlight else { return }
+        requestInFlight = true
+        defer { requestInFlight = false }
+
+        // Matches the decompiled Android engine's 400 m Overpass query.
+        let lat = location.coordinate.latitude
+        let lon = location.coordinate.longitude
+        let query = "[out:json];way[maxspeed][highway](around:400,\(lat),\(lon));out tags geom;"
+        guard var comps = URLComponents(string: "https://overpass-api.de/api/interpreter") else { return }
+        comps.queryItems = [URLQueryItem(name: "data", value: query)]
+        guard let url = comps.url else { return }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw URLError(.badServerResponse)
+            }
+            let decoded = try JSONDecoder().decode(Response.self, from: data)
+            let newSegments = decoded.elements.compactMap(Self.makeSegment)
+            self.segments = newSegments
+            self.lastQueryLocation = location
+            self.logger.log("SPEED LIMIT", "Overpass loaded \(newSegments.count) maxspeed road segments")
+        } catch {
+            self.logger.log("SPEED LIMIT ERROR", error.localizedDescription)
+            self.status = "Speed-limit lookup failed; GPS speed still active"
+        }
+    }
+
+    private static func makeSegment(_ element: Element) -> Segment? {
+        guard let maxspeed = element.tags?.maxspeed,
+              let parsed = parseMaxSpeed(maxspeed),
+              let geometry = element.geometry, geometry.count >= 2 else { return nil }
+        return Segment(
+            speedKmh: parsed.kmh,
+            isMph: parsed.isMph,
+            points: geometry.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        )
+    }
+
+    private static func parseMaxSpeed(_ raw: String) -> (kmh: Int, isMph: Bool)? {
+        let value = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.contains(";") {
+            for part in value.split(separator: ";") {
+                if let parsed = parseMaxSpeed(String(part)) { return parsed }
+            }
+        }
+
+        // Original engine handles values such as "35 mph".
+        let number = value.split(whereSeparator: { !$0.isNumber && $0 != "." }).first.flatMap { Double($0) }
+        if let number {
+            if value.contains("mph") {
+                return (Int((number * 1.609344).rounded()), true)
+            }
+            if value.contains("knots") {
+                return (Int((number * 1.852).rounded()), false)
+            }
+            return (Int(number.rounded()), false)
+        }
+
+        // A compact subset of the decompiled engine's symbolic maxspeed table.
+        let defaults: [String: Int] = [
+            "us:urban": 40, "us:rural": 80,
+            "de:urban": 50, "de:rural": 100,
+            "fr:urban": 50, "fr:rural": 80,
+            "gb:nsl_single": 97, "gb:nsl_dual": 113
+        ]
+        if let speed = defaults[value] { return (speed, false) }
+        return nil
+    }
+
+    private func bestSpeedLimit(at location: CLLocation) -> Int? {
+        guard !segments.isEmpty else { return nil }
+
+        let heading = location.course >= 0 ? location.course : nil
+        var best: (score: Double, speed: Int)?
+
+        for segment in segments {
+            for index in 0..<(segment.points.count - 1) {
+                let a = segment.points[index]
+                let b = segment.points[index + 1]
+                let distance = Self.distanceFrom(location.coordinate, toSegmentA: a, b: b)
+                if distance > 45 { continue }
+
+                var score = distance
+                if let heading {
+                    let roadBearing = Self.bearing(from: a, to: b)
+                    let delta = Self.angularDifference(heading, roadBearing)
+                    let reverseDelta = Self.angularDifference(heading, fmod(roadBearing + 180, 360))
+                    score += min(delta, reverseDelta) * 0.35
+                }
+
+                if best == nil || score < best!.score {
+                    best = (score, segment.speedKmh)
+                }
+            }
+        }
+        return best?.speed
+    }
+
+    private static func distanceFrom(
+        _ p: CLLocationCoordinate2D,
+        toSegmentA a: CLLocationCoordinate2D,
+        b: CLLocationCoordinate2D
+    ) -> Double {
+        // Local equirectangular projection is accurate enough for <=400 m queries.
+        let lat0 = p.latitude * .pi / 180
+        let metersPerLat = 111_132.0
+        let metersPerLon = 111_320.0 * cos(lat0)
+
+        func xy(_ c: CLLocationCoordinate2D) -> (Double, Double) {
+            ((c.longitude - p.longitude) * metersPerLon,
+             (c.latitude - p.latitude) * metersPerLat)
+        }
+
+        let av = xy(a), bv = xy(b)
+        let dx = bv.0 - av.0, dy = bv.1 - av.1
+        let length2 = dx*dx + dy*dy
+        guard length2 > 0 else { return hypot(av.0, av.1) }
+
+        let t = max(0, min(1, -(av.0*dx + av.1*dy) / length2))
+        return hypot(av.0 + t*dx, av.1 + t*dy)
+    }
+
+    private static func bearing(from a: CLLocationCoordinate2D, to b: CLLocationCoordinate2D) -> Double {
+        let lat1 = a.latitude * .pi / 180
+        let lat2 = b.latitude * .pi / 180
+        let dLon = (b.longitude - a.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1)*sin(lat2) - sin(lat1)*cos(lat2)*cos(dLon)
+        return fmod(atan2(y, x) * 180 / .pi + 360, 360)
+    }
+
+    private static func angularDifference(_ a: Double, _ b: Double) -> Double {
+        let d = abs(a - b).truncatingRemainder(dividingBy: 360)
+        return min(d, 360 - d)
+    }
+}

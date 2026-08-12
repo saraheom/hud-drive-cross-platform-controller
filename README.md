@@ -340,3 +340,19 @@ Behavior:
 The reconnect loop does not use CoreBluetooth's
 `CBConnectPeripheralOptionEnableAutoReconnect`, since physical testing showed
 that option was rejected for this accessory.
+
+
+## v24 — vehicle integration
+
+This combined physical-test build adds:
+
+- original-style HUD-managed OBD-II connect/disconnect and OBD event parsing;
+- configurable left/right OBD item packets;
+- original-style GPS speed + OpenStreetMap Overpass speed-limit engine;
+- native HUD speed and speed-limit packets;
+- app-level `BLEDOM` BLE presence monitor driving HUD auto brightness;
+- Spotify metadata sent through the firmware-native MusicNotificationPacket;
+- all v23 HUD reconnect-watchdog behavior retained.
+
+See `docs/V24_VEHICLE_INTEGRATION.md` for the test sequence and known
+assumptions.

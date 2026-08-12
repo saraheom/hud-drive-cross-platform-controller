@@ -8,6 +8,9 @@ final class AppState {
     let bluetooth: HudBluetoothManager
     let navigation: HudNavigationController
     let spotify: SpotifyMediaController
+    let obd: HudOBDController
+    let speedEngine: OriginalSpeedLimitEngine
+    let ambientLight: AmbientLightMonitor
     let settings = HudSettings()
 
     init() {
@@ -16,7 +19,24 @@ final class AppState {
         let bluetooth = HudBluetoothManager(logger: logger)
         self.bluetooth = bluetooth
         self.navigation = HudNavigationController(bluetooth: bluetooth, logger: logger)
-        self.spotify = SpotifyMediaController(logger: logger)
+        let spotify = SpotifyMediaController(logger: logger)
+        self.spotify = spotify
+        let obd = HudOBDController(bluetooth: bluetooth, logger: logger)
+        self.obd = obd
+        self.speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)
+        self.ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
+
+        spotify.onTrackChanged = { [weak bluetooth] artist, track in
+            guard let bluetooth, bluetooth.state == .connected else { return }
+            bluetooth.enqueue(
+                HudCommands.musicNotification(artist: artist, track: track),
+                label: "Native music: \(artist) — \(track)"
+            )
+        }
+
+        bluetooth.onTransportReady = { [weak obd] in
+            obd?.hudDidBecomeReady()
+        }
     }
 
     func initializeHUD() {
@@ -94,4 +114,15 @@ final class AppState {
             label: "Dashboard \(p.name)"
         )
     }
+
+    func sendNativeMusicTest() {
+        bluetooth.enqueue(
+            HudCommands.musicNotification(
+                artist: spotify.artistName.isEmpty ? "Kenshi Yonezu" : spotify.artistName,
+                track: spotify.trackTitle == "No Spotify track" ? "Flamingo" : spotify.trackTitle
+            ),
+            label: "Native music test"
+        )
+    }
+
 }
