@@ -447,3 +447,22 @@ No runtime behavior changes were made; all v28 features remain intact.
 - persists user-configurable settings immediately.
 
 See `docs/V30_IOS27_CAPTURE_AND_RELIABILITY.md`.
+
+
+## v31 — Xcode 27 GitHub Actions runner
+
+The first v30 CI attempt ran on the ordinary `macos-26` image and explicitly
+selected Xcode 26.6. That toolchain ships an iOS 26.x SDK, so the new iOS 27
+`ScreenCaptureKit` module could not be imported.
+
+v31 changes both iOS CI and TestFlight workflows to GitHub's dedicated:
+
+`runs-on: xcode-27`
+
+preview image.
+
+The workflows now verify that the selected iPhoneOS and simulator SDK major
+version is at least 27 before generating/building the project. CI also checks
+that `ScreenCaptureKit.framework` exists in the selected simulator SDK.
+
+No application behavior from v30 was removed.
