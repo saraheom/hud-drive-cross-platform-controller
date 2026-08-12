@@ -15,6 +15,7 @@ final class SpotifyMediaController: NSObject {
     private let logger: LogManager
     private var lastNotifiedTrackURI: String?
 
+    @ObservationIgnored
     private lazy var configuration: SPTConfiguration = {
         let clientID = Bundle.main.object(forInfoDictionaryKey: "SPOTIFY_CLIENT_ID") as? String ?? ""
         let redirectString = Bundle.main.object(forInfoDictionaryKey: "SPOTIFY_REDIRECT_URI") as? String
@@ -26,6 +27,7 @@ final class SpotifyMediaController: NSObject {
         )
     }()
 
+    @ObservationIgnored
     private lazy var appRemote: SPTAppRemote = {
         let remote = SPTAppRemote(configuration: configuration, logLevel: .debug)
         remote.delegate = self

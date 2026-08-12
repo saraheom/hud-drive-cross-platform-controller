@@ -76,6 +76,11 @@ jobs:
           security find-identity -v -p codesigning | grep -q "Apple Distribution"
           echo "Apple Distribution identity is available."
 
+      - name: Validate Spotify observable internals
+        run: |
+          grep -A1 "@ObservationIgnored" ios/HUDController/Media/SpotifyMediaController.swift | grep -q "private lazy var"
+          echo "Spotify lazy internals are excluded from Observation."
+
       - name: Verify App Store build environment
         run: |
           set -euo pipefail

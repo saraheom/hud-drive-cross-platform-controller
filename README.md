@@ -306,3 +306,14 @@ The only major new provider in v21 is Spotify:
 - manual Media Test Notification for isolated testing.
 
 See `docs/V21_SPOTIFY_SETUP.md`.
+
+
+## v22 — Spotify Observation compile fix
+
+Xcode 26 rejected the Spotify controller because the `@Observable` macro tried
+to synthesize observation storage for the lazy Spotify SDK internals. Those
+objects are not UI state and should not be observed.
+
+`SPTConfiguration` and `SPTAppRemote` are now marked with
+`@ObservationIgnored`, preserving them as normal lazy stored properties while
+the user-visible status/track/artist properties remain observable.
