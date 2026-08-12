@@ -110,9 +110,10 @@ enum HudProtocol {
                 buffer.removeSubrange(buffer.startIndex..<stxIndex)
             }
             guard let etxIndex = buffer.dropFirst().firstIndex(of: etx) else { break }
-            let frame = buffer.subdata(in: buffer.startIndex...etxIndex)
+            let endExclusive = buffer.index(after: etxIndex)
+            let frame = buffer.subdata(in: buffer.startIndex..<endExclusive)
             frames.append(frame)
-            buffer.removeSubrange(buffer.startIndex...etxIndex)
+            buffer.removeSubrange(buffer.startIndex..<endExclusive)
         }
         return frames
     }

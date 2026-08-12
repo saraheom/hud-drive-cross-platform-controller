@@ -356,3 +356,19 @@ This combined physical-test build adds:
 
 See `docs/V24_VEHICLE_INTEGRATION.md` for the test sequence and known
 assumptions.
+
+
+## v25 — RX frame-range compile fix
+
+The first v24 iOS CI run exposed a Swift `Data.subdata(in:)` range-type error
+in the new BLE RX frame reassembly helper. `subdata(in:)` accepts a half-open
+`Range<Data.Index>`, not a `ClosedRange`.
+
+Frame extraction now computes the index immediately after ETX and uses:
+
+`buffer.startIndex..<endExclusive`
+
+for both `subdata(in:)` and `removeSubrange(_:)`.
+
+A protocol test was added for complete, fragmented, and back-to-back RX frames.
+All v24 vehicle-integration functionality is otherwise unchanged.
