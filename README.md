@@ -195,3 +195,13 @@ iOS now:
 - sorts HUDWAY-named devices first;
 - automatically selects the first HUDWAY device;
 - verifies the NUS service only after connecting.
+
+
+## v16 — CI simulator + TestFlight build-number fixes
+
+- iOS CI no longer hard-codes an iPhone model. It selects an available iPhone
+  simulator from `simctl` and builds/tests using that simulator's UDID.
+- TestFlight now writes GitHub's unique `GITHUB_RUN_NUMBER` directly into the
+  generated app `Info.plist` as `CFBundleVersion` after XcodeGen runs.
+- The workflow verifies the archived `.app` has that exact build number before
+  exporting/uploading the IPA.

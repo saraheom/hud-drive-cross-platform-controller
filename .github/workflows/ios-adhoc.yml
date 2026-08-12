@@ -25,7 +25,11 @@ jobs:
 
       - name: Generate project
         working-directory: ios
-        run: xcodegen generate
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" HUDWAYController/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" HUDWAYController/Info.plist
 
       - name: Create temporary keychain
         env:

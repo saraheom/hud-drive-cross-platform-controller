@@ -27,7 +27,12 @@ jobs:
 
       - name: Generate project
         working-directory: ios
-        run: xcodegen generate
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" HUDWAYController/Info.plist
+          echo "Generated bundle version:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" HUDWAYController/Info.plist
 
       - name: Install signing certificate and App Store profile
         env:
@@ -106,6 +111,15 @@ jobs:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             archive
+
+      - name: Verify archived bundle version
+        run: |
+          set -euo pipefail
+          ARCHIVE_PLIST="$RUNNER_TEMP/HUDWAYController.xcarchive/Products/Applications/HUDWAYController.app/Info.plist"
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$ARCHIVE_PLIST")
+          SHORT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$ARCHIVE_PLIST")
+          echo "Archived version: $SHORT_VERSION ($VERSION)"
+          test "$VERSION" = "$GITHUB_RUN_NUMBER"
 
       - name: Export App Store IPA
         run: |
