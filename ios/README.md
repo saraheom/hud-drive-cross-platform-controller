@@ -1,10 +1,10 @@
-# HUDWAY Controller iOS
+# HUD Controller iOS
 
-Native SwiftUI iOS client for the validated HUDWAY Drive BLE protocol.
+Native SwiftUI iOS client for the validated HUD Drive BLE protocol.
 
 ## v0.1 features
 
-- CoreBluetooth HUDWAY discovery and connection
+- CoreBluetooth HUD discovery and connection
 - NUS service/characteristic discovery
 - UART connection-check handshake and automatic keep-alive response
 - Serialized 19-byte BLE writes
@@ -15,7 +15,7 @@ Native SwiftUI iOS client for the validated HUDWAY Drive BLE protocol.
 - Navigation ON/OFF
 - Manual maneuver editor
 - Five-leg navigation simulator
-- Persistent session logs in `Documents/HUDWAY Logs`
+- Persistent session logs in `Documents/HUD Logs`
 - Share/export log files
 - App Intents / Shortcuts scaffold
 - Notification settings UI scaffold for later ANCS filter packet validation
@@ -27,7 +27,7 @@ This repository intentionally stores an XcodeGen `project.yml` instead of a gene
 
 ```bash
 brew install xcodegen
-export HUDWAY_BUNDLE_ID=com.yourname.hudwaycontroller
+export HUD_BUNDLE_ID=com.yourname.hudcontroller
 cd ios
 xcodegen generate
 ```

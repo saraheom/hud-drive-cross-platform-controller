@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: macos-26
     env:
-      HUDWAY_BUNDLE_ID: com.example.hudwaycontroller
+      HUD_BUNDLE_ID: com.example.hudcontroller
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +36,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re, sys
-          path = Path("ios/HUDWAYController/Shortcuts/HudwayShortcuts.swift")
+          path = Path("ios/HUDController/Shortcuts/HudShortcuts.swift")
           text = path.read_text()
           for match in re.finditer(r'phrases:\s*\[(.*?)\]', text, re.S):
               strings = re.findall(r'"([^"]+)"', match.group(1))
@@ -49,20 +49,20 @@ jobs:
 
       - name: Sanity-check UIKit usage
         run: |
-          if grep -R "UIDevice" ios/HUDWAYController --include='*.swift' >/dev/null; then
-            grep -R "import UIKit" ios/HUDWAYController --include='*.swift' >/dev/null
+          if grep -R "UIDevice" ios/HUDController --include='*.swift' >/dev/null; then
+            grep -R "import UIKit" ios/HUDController --include='*.swift' >/dev/null
           fi
           echo "UIKit sanity check OK"
 
       - name: Validate generated test-host product names
         working-directory: ios
         run: |
-          APP_PRODUCT=$(xcodebuild -project HUDWAYController.xcodeproj -scheme HUDWAYController -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*FULL_PRODUCT_NAME = / {print $2; exit}')
-          EXECUTABLE=$(xcodebuild -project HUDWAYController.xcodeproj -scheme HUDWAYController -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*EXECUTABLE_NAME = / {print $2; exit}')
+          APP_PRODUCT=$(xcodebuild -project HUDController.xcodeproj -scheme HUDController -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*FULL_PRODUCT_NAME = / {print $2; exit}')
+          EXECUTABLE=$(xcodebuild -project HUDController.xcodeproj -scheme HUDController -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*EXECUTABLE_NAME = / {print $2; exit}')
           echo "App product: $APP_PRODUCT"
           echo "Executable: $EXECUTABLE"
-          test "$APP_PRODUCT" = "HUDWAYController.app"
-          test "$EXECUTABLE" = "HUDWAYController"
+          test "$APP_PRODUCT" = "HUDController.app"
+          test "$EXECUTABLE" = "HUDController"
           echo "Test-host product naming OK"
 
       - name: Select available iPhone Simulator
@@ -93,8 +93,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
-            -project HUDWAYController.xcodeproj \
-            -scheme HUDWAYController \
+            -project HUDController.xcodeproj \
+            -scheme HUDController \
             -sdk iphonesimulator \
             -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
             CODE_SIGNING_ALLOWED=NO \
@@ -105,8 +105,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
-            -project HUDWAYController.xcodeproj \
-            -scheme HUDWAYController \
+            -project HUDController.xcodeproj \
+            -scheme HUDController \
             -sdk iphonesimulator \
             -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
             CODE_SIGNING_ALLOWED=NO \

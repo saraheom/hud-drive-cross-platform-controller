@@ -1,4 +1,4 @@
-# HUDWAY BLE Protocol Test Plan
+# HUD BLE Protocol Test Plan
 
 Test while parked and with all phone connections to the HUD disconnected.
 

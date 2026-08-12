@@ -47,13 +47,13 @@ class BleWorker:
         self._scanning = False
         self._disconnect_requested = False
         self._auto_keepalive_tasks = set()
-        # HUDWAY's Android transport serializes every packet/chunk. Never let
+        # HUD's Android transport serializes every packet/chunk. Never let
         # a keepalive interleave with a multi-chunk maneuver packet.
         self._tx_lock = asyncio.Lock()
         self._tx_sequence = 0
         self._route_sim_task = None
         self._ui_sequence_task = None
-        threading.Thread(target=self._run, daemon=True, name="HUDWAY-BLE-Asyncio").start()
+        threading.Thread(target=self._run, daemon=True, name="HUD-BLE-Asyncio").start()
 
     def _run(self):
         try:
@@ -81,7 +81,7 @@ class BleWorker:
         try:
             self.events.put(("status", "Scanning..."))
             self.events.put(("log", f"Starting BLE scan for {timeout:.0f} seconds..."))
-            self.events.put(("log", "All discoverable BLE advertisers will be listed; HUDWAY is not pre-filtered."))
+            self.events.put(("log", "All discoverable BLE advertisers will be listed; HUD is not pre-filtered."))
 
             def detected(device, adv):
                 try:
@@ -93,7 +93,7 @@ class BleWorker:
                     previous = found.get(address)
                     found[address] = (name, address, is_hud_nus, rssi, service_uuids)
                     if previous is None:
-                        star = " [NUS/HUDWAY candidate]" if is_hud_nus else ""
+                        star = " [NUS/HUD candidate]" if is_hud_nus else ""
                         self.events.put(("log", f"FOUND: {name} | {address} | RSSI={rssi}{star}"))
                         self.events.put(("devices_live", list(found.values())))
                 except Exception as e:
@@ -162,7 +162,7 @@ class BleWorker:
         packet = bytes(data)
         self.events.put(("rx", p.hexstr(packet)))
 
-        # Original HUDWAY Android behavior:
+        # Original HUD Android behavior:
         # every UartConnectionEventPacket resets its 20 s watchdog and causes
         # an immediate KeepAliveCommandPacket to be sent back to the HUD.
         if p.is_uart_connection_event(packet):
@@ -214,7 +214,7 @@ class BleWorker:
         seq = [
             ("System time", p.cmd_system_time(now)),
             ("Keep alive", p.cmd_keep_alive()),
-            ("Phone name", p.cmd_phone_name("HUDWAY Windows Tester")),
+            ("Phone name", p.cmd_phone_name("HUD Windows Tester")),
             ("Keep alive", p.cmd_keep_alive()),
             ("Full screen", p.cmd_full_screen(True)),
             ("Keep alive", p.cmd_keep_alive()),
@@ -318,7 +318,7 @@ class BleWorker:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("HUDWAY BLE Protocol Tester")
+        self.title("HUD BLE Protocol Tester")
         self.geometry("1000x760")
         self.events = queue.Queue()
         self.worker = BleWorker(self.events)
@@ -416,7 +416,7 @@ class App(tk.Tk):
         logf.pack(fill="both", expand=True, padx=8, pady=6)
         self.log = tk.Text(logf, height=16)
         self.log.pack(fill="both", expand=True)
-        self.log.insert("end", "HUDWAY BLE Tester started. Click Scan; scan diagnostics will appear here immediately.\n")
+        self.log.insert("end", "HUD BLE Tester started. Click Scan; scan diagnostics will appear here immediately.\n")
 
     def ui_log(self, text: str):
         self.log.insert("end", text + "\n")

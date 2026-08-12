@@ -46,6 +46,6 @@ jobs:
         if: steps.project.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: HUDWAY-Android-Debug
+          name: HUD-Android-Debug
           path: android/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error

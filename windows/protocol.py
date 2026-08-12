@@ -92,7 +92,7 @@ def parse_hex(text: str) -> bytes:
 def unescape_frame(data: bytes) -> bytes:
     """Return the unescaped frame body (without STX/ETX)."""
     if len(data) < 2 or data[0] != STX or data[-1] != ETX:
-        raise ValueError("Not a complete HUDWAY frame")
+        raise ValueError("Not a complete HUD frame")
     out = bytearray()
     i = 1
     while i < len(data) - 1:

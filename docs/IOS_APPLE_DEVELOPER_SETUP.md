@@ -3,7 +3,7 @@
 ## Required Apple items
 
 1. Enroll in the Apple Developer Program.
-2. Choose a unique bundle ID, e.g. `com.yourname.hudwaycontroller`.
+2. Choose a unique bundle ID, e.g. `com.yourname.hudcontroller`.
 3. Register that App ID in Certificates, Identifiers & Profiles.
 4. For Ad Hoc installation:
    - register your iPhone UDID;
@@ -35,8 +35,8 @@ TestFlight:
 
 ```powershell
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("certificate.p12")) | Set-Content cert-base64.txt
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("HUDWAY_AdHoc.mobileprovision")) | Set-Content adhoc-base64.txt
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("HUDWAY_AppStore.mobileprovision")) | Set-Content appstore-base64.txt
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("HUD_AdHoc.mobileprovision")) | Set-Content adhoc-base64.txt
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("HUD_AppStore.mobileprovision")) | Set-Content appstore-base64.txt
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("AuthKey_XXXXXXXXXX.p8")) | Set-Content asc-key-base64.txt
 ```
 
@@ -50,7 +50,7 @@ TestFlight is the easiest no-Mac installation workflow:
 3. Complete the signing/App Store Connect setup.
 4. Run `Build and Upload iOS TestFlight`.
 5. In App Store Connect, add yourself as an internal tester.
-6. Install Apple's TestFlight app on the iPhone and install HUDWAY Controller.
+6. Install Apple's TestFlight app on the iPhone and install HUD Controller.
 
 ## Ad Hoc alternative
 
@@ -66,8 +66,8 @@ Install OpenSSL (Git for Windows includes an OpenSSL binary, or install a normal
 OpenSSL distribution), then keep the private key private:
 
 ```powershell
-openssl genrsa -out hudway_distribution.key 2048
-openssl req -new -key hudway_distribution.key `
+openssl genrsa -out hud_distribution.key 2048
+openssl req -new -key hud_distribution.key `
   -out CertificateSigningRequest.certSigningRequest `
   -subj "/CN=YOUR LEGAL NAME/emailAddress=YOUR_APPLE_ID_EMAIL/C=US"
 ```
@@ -79,9 +79,9 @@ and upload `CertificateSigningRequest.certSigningRequest`. Download the resultin
 ```powershell
 openssl x509 -inform DER -in distribution.cer -out distribution.pem
 openssl pkcs12 -export `
-  -inkey hudway_distribution.key `
+  -inkey hud_distribution.key `
   -in distribution.pem `
-  -out HUDWAY_Distribution.p12
+  -out HUD_Distribution.p12
 ```
 
 Choose a strong export password. Put the base64 form of the `.p12` and its
@@ -92,6 +92,6 @@ or `.p8` files to Git.
 
 Use your own reverse-DNS identifier, for example:
 
-`com.<your-name-or-domain>.hudwaycontroller`
+`com.<your-name-or-domain>.hudcontroller`
 
-Do not use `com.hudway.*` unless HUDWAY specifically grants use of that identifier.
+Do not use `com.hud.*` unless HUD specifically grants use of that identifier.

@@ -1,6 +1,6 @@
-# HUDWAY Cross-Platform Controller
+# HUD Cross-Platform Controller
 
-A GitHub-first development repository for understanding and testing the HUDWAY Drive hardware BLE protocol before implementing production Android and iOS clients.
+A GitHub-first development repository for understanding and testing the HUD Drive hardware BLE protocol before implementing production Android and iOS clients.
 
 ## Repository layout
 
@@ -22,8 +22,8 @@ The Windows tester supports BLE scanning, connecting, RX notifications, raw TX/R
 3. Open the repository's **Actions** tab.
 4. Select **Build Windows BLE Tester**.
 5. Click **Run workflow**.
-6. After the workflow succeeds, open its run and download the `HUDWAY-BLE-Tester-Windows` artifact.
-7. Extract and run `HUDWAY_BLE_Tester.exe` on a Windows computer with Bluetooth LE.
+6. After the workflow succeeds, open its run and download the `HUD-BLE-Tester-Windows` artifact.
+7. Extract and run `HUD_BLE_Tester.exe` on a Windows computer with Bluetooth LE.
 
 GitHub Actions artifacts preserve build outputs after the job completes. The workflow uses a Windows runner, installs the pinned Python dependencies, runs protocol tests, builds the GUI with PyInstaller, and uploads both the `.exe` and a ZIP. 
 
@@ -35,13 +35,13 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements-dev.txt
 python -m pytest ..\tests -q
-pyinstaller --clean --noconfirm HUDWAY_BLE_Tester.spec
+pyinstaller --clean --noconfirm HUD_BLE_Tester.spec
 ```
 
 Output:
 
 ```text
-windows/dist/HUDWAY_BLE_Tester.exe
+windows/dist/HUD_BLE_Tester.exe
 ```
 
 ## Future Android workflow
@@ -54,16 +54,16 @@ windows/dist/HUDWAY_BLE_Tester.exe
 
 ## Safety
 
-Test while parked. Do not interact with this software while driving. Keep the original HUDWAY application disconnected during protocol tests because the HUD may accept only one BLE central connection.
+Test while parked. Do not interact with this software while driving. Keep the original HUD application disconnected during protocol tests because the HUD may accept only one BLE central connection.
 
 ## Windows BLE scan diagnostics
 
 The Windows build now publishes two executables:
 
-- `HUDWAY_BLE_Tester.exe` — normal GUI build.
-- `HUDWAY_BLE_Tester_Diagnostic.exe` — same GUI plus a console window for WinRT/Bleak diagnostics.
+- `HUD_BLE_Tester.exe` — normal GUI build.
+- `HUD_BLE_Tester_Diagnostic.exe` — same GUI plus a console window for WinRT/Bleak diagnostics.
 
-When **Scan** is clicked, the GUI log must immediately show `SCAN BUTTON: clicked`, then `Starting BLE scan...`, then discovery events. The dropdown is intentionally **not HUDWAY-only**; it displays every BLE advertiser returned by Windows. Nordic UART Service advertisers are marked with a star when that UUID is present in the advertising packet.
+When **Scan** is clicked, the GUI log must immediately show `SCAN BUTTON: clicked`, then `Starting BLE scan...`, then discovery events. The dropdown is intentionally **not HUD-only**; it displays every BLE advertiser returned by Windows. Nordic UART Service advertisers are marked with a star when that UUID is present in the advertising packet.
 
 If Windows Settings can discover devices but the normal tester returns zero devices or reports a WinRT error, run the Diagnostic build and capture both the GUI log and console text.
 
@@ -130,7 +130,7 @@ New test functions:
 A native SwiftUI iPhone client is now under `ios/`.
 
 Highlights:
-- validated HUDWAY BLE protocol and connection watchdog;
+- validated HUD BLE protocol and connection watchdog;
 - serialized 19-byte transport;
 - manual and simulated navigation pipeline;
 - HUD-style dashboard controls;
@@ -142,8 +142,8 @@ See `docs/IOS_APPLE_DEVELOPER_SETUP.md`.
 
 ## v11 iOS CI test-host correction
 
-The visible app label remains `HUDWAY Controller` through `CFBundleDisplayName`,
-but the executable product now keeps the target name `HUDWAYController`. This
+The visible app label remains `HUD Controller` through `CFBundleDisplayName`,
+but the executable product now keeps the target name `HUDController`. This
 matches XcodeGen's generated unit-test host path and avoids the prior
 `Could not find test host` error.
 
@@ -155,7 +155,7 @@ packets discovered in the decompiled client: global enable, filter
 initialization, per-app filters, notification timeout, and message-line count.
 
 A Maps experiment section enables Google Maps, Apple Maps, and Waze filters for
-hardware testing. Classic ANCS remains accessory-facing: HUDWAY Drive receives
+hardware testing. Classic ANCS remains accessory-facing: HUD Drive receives
 the notification content directly from iOS.
 
 
@@ -174,7 +174,7 @@ rejected the IPA for three metadata/build-environment reasons. v14:
 
 - moves iOS GitHub jobs to `macos-26`;
 - explicitly selects Xcode 26.6 and verifies the iPhoneOS SDK is 26+;
-- marks HUDWAY Controller as iPhone-only (`TARGETED_DEVICE_FAMILY = 1`);
+- marks HUD Controller as iPhone-only (`TARGETED_DEVICE_FAMILY = 1`);
 - declares supported iPhone orientations;
 - uses the modern `UILaunchScreen` Info.plist declaration.
 
@@ -184,16 +184,16 @@ Apple's current SDK minimum for App Store Connect uploads.
 
 ## v15 — iOS HUD discovery correction
 
-The iPhone scanner no longer requires the HUDWAY Nordic UART Service UUID to
-appear in the BLE advertisement. Physical Windows testing showed HUDWAY Drive
+The iPhone scanner no longer requires the HUD Nordic UART Service UUID to
+appear in the BLE advertisement. Physical Windows testing showed HUD Drive
 can advertise only its local name and expose NUS after GATT connection.
 
 iOS now:
 - scans all BLE advertisements;
 - logs every discovery including advertised service UUIDs;
 - shows named peripherals in the picker;
-- sorts HUDWAY-named devices first;
-- automatically selects the first HUDWAY device;
+- sorts HUD-named devices first;
+- automatically selects the first HUD device;
 - verifies the NUS service only after connecting.
 
 
@@ -271,3 +271,38 @@ system auto-reconnect connection option.
 ANCS authorization observation remains enabled (`CBPeripheral.ancsAuthorized`
 and `didUpdateANCSAuthorizationFor`), but ANCS is not made a prerequisite for
 the normal HUD transport.
+
+
+## v20 — branding cleanup and source separation
+
+Physical iPhone testing verified that normal notification events such as
+Messages and KakaoTalk reach the HUD. Spotify current-track metadata and map
+turn guidance do not arrive through the notification pipeline.
+
+The UI now separates:
+- accessory notifications;
+- future media / Now Playing source;
+- future navigation providers.
+
+Project-owned branding has also been changed from the prior vendor name to
+`HUD` / `Hud` throughout code, documentation, workflow labels, project target
+names, and generated artifact names. The physical device may still advertise
+its manufacturer-defined Bluetooth name at runtime.
+
+
+## v21 — Spotify-only experiment
+
+v21 deliberately does **not** add an in-app route engine.
+
+Navigation remains external-app-only. Apple Maps, Google Maps, Waze, or another
+separate map application must remain the route source; future navigation work
+will focus only on extracting turn guidance from those external apps.
+
+The only major new provider in v21 is Spotify:
+- Spotify iOS App Remote integration;
+- player-state subscription;
+- current track/artist display;
+- local notification bridge to the already-validated HUD notification path;
+- manual Media Test Notification for isolated testing.
+
+See `docs/V21_SPOTIFY_SETUP.md`.
