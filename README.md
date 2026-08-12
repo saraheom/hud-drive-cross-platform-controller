@@ -372,3 +372,20 @@ for both `subdata(in:)` and `removeSubrange(_:)`.
 
 A protocol test was added for complete, fragmented, and back-to-back RX frames.
 All v24 vehicle-integration functionality is otherwise unchanged.
+
+
+## v26 — BLEDOM CoreBluetooth startup-crash fix
+
+The v25 app compiled, but the simulator test host aborted before XCTest could
+start. `AmbientLightMonitor` created a `CBCentralManager` using
+`CBCentralManagerOptionRestoreIdentifierKey` without implementing
+`centralManager(_:willRestoreState:)`.
+
+CoreBluetooth asserts in that configuration.
+
+v26 removes the restoration identifier from the independent BLEDOM presence
+scanner and creates that central manager with `options: nil`. The monitor still
+supports app-level BLE scanning for `BLEDOM`; only CoreBluetooth state
+restoration for that secondary scanner is removed.
+
+All v24/v25 vehicle features remain unchanged.

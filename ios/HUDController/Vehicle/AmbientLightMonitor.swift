@@ -27,10 +27,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
         self.bluetooth = bluetooth
         self.logger = logger
         super.init()
+        // The BLEDOM presence monitor does not need CoreBluetooth state
+        // restoration. Supplying a restoration identifier requires implementing
+        // centralManager(_:willRestoreState:) and causes CoreBluetooth to assert
+        // at launch if that delegate callback is absent.
         central = CBCentralManager(
             delegate: self,
             queue: nil,
-            options: [CBCentralManagerOptionRestoreIdentifierKey: "HUDAmbientCentral"]
+            options: nil
         )
     }
 
