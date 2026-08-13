@@ -56,10 +56,11 @@ final class HudOBDController {
     private(set) var supportedPIDs = ""
     private(set) var status = "Not connected"
 
-    var freerideLeft: HudOBDItem { didSet { saveItem(freerideLeft, key: "HUD.OBD.freerideLeft") } }
-    var freerideRight: HudOBDItem { didSet { saveItem(freerideRight, key: "HUD.OBD.freerideRight") } }
-    var navigationLeft: HudOBDItem { didSet { saveItem(navigationLeft, key: "HUD.OBD.navigationLeft") } }
-    var navigationRight: HudOBDItem { didSet { saveItem(navigationRight, key: "HUD.OBD.navigationRight") } }
+    var freerideLeft: HudSideWidget { didSet { saveWidget(freerideLeft, key: "HUD.Widget.freerideLeft") } }
+    var freerideRight: HudSideWidget { didSet { saveWidget(freerideRight, key: "HUD.Widget.freerideRight") } }
+    var navigationLeft: HudSideWidget { didSet { saveWidget(navigationLeft, key: "HUD.Widget.navigationLeft") } }
+    var navigationRight: HudSideWidget { didSet { saveWidget(navigationRight, key: "HUD.Widget.navigationRight") } }
+
 
     init(bluetooth: HudBluetoothManager, logger: LogManager) {
         self.bluetooth = bluetooth
@@ -67,10 +68,10 @@ final class HudOBDController {
         let d = UserDefaults.standard
         self.deviceName = d.string(forKey: "HUD.OBD.deviceName") ?? "OBDII"
         self.autoConnect = d.object(forKey: "HUD.OBD.autoConnect") == nil ? true : d.bool(forKey: "HUD.OBD.autoConnect")
-        self.freerideLeft = Self.loadItem("HUD.OBD.freerideLeft", fallback: .coolantTemperature)
-        self.freerideRight = Self.loadItem("HUD.OBD.freerideRight", fallback: .rpmLevels)
-        self.navigationLeft = Self.loadItem("HUD.OBD.navigationLeft", fallback: .drivingVelocity)
-        self.navigationRight = Self.loadItem("HUD.OBD.navigationRight", fallback: .remainingDistance)
+        self.freerideLeft = Self.loadWidget("HUD.Widget.freerideLeft", fallback: .distance)
+        self.freerideRight = Self.loadWidget("HUD.Widget.freerideRight", fallback: .tripTime)
+        self.navigationLeft = Self.loadWidget("HUD.Widget.navigationLeft", fallback: .speed)
+        self.navigationRight = Self.loadWidget("HUD.Widget.navigationRight", fallback: .time)
 
         bluetooth.onOBDConnectionEvent = { [weak self] connected, pids in
             guard let self else { return }
@@ -81,13 +82,13 @@ final class HudOBDController {
         }
     }
 
-    private static func loadItem(_ key: String, fallback: HudOBDItem) -> HudOBDItem {
-        guard UserDefaults.standard.object(forKey: key) != nil else { return fallback }
-        return HudOBDItem(rawValue: UserDefaults.standard.integer(forKey: key)) ?? fallback
+    private static func loadWidget(_ key: String, fallback: HudSideWidget) -> HudSideWidget {
+        guard let raw = UserDefaults.standard.string(forKey: key) else { return fallback }
+        return HudSideWidget(rawValue: raw) ?? fallback
     }
 
-    private func saveItem(_ item: HudOBDItem, key: String) {
-        UserDefaults.standard.set(item.rawValue, forKey: key)
+    private func saveWidget(_ widget: HudSideWidget, key: String) {
+        UserDefaults.standard.set(widget.rawValue, forKey: key)
     }
 
     func connect() {
@@ -122,24 +123,37 @@ final class HudOBDController {
     }
 
     func applyFreerideWidgets() {
-        sendWidget(position: 0, item: freerideLeft, label: "Freeride left")
-        sendWidget(position: 1, item: freerideRight, label: "Freeride right")
+        // Original app: HudWidgetCommandPacket type=0 for Freeride.
+        bluetooth.enqueue(
+            HudCommands.dashboard(
+                left: freerideLeft.rawValue,
+                center: "Simple",
+                right: freerideRight.rawValue,
+                navigationLayout: false
+            ),
+            label: "Freeride dashboard \(freerideLeft.displayName) | Simple | \(freerideRight.displayName)"
+        )
+        logger.log(
+            "DASHBOARD",
+            "Freeride type=0 left=\(freerideLeft.rawValue) center=Simple right=\(freerideRight.rawValue)"
+        )
     }
 
     func applyNavigationWidgets() {
-        // Decompiled UI exposes independent navigation left/right slots.
-        // v30 tests positions 2/3 for that second profile; logs make this
-        // easy to revise if the firmware uses another position mapping.
-        sendWidget(position: 2, item: navigationLeft, label: "Navigation left")
-        sendWidget(position: 3, item: navigationRight, label: "Navigation right")
-    }
-
-    private func sendWidget(position: Int32, item: HudOBDItem, label: String) {
+        // Original app: HudWidgetCommandPacket type=1 for Navigation.
         bluetooth.enqueue(
-            HudCommands.obdCustomItem(position: position, itemIndex: Int32(item.rawValue)),
-            label: "OBD \(label) widget \(item.displayName)"
+            HudCommands.dashboard(
+                left: navigationLeft.rawValue,
+                center: "Navigation",
+                right: navigationRight.rawValue,
+                navigationLayout: true
+            ),
+            label: "Navigation dashboard \(navigationLeft.displayName) | Navigation | \(navigationRight.displayName)"
         )
-        logger.log("OBD WIDGETS", "\(label)(pos\(position))=\(item.displayName)")
+        logger.log(
+            "DASHBOARD",
+            "Navigation type=1 left=\(navigationLeft.rawValue) center=Navigation right=\(navigationRight.rawValue)"
+        )
     }
 
     func hudDidBecomeReady() {

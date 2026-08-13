@@ -36,6 +36,16 @@ struct HudNavigationView: View {
                                     set: { capture.autoSendToHUD = $0 }
                                 ))
 
+                                Toggle("Keep screen awake during capture", isOn: Binding(
+                                    get: { capture.keepScreenAwake },
+                                    set: { capture.keepScreenAwake = $0 }
+                                ))
+
+                                Toggle("Try automatic capture recovery", isOn: Binding(
+                                    get: { capture.autoRecoverAfterInterruption },
+                                    set: { capture.autoRecoverAfterInterruption = $0 }
+                                ))
+
                                 HStack {
                                     Button("Start Full-Display Capture") {
                                         capture.presentFullDisplayPicker()
@@ -82,7 +92,7 @@ struct HudNavigationView: View {
                                 }
 
                                 Text("""
-                                Live mode uses Apple's iOS 27 full-display picker. Choose the entire display once, then switch to Google Maps. The stream captures whatever is actually visible; Google Maps does not need to be selected by bundle ID. Saved Screenshot uses the identical OCR/parser without starting ScreenCaptureKit.
+                                Live mode captures the entire display, then OCRs roughly once per second. "Keep screen awake" prevents automatic display sleep. If iOS terminates capture when the device is manually locked, the recovery option retries the cached display filter and retries again when the app becomes active after unlock. The log records whether recovery succeeds.
                                 """)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

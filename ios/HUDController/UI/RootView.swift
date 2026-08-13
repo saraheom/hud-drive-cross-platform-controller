@@ -34,6 +34,10 @@ struct RootView: View {
             case .active:
                 consumePendingShortcut()
                 state.spotify.appBecameActive()
+                if #available(iOS 27.0, *),
+                   let capture = state.externalCapture27 as? ExternalNavigationCapture {
+                    capture.appBecameActive()
+                }
             case .background:
                 state.spotify.appEnteredBackground()
             default:

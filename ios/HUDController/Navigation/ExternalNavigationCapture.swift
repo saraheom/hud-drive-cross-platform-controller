@@ -24,12 +24,27 @@ final class ExternalNavigationCapture: NSObject {
     var autoSendToHUD: Bool {
         didSet { UserDefaults.standard.set(autoSendToHUD, forKey: "HUD.Capture.autoSend") }
     }
+    var keepScreenAwake: Bool {
+        didSet {
+            UserDefaults.standard.set(keepScreenAwake, forKey: "HUD.Capture.keepAwake")
+            UIApplication.shared.isIdleTimerDisabled = keepScreenAwake && stream != nil
+        }
+    }
+    var autoRecoverAfterInterruption: Bool {
+        didSet { UserDefaults.standard.set(autoRecoverAfterInterruption, forKey: "HUD.Capture.autoRecover") }
+    }
 
     private let logger: LogManager
     private let navigation: HudNavigationController
     private var stream: SCStream?
     private let outputQueue = DispatchQueue(label: "com.jjunnyy.hudcontroller.screenocr", qos: .utility)
     private var lastProcessedAt = Date.distantPast
+    private var lastFilter: SCContentFilter?
+    private var recoveryTask: Task<Void, Never>?
+    private var pendingCandidateKey = ""
+    private var pendingCandidateCount = 0
+    private var lastSentKey = ""
+    private var lastSentDistance = -1
     private let picker = SCContentSharingPicker.shared
 
     init(logger: LogManager, navigation: HudNavigationController) {
@@ -37,6 +52,10 @@ final class ExternalNavigationCapture: NSObject {
         self.navigation = navigation
         self.autoSendToHUD = UserDefaults.standard.object(forKey: "HUD.Capture.autoSend") == nil
             ? false : UserDefaults.standard.bool(forKey: "HUD.Capture.autoSend")
+        self.keepScreenAwake = UserDefaults.standard.object(forKey: "HUD.Capture.keepAwake") == nil
+            ? true : UserDefaults.standard.bool(forKey: "HUD.Capture.keepAwake")
+        self.autoRecoverAfterInterruption = UserDefaults.standard.object(forKey: "HUD.Capture.autoRecover") == nil
+            ? true : UserDefaults.standard.bool(forKey: "HUD.Capture.autoRecover")
         super.init()
         picker.add(self)
     }
@@ -61,18 +80,42 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func stop() {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        UIApplication.shared.isIdleTimerDisabled = false
         guard let stream else {
             status = "Stopped"
             return
         }
+        self.stream = nil
         stream.stopCapture { [weak self] error in
             Task { @MainActor in
                 if let error {
                     self?.logger.log("SCREEN CAPTURE ERROR", error.localizedDescription)
                 }
                 self?.status = "Stopped"
-                self?.stream = nil
             }
+        }
+    }
+
+    func appBecameActive() {
+        guard autoRecoverAfterInterruption,
+              stream == nil,
+              let filter = lastFilter else { return }
+        logger.log("SCREEN CAPTURE RECOVERY", "App active; retrying cached full-display filter")
+        start(filter: filter, recovery: true)
+    }
+
+    private func scheduleRecovery(reason: String) {
+        guard autoRecoverAfterInterruption, let filter = lastFilter else { return }
+        guard recoveryTask == nil else { return }
+        status = "Capture interrupted — recovery pending"
+        logger.log("SCREEN CAPTURE RECOVERY", "Scheduling retry: \(reason)")
+        recoveryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled, self.stream == nil else { return }
+            self.recoveryTask = nil
+            self.start(filter: filter, recovery: true)
         }
     }
 
@@ -88,8 +131,15 @@ final class ExternalNavigationCapture: NSObject {
         }
     }
 
-    private func start(filter: SCContentFilter) {
-        stop()
+    private func start(filter: SCContentFilter, recovery: Bool = false) {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        if let existing = stream {
+            existing.stopCapture(completionHandler: nil)
+            stream = nil
+        }
+        lastFilter = filter
+        UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
         let config = SCStreamConfiguration()
         config.capturesAudio = false
 
@@ -109,8 +159,11 @@ final class ExternalNavigationCapture: NSObject {
                         self?.status = "Capture start failed"
                         self?.logger.log("SCREEN CAPTURE ERROR", error.localizedDescription)
                     } else {
-                        self?.status = "Capturing display at ~1 Hz"
-                        self?.logger.log("SCREEN CAPTURE", "Full-display stream started")
+                        self?.status = recovery ? "Capture recovered" : "Capturing display; OCR ~1 Hz"
+                        self?.logger.log(
+                            recovery ? "SCREEN CAPTURE RECOVERY" : "SCREEN CAPTURE",
+                            recovery ? "Cached-filter capture restart succeeded" : "Full-display stream started"
+                        )
                     }
                 }
             }
@@ -150,10 +203,37 @@ final class ExternalNavigationCapture: NSObject {
         latestRawText = result.rawText
         latestInstruction = result.instruction
         logger.log(source, "\(result.instruction.primaryText) | \(result.instruction.streetName) | \(result.instruction.distanceMeters)m")
-        if autoSendToHUD && result.instruction.distanceMeters > 0 {
-            navigation.current = result.instruction
-            navigation.sendCurrent()
+        guard autoSendToHUD && result.instruction.distanceMeters > 0 else { return }
+
+        let streetKey = result.instruction.streetName
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+        let candidateKey = "\(result.instruction.maneuver.rawValue)|\(streetKey)"
+
+        if candidateKey == pendingCandidateKey {
+            pendingCandidateCount += 1
+        } else {
+            pendingCandidateKey = candidateKey
+            pendingCandidateCount = 1
         }
+
+        // Require two consecutive OCR frames for a new maneuver/street.
+        guard pendingCandidateCount >= 2 else {
+            logger.log("SCREEN OCR FILTER", "Waiting for second matching frame: \(candidateKey)")
+            return
+        }
+
+        let meaningfulDistanceChange =
+            lastSentDistance < 0 || abs(result.instruction.distanceMeters - lastSentDistance) >= 10
+        guard candidateKey != lastSentKey || meaningfulDistanceChange else {
+            logger.log("SCREEN OCR FILTER", "Suppressed duplicate HUD maneuver")
+            return
+        }
+
+        lastSentKey = candidateKey
+        lastSentDistance = result.instruction.distanceMeters
+        navigation.current = result.instruction
+        navigation.sendCurrent()
     }
 }
 
@@ -188,8 +268,11 @@ extension ExternalNavigationCapture: SCContentSharingPickerObserver {
 extension ExternalNavigationCapture: SCStreamDelegate {
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
         Task { @MainActor in
-            self.status = "Capture stopped"
+            self.stream = nil
+            UIApplication.shared.isIdleTimerDisabled = false
+            self.status = "Capture interrupted"
             self.logger.log("SCREEN CAPTURE ERROR", "Stream stopped: \(error.localizedDescription)")
+            self.scheduleRecovery(reason: error.localizedDescription)
         }
     }
 }
@@ -234,6 +317,8 @@ final class ExternalNavigationCapture: NSObject {
             UserDefaults.standard.set(autoSendToHUD, forKey: "HUD.Capture.autoSend")
         }
     }
+    var keepScreenAwake = false
+    var autoRecoverAfterInterruption = false
 
     private let logger: LogManager
     private let navigation: HudNavigationController
@@ -256,6 +341,8 @@ final class ExternalNavigationCapture: NSObject {
     func stop() {
         status = "Stopped"
     }
+
+    func appBecameActive() { }
 
     func analyzePhoto(_ image: UIImage) async {
         status = "Analyzing saved screenshot…"

@@ -135,7 +135,7 @@ enum HudCommands {
     }
 
     /// Decompiled MusicNotificationPacket (Notification category 12).
-    static func musicNotification(artist: String, track: String, packageName: String = "com.spotify.client") -> Data {
+    static func musicNotification(artist: String, track: String, packageName: String = "com.kivic.music") -> Data {
         notificationPacket(
             category: 12,
             packageName: packageName,
@@ -170,6 +170,18 @@ enum HudCommands {
         HudProtocol.frame(
             command: 2, p1: 9, p2: 9,
             payload: HudProtocol.int32(Int32(max(0, value)))
+        )
+    }
+
+
+    /// Original DisplayNotificationSettingCommandPacket.getDefaultMusicSettingPacket()
+    /// package=com.kivic.music, icon=3, textColor=-12996114.
+    static func musicNotificationFilter(enabled: Bool) -> Data {
+        notificationFilter(
+            enabled: enabled,
+            textColor: -12996114,
+            icon: 3,
+            identifiers: ["com.kivic.music"]
         )
     }
 

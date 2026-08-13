@@ -13,6 +13,7 @@ final class AppState {
     let ambientLight: AmbientLightMonitor
     let settings = HudSettings()
     private(set) var externalCapture27: Any?
+    private var musicFilterInitialized = false
 
     init() {
         let logger = LogManager()
@@ -30,8 +31,15 @@ final class AppState {
             self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
         }
 
-        spotify.onTrackChanged = { [weak bluetooth] artist, track in
-            guard let bluetooth, bluetooth.state == .connected else { return }
+        spotify.onTrackChanged = { [weak self, weak bluetooth] artist, track in
+            guard let self, let bluetooth, bluetooth.state == .connected else { return }
+            if !self.musicFilterInitialized {
+                self.musicFilterInitialized = true
+                bluetooth.enqueue(
+                    HudCommands.musicNotificationFilter(enabled: true),
+                    label: "Enable native Music notification filter"
+                )
+            }
             bluetooth.enqueue(
                 HudCommands.musicNotification(artist: artist, track: track),
                 label: "Native music: \(artist) — \(track)"

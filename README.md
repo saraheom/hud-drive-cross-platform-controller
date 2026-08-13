@@ -596,3 +596,53 @@ v37 follows Apple's iOS sample pattern instead:
 The existing `process(pixelBuffer:)` 0.8-second guard remains the effective
 frame-processing throttle, so removing `minimumFrameInterval` does not cause
 OCR to run at display frame rate.
+
+
+## v38 — original dashboard widgets + capture recovery experiment
+
+### Correct Freeride/Navigation widget protocol
+
+Reverse engineering of the original Android dashboard editor shows that visible
+side widgets are selected with `HudWidgetCommandPacket`, not
+`OBDIICustomItemInternalPacket`.
+
+Exact packet:
+- command = 2
+- param1 = 111
+- param2 = 0
+- payload = writeUTF(left), writeUTF(center), writeUTF(right), int32 type
+- type 0 = Freeride
+- type 1 = Navigation
+
+v38 uses the original SideWidget dash names:
+Speedo, MaxSpeedo, AvgSpeedo, Weather, Time, TraveledDistance, Cost, TripTime,
+ETA, None, RPM, Battery, Gasoline, GasolineConsumption, EngineCoolantTemp,
+EngineOilTemp.
+
+Trip Time is therefore now a genuine original-protocol option.
+
+### Screen-lock experiment
+
+iOS 27 stopped the full-display stream during physical lock in the prior test.
+v38 cannot override the OS lock-screen rendering policy, but adds:
+- optional idle-timer suppression so the phone does not auto-lock;
+- cached `SCContentFilter`;
+- automatic restart attempt after unexpected stream termination;
+- another cached-filter restart attempt when the app becomes active after unlock;
+- explicit recovery-success/failure logging.
+
+This lets the next device test determine whether the filter remains reusable
+across lock/unlock without showing the system picker again.
+
+### OCR stability
+
+A new maneuver/street must appear in two consecutive OCR frames before being
+sent to the HUD. Identical maneuvers are suppressed unless distance changes by
+at least 10 meters.
+
+### Spotify
+
+The decompiled original application's default music notification filter uses
+`com.kivic.music` (icon 3), not Spotify's Android/iOS package identifier.
+v38 enables that firmware-native filter and sends MusicNotificationPacket using
+`com.kivic.music`.
