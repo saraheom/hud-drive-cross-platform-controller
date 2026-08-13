@@ -5,7 +5,6 @@ import Vision
 import CoreMedia
 import CoreVideo
 
-
 #if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
 import ScreenCaptureKit
 
@@ -16,13 +15,18 @@ final class ExternalNavigationCapture: NSObject {
     private(set) var status = "Stopped"
     private(set) var latestRawText = ""
     private(set) var latestInstruction = NavigationInstruction(
-        maneuver: .straight, distanceMeters: 0, primaryText: "Waiting for capture", streetName: ""
+        maneuver: .straight,
+        distanceMeters: 0,
+        primaryText: "Waiting for capture",
+        streetName: ""
     )
     private(set) var lastFrameAt: Date?
     private(set) var frameCount = 0
     private(set) var validNavigationFrames = 0
     private(set) var rejectedFrames = 0
     private(set) var navigationModeArmed = false
+    private(set) var detectedSource = ExternalNavigationSource.unknown
+    private(set) var detectedScreenState = ExternalNavigationScreenState.unknown
 
     var autoSendToHUD: Bool {
         didSet { UserDefaults.standard.set(autoSendToHUD, forKey: "HUD.Capture.autoSend") }
@@ -43,28 +47,43 @@ final class ExternalNavigationCapture: NSObject {
     private let logger: LogManager
     private let navigation: HudNavigationController
     private var stream: SCStream?
-    private let outputQueue = DispatchQueue(label: "com.jjunnyy.hudcontroller.screenocr", qos: .utility)
+    private let outputQueue = DispatchQueue(
+        label: "com.jjunnyy.hudcontroller.screenocr",
+        qos: .utility
+    )
     private var lastProcessedAt = Date.distantPast
     private var lastFilter: SCContentFilter?
     private var recoveryTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
+    private var arrivalTask: Task<Void, Never>?
+    private var recoveryAttempt = 0
+
     private var pendingCandidateKey = ""
     private var pendingCandidateCount = 0
     private var lastSentKey = ""
     private var lastSentDistance = -1
     private var hasValidatedInstruction = false
+
+    private var explicitInactiveFrames = 0
+    private var unknownFrames = 0
+    private var activeFrames = 0
+
     private let picker = SCContentSharingPicker.shared
 
     init(logger: LogManager, navigation: HudNavigationController) {
         self.logger = logger
         self.navigation = navigation
-        self.autoSendToHUD = UserDefaults.standard.object(forKey: "HUD.Capture.autoSend") == nil
-            ? false : UserDefaults.standard.bool(forKey: "HUD.Capture.autoSend")
-        self.keepScreenAwake = UserDefaults.standard.object(forKey: "HUD.Capture.keepAwake") == nil
-            ? true : UserDefaults.standard.bool(forKey: "HUD.Capture.keepAwake")
-        self.autoRecoverAfterInterruption = UserDefaults.standard.object(forKey: "HUD.Capture.autoRecover") == nil
-            ? true : UserDefaults.standard.bool(forKey: "HUD.Capture.autoRecover")
-        self.autoEnableNavigationMode = UserDefaults.standard.object(forKey: "HUD.Capture.autoNavMode") == nil
-            ? true : UserDefaults.standard.bool(forKey: "HUD.Capture.autoNavMode")
+
+        let d = UserDefaults.standard
+        self.autoSendToHUD = d.object(forKey: "HUD.Capture.autoSend") == nil
+            ? true : d.bool(forKey: "HUD.Capture.autoSend")
+        self.keepScreenAwake = d.object(forKey: "HUD.Capture.keepAwake") == nil
+            ? true : d.bool(forKey: "HUD.Capture.keepAwake")
+        self.autoRecoverAfterInterruption = d.object(forKey: "HUD.Capture.autoRecover") == nil
+            ? true : d.bool(forKey: "HUD.Capture.autoRecover")
+        self.autoEnableNavigationMode = d.object(forKey: "HUD.Capture.autoNavMode") == nil
+            ? true : d.bool(forKey: "HUD.Capture.autoNavMode")
+
         super.init()
         picker.add(self)
     }
@@ -74,10 +93,6 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func presentFullDisplayPicker() {
-        // On iOS 27, full-display capture is selected by calling present().
-        // macOS-only picker fields such as allowedPickerModes,
-        // allowsChangingSelectedContent, and excludedBundleIDs are explicitly
-        // unavailable on iOS.
         var config = SCContentSharingPickerConfiguration()
         config.showsMicrophoneControl = false
         picker.defaultConfiguration = config
@@ -91,11 +106,20 @@ final class ExternalNavigationCapture: NSObject {
     func stop() {
         recoveryTask?.cancel()
         recoveryTask = nil
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        arrivalTask?.cancel()
+        arrivalTask = nil
+        recoveryAttempt = 0
         UIApplication.shared.isIdleTimerDisabled = false
+
+        deactivateNavigation(reason: "Screen capture manually stopped")
+
         guard let stream else {
             status = "Stopped"
             return
         }
+
         self.stream = nil
         stream.stopCapture { [weak self] error in
             Task { @MainActor in
@@ -111,26 +135,13 @@ final class ExternalNavigationCapture: NSObject {
         guard autoRecoverAfterInterruption,
               stream == nil,
               let filter = lastFilter else { return }
+
         logger.log("SCREEN CAPTURE RECOVERY", "App active; retrying cached full-display filter")
         start(filter: filter, recovery: true)
     }
 
-    private func scheduleRecovery(reason: String) {
-        guard autoRecoverAfterInterruption, let filter = lastFilter else { return }
-        guard recoveryTask == nil else { return }
-        status = "Capture interrupted — recovery pending"
-        logger.log("SCREEN CAPTURE RECOVERY", "Scheduling retry: \(reason)")
-        recoveryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            guard let self, !Task.isCancelled, self.stream == nil else { return }
-            self.recoveryTask = nil
-            self.start(filter: filter, recovery: true)
-        }
-    }
-
     func hudSessionDidReset(reason: String) {
-        // ScreenCaptureKit belongs to the iPhone and may still be running even
-        // though the physical HUD rebooted. Reset only HUD-delivery state.
+        // A physical HUD reboot does not invalidate the iPhone capture.
         navigationModeArmed = false
         lastSentKey = ""
         lastSentDistance = -1
@@ -139,36 +150,39 @@ final class ExternalNavigationCapture: NSObject {
 
         logger.log(
             "SCREEN NAV SESSION",
-            "\(reason); reset HUD navigation arm/dedup state while keeping capture alive"
+            "\(reason); reset HUD delivery state while preserving capture"
         )
 
-        guard autoSendToHUD,
-              autoEnableNavigationMode,
-              hasValidatedInstruction,
+        guard navigation.bluetooth.state == .connected,
+              autoSendToHUD,
+              autoEnableNavigationMode else { return }
+
+        if detectedScreenState == .approachRoute {
+            armNavigationIfNeeded()
+            sendProceedToRoute()
+            return
+        }
+
+        guard hasValidatedInstruction,
+              detectedScreenState == .active,
               latestInstruction.distanceMeters > 0 else { return }
 
-        navigation.navigationOn()
-        navigationModeArmed = true
+        armNavigationIfNeeded()
         navigation.current = latestInstruction
         navigation.sendCurrent()
-
-        let streetKey = latestInstruction.streetName
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "")
-        lastSentKey = "\(latestInstruction.maneuver.rawValue)|\(streetKey)"
-        lastSentDistance = latestInstruction.distanceMeters
+        rememberSent(latestInstruction)
 
         logger.log(
             "SCREEN NAV SESSION",
-            "Re-armed Navigation ON and re-sent cached validated maneuver"
+            "Re-armed Navigation and re-sent cached validated maneuver"
         )
     }
 
     func analyzePhoto(_ image: UIImage) async {
         status = "Analyzing saved screenshot…"
         do {
-            let result = try await GoogleMapsOCRParser.recognize(image)
-            apply(result, source: "PHOTO OCR")
+            let result = try await ExternalNavigationOCRParser.recognize(image)
+            apply(result, sourceLabel: "PHOTO OCR")
             status = "Saved screenshot parsed"
         } catch {
             status = "Photo OCR failed"
@@ -179,47 +193,117 @@ final class ExternalNavigationCapture: NSObject {
     private func start(filter: SCContentFilter, recovery: Bool = false) {
         recoveryTask?.cancel()
         recoveryTask = nil
+
         if let existing = stream {
             existing.stopCapture(completionHandler: nil)
             stream = nil
         }
+
         lastFilter = filter
         UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
+
         let config = SCStreamConfiguration()
         config.capturesAudio = false
 
-        // iOS 27 marks minimumFrameInterval, queueDepth, and scalesToFit
-        // unavailable. Keep the default stream configuration and throttle OCR
-        // in process(pixelBuffer:) instead. We intentionally process no more
-        // than roughly one frame per second regardless of stream frame rate.
-
         let newStream = SCStream(filter: filter, configuration: config, delegate: self)
+
         do {
-            try newStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: outputQueue)
+            try newStream.addStreamOutput(
+                self,
+                type: .screen,
+                sampleHandlerQueue: outputQueue
+            )
             self.stream = newStream
-            status = "Starting full-display capture…"
-            newStream.startCapture { [weak self] error in
+            status = recovery ? "Recovering full-display capture…" : "Starting full-display capture…"
+
+            newStream.startCapture { [weak self, weak newStream] error in
                 Task { @MainActor in
+                    guard let self else { return }
+
                     if let error {
-                        self?.status = "Capture start failed"
-                        self?.logger.log("SCREEN CAPTURE ERROR", error.localizedDescription)
-                    } else {
-                        self?.status = recovery ? "Capture recovered" : "Capturing display; OCR ~1 Hz"
-                        self?.logger.log(
-                            recovery ? "SCREEN CAPTURE RECOVERY" : "SCREEN CAPTURE",
-                            recovery ? "Cached-filter capture restart succeeded" : "Full-display stream started"
+                        if self.stream === newStream {
+                            self.stream = nil
+                        }
+                        self.status = "Capture restart failed"
+                        self.logger.log(
+                            "SCREEN CAPTURE ERROR",
+                            "start failed: \(error.localizedDescription)"
                         )
+                        self.scheduleRecovery(reason: "start failed: \(error.localizedDescription)")
+                        return
                     }
+
+                    self.recoveryAttempt = 0
+                    self.lastFrameAt = Date()
+                    self.status = recovery
+                        ? "Capture recovered"
+                        : "Capturing display; OCR ~1 Hz"
+                    self.logger.log(
+                        recovery ? "SCREEN CAPTURE RECOVERY" : "SCREEN CAPTURE",
+                        recovery ? "Full-display stream restart succeeded" : "Full-display stream started"
+                    )
+                    self.startWatchdog()
                 }
             }
         } catch {
+            stream = nil
             status = "Capture setup failed"
             logger.log("SCREEN CAPTURE ERROR", error.localizedDescription)
+            scheduleRecovery(reason: "setup failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func scheduleRecovery(reason: String) {
+        guard autoRecoverAfterInterruption,
+              lastFilter != nil else { return }
+        guard recoveryTask == nil else { return }
+
+        recoveryAttempt += 1
+        let delays = [1, 2, 4, 8, 12]
+        let delay = delays[min(recoveryAttempt - 1, delays.count - 1)]
+
+        status = "Capture interrupted — retrying in \(delay)s"
+        logger.log(
+            "SCREEN CAPTURE RECOVERY",
+            "attempt=\(recoveryAttempt) delay=\(delay)s reason=\(reason)"
+        )
+
+        recoveryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled else { return }
+            self.recoveryTask = nil
+
+            guard self.stream == nil, let filter = self.lastFilter else { return }
+            self.start(filter: filter, recovery: true)
+        }
+    }
+
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard self.autoRecoverAfterInterruption,
+                      self.stream != nil,
+                      let lastFrameAt = self.lastFrameAt else { continue }
+
+                let age = Date().timeIntervalSince(lastFrameAt)
+                if age > 5 {
+                    self.logger.log(
+                        "SCREEN CAPTURE WATCHDOG",
+                        "No screen frame for \(Int(age))s; rebuilding SCStream"
+                    )
+                    let old = self.stream
+                    self.stream = nil
+                    old?.stopCapture(completionHandler: nil)
+                    self.scheduleRecovery(reason: "frame watchdog stale")
+                    return
+                }
+            }
         }
     }
 
     private func process(pixelBuffer: CVPixelBuffer) {
-        // ScreenCaptureKit already throttles to ~1 Hz. This is a secondary guard.
         guard Date().timeIntervalSince(lastProcessedAt) >= 0.8 else { return }
         lastProcessedAt = Date()
 
@@ -230,11 +314,11 @@ final class ExternalNavigationCapture: NSObject {
 
         Task {
             do {
-                let result = try await GoogleMapsOCRParser.recognize(image)
+                let result = try await ExternalNavigationOCRParser.recognize(image)
                 await MainActor.run {
                     self.frameCount += 1
                     self.lastFrameAt = Date()
-                    self.apply(result, source: "SCREEN OCR")
+                    self.apply(result, sourceLabel: "SCREEN OCR")
                 }
             } catch {
                 await MainActor.run {
@@ -244,14 +328,86 @@ final class ExternalNavigationCapture: NSObject {
         }
     }
 
-    private func apply(_ result: ParsedExternalNavigation, source: String) {
+    private func apply(_ result: ParsedExternalNavigation, sourceLabel: String) {
         latestRawText = result.rawText
+        detectedSource = result.source
+        detectedScreenState = result.screenState
+
+        logger.log(
+            "NAV CLASSIFY",
+            "source=\(result.source.rawValue) state=\(result.screenState.rawValue) confidence=\(result.confidence) structural=\(result.structuralConfidence)"
+        )
+
+        switch result.screenState {
+        case .approachRoute:
+            activeFrames += 1
+            explicitInactiveFrames = 0
+            unknownFrames = 0
+            arrivalTask?.cancel()
+            arrivalTask = nil
+
+            if autoSendToHUD {
+                armNavigationIfNeeded()
+                sendProceedToRoute()
+            }
+            status = "\(result.source.rawValue): proceed to route"
+            return
+
+        case .arrived:
+            explicitInactiveFrames = 0
+            unknownFrames = 0
+            showArrivalAndReturnToFreeride(reason: "Explicit arrival OCR")
+            return
+
+        case .inactive:
+            explicitInactiveFrames += 1
+            unknownFrames = 0
+            activeFrames = 0
+
+            logger.log(
+                "SCREEN NAV LIFECYCLE",
+                "Explicit inactive Maps frame \(explicitInactiveFrames)/2"
+            )
+
+            if navigationModeArmed && explicitInactiveFrames >= 2 {
+                if hasValidatedInstruction && lastSentDistance >= 0 && lastSentDistance <= 80 {
+                    showArrivalAndReturnToFreeride(
+                        reason: "Maps returned home near destination"
+                    )
+                } else {
+                    deactivateNavigation(reason: "Maps returned to graphical/home view")
+                }
+            }
+            return
+
+        case .unknown:
+            rejectedFrames += 1
+            unknownFrames += 1
+            explicitInactiveFrames = 0
+
+            logger.log(
+                "SCREEN OCR REJECT",
+                "unknown frame \(unknownFrames)/6 confidence=\(result.confidence) reason=\(result.validationReason)"
+            )
+
+            if navigationModeArmed && unknownFrames >= 6 {
+                deactivateNavigation(reason: "Navigation list absent for consecutive frames")
+            }
+            return
+
+        case .active:
+            explicitInactiveFrames = 0
+            unknownFrames = 0
+            activeFrames += 1
+            arrivalTask?.cancel()
+            arrivalTask = nil
+        }
 
         guard result.isValidNavigation else {
             rejectedFrames += 1
             logger.log(
                 "SCREEN OCR REJECT",
-                "confidence=\(result.confidence) reason=\(result.validationReason) rawFirst=\(result.rawText.split(separator: "\n").first ?? "")"
+                "source=\(result.source.rawValue) confidence=\(result.confidence) reason=\(result.validationReason)"
             )
             return
         }
@@ -259,17 +415,17 @@ final class ExternalNavigationCapture: NSObject {
         validNavigationFrames += 1
         latestInstruction = result.instruction
         hasValidatedInstruction = true
+
         logger.log(
-            source,
-            "VALID confidence=\(result.confidence) \(result.instruction.primaryText) | \(result.instruction.streetName) | \(result.instruction.distanceMeters)m"
+            sourceLabel,
+            "VALID source=\(result.source.rawValue) confidence=\(result.confidence) " +
+            "\(result.instruction.primaryText) | \(result.instruction.streetName) | " +
+            "\(result.originalDistanceText) -> \(result.instruction.distanceMeters)m"
         )
 
         guard autoSendToHUD && result.instruction.distanceMeters > 0 else { return }
 
-        let streetKey = result.instruction.streetName
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "")
-        let candidateKey = "\(result.instruction.maneuver.rawValue)|\(streetKey)"
+        let candidateKey = instructionKey(result.instruction)
 
         if candidateKey == pendingCandidateKey {
             pendingCandidateCount += 1
@@ -278,34 +434,133 @@ final class ExternalNavigationCapture: NSObject {
             pendingCandidateCount = 1
         }
 
-        // Two consecutive independently OCR'd valid frames are required before
-        // the first packet for a new maneuver/street.
-        guard pendingCandidateCount >= 2 else {
-            logger.log("SCREEN OCR FILTER", "Valid candidate 1/2: \(candidateKey)")
+        // First navigation acquisition remains conservative. Once navigation
+        // is armed, a structurally strong Google/Apple route list may change
+        // street + turn + distance immediately during a legitimate reroute.
+        let strongReroute =
+            navigationModeArmed &&
+            candidateKey != lastSentKey &&
+            result.structuralConfidence >= 90 &&
+            result.confidence >= 90
+
+        guard pendingCandidateCount >= 2 || strongReroute else {
+            logger.log(
+                "SCREEN OCR FILTER",
+                "candidate 1/2: \(candidateKey)"
+            )
             return
         }
 
-        if autoEnableNavigationMode && !navigationModeArmed {
-            navigationModeArmed = true
-            navigation.navigationOn()
-            logger.log("SCREEN NAV", "Automatically enabled HUD navigation mode")
-        }
+        armNavigationIfNeeded()
 
         let meaningfulDistanceChange =
-            lastSentDistance < 0 || abs(result.instruction.distanceMeters - lastSentDistance) >= 10
+            lastSentDistance < 0 ||
+            abs(result.instruction.distanceMeters - lastSentDistance) >= 8
 
         guard candidateKey != lastSentKey || meaningfulDistanceChange else {
             logger.log("SCREEN OCR FILTER", "Suppressed duplicate valid HUD maneuver")
             return
         }
 
-        lastSentKey = candidateKey
-        lastSentDistance = result.instruction.distanceMeters
         navigation.current = result.instruction
         navigation.sendCurrent()
-        logger.log("SCREEN NAV", "Sent validated maneuver to HUD")
+        rememberSent(result.instruction)
+
+        logger.log(
+            "SCREEN NAV",
+            strongReroute
+                ? "Accepted structurally valid reroute immediately"
+                : "Sent validated maneuver to HUD"
+        )
     }
 
+    private func armNavigationIfNeeded() {
+        guard autoEnableNavigationMode,
+              !navigationModeArmed,
+              navigation.bluetooth.state == .connected else { return }
+
+        navigation.navigationOn()
+        navigationModeArmed = true
+        logger.log("SCREEN NAV", "Automatically enabled HUD navigation mode")
+    }
+
+    private func sendProceedToRoute() {
+        guard navigation.bluetooth.state == .connected else { return }
+
+        let proceed = NavigationInstruction(
+            maneuver: .straight,
+            distanceMeters: 0,
+            primaryText: "Proceed to the route",
+            streetName: ""
+        )
+
+        // Send it only once until a new active maneuver arrives.
+        let key = "approachRoute"
+        guard lastSentKey != key else { return }
+
+        navigation.current = proceed
+        navigation.sendCurrent()
+        lastSentKey = key
+        lastSentDistance = 0
+        logger.log("SCREEN NAV", "Sent Proceed to route state")
+    }
+
+    private func showArrivalAndReturnToFreeride(reason: String) {
+        guard navigationModeArmed else { return }
+        guard arrivalTask == nil else { return }
+
+        logger.log("SCREEN NAV ARRIVAL", reason)
+
+        if navigation.bluetooth.state == .connected {
+            navigation.current = NavigationInstruction(
+                maneuver: .destination,
+                distanceMeters: 0,
+                primaryText: "You have arrived",
+                streetName: ""
+            )
+            navigation.sendCurrent()
+        }
+
+        detectedScreenState = .arrived
+        arrivalTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self, !Task.isCancelled else { return }
+            self.arrivalTask = nil
+            self.deactivateNavigation(reason: "Arrival display completed")
+        }
+    }
+
+    private func deactivateNavigation(reason: String) {
+        arrivalTask?.cancel()
+        arrivalTask = nil
+
+        if navigationModeArmed && navigation.bluetooth.state == .connected {
+            navigation.navigationOff()
+        }
+
+        navigationModeArmed = false
+        pendingCandidateKey = ""
+        pendingCandidateCount = 0
+        lastSentKey = ""
+        lastSentDistance = -1
+        explicitInactiveFrames = 0
+        unknownFrames = 0
+        activeFrames = 0
+
+        logger.log("SCREEN NAV LIFECYCLE", "Navigation OFF → Freeride: \(reason)")
+    }
+
+    private func instructionKey(_ instruction: NavigationInstruction) -> String {
+        let street = instruction.streetName
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+        return "\(instruction.maneuver.rawValue)|\(street)"
+    }
+
+    private func rememberSent(_ instruction: NavigationInstruction) {
+        lastSentKey = instructionKey(instruction)
+        lastSentDistance = instruction.distanceMeters
+    }
 }
 
 @available(iOS 27.0, *)
@@ -320,7 +575,10 @@ extension ExternalNavigationCapture: SCContentSharingPickerObserver {
         }
     }
 
-    nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
+    nonisolated func contentSharingPicker(
+        _ picker: SCContentSharingPicker,
+        didCancelFor stream: SCStream?
+    ) {
         Task { @MainActor in
             self.status = "Picker cancelled"
             self.logger.log("SCREEN CAPTURE", "Picker cancelled")
@@ -339,14 +597,23 @@ extension ExternalNavigationCapture: SCContentSharingPickerObserver {
 extension ExternalNavigationCapture: SCStreamDelegate {
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
         Task { @MainActor in
-            self.stream = nil
+            if self.stream === stream {
+                self.stream = nil
+            }
+            self.watchdogTask?.cancel()
+            self.watchdogTask = nil
             UIApplication.shared.isIdleTimerDisabled = false
-            self.status = "Capture stopped by iOS/user — unlock may be required"
+
             let nsError = error as NSError
+            self.status = "Capture stopped — automatic recovery active"
             self.logger.log(
                 "SCREEN CAPTURE STOP",
                 "domain=\(nsError.domain) code=\(nsError.code) description=\(error.localizedDescription)"
             )
+
+            // A stopped capture means we no longer have evidence that a route
+            // list is on screen. Do not leave the HUD frozen in Navigation.
+            self.deactivateNavigation(reason: "ScreenCaptureKit stream stopped")
             self.scheduleRecovery(reason: error.localizedDescription)
         }
     }
@@ -354,24 +621,23 @@ extension ExternalNavigationCapture: SCStreamDelegate {
 
 @available(iOS 27.0, *)
 extension ExternalNavigationCapture: SCStreamOutput {
-    nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    nonisolated func stream(
+        _ stream: SCStream,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of type: SCStreamOutputType
+    ) {
         guard type == .screen,
               sampleBuffer.isValid,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
         Task { @MainActor in
             self.process(pixelBuffer: buffer)
         }
     }
 }
 
-
 #else
 
-/// Simulator / SDK fallback.
-///
-/// Apple's iOS 27 ScreenCaptureKit full-display sample is device-only.
-/// CI still compiles and exercises the shared Vision OCR parser through this
-/// fallback, while TestFlight/device builds compile the real implementation.
 @available(iOS 27.0, *)
 @MainActor
 @Observable
@@ -389,11 +655,11 @@ final class ExternalNavigationCapture: NSObject {
     private(set) var validNavigationFrames = 0
     private(set) var rejectedFrames = 0
     private(set) var navigationModeArmed = false
+    private(set) var detectedSource = ExternalNavigationSource.unknown
+    private(set) var detectedScreenState = ExternalNavigationScreenState.unknown
 
     var autoSendToHUD: Bool {
-        didSet {
-            UserDefaults.standard.set(autoSendToHUD, forKey: "HUD.Capture.autoSend")
-        }
+        didSet { UserDefaults.standard.set(autoSendToHUD, forKey: "HUD.Capture.autoSend") }
     }
     var keepScreenAwake = false
     var autoRecoverAfterInterruption = false
@@ -407,7 +673,7 @@ final class ExternalNavigationCapture: NSObject {
         self.navigation = navigation
         self.autoSendToHUD =
             UserDefaults.standard.object(forKey: "HUD.Capture.autoSend") == nil
-            ? false
+            ? true
             : UserDefaults.standard.bool(forKey: "HUD.Capture.autoSend")
         super.init()
     }
@@ -422,27 +688,24 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func appBecameActive() { }
-
     func hudSessionDidReset(reason: String) { }
 
     func analyzePhoto(_ image: UIImage) async {
         status = "Analyzing saved screenshot…"
         do {
-            let result = try await GoogleMapsOCRParser.recognize(image)
+            let result = try await ExternalNavigationOCRParser.recognize(image)
             latestRawText = result.rawText
-            latestInstruction = result.instruction
+            detectedSource = result.source
+            detectedScreenState = result.screenState
+            if result.isValidNavigation {
+                latestInstruction = result.instruction
+                validNavigationFrames += 1
+            } else {
+                rejectedFrames += 1
+            }
             frameCount += 1
             lastFrameAt = Date()
             status = "Saved screenshot parsed"
-            logger.log(
-                "PHOTO OCR",
-                "\(result.instruction.primaryText) | \(result.instruction.streetName) | \(result.instruction.distanceMeters)m"
-            )
-
-            if autoSendToHUD && result.instruction.distanceMeters > 0 {
-                navigation.current = result.instruction
-                navigation.sendCurrent()
-            }
         } catch {
             status = "Photo OCR failed"
             logger.log("OCR ERROR", error.localizedDescription)

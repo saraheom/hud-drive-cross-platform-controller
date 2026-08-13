@@ -28,7 +28,7 @@ struct HudNavigationView: View {
                        let capture = state.externalCapture27 as? ExternalNavigationCapture {
                         HudCard {
                             VStack(alignment: .leading, spacing: 12) {
-                                Text("External Google Maps Capture").font(.headline)
+                                Text("Automatic External Maps Capture").font(.headline)
                                 Text(capture.status).font(.caption).foregroundStyle(.secondary)
 
                                 Toggle("Automatically send parsed maneuver to HUD", isOn: Binding(
@@ -61,7 +61,7 @@ struct HudNavigationView: View {
                                 Divider()
                                 Text("Saved screenshot test").font(.subheadline.bold())
                                 PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                                    Label("Choose Google Maps Screenshot", systemImage: "photo")
+                                    Label("Choose Maps Screenshot", systemImage: "photo")
                                 }
                                 .buttonStyle(.bordered)
                                 .onChange(of: selectedPhoto) { _, item in
@@ -85,6 +85,8 @@ struct HudNavigationView: View {
                                     Text(photoStatus).font(.caption).foregroundStyle(.secondary)
                                 }
 
+                                LabeledContent("Detected source", value: capture.detectedSource.rawValue)
+                                LabeledContent("Screen state", value: capture.detectedScreenState.rawValue)
                                 LabeledContent("Parsed maneuver", value: capture.latestInstruction.maneuver.label)
                                 LabeledContent("Distance", value: distanceText(capture.latestInstruction.distanceMeters))
                                 LabeledContent("Street", value: capture.latestInstruction.streetName.isEmpty ? "—" : capture.latestInstruction.streetName)
@@ -100,9 +102,9 @@ struct HudNavigationView: View {
                                 }
 
                                 Text("""
-                                Live mode captures the visible display and validates OCR before touching the HUD. A new navigation instruction must contain a paired distance + explicit maneuver and pass two consecutive frames. The first confirmed instruction automatically turns HUD Navigation ON when enabled. Frames that look like ordinary app UI are rejected and the previous valid HUD maneuver remains displayed.
+                                Google Maps and Apple Maps are detected automatically from OCR/layout evidence; there is no source selector. Valid route lists automatically enter Navigation mode. Apple Maps “Proceed to the route” is treated as active navigation, reroutes can replace the entire current maneuver immediately when the new layout is structurally valid, and normal Maps home/map screens return the HUD to Freeride after confirmation.
 
-                                iOS 27 stops full-display capture when the device is physically locked on the tested phone. "Keep screen awake" prevents automatic lock; recovery retries after interruptions/unlock, but cannot force Google Maps to remain rendered behind the lock screen.
+                                Screen capture has a stale-frame watchdog plus exponential automatic restart. iOS may still revoke full-display capture under system conditions such as physical lock; the app retries every recoverable interruption and reports the recovery state here.
                                 """)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

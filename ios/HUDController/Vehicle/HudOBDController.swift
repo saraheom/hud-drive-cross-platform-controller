@@ -51,7 +51,16 @@ final class HudOBDController {
         didSet { UserDefaults.standard.set(deviceName, forKey: "HUD.OBD.deviceName") }
     }
     var autoConnect: Bool {
-        didSet { UserDefaults.standard.set(autoConnect, forKey: "HUD.OBD.autoConnect") }
+        didSet {
+            UserDefaults.standard.set(autoConnect, forKey: "HUD.OBD.autoConnect")
+            if autoConnect {
+                startAutoConnectLoop(reason: "Auto-connect enabled")
+            } else {
+                autoConnectTask?.cancel()
+                autoConnectTask = nil
+                autoConnectAttempt = 0
+            }
+        }
     }
 
     private(set) var connected = false
@@ -69,7 +78,18 @@ final class HudOBDController {
         self.logger = logger
         let d = UserDefaults.standard
         self.deviceName = d.string(forKey: "HUD.OBD.deviceName") ?? "OBDII"
-        self.autoConnect = d.object(forKey: "HUD.OBD.autoConnect") == nil ? true : d.bool(forKey: "HUD.OBD.autoConnect")
+
+        // v45 migration: previous troubleshooting often left this persisted
+        // OFF. The new design is explicitly self-healing, so migrate existing
+        // installs to auto-connect ON once. A user turning it OFF after this
+        // migration remains respected.
+        if !d.bool(forKey: "HUD.OBD.v45AutoConnectMigrated") {
+            d.set(true, forKey: "HUD.OBD.autoConnect")
+            d.set(true, forKey: "HUD.OBD.v45AutoConnectMigrated")
+        }
+        self.autoConnect = d.object(forKey: "HUD.OBD.autoConnect") == nil
+            ? true
+            : d.bool(forKey: "HUD.OBD.autoConnect")
         self.freerideLeft = Self.loadWidget("HUD.Widget.freerideLeft", fallback: .distance)
         self.freerideRight = Self.loadWidget("HUD.Widget.freerideRight", fallback: .tripTime)
         self.navigationLeft = Self.loadWidget("HUD.Widget.navigationLeft", fallback: .speed)
@@ -230,7 +250,7 @@ final class HudOBDController {
 
                 // The physical HUD can take several seconds to connect to ELM327.
                 // Retry until its OBD event explicitly reports connected=true.
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: .seconds(4))
             }
 
             if self.connected {

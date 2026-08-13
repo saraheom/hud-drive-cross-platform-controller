@@ -172,7 +172,7 @@ enum HudCommands {
 
     /// Decompiled HudSpeedLimitAndToleranceCommandPacket
     /// CommandPacket(command=2, p1=101, p2=2)
-    static func speedLimit(limit: Int, tolerance: Int = 0, squareStyle: Bool = false) -> Data {
+    static func speedLimit(limit: Int, tolerance: Int = 0, squareStyle: Bool = true) -> Data {
         var payload = HudProtocol.int32(Int32(max(0, limit)))
         payload.append(HudProtocol.int32(Int32(max(0, tolerance))))
         payload.append(HudProtocol.int32(squareStyle ? 1 : 0))

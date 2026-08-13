@@ -851,3 +851,94 @@ configuration survives app relaunch.
 No Apple Maps OCR assumptions are added in v44. The Google Maps parser remains
 unchanged. A future Apple Maps screenshot can be added as a separate parser
 layout/test fixture rather than weakening the validated Google Maps rules.
+
+
+## v45 — automatic Google/Apple navigation + field reliability
+
+This release combines the August 13 CarPlay field-test fixes into one
+automation-focused build.
+
+### Automatic navigation-source detection
+
+There is no Google/Apple selector. OCR/layout evidence classifies each frame as
+Google Maps, Apple Maps, or unknown.
+
+Google indicators include `Directions`, `In <distance>`, and textual maneuver
+phrases. Apple indicators include `End Route`, `Proceed to the route`, and
+repeated standalone distance/road cards.
+
+Apple Maps `Proceed to the route` is an active navigation state rather than an
+OCR rejection.
+
+### Navigation lifecycle
+
+The capture controller now tracks:
+- active route;
+- approach/proceed-to-route;
+- reroute;
+- explicit Maps home/inactive view;
+- inferred/explicit arrival;
+- unknown/transient OCR.
+
+A structurally strong reroute may immediately replace the previous maneuver
+without requiring continuity with the old street or direction. Explicit Maps
+home screens return the HUD to Freeride after two confirming frames. Unknown
+screens require six consecutive frames before Navigation is turned off.
+
+When the last maneuver was within 80 m and Maps returns to its home view, the
+HUD displays the existing Destination maneuver for about five seconds before
+Navigation OFF.
+
+### Distance handling
+
+The parser explicitly retains the original `ft`/`mi` OCR string in diagnostics
+and always chooses the first/top current route card. Distances below one mile
+remain converted from the original feet value directly to meters for the HUD
+protocol rather than selecting a later mile-denominated route row.
+
+### ScreenCaptureKit recovery
+
+A stale-frame watchdog detects streams that exist but stop delivering frames.
+Unexpected stops and start failures rebuild `SCStream` from the cached content
+filter using exponential retry delays (1, 2, 4, 8, then 12 seconds).
+
+A stopped capture immediately returns the physical HUD to Freeride rather than
+leaving a stale maneuver frozen.
+
+### BLEDOM background/locked-screen monitoring
+
+After the first successful BLEDOM discovery, its CoreBluetooth UUID is saved.
+The app then maintains a restoration-enabled BLE connection/pending connection
+to that peripheral.
+
+CoreBluetooth connection/disconnection callbacks are OS-delivered and are more
+appropriate for background/locked-screen state than a Swift Task polling
+duplicate advertisements. Peripheral disconnect turns HUD Auto Brightness OFF;
+the app immediately leaves another connect request pending so BLEDOM power-on
+can reconnect and turn it ON again.
+
+Foreground advertisement scanning remains as discovery/fallback.
+
+### OBD
+
+Existing installs receive a one-time v45 migration that turns OBD auto-connect
+ON, because earlier debugging often left the persisted switch OFF. After the
+migration, a user may still intentionally disable it.
+
+When enabled, HUD/OBD reset or disconnect keeps retrying every four seconds
+until the HUD explicitly reports OBD connected.
+
+### Rectangular speed-limit sign
+
+`HudSpeedLimitAndToleranceCommandPacket` now sends its square/rectangular style
+flag as `1` by default and the GPS/OSM engine explicitly requests that style.
+The same native speed-limit state is independent of Freeride vs Navigation
+layout.
+
+### Apple Maps graphical maneuver arrows
+
+Apple Maps route lists use graphical turn arrows rather than textual `Turn
+right` phrases. v45 includes an initial local image-shape classifier for the
+first route-card arrow (left/right/straight) while OCR supplies the distance
+and road. This is intentionally logged/tested in the field and can be refined
+from additional Apple Maps screenshots without adding a manual source switch.

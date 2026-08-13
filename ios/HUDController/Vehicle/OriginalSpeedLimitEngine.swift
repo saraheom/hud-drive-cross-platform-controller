@@ -145,7 +145,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         bluetooth.enqueue(
             HudCommands.speedLimit(
                 limit: currentSpeedLimitMph,
-                tolerance: speedTolerance
+                tolerance: speedTolerance,
+                squareStyle: true
             ),
             label: "Speed limit \(currentSpeedLimitMph) mph (+\(speedTolerance))"
         )
@@ -206,7 +207,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             if showSpeedLimit, limit != lastSentLimit, bluetooth.state == .connected {
                 lastSentLimit = limit
                 bluetooth.enqueue(
-                    HudCommands.speedLimit(limit: limit, tolerance: speedTolerance),
+                    HudCommands.speedLimit(limit: limit, tolerance: speedTolerance, squareStyle: true),
                     label: "Speed limit \(limit) mph (+\(speedTolerance))"
                 )
                 bluetooth.enqueue(
