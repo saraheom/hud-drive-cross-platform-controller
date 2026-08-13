@@ -765,3 +765,20 @@ immediately after Spotify is constructed and before any callback captures
 `AppState`.
 
 No runtime probe behavior or other feature changed.
+
+
+## v43 — remove obsolete Weather-as-Music regression tests
+
+The v42 application target compiled, but CI failed while compiling unit tests.
+Two older tests from the v39/v40 Weather-as-Music experiment still referenced
+the removed `HudSideWidget.isMusicDisplaySlot` property and expected Weather's
+UI label to be `Music`.
+
+v43 updates those tests to the current architecture:
+
+- Weather firmware token remains `Weather`;
+- Weather UI label remains `Weather`;
+- `isMusicDisplaySlot` is intentionally absent;
+- the v41 Persistent Text / Music Probe tests remain active.
+
+No runtime application behavior changed.

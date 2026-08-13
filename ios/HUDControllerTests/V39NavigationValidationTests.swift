@@ -41,9 +41,8 @@ final class V39NavigationValidationTests: XCTestCase {
         XCTAssertFalse(parsed.isValidNavigation)
     }
 
-    func testMusicUILabelUsesRealWeatherFirmwareToken() {
+    func testWeatherWidgetRemainsOriginalFirmwareWidget() {
         XCTAssertEqual(HudSideWidget.weather.rawValue, "Weather")
-        XCTAssertEqual(HudSideWidget.weather.displayName, "Music")
-        XCTAssertTrue(HudSideWidget.weather.isMusicDisplaySlot)
+        XCTAssertEqual(HudSideWidget.weather.displayName, "Weather")
     }
 }
