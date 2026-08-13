@@ -551,3 +551,18 @@ ScreenCaptureKit source still imports the framework under:
 
 so physical iOS 27 builds use it normally, while simulator builds compile and
 link only the fallback implementation.
+
+
+## v36 — update obsolete ambient restoration unit test
+
+v35's application target compiled and linked successfully. The only CI failure
+was an old source-inspection test that asserted the ambient BLE monitor must not
+use `CBCentralManagerOptionRestoreIdentifierKey`.
+
+That assertion became obsolete when v30 intentionally added CoreBluetooth state
+restoration *and* implemented `centralManager(_:willRestoreState:)` for better
+background/locked-screen behavior.
+
+v36 updates the regression test to verify the correct invariant instead:
+restoration identifier and restoration callback must either both exist or both
+be absent. For the current design, both are explicitly required.
