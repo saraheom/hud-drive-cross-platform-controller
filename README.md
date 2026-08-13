@@ -513,3 +513,17 @@ device. v33 therefore:
 - changes CI validation to require the framework only in the iPhoneOS device SDK.
 
 No navigation/OCR, BLE, OBD, Spotify, persistence, or BLEDOM behavior was removed.
+
+
+## v34 — persistent settings initializer compile fix
+
+v33 successfully moved past the ScreenCaptureKit simulator problem. CI then
+exposed a Swift initialization rule in the new persistent `HudSettings` model.
+
+The nested `bool` and `integer` helpers referenced the instance property
+`defaults`, which implicitly used `self` before all stored properties had been
+initialized.
+
+v34 uses a local `let store = UserDefaults.standard` throughout initialization,
+then assigns every persisted setting from that local reference. Runtime
+persistence behavior is unchanged.

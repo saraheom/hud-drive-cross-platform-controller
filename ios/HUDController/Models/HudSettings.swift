@@ -47,11 +47,16 @@ final class HudSettings {
     var notificationLines: Int { didSet { defaults.set(notificationLines, forKey: "HUD.Settings.notificationLines") } }
 
     init() {
+        // Use a local defaults reference during initialization. Referring to
+        // the instance property `defaults` from nested helper functions would
+        // implicitly use `self` before every stored property is initialized.
+        let store = UserDefaults.standard
+
         func bool(_ key: String, default fallback: Bool) -> Bool {
-            defaults.object(forKey: key) == nil ? fallback : defaults.bool(forKey: key)
+            store.object(forKey: key) == nil ? fallback : store.bool(forKey: key)
         }
         func integer(_ key: String, default fallback: Int) -> Int {
-            defaults.object(forKey: key) == nil ? fallback : defaults.integer(forKey: key)
+            store.object(forKey: key) == nil ? fallback : store.integer(forKey: key)
         }
 
         autoBrightness = bool("HUD.Settings.autoBrightness", default: false)
@@ -59,7 +64,7 @@ final class HudSettings {
         showTimeWeather = bool("HUD.Settings.showTimeWeather", default: true)
         minimizeWidgets = bool("HUD.Settings.minimizeWidgets", default: false)
 
-        let presetName = defaults.string(forKey: "HUD.Settings.selectedPreset") ?? "Freeride"
+        let presetName = store.string(forKey: "HUD.Settings.selectedPreset") ?? "Freeride"
         selectedPreset = DashboardPreset.presets.first(where: { $0.name == presetName }) ?? DashboardPreset.presets[0]
 
         notifyAll = bool("HUD.Settings.notifyAll", default: false)
