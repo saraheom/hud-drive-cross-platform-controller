@@ -749,3 +749,19 @@ updates to that renderer.
 
 All validated automatic ScreenCaptureKit navigation behavior from v39/v40 is
 retained.
+
+
+## v42 — AppState text-probe initialization fix
+
+The first v41 CI run reached Swift compilation and failed only because the new
+`HudTextRendererProbe` stored property had not been initialized before the
+Spotify callback captured `self`.
+
+v42 initializes:
+
+`self.textProbe = HudTextRendererProbe(bluetooth: bluetooth, logger: logger)`
+
+immediately after Spotify is constructed and before any callback captures
+`AppState`.
+
+No runtime probe behavior or other feature changed.
