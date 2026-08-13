@@ -46,14 +46,15 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func presentFullDisplayPicker() {
-        var config = picker.defaultConfiguration
-        config.allowedPickerModes = .singleDisplay
-        config.allowsChangingSelectedContent = false
-        if let bundle = Bundle.main.bundleIdentifier {
-            config.excludedBundleIDs = [bundle]
-        }
+        // On iOS 27, full-display capture is selected by calling present().
+        // macOS-only picker fields such as allowedPickerModes,
+        // allowsChangingSelectedContent, and excludedBundleIDs are explicitly
+        // unavailable on iOS.
+        var config = SCContentSharingPickerConfiguration()
+        config.showsMicrophoneControl = false
         picker.defaultConfiguration = config
         picker.isActive = true
+
         status = "Choose Entire Display in Apple's picker"
         logger.log("SCREEN CAPTURE", "Presenting iOS 27 full-display picker")
         picker.present()
@@ -91,11 +92,11 @@ final class ExternalNavigationCapture: NSObject {
         stop()
         let config = SCStreamConfiguration()
         config.capturesAudio = false
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 1) // 1 Hz
-        config.queueDepth = 3
-        config.width = 720
-        config.height = 1560
-        config.scalesToFit = true
+
+        // iOS 27 marks minimumFrameInterval, queueDepth, and scalesToFit
+        // unavailable. Keep the default stream configuration and throttle OCR
+        // in process(pixelBuffer:) instead. We intentionally process no more
+        // than roughly one frame per second regardless of stream frame rate.
 
         let newStream = SCStream(filter: filter, configuration: config, delegate: self)
         do {

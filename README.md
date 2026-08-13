@@ -566,3 +566,33 @@ background/locked-screen behavior.
 v36 updates the regression test to verify the correct invariant instead:
 restoration identifier and restoration callback must either both exist or both
 be absent. For the current design, both are explicitly required.
+
+
+## v37 — use the actual iOS 27 ScreenCaptureKit API surface
+
+The v36 TestFlight archive successfully imported ScreenCaptureKit from the
+iPhoneOS 27 SDK. It then exposed six configuration properties that Xcode marks
+unavailable on iOS:
+
+- `allowedPickerModes`
+- `allowsChangingSelectedContent`
+- `excludedBundleIDs`
+- `minimumFrameInterval`
+- `queueDepth`
+- `scalesToFit`
+
+Those properties are part of ScreenCaptureKit's broader/macOS API surface but
+are not usable by an iOS 27 app.
+
+v37 follows Apple's iOS sample pattern instead:
+
+- configure the shared picker only with iOS-supported picker controls;
+- call `picker.present()` for full-display selection;
+- create a default `SCStreamConfiguration`;
+- disable audio;
+- attach the `.screen` stream output;
+- throttle Vision OCR in application code to approximately 1 Hz.
+
+The existing `process(pixelBuffer:)` 0.8-second guard remains the effective
+frame-processing throttle, so removing `minimumFrameInterval` does not cause
+OCR to run at display frame rate.
