@@ -24,11 +24,21 @@ enum HudTextProbeRoute: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class HudTextRendererProbe {
-    var title = "TEST ARTIST"
-    var message = "TEST TRACK"
-    var packageName = "com.kivic.music"
-    var notificationCategory = 12
-    var selectedRoute: HudTextProbeRoute = .nativeMusic
+    var title: String {
+        didSet { UserDefaults.standard.set(title, forKey: "HUD.TextProbe.title") }
+    }
+    var message: String {
+        didSet { UserDefaults.standard.set(message, forKey: "HUD.TextProbe.message") }
+    }
+    var packageName: String {
+        didSet { UserDefaults.standard.set(packageName, forKey: "HUD.TextProbe.packageName") }
+    }
+    var notificationCategory: Int {
+        didSet { UserDefaults.standard.set(notificationCategory, forKey: "HUD.TextProbe.category") }
+    }
+    var selectedRoute: HudTextProbeRoute {
+        didSet { UserDefaults.standard.set(selectedRoute.rawValue, forKey: "HUD.TextProbe.route") }
+    }
 
     private(set) var status = "Ready"
     private let bluetooth: HudBluetoothManager
@@ -37,6 +47,17 @@ final class HudTextRendererProbe {
     init(bluetooth: HudBluetoothManager, logger: LogManager) {
         self.bluetooth = bluetooth
         self.logger = logger
+
+        let d = UserDefaults.standard
+        self.title = d.string(forKey: "HUD.TextProbe.title") ?? "TEST ARTIST"
+        self.message = d.string(forKey: "HUD.TextProbe.message") ?? "TEST TRACK"
+        self.packageName = d.string(forKey: "HUD.TextProbe.packageName") ?? "com.kivic.music"
+        self.notificationCategory = d.object(forKey: "HUD.TextProbe.category") == nil
+            ? 12
+            : d.integer(forKey: "HUD.TextProbe.category")
+        self.selectedRoute = d.string(forKey: "HUD.TextProbe.route")
+            .flatMap(HudTextProbeRoute.init(rawValue:))
+            ?? .nativeMusic
     }
 
     func sendSelected() {

@@ -29,6 +29,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
     private let logger: LogManager
     private var lastSeen = Date.distantPast
     private var watchdogTask: Task<Void, Never>?
+    private let absenceConfirmationWindows = 3
 
     init(bluetooth: HudBluetoothManager, logger: LogManager) {
         self.bluetooth = bluetooth
@@ -115,19 +116,46 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
         }
     }
 
+    func rehydrateHUDState() {
+        guard enabled, bluetooth.state == .connected else { return }
+
+        let recentEnough = lightPresent &&
+            Date().timeIntervalSince(lastSeen) <=
+            Double(max(1, absenceTimeoutSeconds) * absenceConfirmationWindows)
+
+        bluetooth.enqueue(
+            HudCommands.autoBrightness(recentEnough),
+            label: "HUD rehydrate → ambient auto brightness \(recentEnough ? "ON" : "OFF")"
+        )
+        logger.log(
+            "AMBIENT SESSION",
+            "Rehydrated HUD brightness from BLE-presence state: \(recentEnough)"
+        )
+    }
+
     private func startWatchdog() {
         watchdogTask?.cancel()
         watchdogTask = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard self.enabled else { continue }
-                if self.lightPresent &&
-                    Date().timeIntervalSince(self.lastSeen) > Double(self.absenceTimeoutSeconds) {
+                let elapsed = Date().timeIntervalSince(self.lastSeen)
+                let timeout = Double(max(1, self.absenceTimeoutSeconds))
+                let missedWindows = Int(elapsed / timeout)
+
+                if self.lightPresent && missedWindows >= self.absenceConfirmationWindows {
                     self.lightPresent = false
                     self.status = "\(self.targetName) absent"
-                    self.logger.log("AMBIENT", "\(self.targetName) absent for \(self.absenceTimeoutSeconds)s; disabling HUD auto brightness")
+                    let confirmedSeconds = self.absenceTimeoutSeconds * self.absenceConfirmationWindows
+                    self.logger.log(
+                        "AMBIENT",
+                        "\(self.targetName) confirmed absent after \(self.absenceConfirmationWindows) missed windows (~\(confirmedSeconds)s); disabling HUD auto brightness"
+                    )
                     if self.bluetooth.state == .connected {
-                        self.bluetooth.enqueue(HudCommands.autoBrightness(false), label: "Ambient trigger → Auto brightness OFF")
+                        self.bluetooth.enqueue(
+                            HudCommands.autoBrightness(false),
+                            label: "Ambient trigger → Auto brightness OFF"
+                        )
                     }
                 }
             }

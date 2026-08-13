@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 @MainActor
 @Observable
@@ -15,6 +16,7 @@ final class AppState {
     let settings = HudSettings()
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
+    private var hudRehydrateTask: Task<Void, Never>?
 
     init() {
         let logger = LogManager()
@@ -27,8 +29,10 @@ final class AppState {
         self.textProbe = HudTextRendererProbe(bluetooth: bluetooth, logger: logger)
         let obd = HudOBDController(bluetooth: bluetooth, logger: logger)
         self.obd = obd
-        self.speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)
-        self.ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
+        let speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)
+        self.speedEngine = speedEngine
+        let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
+        self.ambientLight = ambientLight
         if #available(iOS 27.0, *) {
             self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
         }
@@ -37,8 +41,25 @@ final class AppState {
             self?.pushSpotifyMetadataToHUD(artist: artist, track: track)
         }
 
-        bluetooth.onTransportReady = { [weak obd] in
-            obd?.hudDidBecomeReady()
+        bluetooth.onTransportReady = { [weak self] in
+            self?.scheduleHUDRehydration(reason: "BLE transport ready")
+        }
+
+        bluetooth.onHUDSessionReset = { [weak self] in
+            self?.scheduleHUDRehydration(reason: "HUD firmware hello / physical session reset")
+        }
+
+        bluetooth.onTransportDisconnected = { [weak self] in
+            guard let self else { return }
+            self.hudRehydrateTask?.cancel()
+            self.hudRehydrateTask = nil
+            self.obd.transportDisconnected()
+            if #available(iOS 27.0, *),
+               let capture = self.externalCapture27 as? ExternalNavigationCapture {
+                // Do not stop ScreenCaptureKit; only mark HUD delivery unarmed.
+                capture.hudSessionDidReset(reason: "HUD BLE transport disconnected")
+            }
+            self.logger.log("HUD SESSION", "BLE transport disconnected; preserved iPhone-side settings/capture")
         }
     }
 
@@ -151,6 +172,59 @@ final class AppState {
             label: "Native music: \(resolvedArtist) — \(resolvedTrack)"
         )
 
+    }
+
+
+    private func scheduleHUDRehydration(reason: String) {
+        hudRehydrateTask?.cancel()
+        hudRehydrateTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            // Short debounce handles duplicate CoreBluetooth restoration /
+            // service-ready callbacks and lets the HUD firmware finish booting.
+            try? await Task.sleep(for: .milliseconds(750))
+            guard !Task.isCancelled, self.bluetooth.state == .connected else { return }
+
+            self.rehydrateHUD(reason: reason)
+            self.hudRehydrateTask = nil
+        }
+    }
+
+    private func rehydrateHUD(reason: String) {
+        logger.log("HUD REHYDRATE", "BEGIN reason=\(reason)")
+
+        // Base session state. Do not use initializeHUD() here because that
+        // method intentionally sends defaults (Navigation OFF, brightness 50).
+        bluetooth.enqueue(HudCommands.systemTime(), label: "Rehydrate → system time")
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "Rehydrate → keep alive")
+        bluetooth.enqueue(HudCommands.phoneName(UIDevice.current.name), label: "Rehydrate → phone name")
+        bluetooth.enqueue(HudCommands.fullScreen(true), label: "Rehydrate → full screen")
+
+        // Restore all user-configurable HUD state from persisted models.
+        applyBrightness()
+        applyTimeWeather()
+        applyNotificationSettings()
+        obd.hudDidBecomeReady()
+        ambientLight.rehydrateHUDState()
+        speedEngine.rehydrateHUDState()
+
+        // Screen capture may have continued through a physical HUD reboot.
+        // Re-arm navigation and immediately restore the last validated maneuver.
+        if #available(iOS 27.0, *),
+           let capture = externalCapture27 as? ExternalNavigationCapture {
+            capture.hudSessionDidReset(reason: reason)
+        }
+
+        // Restore live Spotify packet/filter state if metadata is available.
+        musicFilterInitialized = false
+        pushSpotifyMetadataToHUD()
+
+        logger.log(
+            "HUD REHYDRATE",
+            "END brightness=\(settings.brightness) autoBrightness=\(settings.autoBrightness) " +
+            "OBDauto=\(obd.autoConnect) speedLimit=\(speedEngine.showSpeedLimit) " +
+            "tolerance=+\(speedEngine.speedTolerance)mph"
+        )
     }
 
 }

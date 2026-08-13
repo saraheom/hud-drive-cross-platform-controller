@@ -33,6 +33,8 @@ final class HudBluetoothManager: NSObject {
 
     var onOBDConnectionEvent: ((Bool, String) -> Void)?
     var onTransportReady: (() -> Void)?
+    var onTransportDisconnected: (() -> Void)?
+    var onHUDSessionReset: (() -> Void)?
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -54,6 +56,7 @@ final class HudBluetoothManager: NSObject {
     private var reconnectAttempt = 0
     private var userRequestedDisconnect = false
     private var autoReconnectEnabled = true
+    private var lastHUDSessionHelloAt = Date.distantPast
 
     var savedHUDName: String? {
         UserDefaults.standard.string(forKey: savedPeripheralNameKey)
@@ -319,6 +322,21 @@ final class HudBluetoothManager: NSObject {
             logger.log("HUD LIGHT", "Auto-brightness/sensor raw value = \(value)")
         }
 
+        // HUD firmware/version hello:
+        // captured frame unescapes to EventPacket(command=3, p1=5, p2=0)
+        // followed by "HUDWAY Drive&<firmware>&<protocol>". This packet
+        // reappeared after a physical HUD power cycle even while iOS still
+        // considered the BLE link alive. Treat it as a HUD-session reset
+        // signal so higher layers can rehydrate persistent configuration.
+        if body[0] == 3, body[1] == 5, body[2] == 0 {
+            let now = Date()
+            if now.timeIntervalSince(lastHUDSessionHelloAt) > 2.0 {
+                lastHUDSessionHelloAt = now
+                logger.log("HUD SESSION", "Firmware hello/version event detected; HUD state may have reset")
+                onHUDSessionReset?()
+            }
+        }
+
         // Decompiled OBDConnectionEventPacket:
         // EventPacket(command=3, p1=100, p2=0)
         // payload = DataInputStream.readUTF(supportedPids) + boolean connected
@@ -460,6 +478,7 @@ extension HudBluetoothManager: CBCentralManagerDelegate {
             self.writing = false
             let reason = error?.localizedDescription ?? "no error"
             self.logger.log("BLE", "Disconnected: \(reason)")
+            self.onTransportDisconnected?()
 
             if self.userRequestedDisconnect {
                 self.logger.log("BLE AUTO", "No reconnect: disconnect was user-requested")

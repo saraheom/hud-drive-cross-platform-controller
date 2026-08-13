@@ -51,6 +51,7 @@ final class ExternalNavigationCapture: NSObject {
     private var pendingCandidateCount = 0
     private var lastSentKey = ""
     private var lastSentDistance = -1
+    private var hasValidatedInstruction = false
     private let picker = SCContentSharingPicker.shared
 
     init(logger: LogManager, navigation: HudNavigationController) {
@@ -125,6 +126,42 @@ final class ExternalNavigationCapture: NSObject {
             self.recoveryTask = nil
             self.start(filter: filter, recovery: true)
         }
+    }
+
+    func hudSessionDidReset(reason: String) {
+        // ScreenCaptureKit belongs to the iPhone and may still be running even
+        // though the physical HUD rebooted. Reset only HUD-delivery state.
+        navigationModeArmed = false
+        lastSentKey = ""
+        lastSentDistance = -1
+        pendingCandidateKey = ""
+        pendingCandidateCount = 0
+
+        logger.log(
+            "SCREEN NAV SESSION",
+            "\(reason); reset HUD navigation arm/dedup state while keeping capture alive"
+        )
+
+        guard autoSendToHUD,
+              autoEnableNavigationMode,
+              hasValidatedInstruction,
+              latestInstruction.distanceMeters > 0 else { return }
+
+        navigation.navigationOn()
+        navigationModeArmed = true
+        navigation.current = latestInstruction
+        navigation.sendCurrent()
+
+        let streetKey = latestInstruction.streetName
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+        lastSentKey = "\(latestInstruction.maneuver.rawValue)|\(streetKey)"
+        lastSentDistance = latestInstruction.distanceMeters
+
+        logger.log(
+            "SCREEN NAV SESSION",
+            "Re-armed Navigation ON and re-sent cached validated maneuver"
+        )
     }
 
     func analyzePhoto(_ image: UIImage) async {
@@ -221,6 +258,7 @@ final class ExternalNavigationCapture: NSObject {
 
         validNavigationFrames += 1
         latestInstruction = result.instruction
+        hasValidatedInstruction = true
         logger.log(
             source,
             "VALID confidence=\(result.confidence) \(result.instruction.primaryText) | \(result.instruction.streetName) | \(result.instruction.distanceMeters)m"
@@ -384,6 +422,8 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func appBecameActive() { }
+
+    func hudSessionDidReset(reason: String) { }
 
     func analyzePhoto(_ image: UIImage) async {
         status = "Analyzing saved screenshot…"

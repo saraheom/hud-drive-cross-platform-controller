@@ -101,6 +101,10 @@ struct VehicleView: View {
                                 in: 0...30
                             )
 
+                            Text("Speed engine, speed-limit sign, and warning tolerance are saved immediately and restored after app relaunch.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
                             LabeledContent("GPS speed", value: "\(state.speedEngine.currentSpeedMph) mph")
                             LabeledContent(
                                 "Posted limit",
@@ -157,7 +161,7 @@ struct VehicleView: View {
                             }
 
                             Text("""
-                            BLEDOM does not need to appear in Settings → Bluetooth. This monitor performs app-level BLE advertisement scanning, like Lotus Lantern. When BLEDOM is seen it sends HUD Auto Brightness ON; after the configured absence timeout it sends Auto Brightness OFF.
+                            BLEDOM does not need to appear in Settings → Bluetooth. Presence enables HUD Auto Brightness immediately. To prevent BLE advertisement gaps from flickering brightness, absence is confirmed only after three consecutive timeout windows (for example, a 2 s timeout requires about 6 s of confirmed absence).
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

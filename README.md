@@ -782,3 +782,72 @@ v43 updates those tests to the current architecture:
 - the v41 Persistent Text / Music Probe tests remain active.
 
 No runtime application behavior changed.
+
+
+## v44 — HUD session rehydration + persistent speed-limit settings
+
+The CarPlay drive log showed that a physical HUD power-cycle can reset firmware
+state before iOS reports a CoreBluetooth disconnect. The HUD's firmware/version
+event (`3 / 5 / 0`) reappeared after the power interruption, so v44 treats that
+event as a HUD-session reset signal.
+
+### Automatic HUD rehydration
+
+On a fresh BLE transport or firmware-session reset, v44 re-applies persisted
+state without stopping ScreenCaptureKit:
+
+- system time / keepalive / phone name / full-screen mode;
+- manual/automatic brightness;
+- time/weather toggle;
+- notification filters;
+- Freeride and Navigation dashboard widgets;
+- OBD auto-connect;
+- ambient-light-derived auto-brightness state;
+- GPS/OSM speed-limit state and warning tolerance;
+- current validated screen-capture navigation state;
+- current Spotify metadata packet/filter when available.
+
+If screen capture is still running and has a previously validated maneuver, the
+HUD is automatically put back into Navigation mode and the cached maneuver is
+re-sent immediately.
+
+### OBD robustness
+
+OBD connection state is now considered HUD-session-local. It is cleared when:
+
+- the HUD BLE transport disconnects;
+- a HUD firmware-session reset is detected;
+- the user explicitly requests OBD disconnect.
+
+When OBD auto-connect is enabled, the app retries every five seconds until the
+HUD's actual OBD event reports `connected=true`. A stale local `connected=true`
+value can no longer block reconnection after a physical HUD reboot.
+
+### Ambient BLE hysteresis
+
+BLEDOM presence still enables HUD Auto Brightness immediately. Absence now
+requires three complete timeout windows. A 2-second timeout therefore requires
+about 6 seconds without a matching advertisement before Auto Brightness is
+disabled. This is intended to prevent normal BLE advertising gaps from
+flapping the HUD brightness mode.
+
+### Persistent speed-limit settings
+
+The following are now stored in UserDefaults and restored on app launch:
+
+- original-style GPS/OSM speed engine enabled state;
+- Show speed-limit sign;
+- warning tolerance in mph.
+
+Changing the warning tolerance forces the currently displayed speed-limit
+threshold to refresh. Enabling the speed-limit sign also ensures the GPS/OSM
+engine is running.
+
+The diagnostic persistent-text/music probe fields are also persisted so test
+configuration survives app relaunch.
+
+### Apple Maps
+
+No Apple Maps OCR assumptions are added in v44. The Google Maps parser remains
+unchanged. A future Apple Maps screenshot can be added as a separate parser
+layout/test fixture rather than weakening the validated Google Maps rules.

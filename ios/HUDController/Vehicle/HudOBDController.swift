@@ -44,6 +44,8 @@ enum HudOBDItem: Int, CaseIterable, Identifiable {
 final class HudOBDController {
     private let bluetooth: HudBluetoothManager
     private let logger: LogManager
+    private var autoConnectTask: Task<Void, Never>?
+    private var autoConnectAttempt = 0
 
     var deviceName: String {
         didSet { UserDefaults.standard.set(deviceName, forKey: "HUD.OBD.deviceName") }
@@ -78,6 +80,13 @@ final class HudOBDController {
             self.connected = connected
             self.supportedPIDs = pids
             self.status = connected ? "Connected through HUD" : "Disconnected"
+            if connected {
+                self.autoConnectTask?.cancel()
+                self.autoConnectTask = nil
+                self.autoConnectAttempt = 0
+            } else if self.autoConnect {
+                self.startAutoConnectLoop(reason: "HUD reported OBD disconnected")
+            }
             self.logger.log("OBD EVENT", "connected=\(connected), supported=\(pids)")
         }
     }
@@ -91,16 +100,21 @@ final class HudOBDController {
         UserDefaults.standard.set(widget.rawValue, forKey: key)
     }
 
-    func connect() {
-        if connected {
+    func connect(force: Bool = false) {
+        if connected && !force {
             status = "Connected through HUD"
             logger.log("OBD", "Connect request ignored: already connected")
             return
         }
+
+        if force && connected {
+            logger.log("OBD", "Forced connect requested; clearing stale connected state")
+            connected = false
+            supportedPIDs = ""
+        }
+
         let name = deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "OBDII" : deviceName
         deviceName = name
-        UserDefaults.standard.set(name, forKey: "HUD.OBD.deviceName")
-        UserDefaults.standard.set(autoConnect, forKey: "HUD.OBD.autoConnect")
         status = "HUD is searching for \(name)…"
         logger.log("OBD", "Request HUD-side OBD connection to \(name)")
         bluetooth.enqueue(
@@ -109,13 +123,21 @@ final class HudOBDController {
         )
     }
 
+
     func disconnect() {
+        autoConnectTask?.cancel()
+        autoConnectTask = nil
+        autoConnectAttempt = 0
+        connected = false
+        supportedPIDs = ""
         status = "Disconnect requested"
         bluetooth.enqueue(
             HudCommands.obdConnection(enabled: false, deviceName: deviceName),
             label: "OBD disconnect"
         )
+        logger.log("OBD", "Local OBD state cleared immediately after disconnect request")
     }
+
 
     func applyWidgetSelection() {
         applyFreerideWidgets()
@@ -157,11 +179,65 @@ final class HudOBDController {
     }
 
     func hudDidBecomeReady() {
+        hudSessionDidReset(reason: "HUD transport became ready")
+        applyWidgetSelection()
+    }
+
+    func hudSessionDidReset(reason: String) {
+        autoConnectTask?.cancel()
+        autoConnectTask = nil
+        autoConnectAttempt = 0
+        connected = false
+        supportedPIDs = ""
+        status = autoConnect ? "HUD reset detected; reconnecting OBD…" : "HUD reset detected"
+        logger.log("OBD SESSION", "\(reason); cleared stale OBD connection state")
+
         if autoConnect {
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(2))
-                self.connect()
-            }
+            startAutoConnectLoop(reason: reason)
         }
     }
+
+    func transportDisconnected() {
+        autoConnectTask?.cancel()
+        autoConnectTask = nil
+        autoConnectAttempt = 0
+        connected = false
+        supportedPIDs = ""
+        status = "HUD disconnected"
+        logger.log("OBD SESSION", "HUD BLE transport disconnected; cleared OBD state")
+    }
+
+    private func startAutoConnectLoop(reason: String) {
+        guard autoConnect else { return }
+        guard autoConnectTask == nil else { return }
+
+        logger.log("OBD AUTO", "Starting retry loop: \(reason)")
+        autoConnectTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            // Give the HUD firmware a moment to finish its own startup.
+            try? await Task.sleep(for: .seconds(2))
+
+            while !Task.isCancelled && self.autoConnect && !self.connected {
+                guard self.bluetooth.state == .connected else {
+                    try? await Task.sleep(for: .seconds(2))
+                    continue
+                }
+
+                self.autoConnectAttempt += 1
+                self.logger.log("OBD AUTO", "Connect attempt \(self.autoConnectAttempt)")
+                self.connect(force: true)
+
+                // The physical HUD can take several seconds to connect to ELM327.
+                // Retry until its OBD event explicitly reports connected=true.
+                try? await Task.sleep(for: .seconds(5))
+            }
+
+            if self.connected {
+                self.logger.log("OBD AUTO", "Retry loop completed: OBD connected")
+            }
+            self.autoConnectTask = nil
+        }
+    }
+
 }

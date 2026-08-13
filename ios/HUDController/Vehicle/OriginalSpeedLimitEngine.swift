@@ -46,23 +46,63 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private(set) var currentSpeedLimitMph = 0
     private(set) var status = "Waiting for location"
 
-    var enabled = false {
+    var enabled: Bool {
         didSet {
+            UserDefaults.standard.set(enabled, forKey: "HUD.Speed.enabled")
             if enabled { start() } else { stop() }
         }
     }
-    var speedTolerance = 0
-    var showSpeedLimit = true
+
+    var speedTolerance: Int {
+        didSet {
+            let clamped = max(0, min(30, speedTolerance))
+            if clamped != speedTolerance {
+                speedTolerance = clamped
+                return
+            }
+            UserDefaults.standard.set(speedTolerance, forKey: "HUD.Speed.toleranceMph")
+            // Force the currently displayed limit/warning to refresh.
+            lastSentLimit = -1
+            resendCurrentLimitIfPossible()
+        }
+    }
+
+    var showSpeedLimit: Bool {
+        didSet {
+            UserDefaults.standard.set(showSpeedLimit, forKey: "HUD.Speed.showLimit")
+            if showSpeedLimit && !enabled {
+                enabled = true
+            }
+            lastSentLimit = -1
+            resendCurrentLimitIfPossible()
+        }
+    }
 
     init(bluetooth: HudBluetoothManager, logger: LogManager) {
         self.bluetooth = bluetooth
         self.logger = logger
+
+        let d = UserDefaults.standard
+        self.enabled = d.object(forKey: "HUD.Speed.enabled") == nil
+            ? true
+            : d.bool(forKey: "HUD.Speed.enabled")
+        self.speedTolerance = d.object(forKey: "HUD.Speed.toleranceMph") == nil
+            ? 0
+            : max(0, min(30, d.integer(forKey: "HUD.Speed.toleranceMph")))
+        self.showSpeedLimit = d.object(forKey: "HUD.Speed.showLimit") == nil
+            ? true
+            : d.bool(forKey: "HUD.Speed.showLimit")
+
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         locationManager.activityType = .automotiveNavigation
         locationManager.distanceFilter = 4
         locationManager.pausesLocationUpdatesAutomatically = false
+
+        if enabled {
+            start()
+        }
     }
 
     func start() {
@@ -74,6 +114,46 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     func stop() {
         locationManager.stopUpdatingLocation()
         status = "Disabled"
+    }
+
+    func rehydrateHUDState() {
+        guard enabled, bluetooth.state == .connected else { return }
+        lastSentSpeed = -1
+        lastSentLimit = -1
+
+        logger.log(
+            "SPEED SESSION",
+            "Rehydrating HUD speed/limit state (showLimit=\(showSpeedLimit), tolerance=+\(speedTolerance) mph)"
+        )
+
+        if let location = locationManager.location {
+            process(location)
+        } else {
+            resendCurrentLimitIfPossible()
+        }
+
+        if showSpeedLimit {
+            refreshNow()
+        }
+    }
+
+    private func resendCurrentLimitIfPossible() {
+        guard bluetooth.state == .connected,
+              showSpeedLimit,
+              currentSpeedLimitMph > 0 else { return }
+
+        bluetooth.enqueue(
+            HudCommands.speedLimit(
+                limit: currentSpeedLimitMph,
+                tolerance: speedTolerance
+            ),
+            label: "Speed limit \(currentSpeedLimitMph) mph (+\(speedTolerance))"
+        )
+        bluetooth.enqueue(
+            HudCommands.speedWarningThreshold(currentSpeedLimitMph + speedTolerance),
+            label: "Speed warning \(currentSpeedLimitMph + speedTolerance) mph"
+        )
+        lastSentLimit = currentSpeedLimitMph
     }
 
     func refreshNow() {
@@ -127,7 +207,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 lastSentLimit = limit
                 bluetooth.enqueue(
                     HudCommands.speedLimit(limit: limit, tolerance: speedTolerance),
-                    label: "Speed limit \(limit) mph"
+                    label: "Speed limit \(limit) mph (+\(speedTolerance))"
                 )
                 bluetooth.enqueue(
                     HudCommands.speedWarningThreshold(limit + speedTolerance),
