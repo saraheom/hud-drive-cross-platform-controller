@@ -466,3 +466,28 @@ version is at least 27 before generating/building the project. CI also checks
 that `ScreenCaptureKit.framework` exists in the selected simulator SDK.
 
 No application behavior from v30 was removed.
+
+
+## v32 — restore full iOS CI/TestFlight workflows
+
+v31 accidentally truncated both workflow files after the Xcode 27 verification
+step. A green workflow therefore meant only that checkout and SDK verification
+succeeded; no project generation, build, archive, IPA export, or TestFlight
+upload occurred.
+
+v32 restores the complete v30 CI/TestFlight pipelines and changes only the
+runner/toolchain portions to `xcode-27`.
+
+The TestFlight workflow now explicitly:
+1. verifies Xcode/iOS 27;
+2. installs XcodeGen/Fastlane;
+3. generates the project and injects build number + Spotify client ID;
+4. installs signing certificate and provisioning profile;
+5. archives the app;
+6. verifies `CFBundleVersion == GITHUB_RUN_NUMBER`;
+7. exports an App Store IPA;
+8. verifies the IPA physically exists;
+9. uploads it with `fastlane pilot`;
+10. uploads the IPA as a GitHub Actions artifact.
+
+A successful v32 TestFlight job therefore means an actual upload command ran.

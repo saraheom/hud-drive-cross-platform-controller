@@ -13,9 +13,193 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Verify Xcode 27 toolchain
         run: |
+          set -euo pipefail
           xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-          xcrun --sdk iphonesimulator --show-sdk-version
-          test "$(xcrun --sdk iphoneos --show-sdk-version | cut -d. -f1)" -ge 27
+          IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-version)"
+          SIM_SDK="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          echo "iPhoneOS SDK: $IOS_SDK"
+          echo "Simulator SDK: $SIM_SDK"
+          test "${IOS_SDK%%.*}" -ge 27
+          test "${SIM_SDK%%.*}" -ge 27
+
+      - name: Install build tools
+        run: |
+          brew install xcodegen
+          sudo gem install fastlane
+
+      - name: Validate iOS 27 ScreenCaptureKit framework
+        run: |
+          set -euo pipefail
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          test -d "$SDK_PATH/System/Library/Frameworks/ScreenCaptureKit.framework"
+          echo "ScreenCaptureKit found: $SDK_PATH/System/Library/Frameworks/ScreenCaptureKit.framework"
+
+      - name: Generate project
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" HUDController/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :SPOTIFY_CLIENT_ID $SPOTIFY_CLIENT_ID" HUDController/Info.plist
+          echo "Generated bundle version:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" HUDController/Info.plist
+
+      - name: Install signing certificate and App Store profile
+        env:
+          P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/hud-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          echo "$PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin <<< "$(security cms -D -i "$RUNNER_TEMP/profile.mobileprovision")")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' /dev/stdin <<< "$(security cms -D -i "$RUNNER_TEMP/profile.mobileprovision")")
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$RUNNER_TEMP/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+
+      - name: Verify signing identity and provisioning profile
+        run: |
+          set -euo pipefail
+          echo "Available code-signing identities:"
+          security find-identity -v -p codesigning
+
+          echo "Provisioning profile summary:"
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          /usr/libexec/PlistBuddy -c "Print :Name" "$RUNNER_TEMP/profile.plist"
+          /usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$RUNNER_TEMP/profile.plist"
+          /usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$RUNNER_TEMP/profile.plist"
+
+          security find-identity -v -p codesigning | grep -q "Apple Distribution"
+          echo "Apple Distribution identity is available."
+
+      - name: Validate Spotify observable internals
+        run: |
+          grep -A1 "@ObservationIgnored" ios/HUDController/Media/SpotifyMediaController.swift | grep -q "private lazy var"
+          echo "Spotify lazy internals are excluded from Observation."
+
+      - name: Verify App Store build environment
+        run: |
+          set -euo pipefail
+          echo "Selected Xcode:"
+          xcodebuild -version
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iPhoneOS SDK: $SDK_VERSION"
+          case "$SDK_VERSION" in
+            26.*|27.*) ;;
+            *) echo "ERROR: App Store Connect requires iOS 26 SDK or later."; exit 1 ;;
+          esac
+
+          echo "Generated app settings:"
+          cd ios
+          xcodebuild \
+            -project HUDController.xcodeproj \
+            -scheme HUDController \
+            -showBuildSettings \
+            | grep -E 'TARGETED_DEVICE_FAMILY|PRODUCT_BUNDLE_IDENTIFIER|IPHONEOS_DEPLOYMENT_TARGET'
+
+      - name: Archive
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project HUDController.xcodeproj \
+            -scheme HUDController \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/HUDController.xcarchive" \
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+            PRODUCT_BUNDLE_IDENTIFIER="$HUD_BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            archive
+
+      - name: Verify archived bundle version
+        run: |
+          set -euo pipefail
+          ARCHIVE_PLIST="$RUNNER_TEMP/HUDController.xcarchive/Products/Applications/HUDController.app/Info.plist"
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$ARCHIVE_PLIST")
+          SHORT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$ARCHIVE_PLIST")
+          echo "Archived version: $SHORT_VERSION ($VERSION)"
+          test "$VERSION" = "$GITHUB_RUN_NUMBER"
+
+      - name: Export App Store IPA
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>teamID</key><string>${DEVELOPMENT_TEAM}</string>
+            <key>provisioningProfiles</key>
+            <dict><key>${HUD_BUNDLE_ID}</key><string>${PROFILE_NAME}</string></dict>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/HUDController.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Create App Store Connect API key JSON
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          KEY_CONTENT="$(echo "$ASC_KEY_P8_BASE64" | base64 --decode | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+          cat > "$RUNNER_TEMP/api_key.json" <<EOF
+          {
+            "key_id": "$ASC_KEY_ID",
+            "issuer_id": "$ASC_ISSUER_ID",
+            "key": $KEY_CONTENT,
+            "in_house": false
+          }
+          EOF
+
+      - name: Confirm IPA exists before upload
+        run: |
+          set -euo pipefail
+          IPA="$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' | head -1)"
+          test -n "$IPA"
+          test -f "$IPA"
+          echo "IPA ready for upload: $IPA"
+          ls -lh "$IPA"
+
+      - name: Upload to TestFlight
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: "1"
+        run: |
+          IPA="$(find "$RUNNER_TEMP/export" -name '*.ipa' -maxdepth 1 | head -1)"
+          echo "Submitting IPA to App Store Connect..."
+          fastlane pilot upload \
+            --ipa "$IPA" \
+            --api_key_path "$RUNNER_TEMP/api_key.json" \
+            --skip_waiting_for_build_processing true
+          echo "fastlane pilot upload command completed successfully."
+
+      - name: Upload IPA artifact too
+        uses: actions/upload-artifact@v4
+        with:
+          name: HUDController-TestFlight-IPA
+          path: ${{ runner.temp }}/export/*.ipa
+          retention-days: 14
