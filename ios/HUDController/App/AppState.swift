@@ -149,17 +149,24 @@ final class AppState {
             label: "Native music: \(resolvedArtist) — \(resolvedTrack)"
         )
 
-        // If an experimental Music side-widget is selected, re-send the
-        // corresponding dashboard after metadata updates. This probes whether
-        // the firmware has an undocumented Music widget that binds to the
-        // MusicNotificationPacket data source.
-        if obd.freerideLeft == .spotifyMusicExperimental ||
-            obd.freerideRight == .spotifyMusicExperimental {
+        // "Music" in our UI intentionally maps to the original firmware
+        // Weather dashboard token. Re-apply that known-good dashboard whenever
+        // Spotify metadata changes, while also sending the native music packet.
+        if obd.freerideLeft.isMusicDisplaySlot ||
+            obd.freerideRight.isMusicDisplaySlot {
             obd.applyFreerideWidgets()
+            logger.log(
+                "MUSIC SLOT",
+                "Spotify metadata updated; re-applied Freeride Weather-as-Music slot"
+            )
         }
-        if obd.navigationLeft == .spotifyMusicExperimental ||
-            obd.navigationRight == .spotifyMusicExperimental {
+        if obd.navigationLeft.isMusicDisplaySlot ||
+            obd.navigationRight.isMusicDisplaySlot {
             obd.applyNavigationWidgets()
+            logger.log(
+                "MUSIC SLOT",
+                "Spotify metadata updated; re-applied Navigation Weather-as-Music slot"
+            )
         }
     }
 

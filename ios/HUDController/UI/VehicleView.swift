@@ -73,7 +73,7 @@ struct VehicleView: View {
                                 .buttonStyle(.borderedProminent)
 
                             Text("""
-                            “Spotify / Music (experimental)” is not present in the original app's SideWidget enum. Selecting it sends the undocumented test token `Music` and feeds current Spotify metadata through MusicNotificationPacket. The HUD may ignore it; this option exists specifically to probe for hidden firmware support.
+                            Music replaces Weather in this app. Internally it selects the HUD's original `Weather` side-widget token, which is a known valid dashboard slot. Spotify artist/track metadata is then sent through the native music path while this slot remains selected.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

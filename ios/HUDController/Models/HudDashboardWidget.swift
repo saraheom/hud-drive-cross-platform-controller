@@ -19,11 +19,6 @@ enum HudSideWidget: String, CaseIterable, Identifiable {
     case coolantTemperature = "EngineCoolantTemp"
     case oilTemperature = "EngineOilTemp"
 
-    /// Experimental probe only. This token does NOT appear in the original
-    /// decompiled SideWidget enum; it is intentionally included so we can
-    /// test whether firmware has an undocumented music-capable side widget.
-    case spotifyMusicExperimental = "Music"
-
     var id: String { rawValue }
 
     var displayName: String {
@@ -31,7 +26,10 @@ enum HudSideWidget: String, CaseIterable, Identifiable {
         case .speed: return "Speed"
         case .maxSpeed: return "Max speed"
         case .averageSpeed: return "Average speed"
-        case .weather: return "Weather"
+        // We intentionally reserve the original firmware Weather widget
+        // as the persistent Spotify/music display slot. The BLE/dashboard
+        // token remains exactly "Weather"; only our iPhone UI label changes.
+        case .weather: return "Music"
         case .time: return "Time"
         case .distance: return "Distance"
         case .cost: return "Trip cost"
@@ -44,7 +42,10 @@ enum HudSideWidget: String, CaseIterable, Identifiable {
         case .fuelConsumption: return "Fuel consumption"
         case .coolantTemperature: return "Coolant temperature"
         case .oilTemperature: return "Engine oil temperature"
-        case .spotifyMusicExperimental: return "Spotify / Music (experimental)"
         }
     }
+    var isMusicDisplaySlot: Bool {
+        self == .weather
+    }
+
 }

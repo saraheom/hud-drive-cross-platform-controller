@@ -46,7 +46,7 @@ struct MediaView: View {
                             .buttonStyle(.borderedProminent)
 
                             Text("""
-                            After the first authorization, HUD Controller stores the Spotify App Remote token in Keychain and reconnects automatically when the app becomes active. Manual authorization is only needed initially or if Spotify invalidates the saved authorization. Track changes now enable the original firmware music filter (`com.kivic.music`, icon 3) and then use MusicNotificationPacket directly over BLE.
+                            After the first authorization, HUD Controller stores the Spotify App Remote token in Keychain and reconnects automatically when the app becomes active. Manual authorization is only needed initially or if Spotify invalidates the saved authorization. Track changes enable the original firmware music filter (`com.kivic.music`, icon 3) and use MusicNotificationPacket directly over BLE. If you select Music as a Freeride/Navigation side widget, the app reserves the HUD's original Weather widget slot for music display experiments.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

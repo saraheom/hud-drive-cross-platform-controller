@@ -686,3 +686,34 @@ v39 nevertheless adds `Spotify / Music (experimental)` using the test dash token
 firmware MusicNotificationPacket and the corresponding dashboard is re-applied.
 
 This is explicitly a firmware probe, not a confirmed original widget.
+
+
+## v40 — reserve the original Weather side widget for Music
+
+The v39 physical test showed that the undocumented dashboard token `Music`
+changes the HUD layout but renders a blank side area. The original decompiled
+SideWidget enum does not contain a Music widget.
+
+v40 removes that fake/undocumented token.
+
+Instead:
+
+- the iPhone UI no longer exposes a widget named Weather;
+- that option is displayed as `Music`;
+- selecting `Music` still sends the original, known-valid firmware dashName
+  `Weather`;
+- Spotify metadata continues through the corrected native music filter and
+  `MusicNotificationPacket`;
+- when Spotify metadata changes and a Music slot is selected, the appropriate
+  Freeride/Navigation dashboard is re-applied.
+
+This deliberately sacrifices the Weather side widget, which is acceptable for
+the intended configuration, while keeping the HUD on a firmware-supported
+dashboard layout.
+
+Important: the original weather data packet contains numeric weather fields,
+not arbitrary strings. Therefore v40 does not falsely encode artist/title as
+weather data. The Weather-as-Music slot is the known-good visual container for
+the next text-injection experiments.
+
+All v39 validated automatic navigation behavior is retained.
