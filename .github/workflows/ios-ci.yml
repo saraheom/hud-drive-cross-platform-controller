@@ -45,6 +45,15 @@ jobs:
             echo "Simulator ScreenCaptureKit framework is absent; expected for the device-only iOS 27 sample path."
           fi
 
+      - name: Validate simulator does not link ScreenCaptureKit
+        run: |
+          set -euo pipefail
+          if grep -R "weak_framework ScreenCaptureKit" ios/project.yml; then
+            echo "ScreenCaptureKit must not be globally linked for simulator builds."
+            exit 1
+          fi
+          echo "No global ScreenCaptureKit linker flag present."
+
       - name: Generate project
         working-directory: ios
         run: xcodegen generate

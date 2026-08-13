@@ -527,3 +527,27 @@ initialized.
 v34 uses a local `let store = UserDefaults.standard` throughout initialization,
 then assigns every persisted setting from that local reference. Runtime
 persistence behavior is unchanged.
+
+
+## v35 — remove global ScreenCaptureKit linker flag
+
+v34 compiled successfully under the iOS 27 simulator SDK, proving that the
+conditional Swift implementation works. The remaining CI failure was at link
+time:
+
+`ld: framework 'ScreenCaptureKit' not found`
+
+The cause was a global:
+
+`-weak_framework ScreenCaptureKit`
+
+setting in `project.yml`. That flag forces the simulator linker to resolve a
+framework that does not exist in the simulator SDK.
+
+v35 removes the global linker flag entirely. The real device-only
+ScreenCaptureKit source still imports the framework under:
+
+`#if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)`
+
+so physical iOS 27 builds use it normally, while simulator builds compile and
+link only the fallback implementation.
