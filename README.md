@@ -646,3 +646,43 @@ The decompiled original application's default music notification filter uses
 `com.kivic.music` (icon 3), not Spotify's Android/iOS package identifier.
 v38 enables that firmware-native filter and sends MusicNotificationPacket using
 `com.kivic.music`.
+
+
+## v39 — validated auto-navigation + experimental Spotify widget probe
+
+### Screen capture / lock behavior
+
+Physical testing showed that iOS 27 terminates the full-display ScreenCaptureKit
+stream when the device is manually locked. The framework reports the stop as
+`SCStreamError.userStopped`, and restarting the cached filter while locked fails.
+
+v39 therefore:
+- retains `screen-capture` background mode for normal app backgrounding;
+- keeps the optional idle-timer lock prevention;
+- retains recovery attempts after interruptions/unlock;
+- logs the exact ScreenCaptureKit NSError domain/code on stop;
+- does not claim that capture can continue behind the iOS lock screen.
+
+### Validated automatic navigation
+
+v38 proved that loose OCR validation could misclassify HUD Controller UI text
+("Keep screen awake during capture") as a navigation instruction.
+
+v39 now requires:
+- a navigation-like distance line;
+- a nearby explicit maneuver phrase;
+- confidence >= 80;
+- two consecutive valid frames for a new maneuver/street.
+
+After the first confirmed navigation result, the app automatically sends
+Navigation ON and then continuously sends validated maneuver updates. Invalid
+frames are skipped and do not clear the last valid HUD instruction.
+
+### Spotify side-widget experiment
+
+The original decompiled SideWidget enum has no Music/Now Playing widget.
+v39 nevertheless adds `Spotify / Music (experimental)` using the test dash token
+`Music`. When selected, Spotify metadata continues to be sent through the
+firmware MusicNotificationPacket and the corresponding dashboard is re-applied.
+
+This is explicitly a firmware probe, not a confirmed original widget.

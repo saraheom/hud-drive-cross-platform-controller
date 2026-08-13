@@ -19,6 +19,11 @@ enum HudSideWidget: String, CaseIterable, Identifiable {
     case coolantTemperature = "EngineCoolantTemp"
     case oilTemperature = "EngineOilTemp"
 
+    /// Experimental probe only. This token does NOT appear in the original
+    /// decompiled SideWidget enum; it is intentionally included so we can
+    /// test whether firmware has an undocumented music-capable side widget.
+    case spotifyMusicExperimental = "Music"
+
     var id: String { rawValue }
 
     var displayName: String {
@@ -39,6 +44,7 @@ enum HudSideWidget: String, CaseIterable, Identifiable {
         case .fuelConsumption: return "Fuel consumption"
         case .coolantTemperature: return "Coolant temperature"
         case .oilTemperature: return "Engine oil temperature"
+        case .spotifyMusicExperimental: return "Spotify / Music (experimental)"
         }
     }
 }

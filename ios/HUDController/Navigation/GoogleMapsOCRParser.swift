@@ -5,6 +5,9 @@ import UIKit
 struct ParsedExternalNavigation: Equatable {
     var instruction: NavigationInstruction
     var rawText: String
+    var isValidNavigation: Bool
+    var confidence: Int
+    var validationReason: String
 }
 
 enum GoogleMapsOCRParser {
@@ -39,39 +42,112 @@ enum GoogleMapsOCRParser {
     }
 
     static func parse(lines: [String], rawText: String) -> ParsedExternalNavigation {
-        let cleaned = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let cleaned = lines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
 
-        var distanceMeters = 0
-        var distanceIndex: Int?
+        // Google Maps' CarPlay companion screen normally exposes a distance
+        // line ("In 300 ft", "0.7 miles") followed closely by a maneuver line.
+        // Do not accept arbitrary numeric text elsewhere on the screen.
+        var selectedDistance = 0
+        var instructionLine = ""
+        var distanceLine = ""
+        var pairDistance = Int.max
+
         for (i, line) in cleaned.enumerated() {
-            if let value = parseDistanceMeters(line) {
-                distanceMeters = value
-                distanceIndex = i
-                break
+            guard let meters = parseDistanceMeters(line),
+                  isNavigationDistanceLine(line) else { continue }
+
+            let upper = min(cleaned.count - 1, i + 3)
+            if i < upper {
+                for j in (i + 1)...upper {
+                    if isExplicitManeuverLine(cleaned[j]) {
+                        let gap = j - i
+                        if gap < pairDistance {
+                            pairDistance = gap
+                            selectedDistance = meters
+                            distanceLine = line
+                            instructionLine = cleaned[j]
+                        }
+                    }
+                }
             }
         }
 
-        let instructionLine: String = {
-            if let i = distanceIndex {
-                for j in (i + 1)..<min(cleaned.count, i + 4) {
-                    if looksLikeManeuver(cleaned[j]) { return cleaned[j] }
+        // Fallback for layouts where instruction precedes distance by one row.
+        if instructionLine.isEmpty {
+            for (i, line) in cleaned.enumerated() where isExplicitManeuverLine(line) {
+                let lower = max(0, i - 2)
+                if lower < i {
+                    for j in lower..<i {
+                        if let meters = parseDistanceMeters(cleaned[j]),
+                           isNavigationDistanceLine(cleaned[j]) {
+                            selectedDistance = meters
+                            distanceLine = cleaned[j]
+                            instructionLine = line
+                            break
+                        }
+                    }
                 }
+                if !instructionLine.isEmpty { break }
             }
-            return cleaned.first(where: looksLikeManeuver) ?? cleaned.first ?? ""
-        }()
+        }
 
         let maneuver = maneuverFromText(instructionLine)
         let street = streetFromInstruction(instructionLine)
         let primary = primaryInstruction(instructionLine, maneuver: maneuver)
 
+        var confidence = 0
+        var reasons: [String] = []
+
+        if !instructionLine.isEmpty {
+            confidence += 45
+            reasons.append("explicit maneuver")
+        }
+        if selectedDistance > 0 {
+            confidence += 35
+            reasons.append("paired distance")
+        }
+        if !street.isEmpty {
+            confidence += 15
+            reasons.append("street/road")
+        }
+        if distanceLine.lowercased().contains("in ") ||
+            distanceLine.lowercased().contains("then ") {
+            confidence += 5
+            reasons.append("navigation distance wording")
+        }
+
+        // Reject obvious HUD Controller UI text even if OCR happened to find a
+        // distance elsewhere in the frame.
+        let rejectedUIWords = [
+            "screen capture", "keep screen", "automatically send",
+            "saved screenshot", "frames ocr", "brightness", "spotify",
+            "reconnect", "widget", "notification", "bluetooth"
+        ]
+        let loweredInstruction = instructionLine.lowercased()
+        let containsOwnUI = rejectedUIWords.contains(where: loweredInstruction.contains)
+        if containsOwnUI {
+            confidence = 0
+            reasons = ["HUD Controller UI text"]
+        }
+
+        let valid = confidence >= 80 &&
+            selectedDistance > 0 &&
+            !instructionLine.isEmpty &&
+            !containsOwnUI
+
         return ParsedExternalNavigation(
             instruction: NavigationInstruction(
                 maneuver: maneuver,
-                distanceMeters: distanceMeters,
+                distanceMeters: selectedDistance,
                 primaryText: primary,
                 streetName: street
             ),
-            rawText: rawText
+            rawText: rawText,
+            isValidNavigation: valid,
+            confidence: confidence,
+            validationReason: reasons.joined(separator: ", ")
         )
     }
 
@@ -88,10 +164,33 @@ enum GoogleMapsOCRParser {
         return Int((value * 1609.344).rounded())
     }
 
-    private static func looksLikeManeuver(_ text: String) -> Bool {
-        let s = text.lowercased()
-        return ["turn ", "keep ", "take ", "continue", "merge", "u-turn", "uturn", "exit", "ramp", "roundabout"]
-            .contains(where: s.contains)
+    private static func isExplicitManeuverLine(_ text: String) -> Bool {
+        let s = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefixes = [
+            "turn left", "turn right",
+            "keep left", "keep right",
+            "take the", "take exit", "take a",
+            "continue", "merge",
+            "make a u-turn", "make a u turn", "u-turn", "uturn",
+            "exit left", "exit right",
+            "slight left", "slight right",
+            "sharp left", "sharp right",
+            "enter the roundabout", "at the roundabout"
+        ]
+        return prefixes.contains(where: s.hasPrefix)
+    }
+
+    private static func isNavigationDistanceLine(_ text: String) -> Bool {
+        let s = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard parseDistanceMeters(s) != nil else { return false }
+
+        // Accept the common active-step forms and simple standalone map
+        // distances, but reject arbitrary measurements embedded in app UI.
+        if s.hasPrefix("in ") || s.hasPrefix("then ") { return true }
+
+        let pattern = #"^[0-9]+(?:\.[0-9]+)?\s*(ft|feet|mi|mile|miles)$"#
+        return (try? NSRegularExpression(pattern: pattern))?
+            .firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil
     }
 
     private static func maneuverFromText(_ text: String) -> HudManeuver {

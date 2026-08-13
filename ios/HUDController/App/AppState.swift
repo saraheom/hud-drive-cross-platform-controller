@@ -31,19 +31,8 @@ final class AppState {
             self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
         }
 
-        spotify.onTrackChanged = { [weak self, weak bluetooth] artist, track in
-            guard let self, let bluetooth, bluetooth.state == .connected else { return }
-            if !self.musicFilterInitialized {
-                self.musicFilterInitialized = true
-                bluetooth.enqueue(
-                    HudCommands.musicNotificationFilter(enabled: true),
-                    label: "Enable native Music notification filter"
-                )
-            }
-            bluetooth.enqueue(
-                HudCommands.musicNotification(artist: artist, track: track),
-                label: "Native music: \(artist) — \(track)"
-            )
+        spotify.onTrackChanged = { [weak self] artist, track in
+            self?.pushSpotifyMetadataToHUD(artist: artist, track: track)
         }
 
         bluetooth.onTransportReady = { [weak obd] in
@@ -128,13 +117,50 @@ final class AppState {
     }
 
     func sendNativeMusicTest() {
+        pushSpotifyMetadataToHUD(
+            artist: spotify.artistName.isEmpty ? "Kenshi Yonezu" : spotify.artistName,
+            track: spotify.trackTitle == "No Spotify track" ? "Flamingo" : spotify.trackTitle
+        )
+    }
+
+
+    func pushSpotifyMetadataToHUD(artist: String? = nil, track: String? = nil) {
+        guard bluetooth.state == .connected else { return }
+
+        let resolvedArtist = artist ?? spotify.artistName
+        let resolvedTrack = track ?? spotify.trackTitle
+        guard !resolvedArtist.isEmpty,
+              !resolvedTrack.isEmpty,
+              resolvedTrack != "No Spotify track" else { return }
+
+        if !musicFilterInitialized {
+            musicFilterInitialized = true
+            bluetooth.enqueue(
+                HudCommands.musicNotificationFilter(enabled: true),
+                label: "Enable native Music notification filter"
+            )
+        }
+
         bluetooth.enqueue(
             HudCommands.musicNotification(
-                artist: spotify.artistName.isEmpty ? "Kenshi Yonezu" : spotify.artistName,
-                track: spotify.trackTitle == "No Spotify track" ? "Flamingo" : spotify.trackTitle
+                artist: resolvedArtist,
+                track: resolvedTrack
             ),
-            label: "Native music test"
+            label: "Native music: \(resolvedArtist) — \(resolvedTrack)"
         )
+
+        // If an experimental Music side-widget is selected, re-send the
+        // corresponding dashboard after metadata updates. This probes whether
+        // the firmware has an undocumented Music widget that binds to the
+        // MusicNotificationPacket data source.
+        if obd.freerideLeft == .spotifyMusicExperimental ||
+            obd.freerideRight == .spotifyMusicExperimental {
+            obd.applyFreerideWidgets()
+        }
+        if obd.navigationLeft == .spotifyMusicExperimental ||
+            obd.navigationRight == .spotifyMusicExperimental {
+            obd.applyNavigationWidgets()
+        }
     }
 
 }

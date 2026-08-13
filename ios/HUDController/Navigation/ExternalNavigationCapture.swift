@@ -20,6 +20,9 @@ final class ExternalNavigationCapture: NSObject {
     )
     private(set) var lastFrameAt: Date?
     private(set) var frameCount = 0
+    private(set) var validNavigationFrames = 0
+    private(set) var rejectedFrames = 0
+    private(set) var navigationModeArmed = false
 
     var autoSendToHUD: Bool {
         didSet { UserDefaults.standard.set(autoSendToHUD, forKey: "HUD.Capture.autoSend") }
@@ -32,6 +35,9 @@ final class ExternalNavigationCapture: NSObject {
     }
     var autoRecoverAfterInterruption: Bool {
         didSet { UserDefaults.standard.set(autoRecoverAfterInterruption, forKey: "HUD.Capture.autoRecover") }
+    }
+    var autoEnableNavigationMode: Bool {
+        didSet { UserDefaults.standard.set(autoEnableNavigationMode, forKey: "HUD.Capture.autoNavMode") }
     }
 
     private let logger: LogManager
@@ -56,6 +62,8 @@ final class ExternalNavigationCapture: NSObject {
             ? true : UserDefaults.standard.bool(forKey: "HUD.Capture.keepAwake")
         self.autoRecoverAfterInterruption = UserDefaults.standard.object(forKey: "HUD.Capture.autoRecover") == nil
             ? true : UserDefaults.standard.bool(forKey: "HUD.Capture.autoRecover")
+        self.autoEnableNavigationMode = UserDefaults.standard.object(forKey: "HUD.Capture.autoNavMode") == nil
+            ? true : UserDefaults.standard.bool(forKey: "HUD.Capture.autoNavMode")
         super.init()
         picker.add(self)
     }
@@ -201,8 +209,23 @@ final class ExternalNavigationCapture: NSObject {
 
     private func apply(_ result: ParsedExternalNavigation, source: String) {
         latestRawText = result.rawText
+
+        guard result.isValidNavigation else {
+            rejectedFrames += 1
+            logger.log(
+                "SCREEN OCR REJECT",
+                "confidence=\(result.confidence) reason=\(result.validationReason) rawFirst=\(result.rawText.split(separator: "\n").first ?? "")"
+            )
+            return
+        }
+
+        validNavigationFrames += 1
         latestInstruction = result.instruction
-        logger.log(source, "\(result.instruction.primaryText) | \(result.instruction.streetName) | \(result.instruction.distanceMeters)m")
+        logger.log(
+            source,
+            "VALID confidence=\(result.confidence) \(result.instruction.primaryText) | \(result.instruction.streetName) | \(result.instruction.distanceMeters)m"
+        )
+
         guard autoSendToHUD && result.instruction.distanceMeters > 0 else { return }
 
         let streetKey = result.instruction.streetName
@@ -217,16 +240,24 @@ final class ExternalNavigationCapture: NSObject {
             pendingCandidateCount = 1
         }
 
-        // Require two consecutive OCR frames for a new maneuver/street.
+        // Two consecutive independently OCR'd valid frames are required before
+        // the first packet for a new maneuver/street.
         guard pendingCandidateCount >= 2 else {
-            logger.log("SCREEN OCR FILTER", "Waiting for second matching frame: \(candidateKey)")
+            logger.log("SCREEN OCR FILTER", "Valid candidate 1/2: \(candidateKey)")
             return
+        }
+
+        if autoEnableNavigationMode && !navigationModeArmed {
+            navigationModeArmed = true
+            navigation.navigationOn()
+            logger.log("SCREEN NAV", "Automatically enabled HUD navigation mode")
         }
 
         let meaningfulDistanceChange =
             lastSentDistance < 0 || abs(result.instruction.distanceMeters - lastSentDistance) >= 10
+
         guard candidateKey != lastSentKey || meaningfulDistanceChange else {
-            logger.log("SCREEN OCR FILTER", "Suppressed duplicate HUD maneuver")
+            logger.log("SCREEN OCR FILTER", "Suppressed duplicate valid HUD maneuver")
             return
         }
 
@@ -234,7 +265,9 @@ final class ExternalNavigationCapture: NSObject {
         lastSentDistance = result.instruction.distanceMeters
         navigation.current = result.instruction
         navigation.sendCurrent()
+        logger.log("SCREEN NAV", "Sent validated maneuver to HUD")
     }
+
 }
 
 @available(iOS 27.0, *)
@@ -270,8 +303,12 @@ extension ExternalNavigationCapture: SCStreamDelegate {
         Task { @MainActor in
             self.stream = nil
             UIApplication.shared.isIdleTimerDisabled = false
-            self.status = "Capture interrupted"
-            self.logger.log("SCREEN CAPTURE ERROR", "Stream stopped: \(error.localizedDescription)")
+            self.status = "Capture stopped by iOS/user — unlock may be required"
+            let nsError = error as NSError
+            self.logger.log(
+                "SCREEN CAPTURE STOP",
+                "domain=\(nsError.domain) code=\(nsError.code) description=\(error.localizedDescription)"
+            )
             self.scheduleRecovery(reason: error.localizedDescription)
         }
     }
@@ -311,6 +348,9 @@ final class ExternalNavigationCapture: NSObject {
     )
     private(set) var lastFrameAt: Date?
     private(set) var frameCount = 0
+    private(set) var validNavigationFrames = 0
+    private(set) var rejectedFrames = 0
+    private(set) var navigationModeArmed = false
 
     var autoSendToHUD: Bool {
         didSet {
@@ -319,6 +359,7 @@ final class ExternalNavigationCapture: NSObject {
     }
     var keepScreenAwake = false
     var autoRecoverAfterInterruption = false
+    var autoEnableNavigationMode = true
 
     private let logger: LogManager
     private let navigation: HudNavigationController

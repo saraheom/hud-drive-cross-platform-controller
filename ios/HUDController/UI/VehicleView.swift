@@ -73,6 +73,12 @@ struct VehicleView: View {
                                 .buttonStyle(.borderedProminent)
 
                             Text("""
+                            “Spotify / Music (experimental)” is not present in the original app's SideWidget enum. Selecting it sends the undocumented test token `Music` and feeds current Spotify metadata through MusicNotificationPacket. The HUD may ignore it; this option exists specifically to probe for hidden firmware support.
+                            """)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                            Text("""
                             This uses the original app's HUD-managed OBD connection packets. Visible Freeride/Navigation side widgets are now configured separately with the original HudWidgetCommandPacket (111/0).
                             """)
                             .font(.caption)

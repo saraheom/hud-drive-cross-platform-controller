@@ -36,6 +36,11 @@ struct HudNavigationView: View {
                                     set: { capture.autoSendToHUD = $0 }
                                 ))
 
+                                Toggle("Auto-enable HUD navigation after valid OCR", isOn: Binding(
+                                    get: { capture.autoEnableNavigationMode },
+                                    set: { capture.autoEnableNavigationMode = $0 }
+                                ))
+
                                 Toggle("Keep screen awake during capture", isOn: Binding(
                                     get: { capture.keepScreenAwake },
                                     set: { capture.keepScreenAwake = $0 }
@@ -84,6 +89,9 @@ struct HudNavigationView: View {
                                 LabeledContent("Distance", value: distanceText(capture.latestInstruction.distanceMeters))
                                 LabeledContent("Street", value: capture.latestInstruction.streetName.isEmpty ? "—" : capture.latestInstruction.streetName)
                                 LabeledContent("Frames OCR'd", value: "\(capture.frameCount)")
+                                LabeledContent("Valid navigation frames", value: "\(capture.validNavigationFrames)")
+                                LabeledContent("Rejected frames", value: "\(capture.rejectedFrames)")
+                                LabeledContent("HUD navigation armed", value: capture.navigationModeArmed ? "Yes" : "No")
 
                                 DisclosureGroup("Latest OCR text") {
                                     Text(capture.latestRawText.isEmpty ? "No OCR yet" : capture.latestRawText)
@@ -92,7 +100,9 @@ struct HudNavigationView: View {
                                 }
 
                                 Text("""
-                                Live mode captures the entire display, then OCRs roughly once per second. "Keep screen awake" prevents automatic display sleep. If iOS terminates capture when the device is manually locked, the recovery option retries the cached display filter and retries again when the app becomes active after unlock. The log records whether recovery succeeds.
+                                Live mode captures the visible display and validates OCR before touching the HUD. A new navigation instruction must contain a paired distance + explicit maneuver and pass two consecutive frames. The first confirmed instruction automatically turns HUD Navigation ON when enabled. Frames that look like ordinary app UI are rejected and the previous valid HUD maneuver remains displayed.
+
+                                iOS 27 stops full-display capture when the device is physically locked on the tested phone. "Keep screen awake" prevents automatic lock; recovery retries after interruptions/unlock, but cannot force Google Maps to remain rendered behind the lock screen.
                                 """)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
