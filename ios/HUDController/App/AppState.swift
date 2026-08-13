@@ -8,6 +8,7 @@ final class AppState {
     let bluetooth: HudBluetoothManager
     let navigation: HudNavigationController
     let spotify: SpotifyMediaController
+    let textProbe: HudTextRendererProbe
     let obd: HudOBDController
     let speedEngine: OriginalSpeedLimitEngine
     let ambientLight: AmbientLightMonitor
@@ -149,25 +150,6 @@ final class AppState {
             label: "Native music: \(resolvedArtist) — \(resolvedTrack)"
         )
 
-        // "Music" in our UI intentionally maps to the original firmware
-        // Weather dashboard token. Re-apply that known-good dashboard whenever
-        // Spotify metadata changes, while also sending the native music packet.
-        if obd.freerideLeft.isMusicDisplaySlot ||
-            obd.freerideRight.isMusicDisplaySlot {
-            obd.applyFreerideWidgets()
-            logger.log(
-                "MUSIC SLOT",
-                "Spotify metadata updated; re-applied Freeride Weather-as-Music slot"
-            )
-        }
-        if obd.navigationLeft.isMusicDisplaySlot ||
-            obd.navigationRight.isMusicDisplaySlot {
-            obd.applyNavigationWidgets()
-            logger.log(
-                "MUSIC SLOT",
-                "Spotify metadata updated; re-applied Navigation Weather-as-Music slot"
-            )
-        }
     }
 
 }

@@ -73,12 +73,6 @@ struct VehicleView: View {
                                 .buttonStyle(.borderedProminent)
 
                             Text("""
-                            Music replaces Weather in this app. Internally it selects the HUD's original `Weather` side-widget token, which is a known valid dashboard slot. Spotify artist/track metadata is then sent through the native music path while this slot remains selected.
-                            """)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                            Text("""
                             This uses the original app's HUD-managed OBD connection packets. Visible Freeride/Navigation side widgets are now configured separately with the original HudWidgetCommandPacket (111/0).
                             """)
                             .font(.caption)

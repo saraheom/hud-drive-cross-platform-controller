@@ -717,3 +717,35 @@ weather data. The Weather-as-Music slot is the known-good visual container for
 the next text-injection experiments.
 
 All v39 validated automatic navigation behavior is retained.
+
+
+## v41 — persistent text renderer probe
+
+The v40 device test conclusively showed that selecting the real `Weather`
+dashboard widget produces the normal weather icon and a 0-degree value. Spotify
+artist/title data sent through `MusicNotificationPacket` does not populate that
+widget.
+
+v41 therefore stops treating Weather as Music and restores the original
+firmware widget list.
+
+A new Media → Persistent Text / Music Probe panel tests known text-bearing paths
+independently with explicit strings:
+
+- Phone-name command (`2 / 123 / 0`);
+- native MusicNotificationPacket (`1 / 12 / 0`);
+- arbitrary NotificationPacket categories with selectable package/title/message;
+- notification category sweep 0–15;
+- known persistent navigation maneuver text renderer (`2 / 100 / 1`);
+- raw arbitrary UTF strings supplied as dashboard widget identifiers.
+
+The probe can populate its title/message from the currently connected Spotify
+track. Every test route is logged with its category, package identifier, title,
+and message.
+
+The purpose of this build is discovery: first identify which firmware renderer
+can visibly display arbitrary text persistently; only then bind live Spotify
+updates to that renderer.
+
+All validated automatic ScreenCaptureKit navigation behavior from v39/v40 is
+retained.

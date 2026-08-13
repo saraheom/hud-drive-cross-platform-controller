@@ -26,10 +26,7 @@ enum HudSideWidget: String, CaseIterable, Identifiable {
         case .speed: return "Speed"
         case .maxSpeed: return "Max speed"
         case .averageSpeed: return "Average speed"
-        // We intentionally reserve the original firmware Weather widget
-        // as the persistent Spotify/music display slot. The BLE/dashboard
-        // token remains exactly "Weather"; only our iPhone UI label changes.
-        case .weather: return "Music"
+        case .weather: return "Weather"
         case .time: return "Time"
         case .distance: return "Distance"
         case .cost: return "Trip cost"
@@ -43,9 +40,6 @@ enum HudSideWidget: String, CaseIterable, Identifiable {
         case .coolantTemperature: return "Coolant temperature"
         case .oilTemperature: return "Engine oil temperature"
         }
-    }
-    var isMusicDisplaySlot: Bool {
-        self == .weather
     }
 
 }

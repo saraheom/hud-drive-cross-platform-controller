@@ -46,7 +46,84 @@ struct MediaView: View {
                             .buttonStyle(.borderedProminent)
 
                             Text("""
-                            After the first authorization, HUD Controller stores the Spotify App Remote token in Keychain and reconnects automatically when the app becomes active. Manual authorization is only needed initially or if Spotify invalidates the saved authorization. Track changes enable the original firmware music filter (`com.kivic.music`, icon 3) and use MusicNotificationPacket directly over BLE. If you select Music as a Freeride/Navigation side widget, the app reserves the HUD's original Weather widget slot for music display experiments.
+                            Spotify metadata acquisition is working. The HUD currently does not visibly render MusicNotificationPacket, so the probe below tests other firmware text renderers before we bind Spotify to one permanently.
+                            """)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    HudCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Persistent Text / Music Probe")
+                                .font(.title3.bold())
+
+                            TextField("Title / artist", text: Binding(
+                                get: { state.textProbe.title },
+                                set: { state.textProbe.title = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+
+                            TextField("Message / track", text: Binding(
+                                get: { state.textProbe.message },
+                                set: { state.textProbe.message = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+
+                            TextField("Package identifier", text: Binding(
+                                get: { state.textProbe.packageName },
+                                set: { state.textProbe.packageName = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+
+                            Picker("Protocol route", selection: Binding(
+                                get: { state.textProbe.selectedRoute },
+                                set: { state.textProbe.selectedRoute = $0 }
+                            )) {
+                                ForEach(HudTextProbeRoute.allCases) { route in
+                                    Text(route.displayName).tag(route)
+                                }
+                            }
+
+                            if state.textProbe.selectedRoute == .genericNotification {
+                                Stepper(
+                                    "Notification category: \(state.textProbe.notificationCategory)",
+                                    value: Binding(
+                                        get: { state.textProbe.notificationCategory },
+                                        set: { state.textProbe.notificationCategory = $0 }
+                                    ),
+                                    in: 0...31
+                                )
+                            }
+
+                            HStack {
+                                Button("Use Current Spotify") {
+                                    state.textProbe.useCurrentSpotify(spotify: state.spotify)
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button("Send Selected Probe") {
+                                    state.textProbe.sendSelected()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+
+                            Button("Sweep Notification Categories 0–15") {
+                                state.textProbe.sweepNotificationCategories()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Restore Normal Phone Name") {
+                                state.textProbe.restoreNormalPhoneName()
+                            }
+                            .buttonStyle(.bordered)
+
+                            LabeledContent("Probe status", value: state.textProbe.status)
+
+                            Text("""
+                            Goal: identify any HUD renderer that accepts arbitrary persistent text. Phone-name, notification, navigation, and raw dashboard-UTF paths are intentionally tested separately. Navigation text is already known to render persistently in the center; the key question is whether any other route can expose reusable text outside the navigation renderer.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)
