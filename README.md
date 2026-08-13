@@ -942,3 +942,23 @@ right` phrases. v45 includes an initial local image-shape classifier for the
 first route-card arrow (left/right/straight) while OCR supplies the distance
 and road. This is intentionally logged/tested in the field and can be refined
 from additional Apple Maps screenshots without adding a manual source switch.
+
+
+## v46 — update stale v44 navigation rehydration test
+
+The v45 CI run successfully built the application and all v45 navigation,
+BLEDOM, OBD, and speed-limit regression tests passed.
+
+The only failure was an older v44 source-inspection test that searched for an
+exact log sentence removed by the v45 navigation lifecycle rewrite.
+
+v46 updates that test to verify behavior rather than old wording:
+
+- `hudSessionDidReset(reason:)` still exists;
+- a physical HUD reset preserves ScreenCaptureKit;
+- the HUD navigation state is re-armed;
+- the latest validated maneuver is sent again;
+- the HUD reset handler does not call `stop()` or reopen the system capture
+  picker.
+
+No runtime application behavior changed from v45.

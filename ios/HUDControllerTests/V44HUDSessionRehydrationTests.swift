@@ -47,8 +47,17 @@ final class V44HUDSessionRehydrationTests: XCTestCase {
             .appendingPathComponent("HUDController/Navigation/ExternalNavigationCapture.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
+        // A HUD reboot must reset only HUD-delivery state. It must not stop or
+        // recreate ScreenCaptureKit merely because the physical HUD restarted.
         XCTAssertTrue(source.contains("func hudSessionDidReset(reason: String)"))
-        XCTAssertTrue(source.contains("Re-armed Navigation ON and re-sent cached validated maneuver"))
+        XCTAssertTrue(source.contains("reset HUD delivery state while preserving capture"))
+
+        // If a validated active maneuver is cached, the HUD is re-armed and
+        // the cached maneuver is sent again.
+        XCTAssertTrue(source.contains("armNavigationIfNeeded()"))
+        XCTAssertTrue(source.contains("navigation.current = latestInstruction"))
+        XCTAssertTrue(source.contains("navigation.sendCurrent()"))
+        XCTAssertTrue(source.contains("Re-armed Navigation and re-sent cached validated maneuver"))
     }
 
     func testAmbientUsesThreeWindowHysteresis() throws {
