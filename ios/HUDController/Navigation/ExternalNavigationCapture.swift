@@ -4,6 +4,9 @@ import UIKit
 import Vision
 import CoreMedia
 import CoreVideo
+
+
+#if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
 import ScreenCaptureKit
 
 @available(iOS 27.0, *)
@@ -201,3 +204,80 @@ extension ExternalNavigationCapture: SCStreamOutput {
         }
     }
 }
+
+
+#else
+
+/// Simulator / SDK fallback.
+///
+/// Apple's iOS 27 ScreenCaptureKit full-display sample is device-only.
+/// CI still compiles and exercises the shared Vision OCR parser through this
+/// fallback, while TestFlight/device builds compile the real implementation.
+@available(iOS 27.0, *)
+@MainActor
+@Observable
+final class ExternalNavigationCapture: NSObject {
+    private(set) var status = "Live screen capture requires a physical iOS 27 device"
+    private(set) var latestRawText = ""
+    private(set) var latestInstruction = NavigationInstruction(
+        maneuver: .straight,
+        distanceMeters: 0,
+        primaryText: "Waiting for screenshot",
+        streetName: ""
+    )
+    private(set) var lastFrameAt: Date?
+    private(set) var frameCount = 0
+
+    var autoSendToHUD: Bool {
+        didSet {
+            UserDefaults.standard.set(autoSendToHUD, forKey: "HUD.Capture.autoSend")
+        }
+    }
+
+    private let logger: LogManager
+    private let navigation: HudNavigationController
+
+    init(logger: LogManager, navigation: HudNavigationController) {
+        self.logger = logger
+        self.navigation = navigation
+        self.autoSendToHUD =
+            UserDefaults.standard.object(forKey: "HUD.Capture.autoSend") == nil
+            ? false
+            : UserDefaults.standard.bool(forKey: "HUD.Capture.autoSend")
+        super.init()
+    }
+
+    func presentFullDisplayPicker() {
+        status = "Live capture unavailable in Simulator — use Saved Screenshot test"
+        logger.log("SCREEN CAPTURE", "Simulator fallback: live capture unavailable")
+    }
+
+    func stop() {
+        status = "Stopped"
+    }
+
+    func analyzePhoto(_ image: UIImage) async {
+        status = "Analyzing saved screenshot…"
+        do {
+            let result = try await GoogleMapsOCRParser.recognize(image)
+            latestRawText = result.rawText
+            latestInstruction = result.instruction
+            frameCount += 1
+            lastFrameAt = Date()
+            status = "Saved screenshot parsed"
+            logger.log(
+                "PHOTO OCR",
+                "\(result.instruction.primaryText) | \(result.instruction.streetName) | \(result.instruction.distanceMeters)m"
+            )
+
+            if autoSendToHUD && result.instruction.distanceMeters > 0 {
+                navigation.current = result.instruction
+                navigation.sendCurrent()
+            }
+        } catch {
+            status = "Photo OCR failed"
+            logger.log("OCR ERROR", error.localizedDescription)
+        }
+    }
+}
+#endif

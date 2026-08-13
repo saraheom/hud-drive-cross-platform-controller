@@ -491,3 +491,25 @@ The TestFlight workflow now explicitly:
 10. uploads the IPA as a GitHub Actions artifact.
 
 A successful v32 TestFlight job therefore means an actual upload command ran.
+
+
+## v33 — ScreenCaptureKit physical-device build guard
+
+The v32 CI log confirmed Xcode 27 beta 4 and both iPhoneOS/iPhoneSimulator
+27.0 SDKs were selected. The physical iPhoneOS SDK contains
+`ScreenCaptureKit.framework`, but the simulator Swift build cannot resolve the
+`ScreenCaptureKit` module.
+
+Apple's iOS 27 ScreenCaptureKit sample is documented as requiring a physical
+device. v33 therefore:
+
+- compiles the real ScreenCaptureKit implementation only when
+  `canImport(ScreenCaptureKit) && !targetEnvironment(simulator)`;
+- keeps a simulator fallback with identical observable state;
+- preserves the saved-photo Vision OCR test on Simulator;
+- weak-links ScreenCaptureKit for physical device builds;
+- keeps TestFlight/device builds on Xcode 27 so the real implementation is
+  included;
+- changes CI validation to require the framework only in the iPhoneOS device SDK.
+
+No navigation/OCR, BLE, OBD, Spotify, persistence, or BLEDOM behavior was removed.

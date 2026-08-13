@@ -30,12 +30,18 @@ jobs:
           brew install xcodegen
           sudo gem install fastlane
 
-      - name: Validate iOS 27 ScreenCaptureKit framework
+      - name: Validate iOS 27 device ScreenCaptureKit framework
         run: |
           set -euo pipefail
-          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
-          test -d "$SDK_PATH/System/Library/Frameworks/ScreenCaptureKit.framework"
-          echo "ScreenCaptureKit found: $SDK_PATH/System/Library/Frameworks/ScreenCaptureKit.framework"
+          DEVICE_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          SIM_SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          test -d "$DEVICE_SDK/System/Library/Frameworks/ScreenCaptureKit.framework"
+          echo "Device ScreenCaptureKit found: $DEVICE_SDK/System/Library/Frameworks/ScreenCaptureKit.framework"
+          if [ -d "$SIM_SDK/System/Library/Frameworks/ScreenCaptureKit.framework" ]; then
+            echo "Simulator framework directory exists; Swift module availability will still be handled conditionally."
+          else
+            echo "Simulator ScreenCaptureKit framework is absent; expected for the device-only iOS 27 sample path."
+          fi
 
       - name: Generate project
         working-directory: ios
