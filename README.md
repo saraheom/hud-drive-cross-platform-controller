@@ -1016,3 +1016,19 @@ The intended invariant is now tested explicitly:
 - HUD unit settings remain configured for mph display.
 
 No runtime code changed from v47.
+
+
+## v49 — remove invalid unit-settings test helper
+
+The v48 application build succeeded. The test target failed to compile because
+`V48SpeedProtocolBoundaryTests` referenced a helper named
+`HudCommands.unitSettings(...)` that does not exist in this repository.
+
+v49 removes that invented test dependency and verifies the actual code paths:
+
+- 45 mph converts to approximately 72 km/h at the protocol boundary;
+- `HudCommands.speedNotification(kmh:)` encodes the supplied km/h value;
+- application-facing/current-speed state remains mph;
+- the mph value is never passed directly into the HUD's km/h packet field.
+
+No runtime application code changed from v48.
