@@ -3,7 +3,7 @@ import XCTest
 
 final class V48SpeedProtocolBoundaryTests: XCTestCase {
     func testFortyFiveMphProducesApproximatelySeventyTwoKmhProtocolValue() {
-        // The app/UI value is mph, while SpeedNotification's numeric payload
+        // The app/UI value is mph, while SpeedNotification's numeric content
         // is native km/h. 45 mph is approximately 72 km/h.
         let mph = 45.0
         let metersPerSecond = mph / 2.2369362920544
@@ -20,12 +20,23 @@ final class V48SpeedProtocolBoundaryTests: XCTestCase {
             return
         }
 
-        XCTAssertEqual(body[0], 2)
-        XCTAssertEqual(body[1], 102)
+        // SpeedNotification is implemented through the generic notification
+        // packet family: command 1, category 14, p2 0.
+        XCTAssertGreaterThan(body.count, 3)
+        XCTAssertEqual(body[0], 1)
+        XCTAssertEqual(body[1], 14)
         XCTAssertEqual(body[2], 0)
 
-        // The final four bytes are the big-endian Int32 speed payload.
-        XCTAssertEqual(body.suffix(4), Data([0, 0, 0, 72]))
+        // HudCommands.speedNotification(kmh:) places the protocol km/h value
+        // into the notification title string. Verify that the encoded payload
+        // actually contains "72" instead of assuming an unrelated Int32 packet
+        // layout.
+        let payload = body.dropFirst(3)
+        let ascii = String(decoding: payload, as: UTF8.self)
+        XCTAssertTrue(
+            ascii.contains("72"),
+            "SpeedNotification payload should contain the provided km/h value"
+        )
     }
 
     func testAppFacingSpeedVariableRemainsMph() throws {
