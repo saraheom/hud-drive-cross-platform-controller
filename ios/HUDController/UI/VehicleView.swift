@@ -145,7 +145,7 @@ struct VehicleView: View {
                                 "Absent timeout: \(state.ambientLight.absenceTimeoutSeconds)s",
                                 value: Binding(
                                     get: { state.ambientLight.absenceTimeoutSeconds },
-                                    set: { state.ambientLight.absenceTimeoutSeconds = $0 }
+                                    set: { state.ambientLight.setAbsenceTimeout($0) }
                                 ),
                                 in: 1...30
                             )

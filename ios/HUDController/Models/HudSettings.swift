@@ -37,6 +37,7 @@ final class HudSettings {
     var notifyGmail: Bool { didSet { defaults.set(notifyGmail, forKey: "HUD.Settings.notifyGmail") } }
     var notifyWeChat: Bool { didSet { defaults.set(notifyWeChat, forKey: "HUD.Settings.notifyWeChat") } }
     var notifyKakaoTalk: Bool { didSet { defaults.set(notifyKakaoTalk, forKey: "HUD.Settings.notifyKakaoTalk") } }
+    var notifyMusic: Bool { didSet { defaults.set(notifyMusic, forKey: "HUD.Settings.notifyMusic") } }
 
     var mediaSpotifyEnabled: Bool { didSet { defaults.set(mediaSpotifyEnabled, forKey: "HUD.Settings.mediaSpotifyEnabled") } }
     var navigationGoogleMapsEnabled: Bool { didSet { defaults.set(navigationGoogleMapsEnabled, forKey: "HUD.Settings.navigationGoogleMapsEnabled") } }
@@ -74,6 +75,7 @@ final class HudSettings {
         notifyGmail = bool("HUD.Settings.notifyGmail", default: true)
         notifyWeChat = bool("HUD.Settings.notifyWeChat", default: true)
         notifyKakaoTalk = bool("HUD.Settings.notifyKakaoTalk", default: true)
+        notifyMusic = bool("HUD.Settings.notifyMusic", default: true)
 
         mediaSpotifyEnabled = bool("HUD.Settings.mediaSpotifyEnabled", default: false)
         navigationGoogleMapsEnabled = bool("HUD.Settings.navigationGoogleMapsEnabled", default: false)

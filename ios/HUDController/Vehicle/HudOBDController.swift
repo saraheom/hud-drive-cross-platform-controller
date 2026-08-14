@@ -47,6 +47,7 @@ final class HudOBDController {
     private var autoConnectTask: Task<Void, Never>?
     private var healthTask: Task<Void, Never>?
     private var autoConnectAttempt = 0
+    private var autoConnectGeneration = 0
     private var lastPositiveConnectionEvent = Date.distantPast
 
     var deviceName: String {
@@ -59,6 +60,7 @@ final class HudOBDController {
                 startAutoConnectLoop(reason: "Auto-connect enabled")
                 startHealthLoop()
             } else {
+                autoConnectGeneration += 1
                 autoConnectTask?.cancel()
                 autoConnectTask = nil
                 healthTask?.cancel()
@@ -152,6 +154,7 @@ final class HudOBDController {
 
 
     func disconnect() {
+        autoConnectGeneration += 1
         autoConnectTask?.cancel()
         autoConnectTask = nil
         healthTask?.cancel()
@@ -213,6 +216,7 @@ final class HudOBDController {
     }
 
     func hudSessionDidReset(reason: String) {
+        autoConnectGeneration += 1
         autoConnectTask?.cancel()
         autoConnectTask = nil
         autoConnectAttempt = 0
@@ -228,6 +232,7 @@ final class HudOBDController {
     }
 
     func transportDisconnected() {
+        autoConnectGeneration += 1
         autoConnectTask?.cancel()
         autoConnectTask = nil
         healthTask?.cancel()
@@ -243,14 +248,18 @@ final class HudOBDController {
         guard autoConnect else { return }
         guard autoConnectTask == nil else { return }
 
-        logger.log("OBD AUTO", "Starting retry loop: \(reason)")
+        autoConnectGeneration += 1
+        let generation = autoConnectGeneration
+        logger.log("OBD AUTO", "Starting retry loop generation=\(generation): \(reason)")
         autoConnectTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
             // Give the HUD firmware a moment to finish its own startup.
             try? await Task.sleep(for: .seconds(2))
 
-            while !Task.isCancelled && self.autoConnect && !self.connected {
+            while !Task.isCancelled &&
+                    generation == self.autoConnectGeneration &&
+                    self.autoConnect && !self.connected {
                 guard self.bluetooth.state == .connected else {
                     try? await Task.sleep(for: .seconds(2))
                     continue
@@ -268,7 +277,9 @@ final class HudOBDController {
             if self.connected {
                 self.logger.log("OBD AUTO", "Retry loop completed: OBD connected")
             }
-            self.autoConnectTask = nil
+            if generation == self.autoConnectGeneration {
+                self.autoConnectTask = nil
+            }
         }
     }
 

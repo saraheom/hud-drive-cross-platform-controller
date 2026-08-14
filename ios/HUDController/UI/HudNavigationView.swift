@@ -51,6 +51,22 @@ struct HudNavigationView: View {
                                     set: { capture.autoRecoverAfterInterruption = $0 }
                                 ))
 
+                                if capture.needsUserReselection {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Label("Screen capture needs to be resumed", systemImage: "exclamationmark.triangle.fill")
+                                            .font(.subheadline.bold())
+                                        Text("iOS ended the previous full-display stream. Tap Resume Capture, then choose Entire Display in Apple's system picker.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Button("Resume Capture") {
+                                            capture.presentFullDisplayPicker()
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                    }
+                                    .padding(10)
+                                    .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                                }
+
                                 HStack {
                                     Button("Start Full-Display Capture") {
                                         capture.presentFullDisplayPicker()
@@ -104,7 +120,7 @@ struct HudNavigationView: View {
                                 Text("""
                                 Google Maps and Apple Maps are detected automatically from OCR/layout evidence; there is no source selector. Valid route lists automatically enter Navigation mode. Apple Maps “Proceed to the route” is treated as active navigation, reroutes can replace the entire current maneuver immediately when the new layout is structurally valid, and normal Maps home/map screens return the HUD to Freeride after confirmation.
 
-                                Screen capture has a stale-frame watchdog plus exponential automatic restart. iOS may still revoke full-display capture under system conditions such as physical lock; the app retries every recoverable interruption and reports the recovery state here.
+                                Screen capture is treated as a long-lived driving service. Raw ScreenCaptureKit frames feed a heartbeat independently of OCR. If that heartbeat dies, the HUD immediately returns to Freeride while the app rebuilds the stream. After repeated failures of the cached filter, the app invalidates it and asks for a fresh Entire Display selection instead of leaving navigation frozen.
                                 """)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

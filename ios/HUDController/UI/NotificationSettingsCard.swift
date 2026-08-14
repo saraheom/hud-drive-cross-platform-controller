@@ -29,6 +29,12 @@ struct NotificationSettingsCard: View {
                 }
                 .disabled(state.settings.notifyAll)
 
+                Toggle("Music / Spotify track popups", isOn: Binding(
+                    get: { state.settings.notifyMusic },
+                    set: { state.settings.notifyMusic = $0 }
+                ))
+                .padding(.vertical, 8)
+
                 Divider().padding(.vertical, 8)
 
                 Stepper(

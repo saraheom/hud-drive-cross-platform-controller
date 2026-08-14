@@ -1034,7 +1034,7 @@ v49 removes that invented test dependency and verifies the actual code paths:
 No runtime application code changed from v48.
 
 
-## v50 — correct SpeedNotification packet-shape regression test
+## v51 — correct SpeedNotification packet-shape regression test
 
 The v49 app target built successfully and 66 of 67 tests passed. The sole
 failure was the v48 speed protocol test, which incorrectly assumed
@@ -1050,7 +1050,18 @@ notification packet path:
 - title string = the km/h numeric value
 - message = empty
 
-v50 updates the regression test to verify that real packet shape and confirm
+v51 updates the regression test to verify that real packet shape and confirm
 that the encoded payload contains the supplied km/h value.
 
 No runtime application code changed from v49/v47.
+
+
+## v51 field reliability update
+
+- ScreenCaptureKit raw-frame heartbeat is independent of OCR; capture loss immediately returns the HUD to Freeride.
+- Automatic capture recovery retries indefinitely and invalidates a cached filter after repeated start failures, then presents a Resume Capture path for a fresh Entire Display selection.
+- Apple Maps destination-side arrival phrases, route-shield cleanup, decimal-distance candidate selection, lane-guidance parsing, and feet-boundary preservation were added.
+- Ambient BLE absence-timeout Stepper no longer self-mutates from `didSet`.
+- OBD reconnect uses a generation token to prevent overlapping retry loops.
+- Native music/Spotify HUD popups now have a persisted enable/disable setting.
+- Last known speed limit is persisted so rectangular style can be reasserted earlier after HUD reboot.

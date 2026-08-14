@@ -92,6 +92,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         self.showSpeedLimit = d.object(forKey: "HUD.Speed.showLimit") == nil
             ? true
             : d.bool(forKey: "HUD.Speed.showLimit")
+        self.currentSpeedLimitMph = max(0, d.integer(forKey: "HUD.Speed.lastKnownLimitMph"))
 
         super.init()
         locationManager.delegate = self
@@ -221,6 +222,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         if let limit = bestSpeedLimit(at: location) {
             currentSpeedLimitMph = limit
+            UserDefaults.standard.set(limit, forKey: "HUD.Speed.lastKnownLimitMph")
             if showSpeedLimit, limit != lastSentLimit, bluetooth.state == .connected {
                 lastSentLimit = limit
                 bluetooth.enqueue(

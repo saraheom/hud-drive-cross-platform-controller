@@ -25,6 +25,7 @@ final class ExternalNavigationCapture: NSObject {
     private(set) var validNavigationFrames = 0
     private(set) var rejectedFrames = 0
     private(set) var navigationModeArmed = false
+    private(set) var needsUserReselection = false
     private(set) var detectedSource = ExternalNavigationSource.unknown
     private(set) var detectedScreenState = ExternalNavigationScreenState.unknown
 
@@ -57,6 +58,7 @@ final class ExternalNavigationCapture: NSObject {
     private var watchdogTask: Task<Void, Never>?
     private var arrivalTask: Task<Void, Never>?
     private var recoveryAttempt = 0
+    private var cachedFilterFailureCount = 0
     private var automaticPickerPresentedThisSession = false
     private(set) var captureDesired: Bool {
         didSet { UserDefaults.standard.set(captureDesired, forKey: "HUD.Capture.desired") }
@@ -105,6 +107,8 @@ final class ExternalNavigationCapture: NSObject {
         picker.defaultConfiguration = config
         picker.isActive = true
 
+        needsUserReselection = false
+        automaticPickerPresentedThisSession = true
         status = "Choose Entire Display in Apple's picker"
         logger.log("SCREEN CAPTURE", "Presenting iOS 27 full-display picker")
         picker.present()
@@ -119,6 +123,8 @@ final class ExternalNavigationCapture: NSObject {
         arrivalTask?.cancel()
         arrivalTask = nil
         recoveryAttempt = 0
+        cachedFilterFailureCount = 0
+        needsUserReselection = false
         UIApplication.shared.isIdleTimerDisabled = false
 
         deactivateNavigation(reason: "Screen capture manually stopped")
@@ -160,8 +166,7 @@ final class ExternalNavigationCapture: NSObject {
         guard UIApplication.shared.applicationState == .active,
               !automaticPickerPresentedThisSession else { return }
 
-        automaticPickerPresentedThisSession = true
-        logger.log("SCREEN CAPTURE AUTO", "Capture desired but no cached filter; presenting system picker once")
+        logger.log("SCREEN CAPTURE AUTO", "Capture desired but a fresh system selection is required; presenting picker")
         presentFullDisplayPicker()
     }
 
@@ -254,11 +259,14 @@ final class ExternalNavigationCapture: NSObject {
                             "SCREEN CAPTURE ERROR",
                             "start failed: \(error.localizedDescription)"
                         )
-                        self.scheduleRecovery(reason: "start failed: \(error.localizedDescription)")
+                        self.cachedFilterFailureCount += 1
+                        self.handleFailedCachedFilterIfNeeded(reason: error.localizedDescription)
                         return
                     }
 
                     self.recoveryAttempt = 0
+                    self.cachedFilterFailureCount = 0
+                    self.needsUserReselection = false
                     self.lastFrameAt = Date()
                     self.status = recovery
                         ? "Capture recovered"
@@ -274,8 +282,36 @@ final class ExternalNavigationCapture: NSObject {
             stream = nil
             status = "Capture setup failed"
             logger.log("SCREEN CAPTURE ERROR", error.localizedDescription)
-            scheduleRecovery(reason: "setup failed: \(error.localizedDescription)")
+            cachedFilterFailureCount += 1
+            handleFailedCachedFilterIfNeeded(reason: error.localizedDescription)
         }
+    }
+
+    private func handleFailedCachedFilterIfNeeded(reason: String) {
+        guard captureDesired, autoRecoverAfterInterruption else { return }
+
+        if cachedFilterFailureCount >= 3 {
+            logger.log(
+                "SCREEN CAPTURE RECOVERY",
+                "Cached SCContentFilter failed \(cachedFilterFailureCount)x; invalidating it and requiring fresh Entire Display selection"
+            )
+            lastFilter = nil
+            recoveryTask?.cancel()
+            recoveryTask = nil
+            needsUserReselection = true
+            status = "Screen capture needs permission again — tap Resume Capture"
+            deactivateNavigation(reason: "Screen capture unavailable; fresh system selection required")
+
+            // iOS owns the privacy picker. Present it automatically only while
+            // our app is active; otherwise the visible Resume button remains.
+            if UIApplication.shared.applicationState == .active {
+                automaticPickerPresentedThisSession = false
+                requestAutomaticStartIfDesired()
+            }
+            return
+        }
+
+        scheduleRecovery(reason: reason)
     }
 
     private func scheduleRecovery(reason: String) {
@@ -285,7 +321,7 @@ final class ExternalNavigationCapture: NSObject {
         guard recoveryTask == nil else { return }
 
         recoveryAttempt += 1
-        let delays = [1, 2, 4, 8, 12]
+        let delays = [1, 2, 4, 8, 15]
         let delay = delays[min(recoveryAttempt - 1, delays.count - 1)]
 
         status = "Capture interrupted — retrying in \(delay)s"
@@ -321,8 +357,10 @@ final class ExternalNavigationCapture: NSObject {
                     )
                     let old = self.stream
                     self.stream = nil
+                    self.deactivateNavigation(reason: "Raw ScreenCaptureKit frame heartbeat stalled")
                     old?.stopCapture(completionHandler: nil)
-                    self.scheduleRecovery(reason: "frame watchdog stale")
+                    self.cachedFilterFailureCount = 0
+                    self.scheduleRecovery(reason: "raw frame watchdog stale")
                     return
                 }
             }
@@ -343,7 +381,6 @@ final class ExternalNavigationCapture: NSObject {
                 let result = try await ExternalNavigationOCRParser.recognize(image)
                 await MainActor.run {
                     self.frameCount += 1
-                    self.lastFrameAt = Date()
                     self.apply(result, sourceLabel: "SCREEN OCR")
                 }
             } catch {
@@ -606,7 +643,8 @@ extension ExternalNavigationCapture: SCContentSharingPickerObserver {
         didCancelFor stream: SCStream?
     ) {
         Task { @MainActor in
-            self.status = "Picker cancelled"
+            self.needsUserReselection = self.captureDesired
+            self.status = self.captureDesired ? "Capture paused — tap Resume Capture" : "Picker cancelled"
             self.logger.log("SCREEN CAPTURE", "Picker cancelled")
         }
     }
@@ -637,12 +675,10 @@ extension ExternalNavigationCapture: SCStreamDelegate {
                 "domain=\(nsError.domain) code=\(nsError.code) description=\(error.localizedDescription)"
             )
 
-            // An unexpected ScreenCaptureKit stop is not equivalent to route
-            // completion. Preserve the current HUD maneuver while aggressively
-            // rebuilding capture. Navigation OFF is driven by OCR-confirmed
-            // Maps inactivity after capture resumes, or by an explicit user
-            // Stop Capture action.
-            self.logger.log("SCREEN NAV LIFECYCLE", "Capture interrupted; preserving navigation state during recovery")
+            // Capture health is the highest-level navigation prerequisite.
+            // Never leave a stale maneuver frozen on the HUD while the source
+            // pixels are unavailable. Capture recovery remains desired.
+            self.deactivateNavigation(reason: "ScreenCaptureKit stream stopped unexpectedly")
             self.scheduleRecovery(reason: error.localizedDescription)
         }
     }
@@ -660,6 +696,9 @@ extension ExternalNavigationCapture: SCStreamOutput {
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         Task { @MainActor in
+            // Raw stream heartbeat is deliberately independent of OCR. A slow
+            // Vision pass must never be mistaken for a dead SCStream.
+            self.lastFrameAt = Date()
             self.process(pixelBuffer: buffer)
         }
     }
@@ -684,6 +723,7 @@ final class ExternalNavigationCapture: NSObject {
     private(set) var validNavigationFrames = 0
     private(set) var rejectedFrames = 0
     private(set) var navigationModeArmed = false
+    private(set) var needsUserReselection = false
     private(set) var detectedSource = ExternalNavigationSource.unknown
     private(set) var detectedScreenState = ExternalNavigationScreenState.unknown
 

@@ -40,7 +40,8 @@ final class V47DriveReliabilityTests: XCTestCase {
         let source = try String(contentsOf: url)
         XCTAssertTrue(source.contains("HUD.Capture.desired"))
         XCTAssertTrue(source.contains("requestAutomaticStartIfDesired()"))
-        XCTAssertTrue(source.contains("preserving navigation state during recovery"))
+        XCTAssertTrue(source.contains("ScreenCaptureKit stream stopped unexpectedly"))
+        XCTAssertTrue(source.contains("deactivateNavigation(reason:"))
         XCTAssertTrue(source.contains("scheduleRecovery(reason: error.localizedDescription)"))
     }
 

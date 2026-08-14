@@ -31,6 +31,7 @@ struct ParsedExternalNavigation: Equatable {
 private struct OCRLine {
     let text: String
     let box: CGRect
+    let candidates: [String]
 }
 
 enum ExternalNavigationOCRParser {
@@ -52,8 +53,14 @@ enum ExternalNavigationOCRParser {
 
                 let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
                 var lines = observations.compactMap { observation -> OCRLine? in
-                    guard let candidate = observation.topCandidates(1).first else { return nil }
-                    return OCRLine(text: candidate.string, box: observation.boundingBox)
+                    let candidates = observation.topCandidates(5).map(\.string)
+                    guard let first = candidates.first else { return nil }
+                    // For navigation distance labels, a lower-ranked Vision
+                    // candidate can preserve a decimal point that the top
+                    // candidate drops (for example 2.3 mi -> 2 mi). Prefer the
+                    // most information-preserving standalone distance candidate.
+                    let preferred = preferredDistanceCandidate(candidates) ?? first
+                    return OCRLine(text: preferred, box: observation.boundingBox, candidates: candidates)
                 }
 
                 // Vision order is usually sensible, but do not depend on it.
@@ -87,6 +94,17 @@ enum ExternalNavigationOCRParser {
                 }
             }
         }
+    }
+
+    private static func preferredDistanceCandidate(_ candidates: [String]) -> String? {
+        let matches = candidates.filter { isStandaloneDistance($0) }
+        guard !matches.isEmpty else { return nil }
+        return matches.sorted { a, b in
+            let aDecimal = a.contains(".") ? 1 : 0
+            let bDecimal = b.contains(".") ? 1 : 0
+            if aDecimal != bDecimal { return aDecimal > bDecimal }
+            return a.count > b.count
+        }.first
     }
 
     static func parse(lines: [String], rawText: String) -> ParsedExternalNavigation {
@@ -212,7 +230,10 @@ enum ExternalNavigationOCRParser {
 
         let unit = String(s[unitRange])
         if unit == "ft" || unit == "feet" {
-            return Int((value / 3.28084).rounded())
+            // Preserve advertised feet across the integer-meter wire format.
+            // Rounding down can turn 500 ft into ~499 ft and the HUD then
+            // displays 400 ft. Ceil keeps boundary values on the intended side.
+            return Int(ceil(value / 3.28084))
         }
         return Int((value * 1609.344).rounded())
     }
@@ -276,7 +297,13 @@ enum GoogleMapsOCRParser {
             .filter { !$0.isEmpty }
         let lower = cleaned.map { $0.lowercased() }
 
-        if lower.contains(where: { $0.contains("arrived") || $0.contains("you have arrived") }) {
+        if lower.contains(where: {
+            $0.contains("arrived") ||
+            $0.contains("you have arrived") ||
+            $0.contains("the destination is on your right") ||
+            $0.contains("the destination is on your left") ||
+            $0.hasPrefix("the destination is")
+        }) {
             return ParsedExternalNavigation(
                 instruction: NavigationInstruction(
                     maneuver: .destination,
@@ -444,7 +471,13 @@ private enum AppleMapsOCRParser {
     ) -> ParsedExternalNavigation {
         let lower = lines.map { $0.lowercased() }
 
-        if lower.contains(where: { $0.contains("arrived") || $0.contains("you have arrived") }) {
+        if lower.contains(where: {
+            $0.contains("arrived") ||
+            $0.contains("you have arrived") ||
+            $0.contains("the destination is on your right") ||
+            $0.contains("the destination is on your left") ||
+            $0.hasPrefix("the destination is")
+        }) {
             return ParsedExternalNavigation(
                 instruction: NavigationInstruction(
                     maneuver: .destination,
@@ -584,9 +617,9 @@ private enum AppleMapsOCRParser {
         var value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // OCR often returns the route-shield number before the actual road.
         value = value.replacingOccurrences(
-            of: #"^\s*\d{1,3}\s+"#,
+            of: #"^\s*[\{\[\(]?\s*(?:US|I|IS|INTERSTATE)?[- ]?\d{1,3}\s*[\}\]\)]?\s+"#,
             with: "",
-            options: .regularExpression
+            options: [.regularExpression, .caseInsensitive]
         )
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -606,6 +639,18 @@ private enum AppleManeuverIconClassifier {
         let centerY = (distanceTop + distanceBottom) * 0.5
         let cropHeight = max(90, (distanceBottom - distanceTop) * 2.7)
         let cropWidth = min(width * 0.26, max(120, distanceBox.minX * width * 0.95))
+
+        // Apple lane-guidance cards are structurally different: several gray
+        // arrows span the card and the recommended lane is the single bright
+        // white glyph, often to the RIGHT of the distance text. The old
+        // left-of-distance crop could therefore classify the wrong lane.
+        if let lane = classifyHighlightedLaneArrow(
+            cgImage: cg,
+            distanceTop: distanceTop,
+            distanceHeight: max(20, distanceBottom - distanceTop)
+        ) {
+            return lane
+        }
 
         var rect = CGRect(
             x: 15,
@@ -641,6 +686,54 @@ private enum AppleManeuverIconClassifier {
         if leftRatio > rightRatio * 1.20 && leftRatio > 0.23 { return .left }
         if topRatio > 0.30 { return .straight }
 
+        return .straight
+    }
+
+    private static func classifyHighlightedLaneArrow(
+        cgImage: CGImage,
+        distanceTop: CGFloat,
+        distanceHeight: CGFloat
+    ) -> HudManeuver? {
+        let width = CGFloat(cgImage.width)
+        let height = CGFloat(cgImage.height)
+        // Search the horizontal band immediately above the first distance.
+        // This excludes the white distance digits themselves.
+        var rect = CGRect(
+            x: width * 0.05,
+            y: max(0, distanceTop - max(150, distanceHeight * 3.2)),
+            width: width * 0.90,
+            height: max(90, min(150, distanceHeight * 2.5))
+        ).intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        guard rect.width > 40, rect.height > 40,
+              let crop = cgImage.cropping(to: rect.integral),
+              let pixels = thresholdedPixels(crop),
+              pixels.points.count > 35 else { return nil }
+
+        let xs = pixels.points.map(\.x)
+        let ys = pixels.points.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else { return nil }
+
+        let bw = maxX - minX + 1
+        let bh = maxY - minY + 1
+        let centerX = Double(minX + maxX) / 2.0 / Double(max(1, pixels.width))
+
+        // A normal single-turn card keeps its icon on the far left. Lane
+        // guidance is recognized only when the highlighted glyph occupies the
+        // middle/right portion of this full-width band.
+        guard centerX > 0.28 else { return nil }
+
+        if Double(bh) > Double(bw) * 1.15 { return .straight }
+
+        let midX = Double(minX + maxX) / 2.0
+        var leftTip = 0
+        var rightTip = 0
+        for point in pixels.points {
+            if Double(point.x) < midX - Double(bw) * 0.22 { leftTip += 1 }
+            if Double(point.x) > midX + Double(bw) * 0.22 { rightTip += 1 }
+        }
+        if rightTip > leftTip * 6 / 5 { return .right }
+        if leftTip > rightTip * 6 / 5 { return .left }
         return .straight
     }
 

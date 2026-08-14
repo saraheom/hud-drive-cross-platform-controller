@@ -24,9 +24,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
 
     var absenceTimeoutSeconds: Int {
         didSet {
-            absenceTimeoutSeconds = max(1, min(30, absenceTimeoutSeconds))
-            UserDefaults.standard.set(absenceTimeoutSeconds, forKey: "HUD.Ambient.timeout")
+            // Never assign to an observed property from its own didSet. That
+            // re-entered Observation/SwiftUI during Stepper changes and could
+            // crash the app. The UI supplies an already-clamped value.
+            UserDefaults.standard.set(Self.clampedTimeout(absenceTimeoutSeconds), forKey: "HUD.Ambient.timeout")
         }
+    }
+
+    static func clampedTimeout(_ value: Int) -> Int { max(1, min(30, value)) }
+
+    func setAbsenceTimeout(_ value: Int) {
+        absenceTimeoutSeconds = Self.clampedTimeout(value)
     }
 
     private var central: CBCentralManager!
@@ -50,7 +58,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
             ? false : d.bool(forKey: "HUD.Ambient.enabled")
         self.targetName = d.string(forKey: "HUD.Ambient.targetName") ?? "BLEDOM"
         self.absenceTimeoutSeconds = d.object(forKey: "HUD.Ambient.timeout") == nil
-            ? 5 : max(1, d.integer(forKey: "HUD.Ambient.timeout"))
+            ? 5 : Self.clampedTimeout(d.integer(forKey: "HUD.Ambient.timeout"))
 
         super.init()
 

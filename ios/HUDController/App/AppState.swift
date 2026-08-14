@@ -103,6 +103,12 @@ final class AppState {
             label: "Notification lines \(settings.notificationLines)"
         )
 
+        bluetooth.enqueue(
+            HudCommands.musicNotificationFilter(enabled: settings.notifyMusic),
+            label: "Music notification popups \(settings.notifyMusic ? "ON" : "OFF")"
+        )
+        musicFilterInitialized = settings.notifyMusic
+
         if settings.notifyAll {
             logger.log("NOTIFICATION", "All notifications mode enabled")
             return
@@ -158,6 +164,17 @@ final class AppState {
         guard !resolvedArtist.isEmpty,
               !resolvedTrack.isEmpty,
               resolvedTrack != "No Spotify track" else { return }
+
+        guard settings.notifyMusic else {
+            if musicFilterInitialized {
+                musicFilterInitialized = false
+                bluetooth.enqueue(
+                    HudCommands.musicNotificationFilter(enabled: false),
+                    label: "Disable native Music notification filter"
+                )
+            }
+            return
+        }
 
         if !musicFilterInitialized {
             musicFilterInitialized = true
