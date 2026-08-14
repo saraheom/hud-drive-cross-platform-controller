@@ -274,10 +274,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
                 reason: "advertisement"
             )
 
-            // Once identified, connection/disconnection callbacks are much
-            // more reliable in background/locked state than a foreground Task
-            // timer watching duplicate advertisements.
-            central.stopScan()
+            // Marking presence happens immediately on the advertisement;
+            // don't wait for the slower GATT connection. Keep a connection
+            // pending as the background/locked-screen presence channel.
+            // Scanning is stopped only after didConnect.
             self.maintainConnection(to: peripheral, reason: "matched advertisement")
         }
     }
@@ -298,9 +298,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
                 rssi: self.lastRSSI,
                 reason: "CoreBluetooth didConnect"
             )
+            central.stopScan()
             self.logger.log(
                 "AMBIENT BG",
-                "Persistent ambient BLE connection established"
+                "Persistent ambient BLE connection established; discovery scan stopped"
             )
         }
     }
@@ -337,6 +338,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
             // then leave another pending connect request so device power-on
             // automatically wakes/reconnects us.
             self.markAbsent(reason: "persistent BLE disconnect")
+
+            // Hybrid recovery: leave a GATT connection pending AND scan for
+            // the remembered BLEDOM advertisement. If iOS delivers an
+            // advertisement before GATT finishes, brightness turns ON
+            // immediately rather than waiting ~10 seconds for didConnect.
+            self.startScanning()
             self.scheduleConnectionRetry()
         }
     }

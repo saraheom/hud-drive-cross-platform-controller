@@ -57,6 +57,10 @@ final class ExternalNavigationCapture: NSObject {
     private var watchdogTask: Task<Void, Never>?
     private var arrivalTask: Task<Void, Never>?
     private var recoveryAttempt = 0
+    private var automaticPickerPresentedThisSession = false
+    private(set) var captureDesired: Bool {
+        didSet { UserDefaults.standard.set(captureDesired, forKey: "HUD.Capture.desired") }
+    }
 
     private var pendingCandidateKey = ""
     private var pendingCandidateCount = 0
@@ -83,6 +87,8 @@ final class ExternalNavigationCapture: NSObject {
             ? true : d.bool(forKey: "HUD.Capture.autoRecover")
         self.autoEnableNavigationMode = d.object(forKey: "HUD.Capture.autoNavMode") == nil
             ? true : d.bool(forKey: "HUD.Capture.autoNavMode")
+        self.captureDesired = d.object(forKey: "HUD.Capture.desired") == nil
+            ? true : d.bool(forKey: "HUD.Capture.desired")
 
         super.init()
         picker.add(self)
@@ -93,6 +99,7 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func presentFullDisplayPicker() {
+        captureDesired = true
         var config = SCContentSharingPickerConfiguration()
         config.showsMicrophoneControl = false
         picker.defaultConfiguration = config
@@ -104,6 +111,7 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func stop() {
+        captureDesired = false
         recoveryTask?.cancel()
         recoveryTask = nil
         watchdogTask?.cancel()
@@ -132,12 +140,29 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func appBecameActive() {
-        guard autoRecoverAfterInterruption,
-              stream == nil,
-              let filter = lastFilter else { return }
+        requestAutomaticStartIfDesired()
+    }
 
-        logger.log("SCREEN CAPTURE RECOVERY", "App active; retrying cached full-display filter")
-        start(filter: filter, recovery: true)
+    func requestAutomaticStartIfDesired() {
+        guard captureDesired, autoRecoverAfterInterruption, stream == nil else { return }
+
+        if let filter = lastFilter {
+            logger.log("SCREEN CAPTURE RECOVERY", "Capture desired; retrying cached full-display filter")
+            start(filter: filter, recovery: true)
+            return
+        }
+
+        // SCContentFilter itself isn't persistable across process launches.
+        // When no live-session filter exists, minimize intervention by
+        // automatically presenting Apple's required system picker once while
+        // the app is active. The user still makes the privacy-sensitive
+        // Entire Display selection.
+        guard UIApplication.shared.applicationState == .active,
+              !automaticPickerPresentedThisSession else { return }
+
+        automaticPickerPresentedThisSession = true
+        logger.log("SCREEN CAPTURE AUTO", "Capture desired but no cached filter; presenting system picker once")
+        presentFullDisplayPicker()
     }
 
     func hudSessionDidReset(reason: String) {
@@ -254,7 +279,8 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     private func scheduleRecovery(reason: String) {
-        guard autoRecoverAfterInterruption,
+        guard captureDesired,
+              autoRecoverAfterInterruption,
               lastFilter != nil else { return }
         guard recoveryTask == nil else { return }
 
@@ -611,9 +637,12 @@ extension ExternalNavigationCapture: SCStreamDelegate {
                 "domain=\(nsError.domain) code=\(nsError.code) description=\(error.localizedDescription)"
             )
 
-            // A stopped capture means we no longer have evidence that a route
-            // list is on screen. Do not leave the HUD frozen in Navigation.
-            self.deactivateNavigation(reason: "ScreenCaptureKit stream stopped")
+            // An unexpected ScreenCaptureKit stop is not equivalent to route
+            // completion. Preserve the current HUD maneuver while aggressively
+            // rebuilding capture. Navigation OFF is driven by OCR-confirmed
+            // Maps inactivity after capture resumes, or by an explicit user
+            // Stop Capture action.
+            self.logger.log("SCREEN NAV LIFECYCLE", "Capture interrupted; preserving navigation state during recovery")
             self.scheduleRecovery(reason: error.localizedDescription)
         }
     }
@@ -664,6 +693,7 @@ final class ExternalNavigationCapture: NSObject {
     var keepScreenAwake = false
     var autoRecoverAfterInterruption = false
     var autoEnableNavigationMode = true
+    private(set) var captureDesired = true
 
     private let logger: LogManager
     private let navigation: HudNavigationController
@@ -688,6 +718,7 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func appBecameActive() { }
+    func requestAutomaticStartIfDesired() { }
     func hudSessionDidReset(reason: String) { }
 
     func analyzePhoto(_ image: UIImage) async {

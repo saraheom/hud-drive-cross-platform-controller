@@ -962,3 +962,37 @@ v46 updates that test to verify behavior rather than old wording:
   picker.
 
 No runtime application behavior changed from v45.
+
+
+## v47 — drive reliability + maximum automation
+
+- Fixed a protocol-unit bug in GPS fallback speed. `CLLocation.speed` is now
+  converted to km/h for the HUD's native SpeedNotification packet while the
+  HUD remains configured to display mph. This fixes the characteristic
+  ~0.62x low reading (for example 45 mph appearing near 28 mph).
+- Rejects stale or very poor-accuracy GPS fixes.
+- BLEDOM uses hybrid advertisement + persistent GATT recovery: OFF remains
+  event-driven; after disconnect the app both scans and leaves a connection
+  pending, and a matching advertisement turns Auto Brightness ON immediately.
+- OBD auto-connect now has a continuous 10-second keep-connected health loop.
+  The known HUD protocol reports connection/PID masks but does not stream raw
+  PID values back to the phone, so v47 does not falsely claim to validate RPM
+  or vehicle-speed freshness. Instead it periodically reasserts the
+  idempotent HUD→OBD connect command and resumes the retry loop whenever local
+  connection state is lost.
+- HUD boot restoration is now three-phase: base session, persisted settings
+  after firmware settles, then a delayed display-critical reassertion. This
+  specifically reasserts time/weather OFF, dashboard widgets, brightness,
+  navigation, and speed-limit state after firmware defaults have loaded.
+- Circular speed-limit style was removed from the command API. Every
+  speed-limit packet now hard-codes the rectangular style flag.
+- Screen capture has a persisted `captureDesired` state. Unexpected stream
+  termination preserves the current navigation maneuver while the app
+  automatically rebuilds/retries capture. Only explicit Stop Capture disables
+  that desire.
+- When capture is desired but no in-memory content filter exists (for example
+  after a fresh process launch), the app automatically presents Apple's system
+  content-sharing picker once while foregrounded. The user still performs the
+  required privacy-sensitive Entire Display selection.
+- `screen-capture` remains enabled in UIBackgroundModes for iOS 27 full-display
+  background capture.

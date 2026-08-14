@@ -145,8 +145,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         bluetooth.enqueue(
             HudCommands.speedLimit(
                 limit: currentSpeedLimitMph,
-                tolerance: speedTolerance,
-                squareStyle: true
+                tolerance: speedTolerance
             ),
             label: "Speed limit \(currentSpeedLimitMph) mph (+\(speedTolerance))"
         )
@@ -191,14 +190,32 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     private func process(_ location: CLLocation) {
-        let speedMS = max(0, location.speed)
+        // CLLocation.speed is meters/second. The HUD protocol's native
+        // SpeedNotification field is km/h even when the physical HUD is
+        // configured to DISPLAY mph. Previous builds incorrectly placed the
+        // mph number into this km/h field, producing ~0.62x displayed speed
+        // (for example 45 mph becoming about 28 mph).
+        let age = abs(location.timestamp.timeIntervalSinceNow)
+        guard location.speed >= 0,
+              age <= 5,
+              location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= 65 else {
+            logger.log(
+                "GPS SPEED REJECT",
+                "age=\(String(format: "%.1f", age))s accuracy=\(Int(location.horizontalAccuracy))m speed=\(location.speed)"
+            )
+            return
+        }
+
+        let speedMS = location.speed
+        let protocolSpeedKmh = Int((speedMS * 3.6).rounded())
         currentSpeedMph = Int((speedMS * 2.2369362920544).rounded())
 
         if currentSpeedMph != lastSentSpeed, bluetooth.state == .connected {
             lastSentSpeed = currentSpeedMph
             bluetooth.enqueue(
-                HudCommands.speedNotification(kmh: currentSpeedMph),
-                label: "Vehicle speed \(currentSpeedMph) mph"
+                HudCommands.speedNotification(kmh: protocolSpeedKmh),
+                label: "Vehicle speed \(currentSpeedMph) mph (HUD protocol \(protocolSpeedKmh) km/h)"
             )
         }
 
@@ -207,7 +224,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             if showSpeedLimit, limit != lastSentLimit, bluetooth.state == .connected {
                 lastSentLimit = limit
                 bluetooth.enqueue(
-                    HudCommands.speedLimit(limit: limit, tolerance: speedTolerance, squareStyle: true),
+                    HudCommands.speedLimit(limit: limit, tolerance: speedTolerance),
                     label: "Speed limit \(limit) mph (+\(speedTolerance))"
                 )
                 bluetooth.enqueue(

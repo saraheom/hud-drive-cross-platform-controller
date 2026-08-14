@@ -172,10 +172,12 @@ enum HudCommands {
 
     /// Decompiled HudSpeedLimitAndToleranceCommandPacket
     /// CommandPacket(command=2, p1=101, p2=2)
-    static func speedLimit(limit: Int, tolerance: Int = 0, squareStyle: Bool = true) -> Data {
+    static func speedLimit(limit: Int, tolerance: Int = 0) -> Data {
         var payload = HudProtocol.int32(Int32(max(0, limit)))
         payload.append(HudProtocol.int32(Int32(max(0, tolerance))))
-        payload.append(HudProtocol.int32(squareStyle ? 1 : 0))
+        // v47: the app intentionally supports only the rectangular U.S.-style
+        // speed-limit sign. Never transmit the circular-style flag.
+        payload.append(HudProtocol.int32(1))
         return HudProtocol.frame(command: 2, p1: 101, p2: 2, payload: payload)
     }
 

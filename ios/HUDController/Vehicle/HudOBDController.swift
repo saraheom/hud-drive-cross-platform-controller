@@ -45,7 +45,9 @@ final class HudOBDController {
     private let bluetooth: HudBluetoothManager
     private let logger: LogManager
     private var autoConnectTask: Task<Void, Never>?
+    private var healthTask: Task<Void, Never>?
     private var autoConnectAttempt = 0
+    private var lastPositiveConnectionEvent = Date.distantPast
 
     var deviceName: String {
         didSet { UserDefaults.standard.set(deviceName, forKey: "HUD.OBD.deviceName") }
@@ -55,9 +57,12 @@ final class HudOBDController {
             UserDefaults.standard.set(autoConnect, forKey: "HUD.OBD.autoConnect")
             if autoConnect {
                 startAutoConnectLoop(reason: "Auto-connect enabled")
+                startHealthLoop()
             } else {
                 autoConnectTask?.cancel()
                 autoConnectTask = nil
+                healthTask?.cancel()
+                healthTask = nil
                 autoConnectAttempt = 0
             }
         }
@@ -101,9 +106,11 @@ final class HudOBDController {
             self.supportedPIDs = pids
             self.status = connected ? "Connected through HUD" : "Disconnected"
             if connected {
+                self.lastPositiveConnectionEvent = Date()
                 self.autoConnectTask?.cancel()
                 self.autoConnectTask = nil
                 self.autoConnectAttempt = 0
+                self.startHealthLoop()
             } else if self.autoConnect {
                 self.startAutoConnectLoop(reason: "HUD reported OBD disconnected")
             }
@@ -147,6 +154,8 @@ final class HudOBDController {
     func disconnect() {
         autoConnectTask?.cancel()
         autoConnectTask = nil
+        healthTask?.cancel()
+        healthTask = nil
         autoConnectAttempt = 0
         connected = false
         supportedPIDs = ""
@@ -214,12 +223,15 @@ final class HudOBDController {
 
         if autoConnect {
             startAutoConnectLoop(reason: reason)
+            startHealthLoop()
         }
     }
 
     func transportDisconnected() {
         autoConnectTask?.cancel()
         autoConnectTask = nil
+        healthTask?.cancel()
+        healthTask = nil
         autoConnectAttempt = 0
         connected = false
         supportedPIDs = ""
@@ -259,5 +271,51 @@ final class HudOBDController {
             self.autoConnectTask = nil
         }
     }
+
+
+    private func startHealthLoop() {
+        guard autoConnect, healthTask == nil else { return }
+
+        healthTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled && self.autoConnect {
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled else { break }
+
+                guard self.bluetooth.state == .connected else {
+                    self.connected = false
+                    self.status = "HUD unavailable; OBD reconnect pending"
+                    continue
+                }
+
+                if !self.connected {
+                    self.startAutoConnectLoop(reason: "OBD health watchdog found disconnected state")
+                    continue
+                }
+
+                // The decompiled HUD protocol exposes connection state and
+                // supported-PID masks, but not a stream of raw OBD PID values
+                // back to the phone. Therefore we cannot truthfully use RPM or
+                // speed-value freshness as a phone-side heartbeat. Instead,
+                // periodically reassert the idempotent HUD-side connect
+                // command. This recovers a silently lost ELM link without
+                // requiring the user to toggle Disconnect/Connect.
+                let name = self.deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "OBDII" : self.deviceName
+                self.bluetooth.enqueue(
+                    HudCommands.obdConnection(enabled: true, deviceName: name),
+                    label: "OBD health keep-connected \(name)"
+                )
+                self.logger.log(
+                    "OBD HEALTH",
+                    "Reasserted HUD→OBD connection; supportedPIDs=\(self.supportedPIDs.isEmpty ? "none" : self.supportedPIDs)"
+                )
+            }
+
+            self.healthTask = nil
+        }
+    }
+
 
 }
