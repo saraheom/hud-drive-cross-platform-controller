@@ -20,9 +20,24 @@ final class SpeedUnitTests: XCTestCase {
             .appendingPathComponent("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        XCTAssertTrue(source.contains("2.2369362920544"))
-        XCTAssertTrue(source.contains("0.62137119223733"))
-        XCTAssertFalse(source.contains("* 3.6"))
+        // App-facing speed remains mph.
+        XCTAssertTrue(source.contains("currentSpeedMph"))
+        XCTAssertTrue(source.contains("speedMS * 2.2369362920544"))
+
+        // The physical HUD protocol's SpeedNotification numeric field is km/h
+        // even when the HUD itself is configured to display mph. The engine
+        // must therefore convert m/s -> km/h only at the BLE packet boundary.
+        XCTAssertTrue(source.contains("protocolSpeedKmh"))
+        XCTAssertTrue(source.contains("speedMS * 3.6"))
+        XCTAssertTrue(
+            source.contains("HudCommands.speedNotification(kmh: protocolSpeedKmh)")
+        )
+
+        // Regression guard: never send the mph number directly into the
+        // protocol field again; that caused ~0.62x displayed speed.
+        XCTAssertFalse(
+            source.contains("HudCommands.speedNotification(kmh: currentSpeedMph)")
+        )
     }
 
     func testSpeedParserTupleMemberNamesMatch() throws {

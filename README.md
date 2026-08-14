@@ -996,3 +996,23 @@ No runtime application behavior changed from v45.
   required privacy-sensitive Entire Display selection.
 - `screen-capture` remains enabled in UIBackgroundModes for iOS 27 full-display
   background capture.
+
+
+## v48 — update stale speed-unit regression test
+
+The v47 CI run built successfully and all six v47 drive-reliability tests
+passed. The only failure was an older `SpeedUnitTests` assertion that rejected
+any use of km/h in `OriginalSpeedLimitEngine`.
+
+That assertion predates the v47 protocol correction.
+
+The intended invariant is now tested explicitly:
+
+- app/UI/current-speed state remains mph;
+- `CLLocation.speed` is converted to mph for app state;
+- immediately before `SpeedNotification`, the same m/s value is converted to
+  km/h because that HUD protocol field is natively km/h;
+- the mph number must never again be passed directly to the km/h packet field;
+- HUD unit settings remain configured for mph display.
+
+No runtime code changed from v47.
