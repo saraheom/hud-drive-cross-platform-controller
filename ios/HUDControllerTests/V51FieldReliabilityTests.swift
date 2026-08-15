@@ -26,7 +26,7 @@ final class V51FieldReliabilityTests: XCTestCase {
             lines: ["150 ft", "{13} Powelton Ave", "450 ft", "N 33rd St", "End Route"],
             rawText: ""
         )
-        XCTAssertEqual(result.instruction.streetName, "Powelton Ave")
+        XCTAssertEqual(result.instruction.streetName, "US 13 Powelton Ave")
     }
 
     func testCaptureInvalidatesRepeatedlyFailingFilter() throws {

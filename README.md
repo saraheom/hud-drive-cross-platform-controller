@@ -1371,3 +1371,18 @@ no longer becomes the road name and no longer prevents the parser from reading
 the following actual street/direction text.
 
 No unrelated runtime behavior changed from v61.
+
+
+## v63 — stale Apple shield/component regression-test fix
+
+The v62 application target built successfully and all new v62 tests passed.
+CI failed only because two older tests still asserted behavior superseded by
+v62.
+
+- `V51FieldReliabilityTests` now expects the deliberately preserved route
+  shield text `US 13 Powelton Ave`.
+- `V60AppleArrowComponentIsolationTests` still verifies connected-component
+  isolation, but its direction assertions now target v62's extreme-edge
+  tip/stem classifier instead of the removed upper-half classifier.
+
+No runtime application code changed from v62.
