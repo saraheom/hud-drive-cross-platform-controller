@@ -16,7 +16,7 @@ final class V54RemovedSourceExclusionTests: XCTestCase {
         XCTAssertTrue(project.contains("- AppStateInitializationOrderTests.swift"))
     }
 
-    func testCurrentSourceTreeDoesNotContainProbeImplementation() {
+    func testLegacyProbeFileIsAbsentOrInert() throws {
         let testsURL = URL(fileURLWithPath: #filePath)
         let iosRoot = testsURL
             .deletingLastPathComponent()
@@ -25,9 +25,20 @@ final class V54RemovedSourceExclusionTests: XCTestCase {
         let probeURL = iosRoot
             .appendingPathComponent("HUDController/Media/HudTextRendererProbe.swift")
 
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: probeURL.path),
-            "HudTextRendererProbe.swift was removed in v53 and must not return"
-        )
+        // Older Git checkouts may retain previously tracked files when a newer
+        // ZIP is copied over them. Physical presence is therefore not itself a
+        // failure. If the path exists, it must be only our inert v55 overwrite,
+        // and project.yml already excludes it from compilation.
+        guard FileManager.default.fileExists(atPath: probeURL.path) else {
+            return
+        }
+
+        let source = try String(contentsOf: probeURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("v55 compatibility shim"))
+        XCTAssertFalse(source.contains("final class HudTextRendererProbe"))
+        XCTAssertFalse(source.contains("enum HudTextProbeRoute"))
+        XCTAssertFalse(source.contains("HudCommands.textNotificationProbe("))
+        XCTAssertFalse(source.contains("HudCommands.persistentNavigationTextProbe("))
     }
 }

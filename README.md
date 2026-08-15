@@ -1137,3 +1137,29 @@ checkout instead of replacing it completely:
 - the current v54 ZIP still does not contain those removed source files.
 
 No runtime application behavior changed from v53.
+
+
+## v55 — overwrite stale Git probe source safely
+
+The v54 CI app/test targets compiled, but one v54 test failed because it required
+`HudTextRendererProbe.swift` to be physically absent from the checkout.
+
+That is not reliable when a repository is updated by copying a newer ZIP over
+an older Git checkout: Git may retain a file that used to be tracked even when
+the new ZIP omits it.
+
+v55 makes the cleanup robust to that workflow:
+
+- `project.yml` still explicitly excludes the removed probe source from the app
+  target and excludes its old unit tests;
+- an inert `HudTextRendererProbe.swift` compatibility shim is included at the
+  former path so copying v55 over an older checkout overwrites the stale
+  implementation;
+- the shim contains no class, route enum, packet calls, or executable probe
+  behavior;
+- the regression test now accepts either physical absence or the known inert
+  shim instead of treating file presence alone as failure;
+- runtime AppState, MediaView, and HudCommands are additionally checked to make
+  sure the removed probe does not return.
+
+No runtime application behavior changed from v53/v52.
