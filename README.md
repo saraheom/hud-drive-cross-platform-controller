@@ -1260,3 +1260,18 @@ The lab can:
 No RIGHT enum exists in this hidden packet, so v57 does not invent one.
 These are genuine firmware commands but their combined persistent-layout
 behavior remains experimental.
+
+
+## v58 — experimental Media binding compile fix
+
+The v57 CI failure occurred only in the new Experimental HUD Music Layout UI.
+`AppState.settings` is intentionally owned as a `let`, so Swift cannot synthesize
+writable projected-value bindings such as
+`$state.settings.experimentalMusicPosition`.
+
+v58 keeps the same settings model and runtime behavior, but each experimental
+Picker/Toggle/Stepper now uses an explicit `Binding(get:set:)` that reads and
+writes the corresponding persisted `HudSettings` property.
+
+No navigation, ScreenCaptureKit, Spotify, BLE, OBD, speed-limit, or protocol
+behavior changed from v57.

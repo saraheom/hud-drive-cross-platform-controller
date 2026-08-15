@@ -96,7 +96,10 @@ struct MediaView: View {
 
                             Picker(
                                 "PushMessage position",
-                                selection: $state.settings.experimentalMusicPosition
+                                selection: Binding(
+                                    get: { state.settings.experimentalMusicPosition },
+                                    set: { state.settings.experimentalMusicPosition = $0 }
+                                )
                             ) {
                                 Text("Top").tag(0)
                                 Text("Left").tag(1)
@@ -107,25 +110,37 @@ struct MediaView: View {
 
                             Toggle(
                                 "Mirror Spotify track changes through PushMessage",
-                                isOn: $state.settings.experimentalMusicMirror
+                                isOn: Binding(
+                                    get: { state.settings.experimentalMusicMirror },
+                                    set: { state.settings.experimentalMusicMirror = $0 }
+                                )
                             )
 
                             Stepper(
                                 "Message timeout: \(state.settings.experimentalMusicTimeout)s",
-                                value: $state.settings.experimentalMusicTimeout,
+                                value: Binding(
+                                    get: { state.settings.experimentalMusicTimeout },
+                                    set: { state.settings.experimentalMusicTimeout = $0 }
+                                ),
                                 in: 1...3600,
                                 step: state.settings.experimentalMusicTimeout < 60 ? 5 : 30
                             )
 
                             Stepper(
                                 "Message lines: \(state.settings.experimentalMusicLines)",
-                                value: $state.settings.experimentalMusicLines,
+                                value: Binding(
+                                    get: { state.settings.experimentalMusicLines },
+                                    set: { state.settings.experimentalMusicLines = $0 }
+                                ),
                                 in: 1...5
                             )
 
                             Toggle(
                                 "Mini widgets state",
-                                isOn: $state.settings.experimentalMusicMini
+                                isOn: Binding(
+                                    get: { state.settings.experimentalMusicMini },
+                                    set: { state.settings.experimentalMusicMini = $0 }
+                                )
                             )
 
                             HStack {
