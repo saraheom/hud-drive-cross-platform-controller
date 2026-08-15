@@ -1386,3 +1386,31 @@ v62.
   tip/stem classifier instead of the removed upper-half classifier.
 
 No runtime application code changed from v62.
+
+
+## v64 — Apple centroid direction + secondary shield OCR
+
+Repeated photo tests showed that edge/upper-half heuristics remained unstable.
+v64 keeps connected-component isolation but changes the final simple-arrow
+classification to the whole component's horizontal centroid.
+
+Measured directly from the supplied 1290x2796 Apple Maps screenshots:
+
+- `0.4 mi / US 1 North` left-turn glyph: normalized centroid shift ≈ +0.054;
+- `150 ft / US 13 Powelton Ave` right-turn glyph: shift ≈ -0.059.
+
+The classifier uses a ±0.025 dead-band:
+positive => Left, negative => Right, near zero => Straight.
+
+This uses the actual stem mass of Apple's curved glyph instead of trying to
+infer which extreme edge is the arrowhead.
+
+Route shields also receive a second recovery path. If the normal Vision pass
+finds road/direction text such as `North` but no numeric shield, v64 performs
+one high-accuracy OCR request on a narrowly cropped region immediately to the
+left of that text. It accepts short shield forms such as `1`, `/1`, `{1}`, and
+`US 1`, then combines the recovered number with the road direction.
+
+The experimental PushMessage music path is retained for comparison, but field
+logs show no rendered text from it; only `HudHUDWidgetsMiniState` produced a
+visible effect. No new persistence claims are made for that experiment.

@@ -677,6 +677,7 @@ private enum AppleMapsOCRParser {
 
         var road = ""
         var shieldNumber: String?
+        var roadOCRLine: OCRLine?
         if index + 1 < lines.count {
             for j in (index + 1)..<min(lines.count, index + 6) {
                 let candidate = lines[j].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -698,6 +699,9 @@ private enum AppleMapsOCRParser {
                     // prematurely setting the road to garbage such as `/13`.
                     if !shield.remainder.isEmpty {
                         road = shield.remainder
+                        roadOCRLine = positionedLines.first(where: {
+                            $0.text.caseInsensitiveCompare(candidate) == .orderedSame
+                        })
                         break
                     }
                     continue
@@ -707,10 +711,27 @@ private enum AppleMapsOCRParser {
                     let cleanedRoad = stripRouteShieldOCR(candidate)
                     if !cleanedRoad.isEmpty {
                         road = cleanedRoad
+                        roadOCRLine = positionedLines.first(where: {
+                            $0.text.caseInsensitiveCompare(candidate) == .orderedSame
+                        })
                         break
                     }
                 }
             }
+        }
+
+        // Some Apple screenshots produce only "North"/"South" from the
+        // first OCR pass even though a route shield is visibly present. In
+        // that case, run one narrow high-accuracy Vision request over the
+        // shield region immediately to the left of the road/direction line.
+        if shieldNumber == nil,
+           let image,
+           let roadOCRLine,
+           let recovered = recoverRouteShieldNumber(
+               image: image,
+               roadLine: roadOCRLine
+           ) {
+            shieldNumber = recovered
         }
 
         if let shieldNumber {
@@ -760,6 +781,73 @@ private enum AppleMapsOCRParser {
         )
     }
 
+
+    private static func recoverRouteShieldNumber(
+        image: UIImage,
+        roadLine: OCRLine
+    ) -> String? {
+        guard let cg = image.cgImage else { return nil }
+
+        let width = CGFloat(cg.width)
+        let height = CGFloat(cg.height)
+        let b = roadLine.box
+
+        // Route shields sit immediately left of the road/direction label.
+        // Use a deliberately narrow crop so other maneuver-card numbers and
+        // distances cannot become false shield candidates.
+        let normalizedLeft = max(0, b.minX - 0.155)
+        let normalizedRight = min(1, b.minX + 0.010)
+        let normalizedBottom = max(0, b.midY - max(0.030, b.height * 0.95))
+        let normalizedTop = min(1, b.midY + max(0.030, b.height * 0.95))
+
+        var rect = CGRect(
+            x: normalizedLeft * width,
+            y: (1 - normalizedTop) * height,
+            width: (normalizedRight - normalizedLeft) * width,
+            height: (normalizedTop - normalizedBottom) * height
+        ).integral
+        rect = rect.intersection(CGRect(x: 0, y: 0, width: width, height: height))
+
+        guard rect.width > 12,
+              rect.height > 12,
+              let crop = cg.cropping(to: rect) else { return nil }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        request.minimumTextHeight = 0.08
+        request.recognitionLanguages = ["en-US"]
+
+        let handler = VNImageRequestHandler(cgImage: crop, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return nil
+        }
+
+        let observations = request.results ?? []
+        for observation in observations {
+            for candidate in observation.topCandidates(5) {
+                let text = candidate.string
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Accept only a very short numeric shield result. OCR artifacts
+                // such as "/13", "{1}", or "US 13" are intentionally allowed.
+                if let regex = try? NSRegularExpression(
+                    pattern: #"(?:US|U\.?S\.?)?\s*[/\\|{\[(]?\s*(\d{1,3})\s*[}\])]?"#,
+                    options: [.caseInsensitive]
+                ) {
+                    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                    if let match = regex.firstMatch(in: text, options: [], range: range),
+                       let numberRange = Range(match.range(at: 1), in: text) {
+                        return String(text[numberRange])
+                    }
+                }
+            }
+        }
+
+        return nil
+    }
 
     private static func extractRouteShieldPrefix(
         _ text: String
@@ -959,54 +1047,38 @@ private enum AppleManeuverIconClassifier {
             return .straight
         }
 
-        // v62: classify the ISOLATED maneuver glyph by its extreme-edge
-        // geometry. This is the invariant visible in the supplied Apple Maps
-        // screenshots:
+        // v64: classify the WHOLE isolated maneuver glyph using its
+        // horizontal centroid. This is measured directly from the supplied
+        // Apple Maps screenshots and is more stable than guessing which edge
+        // is the arrow tip.
         //
-        // LEFT turn:
-        //   left extreme  = narrow arrow tip (short span / less mass)
-        //   right extreme = tall vertical stem / bend
+        // Apple curved LEFT:
+        //   arrowhead points left, but the tall stem/bend is on the RIGHT,
+        //   pulling the component centroid to the right of bbox center.
         //
-        // RIGHT turn:
-        //   right extreme = narrow arrow tip
-        //   left extreme  = tall vertical stem / bend
+        // Apple curved RIGHT:
+        //   tall stem/bend is on the LEFT, pulling centroid left.
         //
-        // Because this operates after connected-component isolation, distance
-        // text can no longer contaminate the measurement.
-        let edgeWidth = max(3, Int(Double(bw) * 0.18))
-        let leftEdge = glyph.filter { $0.x <= minX + edgeWidth }
-        let rightEdge = glyph.filter { $0.x >= maxX - edgeWidth }
+        // On the supplied full-resolution screenshots:
+        //   left turn  centroid shift ≈ +0.054 of glyph width
+        //   right turn centroid shift ≈ -0.059 of glyph width
+        // so ±0.025 leaves a large dead-band for straight/ambiguous icons.
+        let centroidX =
+            Double(glyph.map(\.x).reduce(0, +)) / Double(glyph.count)
+        let bboxCenterX = Double(minX + maxX) / 2.0
+        let centroidShift = (centroidX - bboxCenterX) / Double(bw)
 
-        func verticalSpan(_ points: [(x: Int, y: Int)]) -> Int {
-            guard let lo = points.map(\.y).min(),
-                  let hi = points.map(\.y).max() else { return 0 }
-            return hi - lo + 1
-        }
-
-        let leftCount = leftEdge.count
-        let rightCount = rightEdge.count
-        let leftSpan = verticalSpan(leftEdge)
-        let rightSpan = verticalSpan(rightEdge)
-
-        let leftIsTip =
-            Double(leftCount) < Double(max(1, rightCount)) * 0.72 &&
-            Double(leftSpan) < Double(max(1, rightSpan)) * 0.78
-
-        let rightIsTip =
-            Double(rightCount) < Double(max(1, leftCount)) * 0.72 &&
-            Double(rightSpan) < Double(max(1, leftSpan)) * 0.78
-
-        if leftIsTip { return .left }
-        if rightIsTip { return .right }
-
-        // Secondary fallback using only the vertical-span asymmetry. This is
-        // intentionally conservative so anti-aliasing doesn't flip a turn.
-        if Double(leftSpan) < Double(max(1, rightSpan)) * 0.62 {
+        if centroidShift > 0.025 {
             return .left
         }
-        if Double(rightSpan) < Double(max(1, leftSpan)) * 0.62 {
+        if centroidShift < -0.025 {
             return .right
         }
+
+        // If a curved icon is too anti-aliased/cropped to exceed the
+        // dead-band, do not guess the opposite direction. Straight is a safer
+        // fallback; the next 1 Hz frame can replace it once geometry stabilizes.
+        return .straight
 
         return .straight
     }
