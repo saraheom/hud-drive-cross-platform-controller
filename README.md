@@ -1331,3 +1331,24 @@ The supplied screenshots were used as offline geometry checks: the simple
 left, simple right, lane-guidance straight, and second simple-left examples
 classify Left, Right, Straight, Left respectively with this component-isolated
 method.
+
+
+## v61 — update stale v59 Apple-arrow regression test
+
+The v60 application target built successfully. CI failed only because the
+older `V59AppleArrowDirectionTests` still searched the source for the v59
+edge-asymmetry variables (`leftTipByMass`, `rightTipBySpan`, etc.).
+
+Those variables were intentionally removed by v60's connected-component
+rewrite.
+
+v61 updates the regression test to verify the current invariant:
+
+- isolate the bright maneuver glyph with `dominantArrowComponent`;
+- score/select the likely arrow component;
+- classify left/right from the isolated component's upper-half geometry;
+- retain the center-shift fallback;
+- ensure both the v57 upper-crop heuristic and v59 edge-tip heuristic remain
+  absent.
+
+No runtime application behavior changed from v60.

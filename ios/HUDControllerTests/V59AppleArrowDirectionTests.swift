@@ -2,50 +2,52 @@ import XCTest
 @testable import HUDController
 
 final class V59AppleArrowDirectionTests: XCTestCase {
-    func testClassifierUsesExtremeTipVersusStemInvariant() throws {
+    func testClassifierUsesConnectedComponentIsolation() throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("HUDController/Navigation/GoogleMapsOCRParser.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
 
-        XCTAssertTrue(source.contains("leftTipByMass"))
-        XCTAssertTrue(source.contains("leftTipBySpan"))
-        XCTAssertTrue(source.contains("rightTipByMass"))
-        XCTAssertTrue(source.contains("rightTipBySpan"))
-        XCTAssertTrue(source.contains("edgeWidth = max(3, Int(Double(bw) * 0.18))"))
+        // v60+ first isolates the actual bright maneuver glyph so fragments of
+        // the white distance text cannot reverse the left/right result.
+        XCTAssertTrue(source.contains("dominantArrowComponent(from: data)"))
+        XCTAssertTrue(source.contains("componentArrowScore"))
+        XCTAssertTrue(source.contains("connected bright-pixel components"))
+        XCTAssertTrue(source.contains("let upperCut = minY + Int(Double(bh) * 0.60)"))
+        XCTAssertTrue(source.contains("upperLeft"))
+        XCTAssertTrue(source.contains("upperRight"))
+        XCTAssertTrue(source.contains("normalizedShift"))
 
-        // Regression guard: the unstable v57 upper-arrowhead heuristic must
-        // not return.
+        // Regression guards: neither of the two older unstable classifiers
+        // should return.
         XCTAssertFalse(source.contains("arrowheadCutoff"))
         XCTAssertFalse(source.contains("headCenter"))
+        XCTAssertFalse(source.contains("leftTipByMass"))
+        XCTAssertFalse(source.contains("leftTipBySpan"))
+        XCTAssertFalse(source.contains("rightTipByMass"))
+        XCTAssertFalse(source.contains("rightTipBySpan"))
     }
 
-    func testLeftTurnGeometryIsNotReversed() {
-        // Representative geometry measured from the supplied Apple Maps
-        // left-turn screenshot: narrow left arrow tip, heavy right stem.
-        let leftCount = 446
-        let rightCount = 1525
-        let leftSpan = 38
-        let rightSpan = 87
+    func testLeftTurnUpperComponentGeometryIsNotReversed() {
+        // Representative isolated-glyph geometry for a left-turn icon:
+        // upper arrowhead mass is biased left.
+        let upperLeft = 910
+        let upperRight = 520
 
-        let leftTipByMass = Double(leftCount) < Double(rightCount) * 0.72
-        let leftTipBySpan = Double(leftSpan) < Double(rightSpan) * 0.78
-
-        XCTAssertTrue(leftTipByMass)
-        XCTAssertTrue(leftTipBySpan)
+        XCTAssertGreaterThan(
+            Double(upperLeft),
+            Double(upperRight) * 1.16
+        )
     }
 
-    func testMirroredGeometryClassifiesAsRight() {
-        let leftCount = 1525
-        let rightCount = 446
-        let leftSpan = 87
-        let rightSpan = 38
+    func testMirroredUpperComponentGeometryClassifiesAsRight() {
+        let upperLeft = 520
+        let upperRight = 910
 
-        let rightTipByMass = Double(rightCount) < Double(leftCount) * 0.72
-        let rightTipBySpan = Double(rightSpan) < Double(leftSpan) * 0.78
-
-        XCTAssertTrue(rightTipByMass)
-        XCTAssertTrue(rightTipBySpan)
+        XCTAssertGreaterThan(
+            Double(upperRight),
+            Double(upperLeft) * 1.16
+        )
     }
 }
