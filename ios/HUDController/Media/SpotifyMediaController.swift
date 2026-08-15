@@ -15,7 +15,9 @@ final class SpotifyMediaController: NSObject {
     private let logger: LogManager
     private var lastNotifiedTrackURI: String?
     private var reconnectTask: Task<Void, Never>?
+    private var reconnectAttempt = 0
     private var userRequestedDisconnect = false
+    private(set) var authorizationRequired = false
     var onTrackChanged: ((String, String) -> Void)?
 
     @ObservationIgnored
@@ -44,6 +46,7 @@ final class SpotifyMediaController: NSObject {
         if let token = SpotifyTokenStore.load() {
             appRemote.connectionParameters.accessToken = token
             authorized = true
+            authorizationRequired = false
             status = "Previously authorized"
             logger.log("MEDIA AUTO", "Restored Spotify App Remote token from Keychain")
         }
@@ -57,48 +60,84 @@ final class SpotifyMediaController: NSObject {
         userRequestedDisconnect = false
 
         guard isConfigured else {
+            status = "Spotify Client ID is not configured"
             logger.log("MEDIA AUTO", "Spotify auto-connect skipped: Client ID missing")
             return
         }
-        guard !connected else { return }
 
-        guard let token = appRemote.connectionParameters.accessToken, !token.isEmpty else {
-            logger.log("MEDIA AUTO", "No saved Spotify authorization; one-time manual authorization required")
+        guard !connected else {
+            reconnectAttempt = 0
             return
         }
 
+        guard let token = appRemote.connectionParameters.accessToken,
+              !token.isEmpty else {
+            authorized = false
+            authorizationRequired = true
+            status = "Spotify authorization required"
+            logger.log(
+                "MEDIA AUTO",
+                "No saved Spotify authorization; one-time authorization required"
+            )
+            return
+        }
+
+        authorized = true
+        authorizationRequired = false
+
         reconnectTask?.cancel()
         reconnectTask = nil
-        status = "Connecting to Spotify automatically…"
-        logger.log("MEDIA AUTO", "Attempting Spotify App Remote auto-connect")
+        status = reconnectAttempt == 0
+            ? "Connecting to Spotify automatically…"
+            : "Reconnecting to Spotify automatically…"
+
+        logger.log(
+            "MEDIA AUTO",
+            "Attempting Spotify App Remote connection attempt=\(reconnectAttempt + 1)"
+        )
         appRemote.connect()
     }
 
     func appBecameActive() {
         guard !connected else { return }
+        userRequestedDisconnect = false
         autoConnectIfPossible()
     }
 
     func appEnteredBackground() {
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        logger.log("MEDIA AUTO", "App backgrounded; preserving Spotify App Remote state")
+        // Do not clear authorization or mark this as a user disconnect.
+        // iOS may suspend the retry timer, but the next active transition
+        // immediately resumes automatic connection.
+        logger.log("MEDIA AUTO", "App backgrounded; preserving Spotify authorization/reconnect intent")
     }
 
+    private func scheduleReconnect(reason: String) {
+        guard !userRequestedDisconnect else { return }
+        guard !authorizationRequired else { return }
+        guard authorized else { return }
+        guard reconnectTask == nil else { return }
 
-private func scheduleReconnect() {
-    // Deliberately do not spin forever. App Remote failures often mean
-    // Spotify needs a fresh user authorization/open-app transition.
-    guard !userRequestedDisconnect else { return }
-    guard reconnectTask == nil else { return }
-    reconnectTask = Task { @MainActor [weak self] in
-        try? await Task.sleep(for: .seconds(8))
-        guard let self, !Task.isCancelled, !self.connected else { return }
-        self.reconnectTask = nil
-        self.logger.log("MEDIA AUTO", "One delayed Spotify reconnect attempt")
-        self.appRemote.connect()
+        let delays: [Double] = [2, 5, 10, 15]
+        let delay = delays[min(reconnectAttempt, delays.count - 1)]
+        reconnectAttempt += 1
+
+        status = "Spotify reconnecting automatically…"
+        logger.log(
+            "MEDIA AUTO",
+            "Scheduling reconnect in \(Int(delay))s reason=\(reason) attempt=\(reconnectAttempt)"
+        )
+
+        reconnectTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, !Task.isCancelled,
+                  !self.connected,
+                  !self.userRequestedDisconnect,
+                  !self.authorizationRequired else { return }
+
+            self.reconnectTask = nil
+            self.autoConnectIfPossible()
+        }
     }
-}
 
     func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
@@ -112,10 +151,11 @@ private func scheduleReconnect() {
         }
     }
 
+    /// Normal entry point. If a saved authorization exists, this never
+    /// clears it and simply reconnects. Only a genuinely unauthorized state
+    /// enters Spotify's one-time authorization flow.
     func connectOrAuthorize() {
         userRequestedDisconnect = false
-        reconnectTask?.cancel()
-        reconnectTask = nil
 
         guard isConfigured else {
             status = "Spotify Client ID is not configured"
@@ -123,16 +163,44 @@ private func scheduleReconnect() {
             return
         }
 
-        // This button is intentionally "Re-authorize", not merely connect.
-        // A stale Keychain token was causing every manual tap to repeat the
-        // same failed appRemote.connect() call without reopening Spotify.
+        if let token = appRemote.connectionParameters.accessToken,
+           !token.isEmpty {
+            authorized = true
+            authorizationRequired = false
+            reconnectAttempt = 0
+            autoConnectIfPossible()
+            return
+        }
+
+        beginAuthorization()
+    }
+
+    /// Explicit troubleshooting action. This is the only normal UI path that
+    /// intentionally discards the stored Spotify authorization token.
+    func reauthorize() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectAttempt = 0
+
         appRemote.disconnect()
         appRemote.connectionParameters.accessToken = nil
         SpotifyTokenStore.clear()
+        connected = false
         authorized = false
+        authorizationRequired = true
 
+        beginAuthorization()
+    }
+
+    private func beginAuthorization() {
+        guard isConfigured else {
+            status = "Spotify Client ID is not configured"
+            return
+        }
+
+        userRequestedDisconnect = false
         status = "Opening Spotify authorization…"
-        logger.log("MEDIA", "Starting fresh Spotify App Remote authorization")
+        logger.log("MEDIA", "Starting Spotify App Remote authorization")
 
         appRemote.authorizeAndPlayURI("") { installed in
             Task { @MainActor in
@@ -148,6 +216,7 @@ private func scheduleReconnect() {
         userRequestedDisconnect = true
         reconnectTask?.cancel()
         reconnectTask = nil
+        reconnectAttempt = 0
         appRemote.disconnect()
         connected = false
         status = "Disconnected"
@@ -163,6 +232,8 @@ private func scheduleReconnect() {
             appRemote.connectionParameters.accessToken = token
             SpotifyTokenStore.save(token)
             authorized = true
+            authorizationRequired = false
+            reconnectAttempt = 0
             status = "Authorized; connecting…"
             logger.log("MEDIA", "Spotify authorization callback received; token saved to Keychain")
             appRemote.connect()
@@ -170,7 +241,9 @@ private func scheduleReconnect() {
         }
 
         if let error = parameters?[SPTAppRemoteErrorDescriptionKey] {
-            status = "Spotify authorization error"
+            authorized = false
+            authorizationRequired = true
+            status = "Spotify authorization required"
             logger.log("MEDIA ERROR", error)
             return true
         }
@@ -227,6 +300,9 @@ extension SpotifyMediaController: SPTAppRemoteDelegate {
             self.reconnectTask?.cancel()
             self.reconnectTask = nil
             self.userRequestedDisconnect = false
+            self.reconnectAttempt = 0
+            self.authorizationRequired = false
+            self.authorized = true
             self.connected = true
             self.status = "Spotify connected"
             self.logger.log("MEDIA", "Spotify App Remote connected")
@@ -254,7 +330,7 @@ extension SpotifyMediaController: SPTAppRemoteDelegate {
                 "MEDIA ERROR",
                 "Spotify connect failed domain=\(nsError?.domain ?? "nil") code=\(nsError?.code ?? -1) description=\(error?.localizedDescription ?? "unknown")"
             )
-            self.scheduleReconnect()
+            self.scheduleReconnect(reason: error?.localizedDescription ?? "connection attempt failed")
         }
     }
 
@@ -267,7 +343,7 @@ extension SpotifyMediaController: SPTAppRemoteDelegate {
                 "MEDIA",
                 "Spotify disconnected: \(error?.localizedDescription ?? "no error")"
             )
-            self.scheduleReconnect()
+            self.scheduleReconnect(reason: error?.localizedDescription ?? "unexpected disconnect")
         }
     }
 }

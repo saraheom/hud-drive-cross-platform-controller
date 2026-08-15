@@ -14,6 +14,10 @@ struct MediaView: View {
                             Text("Spotify").font(.title3.bold())
 
                             LabeledContent("Status", value: state.spotify.status)
+                            LabeledContent(
+                                "Authorization",
+                                value: state.spotify.authorized ? "Saved" : "Required"
+                            )
                             LabeledContent("Track", value: state.spotify.trackTitle)
                             LabeledContent(
                                 "Artist",
@@ -24,18 +28,44 @@ struct MediaView: View {
                                 Text("Spotify Client ID is not configured in this build.")
                                     .font(.caption)
                                     .foregroundStyle(.orange)
-                            }
-
-                            HStack {
-                                Button("Connect / Re-authorize Spotify") {
+                            } else if state.spotify.authorizationRequired || !state.spotify.authorized {
+                                Button("Authorize Spotify") {
                                     state.spotify.connectOrAuthorize()
                                 }
                                 .buttonStyle(.borderedProminent)
 
-                                Button("Disconnect") {
-                                    state.spotify.disconnect()
+                                Text("Spotify authorization is required only the first time, or if Spotify later invalidates the saved authorization.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                HStack {
+                                    if !state.spotify.connected {
+                                        ProgressView()
+                                        Text("Automatic reconnect is active")
+                                            .font(.caption)
+                                    } else {
+                                        Label("Automatic connection active", systemImage: "checkmark.circle.fill")
+                                            .font(.caption)
+                                    }
+
+                                    Spacer()
+
+                                    Menu {
+                                        Button("Reconnect Now") {
+                                            state.spotify.connectOrAuthorize()
+                                        }
+
+                                        Button("Re-authorize Spotify") {
+                                            state.spotify.reauthorize()
+                                        }
+
+                                        Button("Disconnect Until App Reactivates") {
+                                            state.spotify.disconnect()
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis.circle")
+                                    }
                                 }
-                                .buttonStyle(.bordered)
                             }
 
                             Divider()
@@ -43,87 +73,10 @@ struct MediaView: View {
                             Button("Send Native HUD Music Test") {
                                 state.sendNativeMusicTest()
                             }
-                            .buttonStyle(.borderedProminent)
-
-                            Text("""
-                            Spotify metadata acquisition is working. The HUD currently does not visibly render MusicNotificationPacket, so the probe below tests other firmware text renderers before we bind Spotify to one permanently.
-                            """)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    HudCard {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Persistent Text / Music Probe")
-                                .font(.title3.bold())
-
-                            TextField("Title / artist", text: Binding(
-                                get: { state.textProbe.title },
-                                set: { state.textProbe.title = $0 }
-                            ))
-                            .textFieldStyle(.roundedBorder)
-
-                            TextField("Message / track", text: Binding(
-                                get: { state.textProbe.message },
-                                set: { state.textProbe.message = $0 }
-                            ))
-                            .textFieldStyle(.roundedBorder)
-
-                            TextField("Package identifier", text: Binding(
-                                get: { state.textProbe.packageName },
-                                set: { state.textProbe.packageName = $0 }
-                            ))
-                            .textFieldStyle(.roundedBorder)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-
-                            Picker("Protocol route", selection: Binding(
-                                get: { state.textProbe.selectedRoute },
-                                set: { state.textProbe.selectedRoute = $0 }
-                            )) {
-                                ForEach(HudTextProbeRoute.allCases) { route in
-                                    Text(route.displayName).tag(route)
-                                }
-                            }
-
-                            if state.textProbe.selectedRoute == .genericNotification {
-                                Stepper(
-                                    "Notification category: \(state.textProbe.notificationCategory)",
-                                    value: Binding(
-                                        get: { state.textProbe.notificationCategory },
-                                        set: { state.textProbe.notificationCategory = $0 }
-                                    ),
-                                    in: 0...31
-                                )
-                            }
-
-                            HStack {
-                                Button("Use Current Spotify") {
-                                    state.textProbe.useCurrentSpotify(spotify: state.spotify)
-                                }
-                                .buttonStyle(.bordered)
-
-                                Button("Send Selected Probe") {
-                                    state.textProbe.sendSelected()
-                                }
-                                .buttonStyle(.borderedProminent)
-                            }
-
-                            Button("Sweep Notification Categories 0–15") {
-                                state.textProbe.sweepNotificationCategories()
-                            }
                             .buttonStyle(.bordered)
 
-                            Button("Restore Normal Phone Name") {
-                                state.textProbe.restoreNormalPhoneName()
-                            }
-                            .buttonStyle(.bordered)
-
-                            LabeledContent("Probe status", value: state.textProbe.status)
-
                             Text("""
-                            Goal: identify any HUD renderer that accepts arbitrary persistent text. Phone-name, notification, navigation, and raw dashboard-UTF paths are intentionally tested separately. Navigation text is already known to render persistently in the center; the key question is whether any other route can expose reusable text outside the navigation renderer.
+                            Once Spotify has been authorized, HUD Controller restores the token from Keychain and reconnects automatically. Unexpected Spotify App Remote disconnects retry after 2, 5, 10, then every 15 seconds. Normal reconnects never erase authorization.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

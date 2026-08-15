@@ -1088,3 +1088,31 @@ v52 updates the regression test to verify the actual safety invariants:
   `absenceTimeoutSeconds`.
 
 No runtime application behavior changed from v51.
+
+
+## v53 — automatic Spotify reconnect + remove text/music probe
+
+Spotify App Remote is now designed as an authorize-once service.
+
+- Saved App Remote authorization continues to load from Keychain.
+- Normal connection/reconnection never clears the saved token.
+- Unexpected disconnects retry after 2 s, 5 s, 10 s, then every 15 s.
+- Foreground/app-active transitions immediately resume automatic connection.
+- The normal Media UI no longer presents a Connect/Re-authorize button on every
+  drive.
+- `Authorize Spotify` appears only when no saved authorization is available.
+- Explicit `Re-authorize Spotify` remains under the troubleshooting menu and is
+  the only normal UI path that intentionally clears the saved token.
+- Initial OAuth/App Remote consent, or consent after Spotify invalidates the
+  authorization, still requires user interaction.
+
+The old Persistent Text / Music Probe experiment is removed completely:
+
+- its Media UI card is gone;
+- `HudTextRendererProbe.swift` is removed;
+- AppState no longer owns the probe;
+- probe-only HudCommands helpers are removed;
+- obsolete probe tests are removed.
+
+The confirmed native HUD music-notification path and the independent
+Music/Spotify popup enable/disable setting remain unchanged.

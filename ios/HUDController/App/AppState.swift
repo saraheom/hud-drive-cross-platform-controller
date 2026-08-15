@@ -9,7 +9,6 @@ final class AppState {
     let bluetooth: HudBluetoothManager
     let navigation: HudNavigationController
     let spotify: SpotifyMediaController
-    let textProbe: HudTextRendererProbe
     let obd: HudOBDController
     let speedEngine: OriginalSpeedLimitEngine
     let ambientLight: AmbientLightMonitor
@@ -27,7 +26,6 @@ final class AppState {
         self.navigation = HudNavigationController(bluetooth: bluetooth, logger: logger)
         let spotify = SpotifyMediaController(logger: logger)
         self.spotify = spotify
-        self.textProbe = HudTextRendererProbe(bluetooth: bluetooth, logger: logger)
         let obd = HudOBDController(bluetooth: bluetooth, logger: logger)
         self.obd = obd
         let speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)

@@ -144,20 +144,6 @@ enum HudCommands {
         )
     }
 
-    static func textNotificationProbe(
-        category: Int,
-        packageName: String,
-        title: String,
-        message: String
-    ) -> Data {
-        notificationPacket(
-            category: UInt8(max(0, min(255, category))),
-            packageName: packageName,
-            title: title,
-            message: message
-        )
-    }
-
     private static func notificationPacket(
         category: UInt8,
         packageName: String,
@@ -202,16 +188,5 @@ enum HudCommands {
     }
 
 
-    /// Diagnostic only: uses the known persistent navigation text renderer.
-    /// This intentionally does not claim to be a side-widget renderer.
-    static func persistentNavigationTextProbe(title: String, detail: String) -> Data {
-        let instruction = NavigationInstruction(
-            maneuver: .straight,
-            distanceMeters: 321,
-            primaryText: title,
-            streetName: detail
-        )
-        return maneuver(instruction)
-    }
 
 }
