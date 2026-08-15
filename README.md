@@ -1299,3 +1299,35 @@ The regression test includes measurements from the supplied Apple Maps
 never interpreted as Right again.
 
 No other v58/v57 behavior changed.
+
+
+## v60 — isolate Apple maneuver glyph before direction classification
+
+A second photo regression showed the lane-guidance case still classifying
+correctly while every normal Apple maneuver was unstable or reversed:
+
+- `US 1 North` left -> Right
+- `Falls Bridge` right -> Straight
+- highlighted-lane Lansdowne straight -> Straight (correct)
+- `N 33rd St` left -> Right
+
+The issue was therefore not the lane classifier and not OCR text. The normal
+classifier was measuring every bright pixel in a crop anchored to Vision's
+distance bounding box. Tiny bounding-box changes could let pieces of distance
+text enter that crop and dominate the arrow geometry.
+
+v60 now:
+
+- threshold-crops the normal maneuver region as before;
+- splits the bright pixels into 8-connected components;
+- selects the dominant arrow-like component while penalizing leaked text on the
+  right side;
+- classifies only that isolated glyph;
+- identifies tall isolated glyphs as Straight;
+- classifies curved left/right glyphs from upper-half mass and centroid;
+- leaves the already-working multi-lane highlighted-arrow path untouched.
+
+The supplied screenshots were used as offline geometry checks: the simple
+left, simple right, lane-guidance straight, and second simple-left examples
+classify Left, Right, Straight, Left respectively with this component-isolated
+method.

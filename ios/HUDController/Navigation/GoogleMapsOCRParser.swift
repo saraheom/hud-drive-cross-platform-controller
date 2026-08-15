@@ -878,75 +878,143 @@ private enum AppleManeuverIconClassifier {
         let h = data.height
         guard w > 0, h > 0, data.points.count > 20 else { return .straight }
 
-        // Apple's curved turn glyph has a very useful invariant:
-        //
-        // LEFT turn:
-        //   far-left edge  = narrow arrow TIP
-        //   far-right edge = heavy vertical stem / bend
-        //
-        // RIGHT turn:
-        //   far-right edge = narrow arrow TIP
-        //   far-left edge  = heavy vertical stem / bend
-        //
-        // This is substantially more stable than looking at the "upper"
-        // portion of the glyph, because Vision can shift the distance box
-        // vertically from frame to frame and Apple's arrowhead is not always
-        // located in the top half of the crop.
-        let xs = data.points.map(\.x)
-        let ys = data.points.map(\.y)
+        // IMPORTANT: classify ONLY the connected maneuver glyph. The previous
+        // versions measured every bright pixel in this crop. Depending on the
+        // Vision distance bounding box, fragments of the white distance label
+        // could enter the crop and completely reverse the left/right geometry.
+        guard let glyph = dominantArrowComponent(from: data),
+              glyph.count > 20 else { return .straight }
+
+        let xs = glyph.map(\.x)
+        let ys = glyph.map(\.y)
         guard let minX = xs.min(), let maxX = xs.max(),
               let minY = ys.min(), let maxY = ys.max() else { return .straight }
 
         let bw = max(1, maxX - minX + 1)
         let bh = max(1, maxY - minY + 1)
 
-        let edgeWidth = max(3, Int(Double(bw) * 0.18))
-        let leftEdge = data.points.filter { $0.x <= minX + edgeWidth }
-        let rightEdge = data.points.filter { $0.x >= maxX - edgeWidth }
-
-        func verticalSpan(_ points: [(x: Int, y: Int)]) -> Int {
-            guard let lo = points.map(\.y).min(),
-                  let hi = points.map(\.y).max() else { return 0 }
-            return hi - lo + 1
-        }
-
-        let leftCount = leftEdge.count
-        let rightCount = rightEdge.count
-        let leftSpan = verticalSpan(leftEdge)
-        let rightSpan = verticalSpan(rightEdge)
-
-        // Require agreement between BOTH pixel mass and vertical span. That
-        // avoids confusing a straight arrow or partially cropped glyph with a
-        // left/right turn.
-        let leftTipByMass = Double(leftCount) < Double(max(1, rightCount)) * 0.72
-        let leftTipBySpan = Double(leftSpan) < Double(max(1, rightSpan)) * 0.78
-
-        let rightTipByMass = Double(rightCount) < Double(max(1, leftCount)) * 0.72
-        let rightTipBySpan = Double(rightSpan) < Double(max(1, leftSpan)) * 0.78
-
-        if leftTipByMass && leftTipBySpan {
-            return .left
-        }
-        if rightTipByMass && rightTipBySpan {
-            return .right
-        }
-
-        // Straight arrows are generally tall and horizontally balanced.
-        if Double(bh) > Double(bw) * 1.05 {
+        // Straight arrows are tall and centered. Test this before left/right.
+        // Apple's simple straight glyph is much taller than it is wide.
+        if Double(bh) > Double(bw) * 1.28 {
             return .straight
         }
 
-        // Secondary fallback: compare only edge mass, but with a much stronger
-        // threshold than before. This is useful for anti-aliased screenshots
-        // where span measurements become similar.
-        if Double(leftCount) < Double(max(1, rightCount)) * 0.52 {
+        // For a curved 90-degree turn, the arrowhead occupies the upper half
+        // of the isolated component. Once unrelated text pixels are removed,
+        // its horizontal mass is a stable direction signal:
+        //   left arrow  -> upper-half mass biased left
+        //   right arrow -> upper-half mass biased right
+        let upperCut = minY + Int(Double(bh) * 0.60)
+        let upper = glyph.filter { $0.y <= upperCut }
+        guard upper.count > 15 else { return .straight }
+
+        let leftBoundary = minX + Int(Double(bw) * 0.46)
+        let rightBoundary = minX + Int(Double(bw) * 0.54)
+        let upperLeft = upper.filter { $0.x <= leftBoundary }.count
+        let upperRight = upper.filter { $0.x >= rightBoundary }.count
+
+        if Double(upperLeft) > Double(max(1, upperRight)) * 1.16 {
             return .left
         }
-        if Double(rightCount) < Double(max(1, leftCount)) * 0.52 {
+        if Double(upperRight) > Double(max(1, upperLeft)) * 1.16 {
             return .right
         }
 
+        // Secondary signal: compare the horizontal center of the upper
+        // arrowhead against the component center. This handles antialiasing
+        // where the two mass counts are close.
+        let componentCenterX = Double(minX + maxX) / 2.0
+        let upperCenterX = Double(upper.map(\.x).reduce(0, +)) / Double(upper.count)
+        let normalizedShift = (upperCenterX - componentCenterX) / Double(bw)
+
+        if normalizedShift < -0.055 { return .left }
+        if normalizedShift > 0.055 { return .right }
+
         return .straight
+    }
+
+    /// Extract connected bright-pixel components and choose the one most
+    /// likely to be the Apple maneuver glyph. This makes classification
+    /// independent of small OCR distance-box shifts and excludes distance
+    /// digits/text that happen to enter the crop.
+    private static func dominantArrowComponent(
+        from pixels: PixelSet
+    ) -> [(x: Int, y: Int)]? {
+        guard pixels.width > 0, pixels.height > 0 else { return nil }
+
+        let width = pixels.width
+        let height = pixels.height
+        var occupied = [Bool](repeating: false, count: width * height)
+        for point in pixels.points where
+            point.x >= 0 && point.x < width && point.y >= 0 && point.y < height {
+            occupied[point.y * width + point.x] = true
+        }
+
+        var visited = [Bool](repeating: false, count: width * height)
+        var components: [[(x: Int, y: Int)]] = []
+        let neighborOffsets = [
+            (-1, -1), (0, -1), (1, -1),
+            (-1,  0),          (1,  0),
+            (-1,  1), (0,  1), (1,  1)
+        ]
+
+        for seed in pixels.points {
+            let seedIndex = seed.y * width + seed.x
+            guard seedIndex >= 0, seedIndex < visited.count,
+                  !visited[seedIndex] else { continue }
+
+            var queue = [seed]
+            var head = 0
+            visited[seedIndex] = true
+            var component: [(x: Int, y: Int)] = []
+
+            while head < queue.count {
+                let current = queue[head]
+                head += 1
+                component.append(current)
+
+                for (dx, dy) in neighborOffsets {
+                    let nx = current.x + dx
+                    let ny = current.y + dy
+                    guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                    let index = ny * width + nx
+                    guard occupied[index], !visited[index] else { continue }
+                    visited[index] = true
+                    queue.append((x: nx, y: ny))
+                }
+            }
+
+            if component.count >= 12 {
+                components.append(component)
+            }
+        }
+
+        // The maneuver icon is a large connected white glyph on the left side
+        // of the card. Prefer substantial/tall components and penalize anything
+        // whose center is in the far-right portion of this icon crop (normally
+        // leaked distance text).
+        return components.max { lhs, rhs in
+            componentArrowScore(lhs, cropWidth: width) <
+            componentArrowScore(rhs, cropWidth: width)
+        }
+    }
+
+    private static func componentArrowScore(
+        _ component: [(x: Int, y: Int)],
+        cropWidth: Int
+    ) -> Double {
+        let xs = component.map(\.x)
+        let ys = component.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else { return 0 }
+
+        let bw = maxX - minX + 1
+        let bh = maxY - minY + 1
+        let centerX = Double(minX + maxX) / 2.0
+        let rightPenalty = centerX > Double(cropWidth) * 0.72 ? 0.18 : 1.0
+        let shapeBonus = Double(min(bw, bh)) / Double(max(1, max(bw, bh))) + 0.55
+
+        return Double(component.count) * shapeBonus * rightPenalty
     }
 
     private static func classifyHighlightedLaneArrow(
