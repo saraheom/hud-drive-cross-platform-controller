@@ -1065,3 +1065,26 @@ No runtime application code changed from v49/v47.
 - OBD reconnect uses a generation token to prevent overlapping retry loops.
 - Native music/Spotify HUD popups now have a persisted enable/disable setting.
 - Last known speed limit is persisted so rectangular style can be reasserted earlier after HUD reboot.
+
+
+## v52 — update stale ambient-timeout regression test
+
+The v51 iOS application target built successfully and 73 of 74 tests passed.
+The only failing test was an older source-inspection assertion that looked for
+the pre-v51 timeout implementation string `max(1, d.integer(forKey:`.
+
+v51 intentionally replaced that implementation to fix the Stepper crash:
+timeout clamping now goes through `clampedTimeout(_:)` and
+`setAbsenceTimeout(_:)`, while the `didSet` observer only persists the already
+clamped value.
+
+v52 updates the regression test to verify the actual safety invariants:
+
+- 1 second remains the minimum supported timeout;
+- 30 seconds remains the maximum;
+- restored UserDefaults values are clamped;
+- UI changes use the safe setter;
+- `absenceTimeoutSeconds.didSet` never recursively assigns
+  `absenceTimeoutSeconds`.
+
+No runtime application behavior changed from v51.
