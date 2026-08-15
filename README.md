@@ -1275,3 +1275,27 @@ writes the corresponding persisted `HudSettings` property.
 
 No navigation, ScreenCaptureKit, Spotify, BLE, OBD, speed-limit, or protocol
 behavior changed from v57.
+
+
+## v59 — Apple Maps curved-arrow direction fix
+
+A photo/screen-capture regression showed the same Apple Maps left-turn card
+oscillating between Left, Straight, and Right depending on small Vision
+bounding-box changes. The v57 upper-arrowhead heuristic was therefore not
+geometrically stable.
+
+v59 replaces it with an extreme-edge asymmetry invariant:
+
+- a left-turn glyph has a narrow far-left arrow tip and a heavy far-right
+  vertical stem/bend;
+- a right-turn glyph is the horizontal mirror image;
+- both edge pixel mass and edge vertical span must agree before declaring
+  left/right;
+- tall/balanced glyphs fall back to Straight;
+- the existing highlighted-lane-guidance classifier remains separate.
+
+The regression test includes measurements from the supplied Apple Maps
+`0.4 mi / US 1 North` left-turn screenshot to ensure that exact geometry is
+never interpreted as Right again.
+
+No other v58/v57 behavior changed.

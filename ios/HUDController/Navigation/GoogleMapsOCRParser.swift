@@ -878,9 +878,20 @@ private enum AppleManeuverIconClassifier {
         let h = data.height
         guard w > 0, h > 0, data.points.count > 20 else { return .straight }
 
-        // For curved left/right arrows, total left/right ink is a poor
-        // discriminator because the long vertical stem sits on the OPPOSITE
-        // side from the arrowhead. Examine the upper arrowhead region instead.
+        // Apple's curved turn glyph has a very useful invariant:
+        //
+        // LEFT turn:
+        //   far-left edge  = narrow arrow TIP
+        //   far-right edge = heavy vertical stem / bend
+        //
+        // RIGHT turn:
+        //   far-right edge = narrow arrow TIP
+        //   far-left edge  = heavy vertical stem / bend
+        //
+        // This is substantially more stable than looking at the "upper"
+        // portion of the glyph, because Vision can shift the distance box
+        // vertically from frame to frame and Apple's arrowhead is not always
+        // located in the top half of the crop.
         let xs = data.points.map(\.x)
         let ys = data.points.map(\.y)
         guard let minX = xs.min(), let maxX = xs.max(),
@@ -888,28 +899,53 @@ private enum AppleManeuverIconClassifier {
 
         let bw = max(1, maxX - minX + 1)
         let bh = max(1, maxY - minY + 1)
-        let arrowheadCutoff = minY + Int(Double(bh) * 0.58)
-        let head = data.points.filter { $0.y <= arrowheadCutoff }
 
-        guard head.count > 20 else { return .straight }
+        let edgeWidth = max(3, Int(Double(bw) * 0.18))
+        let leftEdge = data.points.filter { $0.x <= minX + edgeWidth }
+        let rightEdge = data.points.filter { $0.x >= maxX - edgeWidth }
 
-        var headLeft = 0
-        var headRight = 0
-        for point in head {
-            if point.x <= minX + Int(Double(bw) * 0.36) { headLeft += 1 }
-            if point.x >= minX + Int(Double(bw) * 0.64) { headRight += 1 }
+        func verticalSpan(_ points: [(x: Int, y: Int)]) -> Int {
+            guard let lo = points.map(\.y).min(),
+                  let hi = points.map(\.y).max() else { return 0 }
+            return hi - lo + 1
         }
 
-        if headLeft > Int(Double(headRight) * 1.22) { return .left }
-        if headRight > Int(Double(headLeft) * 1.22) { return .right }
+        let leftCount = leftEdge.count
+        let rightCount = rightEdge.count
+        let leftSpan = verticalSpan(leftEdge)
+        let rightSpan = verticalSpan(rightEdge)
 
-        // A tall, centered arrowhead is straight.
-        if Double(bh) > Double(bw) * 1.10 { return .straight }
+        // Require agreement between BOTH pixel mass and vertical span. That
+        // avoids confusing a straight arrow or partially cropped glyph with a
+        // left/right turn.
+        let leftTipByMass = Double(leftCount) < Double(max(1, rightCount)) * 0.72
+        let leftTipBySpan = Double(leftSpan) < Double(max(1, rightSpan)) * 0.78
 
-        let headCenter = head.map(\.x).reduce(0, +) / max(1, head.count)
-        let normalized = Double(headCenter - minX) / Double(bw)
-        if normalized < 0.43 { return .left }
-        if normalized > 0.57 { return .right }
+        let rightTipByMass = Double(rightCount) < Double(max(1, leftCount)) * 0.72
+        let rightTipBySpan = Double(rightSpan) < Double(max(1, leftSpan)) * 0.78
+
+        if leftTipByMass && leftTipBySpan {
+            return .left
+        }
+        if rightTipByMass && rightTipBySpan {
+            return .right
+        }
+
+        // Straight arrows are generally tall and horizontally balanced.
+        if Double(bh) > Double(bw) * 1.05 {
+            return .straight
+        }
+
+        // Secondary fallback: compare only edge mass, but with a much stronger
+        // threshold than before. This is useful for anti-aliased screenshots
+        // where span measurements become similar.
+        if Double(leftCount) < Double(max(1, rightCount)) * 0.52 {
+            return .left
+        }
+        if Double(rightCount) < Double(max(1, leftCount)) * 0.52 {
+            return .right
+        }
+
         return .straight
     }
 
