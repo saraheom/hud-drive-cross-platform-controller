@@ -10,7 +10,7 @@ final class V61AppleComponentRegressionTests: XCTestCase {
         let source = try String(contentsOf: url, encoding: .utf8)
 
         guard let isolate = source.range(of: "dominantArrowComponent(from: data)"),
-              let direction = source.range(of: "let upperCut = minY + Int(Double(bh) * 0.60)")
+              let direction = source.range(of: "let leftEdge = glyph.filter")
         else {
             XCTFail("Expected Apple component-isolation pipeline not found")
             return

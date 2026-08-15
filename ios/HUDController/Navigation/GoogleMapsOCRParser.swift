@@ -678,7 +678,7 @@ private enum AppleMapsOCRParser {
         var road = ""
         var shieldNumber: String?
         if index + 1 < lines.count {
-            for j in (index + 1)..<min(lines.count, index + 5) {
+            for j in (index + 1)..<min(lines.count, index + 6) {
                 let candidate = lines[j].trimmingCharacters(in: .whitespacesAndNewlines)
                 let l = candidate.lowercased()
 
@@ -687,16 +687,28 @@ private enum AppleMapsOCRParser {
                     break
                 }
 
-                // Apple OCR often reads the number INSIDE a route shield as a
-                // separate pure numeric line before "North" or the street.
-                if candidate.range(of: #"^\d{1,3}$"#, options: .regularExpression) != nil {
-                    shieldNumber = candidate
+                if let shield = extractRouteShieldPrefix(candidate) {
+                    if shieldNumber == nil {
+                        shieldNumber = shield.number
+                    }
+
+                    // If OCR merged the shield with useful road/direction text,
+                    // keep the remainder. If this is shield-only (`13`, `/13`,
+                    // `{13}`), continue to the next OCR line rather than
+                    // prematurely setting the road to garbage such as `/13`.
+                    if !shield.remainder.isEmpty {
+                        road = shield.remainder
+                        break
+                    }
                     continue
                 }
 
                 if !candidate.isEmpty {
-                    road = stripRouteShieldOCR(candidate)
-                    if !road.isEmpty { break }
+                    let cleanedRoad = stripRouteShieldOCR(candidate)
+                    if !cleanedRoad.isEmpty {
+                        road = cleanedRoad
+                        break
+                    }
                 }
             }
         }
@@ -748,6 +760,55 @@ private enum AppleMapsOCRParser {
         )
     }
 
+
+    private static func extractRouteShieldPrefix(
+        _ text: String
+    ) -> (number: String, remainder: String)? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Common Vision outputs observed from Apple route shields:
+        // "13", "/13", "{13}", "(13)", "[13]", "US 13", "13 N 38th St".
+        let patterns = [
+            #"^\s*(?:US|U\.?S\.?|I|IS|INTERSTATE)?\s*[-/]?\s*[\{\[\(]?\s*(\d{1,3})\s*[\}\]\)]?\s*(.*)$"#,
+            #"^\s*[/\\|]?\s*(\d{1,3})\s*(.*)$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.caseInsensitive]
+            ) else { continue }
+
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            guard let match = regex.firstMatch(in: value, options: [], range: range),
+                  match.numberOfRanges >= 3,
+                  let numberRange = Range(match.range(at: 1), in: value),
+                  let remainderRange = Range(match.range(at: 2), in: value)
+            else { continue }
+
+            let number = String(value[numberRange])
+            let remainder = String(value[remainderRange])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Avoid interpreting ordinary street numbers like "4442 Ridge Ave"
+            // as route shields. Shield numbers are short and are either alone,
+            // preceded by shield punctuation/prefixes, or followed by a
+            // cardinal direction / road text in the Apple route-card pattern.
+            let explicitShieldMarker =
+                value.range(of: #"^\s*(?:US|U\.?S\.?|I|IS|INTERSTATE|[/\\|{\[(])"#,
+                            options: [.regularExpression, .caseInsensitive]) != nil
+            let shieldOnly = remainder.isEmpty
+            let directionalRemainder =
+                remainder.range(of: #"^(?:N|S|E|W|North|South|East|West)\b"#,
+                                options: [.regularExpression, .caseInsensitive]) != nil
+
+            if explicitShieldMarker || shieldOnly || directionalRemainder {
+                return (number, remainder)
+            }
+        }
+
+        return nil
+    }
 
     private static func routeShieldLabel(
         number: String,
@@ -894,41 +955,58 @@ private enum AppleManeuverIconClassifier {
         let bh = max(1, maxY - minY + 1)
 
         // Straight arrows are tall and centered. Test this before left/right.
-        // Apple's simple straight glyph is much taller than it is wide.
         if Double(bh) > Double(bw) * 1.28 {
             return .straight
         }
 
-        // For a curved 90-degree turn, the arrowhead occupies the upper half
-        // of the isolated component. Once unrelated text pixels are removed,
-        // its horizontal mass is a stable direction signal:
-        //   left arrow  -> upper-half mass biased left
-        //   right arrow -> upper-half mass biased right
-        let upperCut = minY + Int(Double(bh) * 0.60)
-        let upper = glyph.filter { $0.y <= upperCut }
-        guard upper.count > 15 else { return .straight }
+        // v62: classify the ISOLATED maneuver glyph by its extreme-edge
+        // geometry. This is the invariant visible in the supplied Apple Maps
+        // screenshots:
+        //
+        // LEFT turn:
+        //   left extreme  = narrow arrow tip (short span / less mass)
+        //   right extreme = tall vertical stem / bend
+        //
+        // RIGHT turn:
+        //   right extreme = narrow arrow tip
+        //   left extreme  = tall vertical stem / bend
+        //
+        // Because this operates after connected-component isolation, distance
+        // text can no longer contaminate the measurement.
+        let edgeWidth = max(3, Int(Double(bw) * 0.18))
+        let leftEdge = glyph.filter { $0.x <= minX + edgeWidth }
+        let rightEdge = glyph.filter { $0.x >= maxX - edgeWidth }
 
-        let leftBoundary = minX + Int(Double(bw) * 0.46)
-        let rightBoundary = minX + Int(Double(bw) * 0.54)
-        let upperLeft = upper.filter { $0.x <= leftBoundary }.count
-        let upperRight = upper.filter { $0.x >= rightBoundary }.count
+        func verticalSpan(_ points: [(x: Int, y: Int)]) -> Int {
+            guard let lo = points.map(\.y).min(),
+                  let hi = points.map(\.y).max() else { return 0 }
+            return hi - lo + 1
+        }
 
-        if Double(upperLeft) > Double(max(1, upperRight)) * 1.16 {
+        let leftCount = leftEdge.count
+        let rightCount = rightEdge.count
+        let leftSpan = verticalSpan(leftEdge)
+        let rightSpan = verticalSpan(rightEdge)
+
+        let leftIsTip =
+            Double(leftCount) < Double(max(1, rightCount)) * 0.72 &&
+            Double(leftSpan) < Double(max(1, rightSpan)) * 0.78
+
+        let rightIsTip =
+            Double(rightCount) < Double(max(1, leftCount)) * 0.72 &&
+            Double(rightSpan) < Double(max(1, leftSpan)) * 0.78
+
+        if leftIsTip { return .left }
+        if rightIsTip { return .right }
+
+        // Secondary fallback using only the vertical-span asymmetry. This is
+        // intentionally conservative so anti-aliasing doesn't flip a turn.
+        if Double(leftSpan) < Double(max(1, rightSpan)) * 0.62 {
             return .left
         }
-        if Double(upperRight) > Double(max(1, upperLeft)) * 1.16 {
+        if Double(rightSpan) < Double(max(1, leftSpan)) * 0.62 {
             return .right
         }
-
-        // Secondary signal: compare the horizontal center of the upper
-        // arrowhead against the component center. This handles antialiasing
-        // where the two mass counts are close.
-        let componentCenterX = Double(minX + maxX) / 2.0
-        let upperCenterX = Double(upper.map(\.x).reduce(0, +)) / Double(upper.count)
-        let normalizedShift = (upperCenterX - componentCenterX) / Double(bw)
-
-        if normalizedShift < -0.055 { return .left }
-        if normalizedShift > 0.055 { return .right }
 
         return .straight
     }

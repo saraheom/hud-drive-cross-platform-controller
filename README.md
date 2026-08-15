@@ -1352,3 +1352,22 @@ v61 updates the regression test to verify the current invariant:
   absent.
 
 No runtime application behavior changed from v60.
+
+
+## v62 — Apple arrow + route-shield robustness
+
+The v61 photo logs still showed left-turn cards being emitted as Right. v62
+keeps v60's connected-component isolation but replaces the final direction
+decision with the extreme-edge invariant measured directly from the supplied
+screenshots:
+
+- left turn: narrow/short left arrow-tip edge, tall/heavy right stem;
+- right turn: narrow/short right arrow-tip edge, tall/heavy left stem;
+- straight/lane-guidance remain separate paths.
+
+The parser also now accepts route-shield OCR variants such as `13`, `/13`,
+`{13}`, `(13)`, `US 13`, and a merged `13 N 38th St`. A shield-only OCR token
+no longer becomes the road name and no longer prevents the parser from reading
+the following actual street/direction text.
+
+No unrelated runtime behavior changed from v61.

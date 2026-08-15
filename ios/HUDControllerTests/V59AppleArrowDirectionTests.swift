@@ -14,40 +14,38 @@ final class V59AppleArrowDirectionTests: XCTestCase {
         XCTAssertTrue(source.contains("dominantArrowComponent(from: data)"))
         XCTAssertTrue(source.contains("componentArrowScore"))
         XCTAssertTrue(source.contains("connected bright-pixel components"))
-        XCTAssertTrue(source.contains("let upperCut = minY + Int(Double(bh) * 0.60)"))
-        XCTAssertTrue(source.contains("upperLeft"))
-        XCTAssertTrue(source.contains("upperRight"))
-        XCTAssertTrue(source.contains("normalizedShift"))
+        XCTAssertTrue(source.contains("let leftEdge = glyph.filter"))
+        XCTAssertTrue(source.contains("let rightEdge = glyph.filter"))
+        XCTAssertTrue(source.contains("let leftIsTip"))
+        XCTAssertTrue(source.contains("let rightIsTip"))
 
         // Regression guards: neither of the two older unstable classifiers
         // should return.
         XCTAssertFalse(source.contains("arrowheadCutoff"))
         XCTAssertFalse(source.contains("headCenter"))
-        XCTAssertFalse(source.contains("leftTipByMass"))
-        XCTAssertFalse(source.contains("leftTipBySpan"))
-        XCTAssertFalse(source.contains("rightTipByMass"))
-        XCTAssertFalse(source.contains("rightTipBySpan"))
+        XCTAssertFalse(source.contains("arrowheadCutoff"))
+        XCTAssertFalse(source.contains("headCenter"))
     }
 
-    func testLeftTurnUpperComponentGeometryIsNotReversed() {
-        // Representative isolated-glyph geometry for a left-turn icon:
-        // upper arrowhead mass is biased left.
-        let upperLeft = 910
-        let upperRight = 520
-
-        XCTAssertGreaterThan(
-            Double(upperLeft),
-            Double(upperRight) * 1.16
+    func testLeftTurnExtremeEdgeGeometryIsNotReversed() {
+        let leftCount = 340
+        let rightCount = 1079
+        let leftSpan = 33
+        let rightSpan = 102
+        XCTAssertTrue(
+            Double(leftCount) < Double(rightCount) * 0.72 &&
+            Double(leftSpan) < Double(rightSpan) * 0.78
         )
     }
 
-    func testMirroredUpperComponentGeometryClassifiesAsRight() {
-        let upperLeft = 520
-        let upperRight = 910
-
-        XCTAssertGreaterThan(
-            Double(upperRight),
-            Double(upperLeft) * 1.16
+    func testMirroredExtremeEdgeGeometryClassifiesAsRight() {
+        let leftCount = 1598
+        let rightCount = 701
+        let leftSpan = 98
+        let rightSpan = 53
+        XCTAssertTrue(
+            Double(rightCount) < Double(leftCount) * 0.72 &&
+            Double(rightSpan) < Double(leftSpan) * 0.78
         )
     }
 }
