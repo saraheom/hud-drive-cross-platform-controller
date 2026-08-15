@@ -1163,3 +1163,39 @@ v55 makes the cleanup robust to that workflow:
   sure the removed probe does not return.
 
 No runtime application behavior changed from v53/v52.
+
+
+## v56 — Spotify fresh-App-Remote automatic recovery
+
+Field logs showed a distinctive Spotify failure mode:
+
+- authorization was successfully saved to Keychain;
+- the App Remote later disconnected;
+- the same long-lived `SPTAppRemote` repeatedly returned
+  `com.spotify.app-remote -1000 Connection attempt failed`;
+- after a fresh HUD Controller process was created, the Keychain token was
+  restored and App Remote connected immediately.
+
+v56 therefore treats the Spotify transport object as disposable while treating
+authorization as persistent.
+
+Changes:
+
+- every foreground activation while disconnected creates a fresh
+  `SPTAppRemote`, restores the Keychain token, and connects automatically;
+- repeated connection failures also replace the App Remote automatically;
+- rebuilding the transport never clears Spotify authorization;
+- duplicate simultaneous `connect()` calls are suppressed with an
+  `connectionInFlight` guard;
+- callbacks from discarded App Remote generations are ignored;
+- retry cadence is 1 s, 2 s, 5 s, 10 s, then 15 s indefinitely;
+- successful connection always re-establishes the player-state subscription;
+- player-state subscription itself retries up to four times;
+- only explicit Re-authorize clears the stored token.
+
+Spotify SDK limitation: plain `connect()` cannot silently wake Spotify if the
+Spotify application is not running. Spotify's documented wake path is
+`authorizeAndPlayURI`, which performs an app switch. Therefore v56 guarantees
+automatic recovery when Spotify is available/running again, but it does not
+silently bypass that iOS/Spotify app-switch requirement after Spotify has been
+fully terminated.

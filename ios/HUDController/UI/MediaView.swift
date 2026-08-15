@@ -76,7 +76,7 @@ struct MediaView: View {
                             .buttonStyle(.bordered)
 
                             Text("""
-                            Once Spotify has been authorized, HUD Controller restores the token from Keychain and reconnects automatically. Unexpected Spotify App Remote disconnects retry after 2, 5, 10, then every 15 seconds. Normal reconnects never erase authorization.
+                            Once authorized, Spotify credentials stay in Keychain. When HUD Controller returns to the foreground while disconnected, it creates a fresh Spotify App Remote, restores the saved token, and reconnects automatically. Failed connections retry after 1, 2, 5, 10, then every 15 seconds; repeated failures automatically replace the stale App Remote without erasing authorization.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)
