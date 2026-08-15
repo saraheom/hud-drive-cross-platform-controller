@@ -4,6 +4,7 @@ import UIKit
 import Vision
 import CoreMedia
 import CoreVideo
+import UserNotifications
 
 #if canImport(ScreenCaptureKit) && !targetEnvironment(simulator)
 import ScreenCaptureKit
@@ -59,6 +60,8 @@ final class ExternalNavigationCapture: NSObject {
     private var arrivalTask: Task<Void, Never>?
     private var recoveryAttempt = 0
     private var cachedFilterFailureCount = 0
+    private var captureLossGeneration = 0
+    private var recoveryNotificationPermissionRequested = false
     private var automaticPickerPresentedThisSession = false
     private(set) var captureDesired: Bool {
         didSet { UserDefaults.standard.set(captureDesired, forKey: "HUD.Capture.desired") }
@@ -102,6 +105,7 @@ final class ExternalNavigationCapture: NSObject {
 
     func presentFullDisplayPicker() {
         captureDesired = true
+        requestRecoveryNotificationPermissionIfNeeded()
         var config = SCContentSharingPickerConfiguration()
         config.showsMicrophoneControl = false
         picker.defaultConfiguration = config
@@ -264,6 +268,7 @@ final class ExternalNavigationCapture: NSObject {
                         return
                     }
 
+                    self.captureLossGeneration += 1
                     self.recoveryAttempt = 0
                     self.cachedFilterFailureCount = 0
                     self.needsUserReselection = false
@@ -300,7 +305,12 @@ final class ExternalNavigationCapture: NSObject {
             recoveryTask = nil
             needsUserReselection = true
             status = "Screen capture needs permission again — tap Resume Capture"
-            deactivateNavigation(reason: "Screen capture unavailable; fresh system selection required")
+            forceFreerideForCaptureLoss(
+                reason: "Screen capture unavailable; fresh system selection required"
+            )
+            notifyCaptureNeedsAttention(
+                reason: "Screen capture stopped and iOS requires Entire Display to be selected again."
+            )
 
             // iOS owns the privacy picker. Present it automatically only while
             // our app is active; otherwise the visible Resume button remains.
@@ -350,14 +360,16 @@ final class ExternalNavigationCapture: NSObject {
                       let lastFrameAt = self.lastFrameAt else { continue }
 
                 let age = Date().timeIntervalSince(lastFrameAt)
-                if age > 5 {
+                if age > 4 {
                     self.logger.log(
                         "SCREEN CAPTURE WATCHDOG",
                         "No screen frame for \(Int(age))s; rebuilding SCStream"
                     )
                     let old = self.stream
                     self.stream = nil
-                    self.deactivateNavigation(reason: "Raw ScreenCaptureKit frame heartbeat stalled")
+                    self.forceFreerideForCaptureLoss(
+                        reason: "Raw ScreenCaptureKit frame heartbeat stalled"
+                    )
                     old?.stopCapture(completionHandler: nil)
                     self.cachedFilterFailureCount = 0
                     self.scheduleRecovery(reason: "raw frame watchdog stale")
@@ -568,6 +580,80 @@ final class ExternalNavigationCapture: NSObject {
         logger.log("SCREEN NAV", "Sent Proceed to route state")
     }
 
+
+    private func forceFreerideForCaptureLoss(reason: String) {
+        captureLossGeneration += 1
+        let generation = captureLossGeneration
+
+        // Do not trust our local navigationModeArmed flag here. A physical HUD
+        // reboot can leave firmware Navigation ON while the phone believes it
+        // is unarmed. Capture health is authoritative: no stream = Freeride.
+        navigation.navigationOff()
+        navigationModeArmed = false
+        pendingCandidateKey = ""
+        pendingCandidateCount = 0
+        lastSentKey = ""
+        lastSentDistance = -1
+
+        logger.log(
+            "SCREEN NAV LIFECYCLE",
+            "FORCE Navigation OFF → Freeride: \(reason)"
+        )
+
+        // Field logs showed the first Navigation OFF packet could be missed by
+        // the HUD during reconnect/firmware activity. Reassert twice, but only
+        // if capture has not recovered in the meantime.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let self,
+                  generation == self.captureLossGeneration,
+                  self.stream == nil else { return }
+            self.navigation.navigationOff()
+
+            try? await Task.sleep(for: .milliseconds(850))
+            guard generation == self.captureLossGeneration,
+                  self.stream == nil else { return }
+            self.navigation.navigationOff()
+        }
+    }
+
+    private func requestRecoveryNotificationPermissionIfNeeded() {
+        guard !recoveryNotificationPermissionRequested else { return }
+        recoveryNotificationPermissionRequested = true
+
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .notDetermined else { return }
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
+    }
+
+    private func notifyCaptureNeedsAttention(reason: String) {
+        guard UIApplication.shared.applicationState != .active else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "HUD screen capture paused"
+        content.body = "Tap to reopen HUD Controller and select Entire Display to resume navigation."
+        content.sound = .default
+        content.userInfo = ["HUDCaptureRecovery": true, "reason": reason]
+
+        let request = UNNotificationRequest(
+            identifier: "hud.capture.recovery",
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request) { [weak self] error in
+            if let error {
+                Task { @MainActor in
+                    self?.logger.log(
+                        "SCREEN CAPTURE ALERT",
+                        "Local recovery notification failed: \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+    }
+
     private func showArrivalAndReturnToFreeride(reason: String) {
         guard navigationModeArmed else { return }
         guard arrivalTask == nil else { return }
@@ -678,7 +764,9 @@ extension ExternalNavigationCapture: SCStreamDelegate {
             // Capture health is the highest-level navigation prerequisite.
             // Never leave a stale maneuver frozen on the HUD while the source
             // pixels are unavailable. Capture recovery remains desired.
-            self.deactivateNavigation(reason: "ScreenCaptureKit stream stopped unexpectedly")
+            self.forceFreerideForCaptureLoss(
+                reason: "ScreenCaptureKit stream stopped unexpectedly"
+            )
             self.scheduleRecovery(reason: error.localizedDescription)
         }
     }

@@ -117,6 +117,23 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         status = "Disabled"
     }
 
+
+    /// Immediately overwrite the firmware's circular boot-default style.
+    ///
+    /// A zero limit is used as a style-only/hidden prime so we don't show a
+    /// stale road limit from the previous drive. The first valid GPS/OSM
+    /// result then replaces it with the real rectangular sign.
+    func primeRectangularStyle() {
+        guard enabled, showSpeedLimit, bluetooth.state == .connected else { return }
+
+        bluetooth.enqueue(
+            HudCommands.speedLimit(limit: 0, tolerance: speedTolerance),
+            label: "Speed-limit rectangle style prime"
+        )
+        lastSentLimit = -1
+        logger.log("SPEED SESSION", "Primed rectangular speed-limit style immediately")
+    }
+
     func rehydrateHUDState() {
         guard enabled, bluetooth.state == .connected else { return }
         lastSentSpeed = -1

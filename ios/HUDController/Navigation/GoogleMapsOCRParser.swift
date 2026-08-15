@@ -131,7 +131,11 @@ enum ExternalNavigationOCRParser {
                 positionedLines: positionedLines
             )
         case .googleMaps:
-            return GoogleMapsOCRParser.parseGoogle(lines: cleaned, rawText: rawText)
+            return GoogleMapsOCRParser.parseGoogle(
+                lines: cleaned,
+                rawText: rawText,
+                positionedLines: positionedLines
+            )
         case .unknown:
             // A normal Maps home screen is still useful because it tells the
             // navigation lifecycle to return to Freeride.
@@ -285,12 +289,13 @@ enum GoogleMapsOCRParser {
     }
 
     static func parse(lines: [String], rawText: String) -> ParsedExternalNavigation {
-        parseGoogle(lines: lines, rawText: rawText)
+        parseGoogle(lines: lines, rawText: rawText, positionedLines: [])
     }
 
     fileprivate static func parseGoogle(
         lines: [String],
-        rawText: String
+        rawText: String,
+        positionedLines: [OCRLine] = []
     ) -> ParsedExternalNavigation {
         let cleaned = lines
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -331,30 +336,90 @@ enum GoogleMapsOCRParser {
             )
         }
 
+        // Google Maps near-destination card, e.g.
+        // "In 0.4 mi / Home / Destination will be on the left".
+        // This is APPROACHING the destination, not arrival.
+        if let approachIndex = lower.firstIndex(where: {
+            $0.contains("destination will be on the left") ||
+            $0.contains("destination will be on the right")
+        }) {
+            let sideText = cleaned[approachIndex]
+            let distanceCandidate = cleaned
+                .prefix(approachIndex + 1)
+                .reversed()
+                .first(where: { ExternalNavigationOCRParser.parseDistanceMeters($0) != nil })
+                ?? cleaned.first(where: { ExternalNavigationOCRParser.parseDistanceMeters($0) != nil })
+                ?? ""
+
+            if let meters = ExternalNavigationOCRParser.parseDistanceMeters(distanceCandidate),
+               meters > 0 {
+                let name = approachIndex > 0
+                    ? cleaned[max(0, approachIndex - 1)]
+                    : "Destination"
+                return ParsedExternalNavigation(
+                    instruction: NavigationInstruction(
+                        maneuver: .destination,
+                        distanceMeters: meters,
+                        primaryText: sideText.lowercased().contains("left")
+                            ? "Destination on left"
+                            : "Destination on right",
+                        streetName: name
+                    ),
+                    rawText: rawText,
+                    isValidNavigation: true,
+                    confidence: 100,
+                    validationReason: "Google destination approach with remaining distance",
+                    source: .googleMaps,
+                    screenState: .active,
+                    originalDistanceText: distanceCandidate,
+                    structuralConfidence: 100
+                )
+            }
+        }
+
         var selectedDistance = 0
         var originalDistance = ""
         var instructionLine = ""
-        var distanceLine = ""
-        var bestIndex = Int.max
 
-        // Favor the top/current instruction. Never choose a later upcoming
-        // maneuver simply because OCR reordered a few words.
-        for (i, line) in cleaned.enumerated() {
-            guard let meters = ExternalNavigationOCRParser.parseDistanceMeters(line),
-                  isNavigationDistanceLine(line) else { continue }
+        // Prefer spatial pairing on real OCR frames. Google can place several
+        // complete maneuvers on the screen simultaneously; pairing merely by
+        // flattened OCR order can attach the CURRENT distance to the NEXT
+        // maneuver. The current card's distance sits immediately above its own
+        // maneuver text.
+        if !positionedLines.isEmpty,
+           let pair = spatialCurrentGoogleCard(positionedLines) {
+            selectedDistance = pair.meters
+            originalDistance = pair.distanceText
+            instructionLine = pair.instructionText
+        }
 
-            let upper = min(cleaned.count - 1, i + 3)
-            guard i < upper else { continue }
+        // Text-only / Vision fallback.
+        if instructionLine.isEmpty {
+            var bestIndex = Int.max
+            for (i, line) in cleaned.enumerated() {
+                guard let meters = ExternalNavigationOCRParser.parseDistanceMeters(line),
+                      isNavigationDistanceLine(line) else { continue }
 
-            for j in (i + 1)...upper where ExternalNavigationOCRParser.isExplicitGoogleManeuver(cleaned[j]) {
-                if i < bestIndex {
-                    bestIndex = i
-                    selectedDistance = meters
-                    originalDistance = line
-                    distanceLine = line
-                    instructionLine = cleaned[j]
+                let upper = min(cleaned.count - 1, i + 3)
+                guard i < upper else { continue }
+
+                for j in (i + 1)...upper
+                where ExternalNavigationOCRParser.isExplicitGoogleManeuver(cleaned[j]) {
+                    // Do not cross a second distance row. If another distance
+                    // occurs before this maneuver, it belongs to a later card.
+                    let crossedDistance = ((i + 1)..<j).contains {
+                        isNavigationDistanceLine(cleaned[$0])
+                    }
+                    guard !crossedDistance else { continue }
+
+                    if i < bestIndex {
+                        bestIndex = i
+                        selectedDistance = meters
+                        originalDistance = line
+                        instructionLine = cleaned[j]
+                    }
+                    break
                 }
-                break
             }
         }
 
@@ -368,7 +433,6 @@ enum GoogleMapsOCRParser {
                        isNavigationDistanceLine(cleaned[j]) {
                         selectedDistance = meters
                         originalDistance = cleaned[j]
-                        distanceLine = cleaned[j]
                         instructionLine = line
                         break
                     }
@@ -379,7 +443,7 @@ enum GoogleMapsOCRParser {
 
         let maneuver = ExternalNavigationOCRParser.maneuverFromText(instructionLine)
         let street = streetFromInstruction(instructionLine)
-        let primary = primaryInstruction(instructionLine, maneuver: maneuver)
+        let primary = compactPrimaryInstruction(instructionLine, maneuver: maneuver)
 
         var confidence = 0
         var reasons: [String] = []
@@ -454,11 +518,61 @@ enum GoogleMapsOCRParser {
         return ""
     }
 
-    private static func primaryInstruction(_ text: String, maneuver: HudManeuver) -> String {
-        if let range = text.lowercased().range(of: " onto ") {
-            return String(text[..<range.lowerBound])
+    private static func compactPrimaryInstruction(
+        _ text: String,
+        maneuver: HudManeuver
+    ) -> String {
+        // Keep the maneuver line short enough for the physical HUD. Context
+        // such as "after the gas station (on the left)" is useful in Maps but
+        // causes the HUD renderer to truncate the actual road name.
+        switch maneuver {
+        case .left: return "Turn left"
+        case .right: return "Turn right"
+        case .slightLeft: return "Slight left"
+        case .slightRight: return "Slight right"
+        case .sharpLeft: return "Sharp left"
+        case .sharpRight: return "Sharp right"
+        case .keepLeft: return "Keep left"
+        case .keepRight: return "Keep right"
+        case .exitLeft: return "Exit left"
+        case .exitRight: return "Exit right"
+        case .uTurn: return "U-turn"
+        case .roundabout: return "Roundabout"
+        case .destination: return "Destination"
+        case .straight: return "Continue straight"
         }
-        return text.isEmpty ? maneuver.label : text
+    }
+
+    private static func spatialCurrentGoogleCard(
+        _ lines: [OCRLine]
+    ) -> (meters: Int, distanceText: String, instructionText: String)? {
+        let distances = lines.compactMap { line -> (OCRLine, Int)? in
+            guard isNavigationDistanceLine(line.text),
+                  let meters = ExternalNavigationOCRParser.parseDistanceMeters(line.text)
+            else { return nil }
+            return (line, meters)
+        }
+        .sorted { $0.0.box.midY > $1.0.box.midY }
+
+        for (distance, meters) in distances {
+            // Vision normalized boxes have bottom-left origin. Instruction
+            // text is visually BELOW the distance, therefore lower midY.
+            let candidates = lines.filter {
+                ExternalNavigationOCRParser.isExplicitGoogleManeuver($0.text) &&
+                $0.box.midY < distance.box.midY &&
+                (distance.box.midY - $0.box.midY) < 0.13
+            }
+            .sorted {
+                abs(distance.box.midY - $0.box.midY) <
+                abs(distance.box.midY - $1.box.midY)
+            }
+
+            if let instruction = candidates.first {
+                return (meters, distance.text, instruction.text)
+            }
+        }
+
+        return nil
     }
 }
 
@@ -562,18 +676,39 @@ private enum AppleMapsOCRParser {
         }
 
         var road = ""
+        var shieldNumber: String?
         if index + 1 < lines.count {
-            for j in (index + 1)..<min(lines.count, index + 4) {
-                let candidate = lines[j]
+            for j in (index + 1)..<min(lines.count, index + 5) {
+                let candidate = lines[j].trimmingCharacters(in: .whitespacesAndNewlines)
                 let l = candidate.lowercased()
+
                 if l.contains("end route") ||
                     ExternalNavigationOCRParser.isStandaloneDistance(candidate) {
                     break
                 }
-                if !candidate.allSatisfy({ $0.isNumber || $0.isWhitespace }) {
+
+                // Apple OCR often reads the number INSIDE a route shield as a
+                // separate pure numeric line before "North" or the street.
+                if candidate.range(of: #"^\d{1,3}$"#, options: .regularExpression) != nil {
+                    shieldNumber = candidate
+                    continue
+                }
+
+                if !candidate.isEmpty {
                     road = stripRouteShieldOCR(candidate)
                     if !road.isEmpty { break }
                 }
+            }
+        }
+
+        if let shieldNumber {
+            let shieldLabel = routeShieldLabel(
+                number: shieldNumber,
+                image: image,
+                positionedLines: positionedLines
+            )
+            if !shieldLabel.isEmpty {
+                road = road.isEmpty ? shieldLabel : "\(shieldLabel) \(road)"
             }
         }
 
@@ -611,6 +746,82 @@ private enum AppleMapsOCRParser {
             originalDistanceText: distanceText,
             structuralConfidence: endRoute ? 100 : confidence
         )
+    }
+
+
+    private static func routeShieldLabel(
+        number: String,
+        image: UIImage?,
+        positionedLines: [OCRLine]
+    ) -> String {
+        // If Vision itself recognized a route prefix, preserve it.
+        let all = positionedLines.map(\.text).joined(separator: " ")
+        if all.range(of: #"\bI[- ]?\#(number)\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return "I-\(number)"
+        }
+        if all.range(of: #"\bUS[- ]?\#(number)\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return "US \(number)"
+        }
+
+        guard let image,
+              let cg = image.cgImage,
+              let numberLine = positionedLines.first(where: {
+                  $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == number
+              }) else {
+            return "US \(number)"
+        }
+
+        // Interstate shields in Apple Maps are normally colored; U.S. route
+        // shields are grayscale/white. Sample the shield around the OCR number.
+        let w = CGFloat(cg.width)
+        let h = CGFloat(cg.height)
+        let b = numberLine.box
+        let x = max(0, b.minX * w - b.width * w * 0.55)
+        let y = max(0, (1 - b.maxY) * h - b.height * h * 0.45)
+        let rw = min(w - x, b.width * w * 2.1)
+        let rh = min(h - y, b.height * h * 1.9)
+        let rect = CGRect(x: x, y: y, width: rw, height: rh).integral
+
+        guard rect.width > 5, rect.height > 5,
+              let crop = cg.cropping(to: rect),
+              let saturation = averageSaturation(crop) else {
+            return "US \(number)"
+        }
+
+        return saturation > 0.18 ? "I-\(number)" : "US \(number)"
+    }
+
+    private static func averageSaturation(_ image: CGImage) -> Double? {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return nil }
+
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        guard let ctx = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var sum = 0.0
+        var count = 0
+        for i in stride(from: 0, to: bytes.count, by: 4) {
+            let r = Double(bytes[i]) / 255.0
+            let g = Double(bytes[i + 1]) / 255.0
+            let b = Double(bytes[i + 2]) / 255.0
+            let maxv = max(r, g, b)
+            let minv = min(r, g, b)
+            guard maxv > 0.15 else { continue }
+            sum += maxv == 0 ? 0 : (maxv - minv) / maxv
+            count += 1
+        }
+        return count > 0 ? sum / Double(count) : nil
     }
 
     private static func stripRouteShieldOCR(_ text: String) -> String {
@@ -667,25 +878,38 @@ private enum AppleManeuverIconClassifier {
         let h = data.height
         guard w > 0, h > 0, data.points.count > 20 else { return .straight }
 
-        var left = 0
-        var right = 0
-        var top = 0
+        // For curved left/right arrows, total left/right ink is a poor
+        // discriminator because the long vertical stem sits on the OPPOSITE
+        // side from the arrowhead. Examine the upper arrowhead region instead.
+        let xs = data.points.map(\.x)
+        let ys = data.points.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else { return .straight }
 
-        for point in data.points {
-            if point.x < w / 3 { left += 1 }
-            if point.x > (w * 2) / 3 { right += 1 }
-            if point.y < h / 3 { top += 1 }
+        let bw = max(1, maxX - minX + 1)
+        let bh = max(1, maxY - minY + 1)
+        let arrowheadCutoff = minY + Int(Double(bh) * 0.58)
+        let head = data.points.filter { $0.y <= arrowheadCutoff }
+
+        guard head.count > 20 else { return .straight }
+
+        var headLeft = 0
+        var headRight = 0
+        for point in head {
+            if point.x <= minX + Int(Double(bw) * 0.36) { headLeft += 1 }
+            if point.x >= minX + Int(Double(bw) * 0.64) { headRight += 1 }
         }
 
-        let total = max(1, data.points.count)
-        let leftRatio = Double(left) / Double(total)
-        let rightRatio = Double(right) / Double(total)
-        let topRatio = Double(top) / Double(total)
+        if headLeft > Int(Double(headRight) * 1.22) { return .left }
+        if headRight > Int(Double(headLeft) * 1.22) { return .right }
 
-        if rightRatio > leftRatio * 1.20 && rightRatio > 0.23 { return .right }
-        if leftRatio > rightRatio * 1.20 && leftRatio > 0.23 { return .left }
-        if topRatio > 0.30 { return .straight }
+        // A tall, centered arrowhead is straight.
+        if Double(bh) > Double(bw) * 1.10 { return .straight }
 
+        let headCenter = head.map(\.x).reduce(0, +) / max(1, head.count)
+        let normalized = Double(headCenter - minX) / Double(bw)
+        if normalized < 0.43 { return .left }
+        if normalized > 0.57 { return .right }
         return .straight
     }
 

@@ -189,4 +189,40 @@ enum HudCommands {
 
 
 
+
+
+    // MARK: - Experimental hidden display commands
+
+    /// Decompiled PushMessageCommandPacket:
+    /// CommandPacket(command=2, p1=24/ASCII CAN, p2=0)
+    /// payload = int32 Display_Position + int32 Display_type +
+    ///           Java writeUTF(title) + Java writeUTF(message)
+    ///
+    /// Display_Position ordinals:
+    /// 0 TOP, 1 LEFT, 2 DOWN, 3 FULL
+    /// Display_type ordinals:
+    /// 0 INFO, 1 WARNING
+    static func pushMessage(
+        position: Int32,
+        type: Int32 = 0,
+        title: String,
+        message: String
+    ) -> Data {
+        var payload = HudProtocol.int32(position)
+        payload.append(HudProtocol.int32(type))
+        payload.append(HudProtocol.javaWriteUTF(title))
+        payload.append(HudProtocol.javaWriteUTF(message))
+        return HudProtocol.frame(command: 2, p1: 24, p2: 0, payload: payload)
+    }
+
+    /// Decompiled HudHUDWidgetsMiniState(command=2, p1=122, p2=0).
+    static func widgetsMiniState(_ enabled: Bool) -> Data {
+        HudProtocol.frame(
+            command: 2,
+            p1: 122,
+            p2: 0,
+            payload: Data([enabled ? 1 : 0])
+        )
+    }
+
 }

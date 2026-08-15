@@ -1199,3 +1199,64 @@ Spotify application is not running. Spotify's documented wake path is
 automatic recovery when Spotify is available/running again, but it does not
 silently bypass that iOS/Spotify app-switch requirement after Spotify has been
 fully terminated.
+
+
+## v57 — navigation/capture reliability + hidden music layout lab
+
+Field-log driven changes:
+
+### Physical HUD speed-limit boot style
+A rectangular speed-limit packet with limit `0` is now sent immediately when
+the HUD BLE transport/session becomes ready. This is a style-only/hidden prime:
+it overwrites the firmware's circular boot default without intentionally
+showing the previous road's stale speed limit. The real GPS/OSM limit replaces
+it when available, and the normal phase-2/phase-3 rehydration still reasserts
+the rectangular style.
+
+### Apple Maps
+- Simple arrow classification now uses the arrowhead region instead of total
+  left/right pixel mass. The long stem on Apple's curved arrows was causing
+  left turns to be classified as right turns.
+- Pure numeric route-shield OCR is retained. A grayscale shield is represented
+  as `US <number>` and a colored interstate-style shield as `I-<number>`.
+- Example target: the supplied Apple card `1 / North` becomes `US 1 North`
+  rather than only `North`.
+- Existing lane-guidance highlighted-arrow handling remains.
+
+### Google Maps
+- Current distance/maneuver pairing is spatial when Vision boxes are
+  available, so a current `100 ft` row is not paired with the next route
+  instruction.
+- HUD primary text is compacted (`Turn left`, `Turn right`, `Keep left`, etc.)
+  while the road is kept separately. Long context such as
+  `after the gas station (on the left)` no longer consumes the HUD line.
+- `Destination will be on the left/right` with remaining distance is an active
+  destination-approach state, not arrival and not an invalid OCR frame.
+
+### ScreenCaptureKit
+- Raw-frame watchdog threshold is 4 seconds.
+- Any capture loss force-sends Navigation OFF independent of local
+  `navigationModeArmed`, then reasserts OFF twice if capture has not recovered.
+- When the cached content filter becomes unusable and iOS requires a new
+  Entire Display selection, the app posts a local notification while
+  backgrounded. Tapping the notification opens HUD Controller, where automatic
+  capture startup presents Apple's system picker.
+- iOS does not permit HUD Controller to draw its own arbitrary popup over
+  Google Maps/Apple Maps; the system notification banner is the supported
+  cross-app attention mechanism.
+
+### Experimental persistent Spotify display
+The original decompiled Android library exposes `PushMessageCommandPacket`:
+command 2 / p1 24 / p2 0 with positions TOP, LEFT, DOWN, FULL and title/message
+text. v57 adds an Experimental HUD Music Layout card to the Media page.
+
+The lab can:
+- send current Spotify artist + track through PushMessage;
+- mirror future Spotify track changes through PushMessage;
+- choose TOP / LEFT / DOWN / FULL;
+- test notification timeout, line count, and `HudHUDWidgetsMiniState`;
+- clear the experimental message.
+
+No RIGHT enum exists in this hidden packet, so v57 does not invent one.
+These are genuine firmware commands but their combined persistent-layout
+behavior remains experimental.
