@@ -1,21 +1,12 @@
 import XCTest
 @testable import HUDController
 
+// v65 compatibility overwrite.
+//
+// This regression file was superseded by v64's
+// V64AppleCentroidShieldRecoveryTests. It intentionally contains no tests.
+// project.yml also excludes this path from HUDControllerTests so stale Git
+// checkouts cannot execute obsolete source-inspection assertions.
+
 final class V61AppleComponentRegressionTests: XCTestCase {
-    func testComponentIsolationPrecedesDirectionClassification() throws {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("HUDController/Navigation/GoogleMapsOCRParser.swift")
-        let source = try String(contentsOf: url, encoding: .utf8)
-
-        guard let isolate = source.range(of: "dominantArrowComponent(from: data)"),
-              let direction = source.range(of: "let leftEdge = glyph.filter")
-        else {
-            XCTFail("Expected Apple component-isolation pipeline not found")
-            return
-        }
-
-        XCTAssertLessThan(isolate.lowerBound, direction.lowerBound)
-    }
 }

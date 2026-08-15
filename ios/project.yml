@@ -68,6 +68,13 @@ targets:
           # Removed persistent-text probe experiment tests.
           - V41TextRendererProbeTests.swift
           - AppStateInitializationOrderTests.swift
+          # Superseded Apple-arrow regression files. These can remain in an
+          # older Git checkout after ZIP-overlay updates, so explicitly exclude
+          # them from the generated test target.
+          - V59AppleArrowDirectionTests.swift
+          - V60AppleArrowComponentIsolationTests.swift
+          - V61AppleComponentRegressionTests.swift
+          - V62AppleArrowShieldTests.swift
     dependencies:
       - target: HUDController
     settings:

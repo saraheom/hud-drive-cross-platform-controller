@@ -1414,3 +1414,22 @@ left of that text. It accepts short shield forms such as `1`, `/1`, `{1}`, and
 The experimental PushMessage music path is retained for comparison, but field
 logs show no rendered text from it; only `HudHUDWidgetsMiniState` produced a
 visible effect. No new persistence claims are made for that experiment.
+
+
+## v65 — stale Apple regression-file cleanup
+
+The v64 application target built successfully and all v64 tests passed.
+The CI checkout nevertheless executed four older Apple-arrow regression files
+from v59-v62, because ZIP-overlay repository updates do not necessarily delete
+files that were tracked by an earlier Git commit.
+
+v65 makes the project resilient to that update workflow:
+
+- `project.yml` explicitly excludes the superseded v59-v62 Apple test files;
+- v65 also ships inert overwrite shims at those exact old paths, so copying the
+  new repository over an existing checkout replaces stale assertions even
+  before XcodeGen runs;
+- the active Apple-arrow/shield coverage remains in
+  `V64AppleCentroidShieldRecoveryTests` and `V64AppleRoadFallbackTests`.
+
+No runtime application behavior changed from v64.
