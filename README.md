@@ -1116,3 +1116,24 @@ The old Persistent Text / Music Probe experiment is removed completely:
 
 The confirmed native HUD music-notification path and the independent
 Music/Spotify popup enable/disable setting remain unchanged.
+
+
+## v54 — explicitly exclude removed probe files from XcodeGen
+
+The v53 source ZIP correctly removed `HudTextRendererProbe.swift`, but the CI
+checkout still contained a stale copy of that file. Because `project.yml`
+previously included the entire `HUDController` directory recursively, XcodeGen
+picked up the stale local file and tried to compile it. That file referenced
+probe-only HudCommands helpers that v53 correctly removed.
+
+v54 makes deletion robust even when an updated repo is copied over an older
+checkout instead of replacing it completely:
+
+- `HUDController/Media/HudTextRendererProbe.swift` is explicitly excluded from
+  the application target;
+- old `V41TextRendererProbeTests.swift` and
+  `AppStateInitializationOrderTests.swift` are explicitly excluded from the
+  test target;
+- the current v54 ZIP still does not contain those removed source files.
+
+No runtime application behavior changed from v53.

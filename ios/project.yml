@@ -17,6 +17,11 @@ targets:
     platform: iOS
     sources:
       - path: HUDController
+        excludes:
+          # v53 removed this diagnostic experiment. Keep an explicit exclusion
+          # so repositories updated by copying over an older checkout cannot
+          # accidentally compile a stale local copy.
+          - Media/HudTextRendererProbe.swift
     dependencies:
       - package: SpotifyiOS
     info:
@@ -59,6 +64,10 @@ targets:
     platform: iOS
     sources:
       - path: HUDControllerTests
+        excludes:
+          # Removed persistent-text probe experiment tests.
+          - V41TextRendererProbeTests.swift
+          - AppStateInitializationOrderTests.swift
     dependencies:
       - target: HUDController
     settings:
