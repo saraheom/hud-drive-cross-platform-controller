@@ -83,7 +83,8 @@ final class V57NavigationCaptureMusicLabTests: XCTestCase {
         XCTAssertTrue(source.contains("HUD screen capture paused"))
         XCTAssertTrue(source.contains("forceFreerideForCaptureLoss"))
         XCTAssertTrue(source.contains("captureLossGeneration"))
-        XCTAssertTrue(source.contains("age > 4"))
+        XCTAssertTrue(source.contains("age > 3"))
+        XCTAssertTrue(source.contains("watchdog sees no active stream/frame"))
     }
 
     func testSpeedLimitStylePrimeUsesRectangularPacketBeforeRoadLookup() throws {

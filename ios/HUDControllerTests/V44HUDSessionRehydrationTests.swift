@@ -40,24 +40,38 @@ final class V44HUDSessionRehydrationTests: XCTestCase {
         XCTAssertTrue(source.contains("onTransportDisconnected?()"))
     }
 
-    func testCaptureCanRearmWithoutRestartingCapture() throws {
+    func testCaptureRearmRequiresHealthyScreenCapture() throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("HUDController/Navigation/ExternalNavigationCapture.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-        // A HUD reboot must reset only HUD-delivery state. It must not stop or
-        // recreate ScreenCaptureKit merely because the physical HUD restarted.
         XCTAssertTrue(source.contains("func hudSessionDidReset(reason: String)"))
-        XCTAssertTrue(source.contains("reset HUD delivery state while preserving capture"))
+        XCTAssertTrue(source.contains("capture health has priority"))
+        XCTAssertTrue(source.contains("guard isCaptureHealthy"))
+        XCTAssertTrue(source.contains("HUD session ready while capture unhealthy"))
+        XCTAssertTrue(source.contains("forceFreerideForCaptureLoss"))
 
-        // If a validated active maneuver is cached, the HUD is re-armed and
-        // the cached maneuver is sent again.
-        XCTAssertTrue(source.contains("armNavigationIfNeeded()"))
+        // A cached validated maneuver may only be re-sent after the health
+        // guard has passed.
+        guard let reset = source.range(of: "func hudSessionDidReset(reason: String)"),
+              let health = source.range(
+                of: "guard isCaptureHealthy",
+                range: reset.lowerBound..<source.endIndex
+              ),
+              let rearm = source.range(
+                of: "armNavigationIfNeeded()",
+                range: reset.lowerBound..<source.endIndex
+              )
+        else {
+            XCTFail("Expected capture-health rearm path not found")
+            return
+        }
+
+        XCTAssertLessThan(health.lowerBound, rearm.lowerBound)
         XCTAssertTrue(source.contains("navigation.current = latestInstruction"))
         XCTAssertTrue(source.contains("navigation.sendCurrent()"))
-        XCTAssertTrue(source.contains("Re-armed Navigation and re-sent cached validated maneuver"))
     }
 
     func testAmbientUsesThreeWindowHysteresis() throws {

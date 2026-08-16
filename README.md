@@ -1650,3 +1650,19 @@ next route block.
 - a connection stuck in `.connecting` for >6 s is cancelled/retried;
 - healthy presence periodically reasserts HUD Auto Brightness ON;
 - HUD reboot/reconnect no longer requires manually toggling Auto Enable.
+
+
+## v74 — stale capture regression-test fix
+
+The v73 app target builds successfully and the new v73 road-reliability tests
+pass. CI failed only because two older tests still asserted pre-v73 capture
+behavior.
+
+- `V44HUDSessionRehydrationTests` previously expected a HUD reboot to always
+  re-arm cached navigation. It now verifies the v73 invariant that
+  ScreenCaptureKit health must be checked first; unhealthy capture forces
+  Freeride.
+- `V57NavigationCaptureMusicLabTests` previously pinned the watchdog to
+  `age > 4`. v73 intentionally tightened the raw-frame threshold to 3 seconds.
+
+No runtime application code changed from v73.
