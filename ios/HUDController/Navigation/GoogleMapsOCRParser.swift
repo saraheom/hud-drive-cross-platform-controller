@@ -792,61 +792,136 @@ private enum AppleMapsOCRParser {
         let height = CGFloat(cg.height)
         let b = roadLine.box
 
-        // Route shields sit immediately left of the road/direction label.
-        // Use a deliberately narrow crop so other maneuver-card numbers and
-        // distances cannot become false shield candidates.
-        let normalizedLeft = max(0, b.minX - 0.155)
-        let normalizedRight = min(1, b.minX + 0.010)
-        let normalizedBottom = max(0, b.midY - max(0.030, b.height * 0.95))
-        let normalizedTop = min(1, b.midY + max(0.030, b.height * 0.95))
+        // Apple route shields are immediately left of the road/direction text,
+        // but the exact spacing varies with short strings such as "North".
+        // Try several increasingly wide crops rather than betting on one ROI.
+        let leftExpansions: [CGFloat] = [0.12, 0.17, 0.22, 0.27]
 
-        var rect = CGRect(
-            x: normalizedLeft * width,
-            y: (1 - normalizedTop) * height,
-            width: (normalizedRight - normalizedLeft) * width,
-            height: (normalizedTop - normalizedBottom) * height
-        ).integral
-        rect = rect.intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        for expansion in leftExpansions {
+            let normalizedLeft = max(0, b.minX - expansion)
+            let normalizedRight = min(1, b.minX + 0.012)
+            let halfHeight = max(0.035, b.height * 1.25)
+            let normalizedBottom = max(0, b.midY - halfHeight)
+            let normalizedTop = min(1, b.midY + halfHeight)
 
-        guard rect.width > 12,
-              rect.height > 12,
-              let crop = cg.cropping(to: rect) else { return nil }
+            var rect = CGRect(
+                x: normalizedLeft * width,
+                y: (1 - normalizedTop) * height,
+                width: (normalizedRight - normalizedLeft) * width,
+                height: (normalizedTop - normalizedBottom) * height
+            ).integral
+            rect = rect.intersection(
+                CGRect(x: 0, y: 0, width: width, height: height)
+            )
 
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        request.minimumTextHeight = 0.08
-        request.recognitionLanguages = ["en-US"]
+            guard rect.width > 14,
+                  rect.height > 14,
+                  let crop = cg.cropping(to: rect),
+                  let enlarged = upscaleShieldCrop(crop, scale: 4)
+            else { continue }
 
-        let handler = VNImageRequestHandler(cgImage: crop, options: [:])
-        do {
-            try handler.perform([request])
-        } catch {
-            return nil
-        }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            request.minimumTextHeight = 0.025
+            request.recognitionLanguages = ["en-US"]
+            request.customWords = [
+                "1", "13", "76",
+                "US 1", "US 13", "I-76"
+            ]
 
-        let observations = request.results ?? []
-        for observation in observations {
-            for candidate in observation.topCandidates(5) {
-                let text = candidate.string
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            let handler = VNImageRequestHandler(cgImage: enlarged, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                continue
+            }
 
-                // Accept only a very short numeric shield result. OCR artifacts
-                // such as "/13", "{1}", or "US 13" are intentionally allowed.
-                if let regex = try? NSRegularExpression(
-                    pattern: #"(?:US|U\.?S\.?)?\s*[/\\|{\[(]?\s*(\d{1,3})\s*[}\])]?"#,
-                    options: [.caseInsensitive]
-                ) {
-                    let range = NSRange(text.startIndex..<text.endIndex, in: text)
-                    if let match = regex.firstMatch(in: text, options: [], range: range),
-                       let numberRange = Range(match.range(at: 1), in: text) {
-                        return String(text[numberRange])
+            for observation in request.results ?? [] {
+                for candidate in observation.topCandidates(10) {
+                    let text = candidate.string
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    if let number = extractShortShieldNumber(text) {
+                        return number
                     }
                 }
             }
         }
 
         return nil
+    }
+
+    private static func extractShortShieldNumber(_ text: String) -> String? {
+        guard text.count <= 12 else { return nil }
+
+        let patterns = [
+            #"(?:US|U\.?S\.?)?\s*[/\\|{\[(]?\s*(\d{1,3})\s*[}\])]?"#,
+            #"[/\\|{\[(]?\s*(\d{1,3})\s*[}\])]?"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.caseInsensitive]
+            ) else { continue }
+
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            guard let match = regex.firstMatch(
+                in: text,
+                options: [],
+                range: range
+            ),
+            match.numberOfRanges >= 2,
+            let numberRange = Range(match.range(at: 1), in: text)
+            else { continue }
+
+            return String(text[numberRange])
+        }
+
+        return nil
+    }
+
+    private static func upscaleShieldCrop(
+        _ image: CGImage,
+        scale: Int
+    ) -> CGImage? {
+        guard scale > 1 else { return image }
+
+        let targetWidth = image.width * scale
+        let targetHeight = image.height * scale
+
+        guard let ctx = CGContext(
+            data: nil,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        ctx.interpolationQuality = .none
+        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+        ctx.fill(
+            CGRect(
+                x: 0,
+                y: 0,
+                width: targetWidth,
+                height: targetHeight
+            )
+        )
+        ctx.draw(
+            image,
+            in: CGRect(
+                x: 0,
+                y: 0,
+                width: targetWidth,
+                height: targetHeight
+            )
+        )
+
+        return ctx.makeImage()
     }
 
     private static func extractRouteShieldPrefix(
@@ -1052,8 +1127,23 @@ private enum AppleManeuverIconClassifier {
         // and only ~0.19-0.26 for the wrong classes. Keep generous safety
         // thresholds so a distorted/unknown icon does not get confidently
         // converted into the opposite maneuver.
-        guard best.1 >= 0.62,
-              best.1 - second >= 0.16 else {
+        // Field testing showed some genuine Apple right-turn glyphs land
+        // below the original conservative 0.62 threshold even though Right is
+        // still clearly the best template. Keep a strict margin, but allow a
+        // lower absolute score for Left/Right so a real turn does not collapse
+        // to Straight merely because anti-aliasing/crop scale differs.
+        let margin = best.1 - second
+
+        if best.0 == .left || best.0 == .right {
+            guard best.1 >= 0.38,
+                  margin >= 0.075 else {
+                return .straight
+            }
+            return best.0
+        }
+
+        guard best.1 >= 0.56,
+              margin >= 0.12 else {
             return .straight
         }
 

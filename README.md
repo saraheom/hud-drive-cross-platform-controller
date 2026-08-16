@@ -1504,3 +1504,27 @@ Normal single-arrow cards therefore fall through to the v66 template matcher.
 This change is upstream of HUD packet generation. `HudManeuver.direction`
 mapping was inspected and remains correct:
 Right=2, Straight=4, Left=6.
+
+
+## v68 — Apple right-turn acceptance + stronger US shield recovery
+
+Field results after v67:
+
+- left-turn cards now classify correctly;
+- a genuine right-turn card (`US 13 Powelton Ave`) still fell back to Straight;
+- `0.4 mi` cards parse correctly as 644 m, but the HUD firmware displays that
+  meter value as ~2112 ft in imperial mode;
+- `US 1 North` sometimes still loses the shield number entirely.
+
+v68 changes the Apple template decision so Left/Right candidates can be
+accepted at a lower absolute IoU when they still beat the next template by a
+clear margin. Straight keeps a stricter threshold.
+
+Shield recovery now tries four ROIs of increasing width, upscales the crop 4x,
+uses Vision `.accurate`, lowers minimum text height, checks up to 10 candidates,
+and explicitly seeds common route strings.
+
+Important distance note: no OCR distance change was made. The log proves
+`0.4 mi` is parsed as 644 m. The physical HUD itself converts the meter field to
+feet and renders ~2112 ft. Preserving `0.4 mi` exactly requires identifying a
+firmware/unit-display control in the navigation packet rather than changing OCR.
