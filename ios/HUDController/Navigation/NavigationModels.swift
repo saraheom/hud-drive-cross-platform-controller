@@ -69,6 +69,9 @@ struct NavigationInstruction: Equatable, Codable {
     var distanceMeters: Int
     var primaryText: String
     var streetName: String
+    /// Exact distance text from the source navigation UI, e.g. "80 ft" or
+    /// "0.4 mi". HUD protocol still uses distanceMeters internally.
+    var displayDistanceText: String = ""
     var currentStreet: String = ""
     var exitNumber: Int? = nil
 }

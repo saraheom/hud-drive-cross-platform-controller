@@ -1573,3 +1573,29 @@ shield OCR still fails, it examines the near-white connected component inside
 the shield ROI and recognizes a narrow/tall centered digit-1 shape.
 
 All v69 Apple arrow-template behavior is preserved.
+
+
+## v71 — preserve exact OCR distance + correct US-1 numeral polarity
+
+Screenshot-test logs showed:
+
+- `80 ft` was correctly OCR-parsed to 25 m, but the Navigation UI converted
+  25 m back to `82 ft`;
+- `90 ft` became 28 m and was shown as `91 ft`;
+- `0.4 mi` remained correctly parsed as 644 m;
+- `US 1 North` still returned only `North`.
+
+The first issue was a UI round-trip problem, not OCR. `NavigationInstruction`
+now carries the exact source distance string alongside the protocol meter
+value. Apple/Google parsers populate it, and the Navigation UI displays that
+original string exactly. Thus screenshot tests show `80 ft`, `90 ft`, `0.4 mi`,
+etc. without integer-meter quantization artifacts.
+
+The v70 US-1 visual fallback also had a polarity error: it assumed Apple's
+route numeral was white. The actual Apple US shield is light with a dark
+numeral. v71 first isolates the compact light shield body, then searches inside
+it for a centered narrow/tall dark component representing digit `1`.
+
+The physical HUD maneuver protocol still receives integer meters, matching the
+original Android packet. Exact physical-HUD formatting is therefore a separate
+firmware/protocol question from the screenshot-test UI.

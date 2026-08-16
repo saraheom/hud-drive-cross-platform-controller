@@ -363,7 +363,8 @@ enum GoogleMapsOCRParser {
                         primaryText: sideText.lowercased().contains("left")
                             ? "Destination on left"
                             : "Destination on right",
-                        streetName: name
+                        streetName: name,
+                        displayDistanceText: distanceCandidate
                     ),
                     rawText: rawText,
                     isValidNavigation: true,
@@ -487,7 +488,8 @@ enum GoogleMapsOCRParser {
                 maneuver: maneuver,
                 distanceMeters: selectedDistance,
                 primaryText: primary,
-                streetName: street
+                streetName: street,
+                displayDistanceText: originalDistance
             ),
             rawText: rawText,
             isValidNavigation: valid,
@@ -768,7 +770,8 @@ private enum AppleMapsOCRParser {
                 maneuver: maneuver,
                 distanceMeters: distanceMeters,
                 primaryText: maneuver.label,
-                streetName: road
+                streetName: road,
+                displayDistanceText: distanceText
             ),
             rawText: rawText,
             isValidNavigation: confidence >= 75,
@@ -869,30 +872,30 @@ private enum AppleMapsOCRParser {
     ) -> String? {
         guard let cg = image.cgImage else { return nil }
 
-        let width = CGFloat(cg.width)
-        let height = CGFloat(cg.height)
+        let imageWidth = CGFloat(cg.width)
+        let imageHeight = CGFloat(cg.height)
         let b = roadLine.box
 
-        // The shield is directly to the left of a short directional label such
-        // as North/South. Keep this narrow to avoid the maneuver arrow/distance.
-        let normalizedLeft = max(0, b.minX - 0.115)
-        let normalizedRight = max(normalizedLeft, b.minX - 0.010)
-        let halfHeight = max(0.030, b.height * 1.10)
+        // Apple positions a US-route shield immediately to the left of a short
+        // direction label such as "North". Keep the crop local to that region.
+        let normalizedLeft = max(0, b.minX - 0.125)
+        let normalizedRight = max(normalizedLeft, b.minX - 0.004)
+        let halfHeight = max(0.034, b.height * 1.25)
         let normalizedBottom = max(0, b.midY - halfHeight)
         let normalizedTop = min(1, b.midY + halfHeight)
 
         var rect = CGRect(
-            x: normalizedLeft * width,
-            y: (1 - normalizedTop) * height,
-            width: (normalizedRight - normalizedLeft) * width,
-            height: (normalizedTop - normalizedBottom) * height
+            x: normalizedLeft * imageWidth,
+            y: (1 - normalizedTop) * imageHeight,
+            width: (normalizedRight - normalizedLeft) * imageWidth,
+            height: (normalizedTop - normalizedBottom) * imageHeight
         ).integral
         rect = rect.intersection(
-            CGRect(x: 0, y: 0, width: width, height: height)
+            CGRect(x: 0, y: 0, width: imageWidth, height: imageHeight)
         )
 
-        guard rect.width > 18,
-              rect.height > 18,
+        guard rect.width > 20,
+              rect.height > 20,
               let crop = cg.cropping(to: rect) else { return nil }
 
         let w = crop.width
@@ -911,67 +914,160 @@ private enum AppleMapsOCRParser {
 
         ctx.draw(crop, in: CGRect(x: 0, y: 0, width: w, height: h))
 
-        var points: [(x: Int, y: Int)] = []
+        func luminance(_ x: Int, _ y: Int) -> Int {
+            let i = (y * w + x) * 4
+            let r = Int(bytes[i])
+            let g = Int(bytes[i + 1])
+            let b = Int(bytes[i + 2])
+            return (299 * r + 587 * g + 114 * b) / 1000
+        }
+
+        // Step 1: find the light/gray shield body. The previous v70 fallback
+        // incorrectly searched for a white digit; Apple's numeral is DARK on
+        // a light shield.
+        var light = [Bool](repeating: false, count: w * h)
         for y in 0..<h {
             for x in 0..<w {
-                let i = (y * w + x) * 4
-                let r = Int(bytes[i])
-                let g = Int(bytes[i + 1])
-                let bl = Int(bytes[i + 2])
-
-                // Apple's shield fill is gray; the numeral itself is close to
-                // white. High threshold suppresses most of the shield body.
-                if r >= 225, g >= 225, bl >= 225 {
-                    points.append((x, y))
+                let l = luminance(x, y)
+                if l >= 105 {
+                    light[y * w + x] = true
                 }
             }
         }
 
-        guard !points.isEmpty else { return nil }
-
-        // Connected components among near-white pixels.
-        var occupied = [Bool](repeating: false, count: w * h)
-        for pt in points {
-            occupied[pt.y * w + pt.x] = true
-        }
-        var visited = [Bool](repeating: false, count: w * h)
         let neighbors = [
             (-1,-1),(0,-1),(1,-1),
             (-1, 0),       (1, 0),
             (-1, 1),(0, 1),(1, 1)
         ]
-        var components: [[(x: Int, y: Int)]] = []
+        var visited = [Bool](repeating: false, count: w * h)
+        var lightComponents: [[(x: Int, y: Int)]] = []
 
-        for seed in points {
-            let si = seed.y * w + seed.x
-            guard !visited[si] else { continue }
-            visited[si] = true
-            var q = [seed]
-            var qi = 0
-            var component: [(x: Int, y: Int)] = []
+        for y in 0..<h {
+            for x in 0..<w {
+                let seedIndex = y * w + x
+                guard light[seedIndex], !visited[seedIndex] else { continue }
 
-            while qi < q.count {
-                let cur = q[qi]
-                qi += 1
-                component.append(cur)
+                visited[seedIndex] = true
+                var queue = [(x: x, y: y)]
+                var cursor = 0
+                var component: [(x: Int, y: Int)] = []
 
-                for (dx,dy) in neighbors {
-                    let nx = cur.x + dx
-                    let ny = cur.y + dy
-                    guard nx >= 0, nx < w, ny >= 0, ny < h else { continue }
-                    let ni = ny * w + nx
-                    guard occupied[ni], !visited[ni] else { continue }
-                    visited[ni] = true
-                    q.append((nx,ny))
+                while cursor < queue.count {
+                    let pt = queue[cursor]
+                    cursor += 1
+                    component.append(pt)
+
+                    for (dx, dy) in neighbors {
+                        let nx = pt.x + dx
+                        let ny = pt.y + dy
+                        guard nx >= 0, nx < w, ny >= 0, ny < h else { continue }
+                        let ni = ny * w + nx
+                        guard light[ni], !visited[ni] else { continue }
+                        visited[ni] = true
+                        queue.append((nx, ny))
+                    }
                 }
-            }
 
-            if component.count >= 8 {
-                components.append(component)
+                if component.count >= 80 {
+                    lightComponents.append(component)
+                }
             }
         }
 
-        for component in components {
+        // Shield is a compact substantial light component, not the long road
+        // text to its right or the maneuver arrow farther left.
+        let shieldCandidates = lightComponents.compactMap {
+            component -> (component: [(x: Int, y: Int)], score: Double)? in
+
+            let xs = component.map(\.x)
+            let ys = component.map(\.y)
+            guard let minX = xs.min(), let maxX = xs.max(),
+                  let minY = ys.min(), let maxY = ys.max() else { return nil }
+
+            let cw = maxX - minX + 1
+            let ch = maxY - minY + 1
+            guard cw >= 18, ch >= 18 else { return nil }
+
+            let aspect = Double(cw) / Double(ch)
+            guard aspect >= 0.55, aspect <= 1.55 else { return nil }
+
+            let cx = Double(minX + maxX) * 0.5 / Double(max(1, w))
+            guard cx >= 0.15, cx <= 0.88 else { return nil }
+
+            // Prefer a near-square component with enough filled pixels.
+            let compactness = Double(component.count) / Double(cw * ch)
+            let score = compactness * 1000.0 - abs(aspect - 1.0) * 100.0
+            return (component, score)
+        }
+
+        guard let shield = shieldCandidates.max(by: { $0.score < $1.score })?.component else {
+            return nil
+        }
+
+        let sx = shield.map(\.x)
+        let sy = shield.map(\.y)
+        guard let shieldMinX = sx.min(), let shieldMaxX = sx.max(),
+              let shieldMinY = sy.min(), let shieldMaxY = sy.max() else {
+            return nil
+        }
+
+        let shieldW = shieldMaxX - shieldMinX + 1
+        let shieldH = shieldMaxY - shieldMinY + 1
+
+        // Step 2: inside the light shield, find DARK connected components.
+        // The US-1 numeral is a narrow, tall component near the center.
+        var dark = [Bool](repeating: false, count: w * h)
+
+        let insetX = max(2, Int(Double(shieldW) * 0.18))
+        let insetY = max(2, Int(Double(shieldH) * 0.14))
+
+        for y in (shieldMinY + insetY)...max(shieldMinY + insetY, shieldMaxY - insetY) {
+            for x in (shieldMinX + insetX)...max(shieldMinX + insetX, shieldMaxX - insetX) {
+                guard x >= 0, x < w, y >= 0, y < h else { continue }
+                if luminance(x, y) <= 90 {
+                    dark[y * w + x] = true
+                }
+            }
+        }
+
+        visited = [Bool](repeating: false, count: w * h)
+        var darkComponents: [[(x: Int, y: Int)]] = []
+
+        for y in shieldMinY...shieldMaxY {
+            for x in shieldMinX...shieldMaxX {
+                let seedIndex = y * w + x
+                guard dark[seedIndex], !visited[seedIndex] else { continue }
+
+                visited[seedIndex] = true
+                var queue = [(x: x, y: y)]
+                var cursor = 0
+                var component: [(x: Int, y: Int)] = []
+
+                while cursor < queue.count {
+                    let pt = queue[cursor]
+                    cursor += 1
+                    component.append(pt)
+
+                    for (dx, dy) in neighbors {
+                        let nx = pt.x + dx
+                        let ny = pt.y + dy
+                        guard nx >= shieldMinX, nx <= shieldMaxX,
+                              ny >= shieldMinY, ny <= shieldMaxY else { continue }
+                        let ni = ny * w + nx
+                        guard dark[ni], !visited[ni] else { continue }
+                        visited[ni] = true
+                        queue.append((nx, ny))
+                    }
+                }
+
+                if component.count >= 5 {
+                    darkComponents.append(component)
+                }
+            }
+        }
+
+        for component in darkComponents {
             let xs = component.map(\.x)
             let ys = component.map(\.y)
             guard let minX = xs.min(), let maxX = xs.max(),
@@ -979,16 +1075,16 @@ private enum AppleMapsOCRParser {
 
             let cw = maxX - minX + 1
             let ch = maxY - minY + 1
-            let centerX = Double(minX + maxX) * 0.5 / Double(max(1, w))
+            let centerX = Double(minX + maxX) * 0.5
+            let shieldCenterX = Double(shieldMinX + shieldMaxX) * 0.5
 
-            // A route-number "1" is a narrow, tall bright glyph near the
-            // horizontal center of the shield crop. Require strong geometry so
-            // this fallback does not invent US 1 from arbitrary street text.
-            if ch >= 12,
-               Double(ch) / Double(max(1, cw)) >= 1.65,
-               cw <= max(18, w / 3),
-               centerX >= 0.28,
-               centerX <= 0.72 {
+            let centered =
+                abs(centerX - shieldCenterX) <= Double(shieldW) * 0.24
+            let tallEnough = ch >= max(8, Int(Double(shieldH) * 0.34))
+            let narrowEnough =
+                Double(ch) / Double(max(1, cw)) >= 1.45
+
+            if centered && tallEnough && narrowEnough {
                 return "1"
             }
         }

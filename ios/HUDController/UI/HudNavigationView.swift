@@ -18,7 +18,7 @@ struct HudNavigationView: View {
                                 .font(.system(size: 64, weight: .semibold))
                             Text(state.navigation.current.primaryText).font(.title2.bold())
                             Text(state.navigation.current.streetName).font(.headline).foregroundStyle(.secondary)
-                            Text(distanceText(state.navigation.current.distanceMeters))
+                            Text(distanceText(state.navigation.current))
                                 .font(.system(size: 42, weight: .bold, design: .rounded))
                                 .foregroundStyle(HudTheme.accent)
                         }.frame(maxWidth: .infinity)
@@ -104,7 +104,7 @@ struct HudNavigationView: View {
                                 LabeledContent("Detected source", value: capture.detectedSource.rawValue)
                                 LabeledContent("Screen state", value: capture.detectedScreenState.rawValue)
                                 LabeledContent("Parsed maneuver", value: capture.latestInstruction.maneuver.label)
-                                LabeledContent("Distance", value: distanceText(capture.latestInstruction.distanceMeters))
+                                LabeledContent("Distance", value: distanceText(capture.latestInstruction))
                                 LabeledContent("Street", value: capture.latestInstruction.streetName.isEmpty ? "—" : capture.latestInstruction.streetName)
                                 LabeledContent("Frames OCR'd", value: "\(capture.frameCount)")
                                 LabeledContent("Valid navigation frames", value: "\(capture.validNavigationFrames)")
@@ -168,10 +168,22 @@ struct HudNavigationView: View {
         }
     }
 
-    private func distanceText(_ meters: Int) -> String {
+    private func distanceText(_ instruction: NavigationInstruction) -> String {
+        let exact = instruction.displayDistanceText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !exact.isEmpty {
+            return exact
+        }
+
+        let meters = instruction.distanceMeters
         guard meters > 0 else { return "—" }
-        let feet = Int(Double(meters) * 3.28084)
-        if feet >= 5280 { return String(format: "%.1f mi", Double(feet) / 5280.0) }
+
+        // Manual/non-OCR instructions have no original display string, so use
+        // a conventional imperial fallback.
+        let feet = Int((Double(meters) * 3.28084).rounded())
+        if feet >= 5280 {
+            return String(format: "%.1f mi", Double(feet) / 5280.0)
+        }
         return "\(feet) ft"
     }
 }
