@@ -38,7 +38,6 @@ final class AppState {
 
         spotify.onTrackChanged = { [weak self] artist, track in
             self?.pushSpotifyMetadataToHUD(artist: artist, track: track)
-            self?.pushExperimentalMusicIfEnabled(artist: artist, track: track)
         }
 
         bluetooth.onTransportReady = { [weak self] in
@@ -198,61 +197,6 @@ final class AppState {
     }
 
 
-    func sendExperimentalMusicPushMessage() {
-        let artist = spotify.artistName.isEmpty ? "Spotify Artist" : spotify.artistName
-        let track = spotify.trackTitle == "No Spotify track" ? "Spotify Track" : spotify.trackTitle
-        sendExperimentalMusic(artist: artist, track: track)
-    }
-
-    func clearExperimentalPushMessage() {
-        guard bluetooth.state == .connected else { return }
-        bluetooth.enqueue(
-            HudCommands.pushMessage(
-                position: Int32(max(0, min(3, settings.experimentalMusicPosition))),
-                title: "",
-                message: ""
-            ),
-            label: "Experimental PushMessage clear"
-        )
-    }
-
-    func applyExperimentalMusicLayout() {
-        guard bluetooth.state == .connected else { return }
-        bluetooth.enqueue(
-            HudCommands.notificationTimeout(seconds: max(1, min(3600, settings.experimentalMusicTimeout))),
-            label: "Experimental message timeout \(settings.experimentalMusicTimeout)s"
-        )
-        bluetooth.enqueue(
-            HudCommands.notificationLineCount(max(1, min(5, settings.experimentalMusicLines))),
-            label: "Experimental message lines \(settings.experimentalMusicLines)"
-        )
-        bluetooth.enqueue(
-            HudCommands.widgetsMiniState(settings.experimentalMusicMini),
-            label: "Experimental mini widgets \(settings.experimentalMusicMini)"
-        )
-    }
-
-    private func pushExperimentalMusicIfEnabled(artist: String, track: String) {
-        guard settings.experimentalMusicMirror else { return }
-        sendExperimentalMusic(artist: artist, track: track)
-    }
-
-    private func sendExperimentalMusic(artist: String, track: String) {
-        guard bluetooth.state == .connected else { return }
-
-        applyExperimentalMusicLayout()
-        bluetooth.enqueue(
-            HudCommands.pushMessage(
-                position: Int32(max(0, min(3, settings.experimentalMusicPosition))),
-                type: 0,
-                title: artist,
-                message: track
-            ),
-            label: "Experimental PushMessage music \(artist) — \(track)"
-        )
-    }
-
-
     private func scheduleHUDRehydration(reason: String) {
         hudRehydrateTask?.cancel()
         hudReassertTask?.cancel()
@@ -314,9 +258,6 @@ final class AppState {
 
         musicFilterInitialized = false
         pushSpotifyMetadataToHUD()
-        if settings.experimentalMusicMirror {
-            sendExperimentalMusicPushMessage()
-        }
 
         logger.log(
             "HUD REHYDRATE",

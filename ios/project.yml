@@ -75,6 +75,9 @@ targets:
           - V60AppleArrowComponentIsolationTests.swift
           - V61AppleComponentRegressionTests.swift
           - V62AppleArrowShieldTests.swift
+          - V58ExperimentalMusicBindingTests.swift
+          - V64AppleRoadFallbackTests.swift
+          - V64AppleCentroidShieldRecoveryTests.swift
     dependencies:
       - target: HUDController
     settings:

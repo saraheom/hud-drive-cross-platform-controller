@@ -47,23 +47,6 @@ final class HudSettings {
     var notificationExposureSeconds: Int { didSet { defaults.set(notificationExposureSeconds, forKey: "HUD.Settings.notificationExposureSeconds") } }
     var notificationLines: Int { didSet { defaults.set(notificationLines, forKey: "HUD.Settings.notificationLines") } }
 
-    // Experimental firmware display lab. These settings use hidden protocol
-    // commands discovered in the original decompiled Android app.
-    var experimentalMusicMirror: Bool {
-        didSet { defaults.set(experimentalMusicMirror, forKey: "HUD.Settings.experimentalMusicMirror") }
-    }
-    var experimentalMusicPosition: Int {
-        didSet { defaults.set(experimentalMusicPosition, forKey: "HUD.Settings.experimentalMusicPosition") }
-    }
-    var experimentalMusicTimeout: Int {
-        didSet { defaults.set(experimentalMusicTimeout, forKey: "HUD.Settings.experimentalMusicTimeout") }
-    }
-    var experimentalMusicLines: Int {
-        didSet { defaults.set(experimentalMusicLines, forKey: "HUD.Settings.experimentalMusicLines") }
-    }
-    var experimentalMusicMini: Bool {
-        didSet { defaults.set(experimentalMusicMini, forKey: "HUD.Settings.experimentalMusicMini") }
-    }
 
     init() {
         // Use a local defaults reference during initialization. Referring to
@@ -103,10 +86,5 @@ final class HudSettings {
         notificationExposureSeconds = integer("HUD.Settings.notificationExposureSeconds", default: 10)
         notificationLines = integer("HUD.Settings.notificationLines", default: 5)
 
-        experimentalMusicMirror = bool("HUD.Settings.experimentalMusicMirror", default: false)
-        experimentalMusicPosition = max(0, min(3, integer("HUD.Settings.experimentalMusicPosition", default: 1)))
-        experimentalMusicTimeout = max(1, min(3600, integer("HUD.Settings.experimentalMusicTimeout", default: 60)))
-        experimentalMusicLines = max(1, min(5, integer("HUD.Settings.experimentalMusicLines", default: 2)))
-        experimentalMusicMini = bool("HUD.Settings.experimentalMusicMini", default: false)
     }
 }

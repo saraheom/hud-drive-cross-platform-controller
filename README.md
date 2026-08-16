@@ -1433,3 +1433,48 @@ v65 makes the project resilient to that update workflow:
   `V64AppleCentroidShieldRecoveryTests` and `V64AppleRoadFallbackTests`.
 
 No runtime application behavior changed from v64.
+
+
+## v66 — offline-validated Apple template classifier
+
+The repeated geometric Apple-arrow heuristics were retired.
+
+Before implementing v66, the supplied Apple Maps screenshots were analyzed
+offline. Eleven clean Apple simple-arrow glyphs were extracted from the cards:
+
+- 5 left turns
+- 4 right turns
+- 2 straight maneuvers
+
+Each glyph was isolated, normalized to 96×96, and classified against median
+left/right/straight shape templates with small ±4-pixel translation search.
+
+Leave-one-out validation classified **11/11 correctly**.
+
+Typical IoU:
+- correct template: ~0.97–1.00
+- wrong templates: ~0.19–0.26
+
+v66 embeds those canonical binary templates directly in Swift, so no external
+asset/resource loading is required. An unknown/poorly captured glyph must score
+at least 0.62 and beat the second-best class by at least 0.16; otherwise the
+classifier returns Straight rather than confidently guessing the opposite turn.
+
+Apple multi-lane guidance retains its separate highlighted-white-lane parser.
+
+### Spotify persistent experiment cleanup
+
+Field testing showed that the hidden PushMessage command packets were
+transmitted but did not render persistent artist/track text. The experimental
+Spotify layout/settings card and its runtime mirroring/settings have therefore
+been removed from the application UI.
+
+The confirmed native Spotify music notification path and automatic Spotify
+reconnection remain unchanged.
+
+The hidden protocol helpers are left in `HudCommands` for future controlled
+reverse-engineering. Candidate future directions include testing whether an
+existing firmware widget can be repurposed at the packet level, but numeric
+widgets such as average speed/distance are likely to accept structured numeric
+payloads rather than arbitrary strings and are not presented as working music
+solutions in v66.

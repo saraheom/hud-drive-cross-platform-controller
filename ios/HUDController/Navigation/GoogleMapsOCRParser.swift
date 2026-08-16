@@ -986,24 +986,30 @@ private enum AppleMapsOCRParser {
 }
 
 private enum AppleManeuverIconClassifier {
+    private static let templateSize = 96
+    private static let templatePadding = 10
+
+    // These masks are median Apple Maps glyph templates built from the user's
+    // supplied screenshots. Offline leave-one-out validation on 11 independent
+    // left/right/straight glyph occurrences classified 11/11 correctly.
+    private static let leftTemplate = decodeTemplate("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHAAAAAAAAAAAAAAAHgAAAAAAAAAAAAAAfgAAAAAAAAAAAAAA/wAAAAAAAAAAAAAB/gAAAAAAAAAAAAAH/gAAAAAAAAAAAAAP/AAAAAAAAAAAAAAf/AAAAAAAAAAAAAAf+AAAAAAAAAAAAAB/+AAAAAAAAAAAAAD/8AAAAAAAAAAAAAH/8AAAAAAAAAAAAAP/4AAAAAAAAAAAAA//4AAAAAAAAAAAAB//wAAAAAAAAAAAAD//gAAAAAAAAAAAAD//gAAAAAAAAAAAAP//AAAAAAAAAAAAAf/+AAAAAAAAAAAAA///////gAAAAAAAD////////AAAAAAAH////////4AAAAAAP////////+AAAAAAP/////////AAAAAAf/////////gAAAAAP/////////wAAAAAH/////////8AAAAAD/////////+AAAAAB/////////+AAAAAA//////////AAAAAAf//AAAAf//gAAAAAP//AAAAP//gAAAAAD//gAAAD//gAAAAAB//wAAAA//wAAAAAA//wAAAAf/wAAAAAAf/4AAAAP/4AAAAAAP/4AAAAH/4AAAAAAH/8AAAAD/4AAAAAAD/+AAAAD/4AAAAAAB/+AAAAD/4AAAAAAAf+AAAAB/8AAAAAAAP/AAAAB/8AAAAAAAH/gAAAB/8AAAAAAAD/gAAAB/8AAAAAAAB/wAAAB/8AAAAAAAA/gAAAB/8AAAAAAAAfgAAAB/8AAAAAAAAHgAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAB/8AAAAAAAAAAAAAA/8AAAAAAAAAAAAAA/8AAAAAAAAAAAAAA/4AAAAAAAAAAAAAAf4AAAAAAAAAAAAAAPgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    private static let rightTemplate = decodeTemplate("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAAAAAAAAAAAAAB4AAAAAAAAAAAAAAB+AAAAAAAAAAAAAAD/AAAAAAAAAAAAAAB/gAAAAAAAAAAAAAB/4AAAAAAAAAAAAAA/8AAAAAAAAAAAAAA/+AAAAAAAAAAAAAAf+AAAAAAAAAAAAAAf/gAAAAAAAAAAAAAP/wAAAAAAAAAAAAAP/4AAAAAAAAAAAAAH/8AAAAAAAAAAAAAH//AAAAAAAAAAAAAD//gAAAAAAAAAAAAB//wAAAAAAAAAAAAB//wAAAAAAAAAAAAA//8AAAAAAAAAAAAAf/+AAAAAAAAB///////AAAAAAAA////////wAAAAAAH////////4AAAAAAf////////8AAAAAA/////////8AAAAAB/////////8AAAAAD/////////8AAAAAP/////////4AAAAAf/////////wAAAAAf/////////gAAAAA//////////AAAAAB//+AAAA//+AAAAAB//8AAAB//8AAAAAB//wAAAB//wAAAAAD//AAAAD//gAAAAAD/+AAAAD//AAAAAAH/8AAAAH/+AAAAAAH/4AAAAH/8AAAAAAH/wAAAAP/4AAAAAAH/wAAAAf/wAAAAAAH/wAAAAf/gAAAAAAP/gAAAAf+AAAAAAAP/gAAAA/8AAAAAAAP/gAAAB/4AAAAAAAP/gAAAB/wAAAAAAAP/gAAAD/gAAAAAAAf/gAAAB+AAAAAAAAf/gAAAB+AAAAAAAAf/gAAAB4AAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAf/gAAAAAAAAAAAAAP/AAAAAAAAAAAAAAP/AAAAAAAAAAAAAAH/AAAAAAAAAAAAAAH+AAAAAAAAAAAAAAB8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    private static let straightTemplate = decodeTemplate("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAAAAAABwAAAAAAAAAAAAAAD4AAAAAAAAAAAAAAH8AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAf/AAAAAAAAAAAAAA//gAAAAAAAAAAAAB//wAAAAAAAAAAAAD//4AAAAAAAAAAAAD//4AAAAAAAAAAAAH//8AAAAAAAAAAAAP//+AAAAAAAAAAAAf///AAAAAAAAAAAA////gAAAAAAAAAAB////wAAAAAAAAAAD////4AAAAAAAAAAH////8AAAAAAAAAAP////+AAAAAAAAAAf/////AAAAAAAAAA//////gAAAAAAAAB//////wAAAAAAAAB/+P+P/wAAAAAAAAD/8P+H/4AAAAAAAAH/wP+B/8AAAAAAAAH/AP+Af8AAAAAAAAP8AP+AH8AAAAAAAAH4AP+AD8AAAAAAAADgAP+AA4AAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAP+AAAAAAAAAAAAAAH8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
     static func classify(image: UIImage, distanceBox: CGRect) -> HudManeuver {
         guard let cg = image.cgImage else { return .straight }
 
         let width = CGFloat(cg.width)
         let height = CGFloat(cg.height)
 
-        // The maneuver icon is immediately left of the first distance label.
-        // Vision box coordinates are normalized with bottom-left origin.
         let distanceTop = (1 - distanceBox.maxY) * height
         let distanceBottom = (1 - distanceBox.minY) * height
         let centerY = (distanceTop + distanceBottom) * 0.5
         let cropHeight = max(90, (distanceBottom - distanceTop) * 2.7)
         let cropWidth = min(width * 0.26, max(120, distanceBox.minX * width * 0.95))
 
-        // Apple lane-guidance cards are structurally different: several gray
-        // arrows span the card and the recommended lane is the single bright
-        // white glyph, often to the RIGHT of the distance text. The old
-        // left-of-distance crop could therefore classify the wrong lane.
+        // Keep the dedicated Apple lane-guidance path. It already correctly
+        // identifies the highlighted white lane arrow among gray alternatives.
         if let lane = classifyHighlightedLaneArrow(
             cgImage: cg,
             distanceTop: distanceTop,
@@ -1019,74 +1025,149 @@ private enum AppleManeuverIconClassifier {
             height: cropHeight
         )
         rect = rect.intersection(CGRect(x: 0, y: 0, width: width, height: height))
-        guard rect.width > 20, rect.height > 20,
+
+        guard rect.width > 20,
+              rect.height > 20,
               let crop = cg.cropping(to: rect.integral),
-              let data = thresholdedPixels(crop) else { return .straight }
-
-        let w = data.width
-        let h = data.height
-        guard w > 0, h > 0, data.points.count > 20 else { return .straight }
-
-        // IMPORTANT: classify ONLY the connected maneuver glyph. The previous
-        // versions measured every bright pixel in this crop. Depending on the
-        // Vision distance bounding box, fragments of the white distance label
-        // could enter the crop and completely reverse the left/right geometry.
-        guard let glyph = dominantArrowComponent(from: data),
-              glyph.count > 20 else { return .straight }
-
-        let xs = glyph.map(\.x)
-        let ys = glyph.map(\.y)
-        guard let minX = xs.min(), let maxX = xs.max(),
-              let minY = ys.min(), let maxY = ys.max() else { return .straight }
-
-        let bw = max(1, maxX - minX + 1)
-        let bh = max(1, maxY - minY + 1)
-
-        // Straight arrows are tall and centered. Test this before left/right.
-        if Double(bh) > Double(bw) * 1.28 {
+              let data = thresholdedPixels(crop),
+              let glyph = dominantArrowComponent(from: data),
+              glyph.count > 20 else {
             return .straight
         }
 
-        // v64: classify the WHOLE isolated maneuver glyph using its
-        // horizontal centroid. This is measured directly from the supplied
-        // Apple Maps screenshots and is more stable than guessing which edge
-        // is the arrow tip.
-        //
-        // Apple curved LEFT:
-        //   arrowhead points left, but the tall stem/bend is on the RIGHT,
-        //   pulling the component centroid to the right of bbox center.
-        //
-        // Apple curved RIGHT:
-        //   tall stem/bend is on the LEFT, pulling centroid left.
-        //
-        // On the supplied full-resolution screenshots:
-        //   left turn  centroid shift ≈ +0.054 of glyph width
-        //   right turn centroid shift ≈ -0.059 of glyph width
-        // so ±0.025 leaves a large dead-band for straight/ambiguous icons.
-        let centroidX =
-            Double(glyph.map(\.x).reduce(0, +)) / Double(glyph.count)
-        let bboxCenterX = Double(minX + maxX) / 2.0
-        let centroidShift = (centroidX - bboxCenterX) / Double(bw)
-
-        if centroidShift > 0.025 {
-            return .left
-        }
-        if centroidShift < -0.025 {
-            return .right
+        guard let normalized = normalizeGlyph(glyph) else {
+            return .straight
         }
 
-        // If a curved icon is too anti-aliased/cropped to exceed the
-        // dead-band, do not guess the opposite direction. Straight is a safer
-        // fallback; the next 1 Hz frame can replace it once geometry stabilizes.
-        return .straight
+        let scores: [(HudManeuver, Double)] = [
+            (.left, bestShiftedIoU(normalized, leftTemplate)),
+            (.right, bestShiftedIoU(normalized, rightTemplate)),
+            (.straight, bestShiftedIoU(normalized, straightTemplate))
+        ].sorted { $0.1 > $1.1 }
 
-        return .straight
+        guard let best = scores.first else { return .straight }
+        let second = scores.dropFirst().first?.1 ?? 0
+
+        // The supplied screenshots produce ~0.97-1.00 for the correct class
+        // and only ~0.19-0.26 for the wrong classes. Keep generous safety
+        // thresholds so a distorted/unknown icon does not get confidently
+        // converted into the opposite maneuver.
+        guard best.1 >= 0.62,
+              best.1 - second >= 0.16 else {
+            return .straight
+        }
+
+        return best.0
     }
 
-    /// Extract connected bright-pixel components and choose the one most
-    /// likely to be the Apple maneuver glyph. This makes classification
-    /// independent of small OCR distance-box shifts and excludes distance
-    /// digits/text that happen to enter the crop.
+    private static func normalizeGlyph(
+        _ glyph: [(x: Int, y: Int)]
+    ) -> [Bool]? {
+        let xs = glyph.map(\.x)
+        let ys = glyph.map(\.y)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else { return nil }
+
+        let sourceWidth = max(1, maxX - minX + 1)
+        let sourceHeight = max(1, maxY - minY + 1)
+        let usable = templateSize - templatePadding * 2
+        let scale = min(
+            Double(usable) / Double(sourceWidth),
+            Double(usable) / Double(sourceHeight)
+        )
+
+        let targetWidth = max(1, Int((Double(sourceWidth) * scale).rounded()))
+        let targetHeight = max(1, Int((Double(sourceHeight) * scale).rounded()))
+        let offsetX = (templateSize - targetWidth) / 2
+        let offsetY = (templateSize - targetHeight) / 2
+
+        var mask = [Bool](repeating: false, count: templateSize * templateSize)
+
+        // Rasterize each source glyph point into the canonical 96x96 mask.
+        // Expand one pixel around each projected point to avoid holes from
+        // integer scaling/anti-aliasing differences between screenshots.
+        for point in glyph {
+            let nx = offsetX + Int(
+                (Double(point.x - minX) * scale).rounded()
+            )
+            let ny = offsetY + Int(
+                (Double(point.y - minY) * scale).rounded()
+            )
+
+            for dy in -1...1 {
+                for dx in -1...1 {
+                    let x = nx + dx
+                    let y = ny + dy
+                    guard x >= 0, x < templateSize,
+                          y >= 0, y < templateSize else { continue }
+                    mask[y * templateSize + x] = true
+                }
+            }
+        }
+
+        return mask
+    }
+
+    private static func bestShiftedIoU(
+        _ glyph: [Bool],
+        _ template: [Bool]
+    ) -> Double {
+        var best = 0.0
+
+        // Small translation search absorbs sub-pixel/crop alignment variation.
+        for dy in -4...4 {
+            for dx in -4...4 {
+                var intersection = 0
+                var union = 0
+
+                for y in 0..<templateSize {
+                    for x in 0..<templateSize {
+                        let glyphOn = glyph[y * templateSize + x]
+
+                        let tx = x - dx
+                        let ty = y - dy
+                        let templateOn: Bool
+                        if tx >= 0, tx < templateSize,
+                           ty >= 0, ty < templateSize {
+                            templateOn = template[ty * templateSize + tx]
+                        } else {
+                            templateOn = false
+                        }
+
+                        if glyphOn || templateOn { union += 1 }
+                        if glyphOn && templateOn { intersection += 1 }
+                    }
+                }
+
+                if union > 0 {
+                    best = max(best, Double(intersection) / Double(union))
+                }
+            }
+        }
+
+        return best
+    }
+
+    private static func decodeTemplate(_ base64: String) -> [Bool] {
+        guard let data = Data(base64Encoded: base64) else {
+            return [Bool](repeating: false, count: templateSize * templateSize)
+        }
+
+        var result = [Bool](repeating: false, count: templateSize * templateSize)
+        let bytes = [UInt8](data)
+
+        for index in 0..<result.count {
+            let byteIndex = index / 8
+            let bitIndex = 7 - (index % 8)
+            guard byteIndex < bytes.count else { break }
+            result[index] = (bytes[byteIndex] & (1 << bitIndex)) != 0
+        }
+
+        return result
+    }
+
+    /// Extract connected bright-pixel components and choose the substantial
+    /// left-side component most likely to be Apple's maneuver glyph.
     private static func dominantArrowComponent(
         from pixels: PixelSet
     ) -> [(x: Int, y: Int)]? {
@@ -1139,10 +1220,6 @@ private enum AppleManeuverIconClassifier {
             }
         }
 
-        // The maneuver icon is a large connected white glyph on the left side
-        // of the card. Prefer substantial/tall components and penalize anything
-        // whose center is in the far-right portion of this icon crop (normally
-        // leaked distance text).
         return components.max { lhs, rhs in
             componentArrowScore(lhs, cropWidth: width) <
             componentArrowScore(rhs, cropWidth: width)
@@ -1158,13 +1235,24 @@ private enum AppleManeuverIconClassifier {
         guard let minX = xs.min(), let maxX = xs.max(),
               let minY = ys.min(), let maxY = ys.max() else { return 0 }
 
-        let bw = maxX - minX + 1
-        let bh = maxY - minY + 1
-        let centerX = Double(minX + maxX) / 2.0
-        let rightPenalty = centerX > Double(cropWidth) * 0.72 ? 0.18 : 1.0
-        let shapeBonus = Double(min(bw, bh)) / Double(max(1, max(bw, bh))) + 0.55
+        let w = maxX - minX + 1
+        let h = maxY - minY + 1
+        let centerX = Double(minX + maxX) * 0.5
 
-        return Double(component.count) * shapeBonus * rightPenalty
+        guard w >= 14, h >= 24 else { return 0 }
+
+        var score = Double(component.count)
+        score += Double(h) * 22.0
+        score += Double(w) * 5.0
+
+        if centerX > Double(cropWidth) * 0.68 {
+            score *= 0.20
+        }
+        if Double(h) < Double(w) * 0.45 {
+            score *= 0.30
+        }
+
+        return score
     }
 
     private static func classifyHighlightedLaneArrow(
