@@ -265,6 +265,7 @@ enum ExternalNavigationOCRParser {
     fileprivate static func maneuverFromText(_ text: String) -> HudManeuver {
         let s = text.lowercased()
         if s.contains("arriv") || s.contains("destination") { return .destination }
+        if s.contains("merge") { return .straight }
         if s.contains("u-turn") || s.contains("uturn") { return .uTurn }
         if s.contains("keep left") { return .keepLeft }
         if s.contains("keep right") { return .keepRight }

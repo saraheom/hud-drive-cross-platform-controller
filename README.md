@@ -1615,3 +1615,38 @@ dark-numeral fallback architecture and adds a less brittle guard that does not
 pin future tests to the removed v70 geometry constant.
 
 No runtime application behavior changed from v71.
+
+
+## v73 — road field reliability
+
+### Screen capture is the master navigation state
+- no live/recent ScreenCaptureKit frame => HUD Freeride;
+- HUD/BLE reconnect cannot re-arm a cached maneuver unless capture is healthy;
+- watchdog runs every second and treats a raw frame older than 3 s as failure;
+- while capture is desired but absent, Freeride is continuously reasserted and
+  automatic capture recovery is driven.
+
+### Original HUDWAY speed-limit road matcher
+The decompiled Android `SpeedLimitEngine.kt` was ported more literally:
+- Overpass 400 m query and 300 m refresh distance;
+- original 30 m road-segment eligibility construction;
+- candidate ranking:
+  `(angle < 45 ? angle/45 : 2) + (distance < 15 ? distance/15 : 2)`;
+- reverse road bearing is not considered equivalent;
+- internal maxspeed remains km/h and is converted to mph at the same final
+  boundary used by the original HUDWAY navigation manager.
+
+This replaces our old approximate 45 m nearest-road matcher, which could select
+a nearby parallel/intersecting road's speed limit.
+
+### Google merge
+A current Google instruction containing `merge` now maps to the HUD Straight
+maneuver instead of being interpreted as a left/right turn or skipped for the
+next route block.
+
+### Ambient BLEDOM
+- scanning starts even with a remembered peripheral;
+- GATT connection and advertisement discovery run as a hybrid;
+- a connection stuck in `.connecting` for >6 s is cancelled/retried;
+- healthy presence periodically reasserts HUD Auto Brightness ON;
+- HUD reboot/reconnect no longer requires manually toggling Auto Enable.

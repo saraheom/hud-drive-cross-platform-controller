@@ -26,10 +26,19 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let elements: [Element]
     }
 
+    struct SegmentPart {
+        let start: CLLocationCoordinate2D
+        let end: CLLocationCoordinate2D
+        let shiftedStart: CLLocationCoordinate2D
+        let shiftedEnd: CLLocationCoordinate2D
+        let direction: Double
+    }
+
     struct Segment {
-        let speedMph: Int
-        let isMph: Bool
+        let speedKmh: Int
+        let sourceWasMph: Bool
         let points: [CLLocationCoordinate2D]
+        let parts: [SegmentPart]
     }
 
     private let locationManager = CLLocationManager()
@@ -284,7 +293,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             let newSegments = decoded.elements.compactMap(Self.makeSegment)
             self.segments = newSegments
             self.lastQueryLocation = location
-            self.logger.log("SPEED LIMIT", "Overpass loaded \(newSegments.count) maxspeed road segments")
+            self.logger.log(
+                "SPEED LIMIT",
+                "Original HUDWAY matcher loaded \(newSegments.count) roads (400m query / 30m corridor / bearing+15m score)"
+            )
         } catch {
             self.logger.log("SPEED LIMIT ERROR", error.localizedDescription)
             self.status = "Speed-limit lookup failed; GPS speed still active"
@@ -293,61 +305,79 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     private static func makeSegment(_ element: Element) -> Segment? {
         guard let maxspeed = element.tags?.maxspeed,
-              let parsed = parseMaxSpeed(maxspeed),
-              let geometry = element.geometry, geometry.count >= 2 else { return nil }
+              let parsed = parseOriginalMaxSpeed(maxspeed),
+              let geometry = element.geometry,
+              geometry.count >= 2 else { return nil }
+
+        let points = geometry.map {
+            CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)
+        }
+
+        var parts: [SegmentPart] = []
+        for index in 0..<(points.count - 1) {
+            let start = points[index]
+            let end = points[index + 1]
+            let heading = bearing(from: start, to: end)
+
+            parts.append(
+                SegmentPart(
+                    start: start,
+                    end: end,
+                    shiftedStart: coordinate(
+                        from: start,
+                        distanceMeters: 30,
+                        bearingDegrees: heading + 90
+                    ),
+                    shiftedEnd: coordinate(
+                        from: end,
+                        distanceMeters: 30,
+                        bearingDegrees: heading - 90
+                    ),
+                    direction: heading
+                )
+            )
+        }
+
         return Segment(
-            speedMph: parsed.mph,
-            isMph: parsed.sourceWasMph,
-            points: geometry.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+            speedKmh: parsed.kmh,
+            sourceWasMph: parsed.sourceWasMph,
+            points: points,
+            parts: parts
         )
     }
 
-    private static func parseMaxSpeed(_ raw: String) -> (mph: Int, sourceWasMph: Bool)? {
-        let value = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func parseOriginalMaxSpeed(
+        _ raw: String
+    ) -> (kmh: Int, sourceWasMph: Bool)? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if value.contains(";") {
-            for part in value.split(separator: ";") {
-                if let parsed = parseMaxSpeed(String(part)) { return parsed }
+        if let direct = Int(value) {
+            return (direct, false)
+        }
+
+        if value.lowercased().contains("mph") {
+            let cleaned = value.lowercased()
+                .replacingOccurrences(of: "mph", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let mph = Int(cleaned) {
+                return (Int((Double(mph) * 1.609344).rounded()), true)
             }
         }
 
-        let number = value
-            .split(whereSeparator: { !$0.isNumber && $0 != "." })
-            .first
-            .flatMap { Double($0) }
-
-        if let number {
-            // US/UK style OSM values such as "35 mph" remain unchanged.
-            if value.contains("mph") {
-                return (Int(number.rounded()), true)
-            }
-
-            // Knots -> mph.
-            if value.contains("knots") {
-                return (Int((number * 1.150779448).rounded()), false)
-            }
-
-            // Bare numeric maxspeed values in OSM are km/h by convention.
-            // Convert them to mph for the entire HUD pipeline.
-            return (Int((number * 0.62137119223733).rounded()), false)
-        }
-
-        // Symbolic defaults represented in mph.
-        // These are intentionally conservative fallbacks corresponding to
-        // common defaults used by the original engine's symbolic mapping.
-        let defaultsMph: [String: Int] = [
-            "us:urban": 25,
-            "us:rural": 50,
-            "de:urban": 31,
-            "de:rural": 62,
-            "fr:urban": 31,
-            "fr:rural": 50,
-            "gb:nsl_single": 60,
-            "gb:nsl_dual": 70
+        let symbolic: [String: String] = [
+            "UK:motorway": "70 mph",
+            "CA-BC:rural": "80",
+            "CA-BC:urban": "50",
+            "CA-MB:rural": "90",
+            "CA-MB:urban": "50",
+            "CA-ON:rural": "80",
+            "CA-QC:motorway": "100",
+            "CA-QC:urban": "50",
+            "CA-SK:nsl": "80"
         ]
 
-        if let mph = defaultsMph[value] {
-            return (mph, value.hasPrefix("us:") || value.hasPrefix("gb:"))
+        if let mapped = symbolic[value] {
+            return parseOriginalMaxSpeed(mapped)
         }
 
         return nil
@@ -356,30 +386,96 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private func bestSpeedLimit(at location: CLLocation) -> Int? {
         guard !segments.isEmpty else { return nil }
 
-        let heading = location.course >= 0 ? location.course : nil
-        var best: (score: Double, speed: Int)?
+        let direction = location.course >= 0 ? location.course : 0
+        var best: (score: Double, kmh: Int)?
 
         for segment in segments {
-            for index in 0..<(segment.points.count - 1) {
-                let a = segment.points[index]
-                let b = segment.points[index + 1]
-                let distance = Self.distanceFrom(location.coordinate, toSegmentA: a, b: b)
-                if distance > 45 { continue }
+            let eligibleParts = segment.parts.filter {
+                Self.originalPolygonContains(
+                    $0,
+                    location: location.coordinate
+                )
+            }
 
-                var score = distance
-                if let heading {
-                    let roadBearing = Self.bearing(from: a, to: b)
-                    let delta = Self.angularDifference(heading, roadBearing)
-                    let reverseDelta = Self.angularDifference(heading, fmod(roadBearing + 180, 360))
-                    score += min(delta, reverseDelta) * 0.35
-                }
+            guard !eligibleParts.isEmpty else { continue }
 
-                if best == nil || score < best!.score {
-                    best = (score, segment.speedMph)
-                }
+            var segmentScore = Double.greatestFiniteMagnitude
+
+            for part in eligibleParts {
+                let angle = Self.angularDifference(
+                    part.direction,
+                    direction
+                )
+                let distance = Self.distanceFrom(
+                    location.coordinate,
+                    toSegmentA: part.start,
+                    b: part.end
+                )
+
+                let score =
+                    (angle < 45 ? angle / 45 : 2) +
+                    (distance < 15 ? distance / 15 : 2)
+
+                segmentScore = min(segmentScore, score)
+            }
+
+            if best == nil || segmentScore < best!.score {
+                best = (segmentScore, segment.speedKmh)
             }
         }
-        return best?.speed
+
+        guard let kmh = best?.kmh, kmh >= 0 else { return nil }
+        return Int((Double(kmh) / 1.609344).rounded())
+    }
+
+    private static func originalPolygonContains(
+        _ part: SegmentPart,
+        location: CLLocationCoordinate2D
+    ) -> Bool {
+        let a = CLLocation(
+            latitude: part.shiftedStart.latitude,
+            longitude: part.shiftedStart.longitude
+        )
+        let b = CLLocation(
+            latitude: part.shiftedEnd.latitude,
+            longitude: part.shiftedEnd.longitude
+        )
+        let p = CLLocation(
+            latitude: location.latitude,
+            longitude: location.longitude
+        )
+
+        let da = a.distance(from: p)
+        let db = b.distance(from: p)
+        let length = a.distance(from: b)
+
+        return da * da + db * db < length * length
+    }
+
+    private static func coordinate(
+        from coordinate: CLLocationCoordinate2D,
+        distanceMeters: Double,
+        bearingDegrees: Double
+    ) -> CLLocationCoordinate2D {
+        let earthRadius = 6_372_797.6
+        let angularDistance = distanceMeters / earthRadius
+        let bearing = bearingDegrees * .pi / 180
+        let lat1 = coordinate.latitude * .pi / 180
+        let lon1 = coordinate.longitude * .pi / 180
+
+        let lat2 = asin(
+            sin(lat1) * cos(angularDistance) +
+            cos(lat1) * sin(angularDistance) * cos(bearing)
+        )
+        let lon2 = lon1 + atan2(
+            sin(bearing) * sin(angularDistance) * cos(lat1),
+            cos(angularDistance) - sin(lat1) * sin(lat2)
+        )
+
+        return CLLocationCoordinate2D(
+            latitude: lat2 * 180 / .pi,
+            longitude: lon2 * 180 / .pi
+        )
     }
 
     private static func distanceFrom(

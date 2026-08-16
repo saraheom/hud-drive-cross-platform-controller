@@ -174,8 +174,20 @@ final class ExternalNavigationCapture: NSObject {
         presentFullDisplayPicker()
     }
 
+    private var isCaptureHealthy: Bool {
+        guard stream != nil,
+              let lastFrameAt else { return false }
+        return Date().timeIntervalSince(lastFrameAt) <= 3.0
+    }
+
+    private func enforceCaptureNavigationInvariant(reason: String) {
+        guard !isCaptureHealthy else { return }
+        forceFreerideForCaptureLoss(
+            reason: "capture-health invariant: \(reason)"
+        )
+    }
+
     func hudSessionDidReset(reason: String) {
-        // A physical HUD reboot does not invalidate the iPhone capture.
         navigationModeArmed = false
         lastSentKey = ""
         lastSentDistance = -1
@@ -184,11 +196,20 @@ final class ExternalNavigationCapture: NSObject {
 
         logger.log(
             "SCREEN NAV SESSION",
-            "\(reason); reset HUD delivery state while preserving capture"
+            "\(reason); reset HUD delivery state; capture health has priority"
         )
 
-        guard navigation.bluetooth.state == .connected,
-              autoSendToHUD,
+        guard navigation.bluetooth.state == .connected else { return }
+
+        guard isCaptureHealthy else {
+            forceFreerideForCaptureLoss(
+                reason: "\(reason): HUD session ready while capture unhealthy"
+            )
+            requestAutomaticStartIfDesired()
+            return
+        }
+
+        guard autoSendToHUD,
               autoEnableNavigationMode else { return }
 
         if detectedScreenState == .approachRoute {
@@ -354,26 +375,36 @@ final class ExternalNavigationCapture: NSObject {
         watchdogTask?.cancel()
         watchdogTask = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                guard self.autoRecoverAfterInterruption,
-                      self.stream != nil,
-                      let lastFrameAt = self.lastFrameAt else { continue }
+                try? await Task.sleep(for: .seconds(1))
+
+                guard self.captureDesired else { continue }
+
+                guard let activeStream = self.stream,
+                      let lastFrameAt = self.lastFrameAt else {
+                    self.enforceCaptureNavigationInvariant(
+                        reason: "watchdog sees no active stream/frame"
+                    )
+                    self.requestAutomaticStartIfDesired()
+                    continue
+                }
 
                 let age = Date().timeIntervalSince(lastFrameAt)
-                if age > 4 {
+                if age > 3 {
                     self.logger.log(
                         "SCREEN CAPTURE WATCHDOG",
-                        "No screen frame for \(Int(age))s; rebuilding SCStream"
+                        "No raw screen frame for \(String(format: "%.1f", age))s; rebuilding SCStream"
                     )
-                    let old = self.stream
+
                     self.stream = nil
                     self.forceFreerideForCaptureLoss(
-                        reason: "Raw ScreenCaptureKit frame heartbeat stalled"
+                        reason: "raw ScreenCaptureKit heartbeat stale \(String(format: "%.1f", age))s"
                     )
-                    old?.stopCapture(completionHandler: nil)
-                    self.cachedFilterFailureCount = 0
-                    self.scheduleRecovery(reason: "raw frame watchdog stale")
-                    return
+                    activeStream.stopCapture(completionHandler: nil)
+
+                    if self.autoRecoverAfterInterruption {
+                        self.cachedFilterFailureCount = 0
+                        self.scheduleRecovery(reason: "raw frame watchdog stale")
+                    }
                 }
             }
         }

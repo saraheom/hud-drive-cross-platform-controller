@@ -45,6 +45,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
     private var lastSeen = Date.distantPast
     private var watchdogTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var connectionAttemptStartedAt: Date?
+    private var lastHUDReassertAt = Date.distantPast
     private let absenceConfirmationWindows = 3
 
     private let peripheralIDKey = "HUD.Ambient.peripheralUUID"
@@ -77,10 +79,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
 
         restoreRememberedPeripheralIfPossible()
 
+        // Always scan from startup, even when a remembered peripheral exists.
+        // A remembered CoreBluetooth connection can otherwise sit in
+        // `.connecting` for minutes with no advertisement fallback.
+        startScanning()
+
         if let trackedPeripheral {
             maintainConnection(to: trackedPeripheral, reason: "start")
-        } else {
-            startScanning()
         }
 
         startWatchdog()
@@ -147,6 +152,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
             status = "\(peripheral.name ?? targetName) connecting…"
         case .disconnected, .disconnecting:
             status = "\(peripheral.name ?? targetName) background watch connecting…"
+            connectionAttemptStartedAt = Date()
             logger.log(
                 "AMBIENT BG",
                 "Requesting persistent connection to \(peripheral.identifier) reason=\(reason)"
@@ -173,18 +179,25 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
 
         status = rssi.map { "\(name) present • RSSI \($0)" } ?? "\(name) present"
 
-        if !lightPresent {
-            lightPresent = true
+        let becamePresent = !lightPresent
+        lightPresent = true
+
+        if becamePresent {
             logger.log(
                 "AMBIENT",
                 "\(name) became present via \(reason); enabling HUD auto brightness"
             )
-            if bluetooth.state == .connected {
-                bluetooth.enqueue(
-                    HudCommands.autoBrightness(true),
-                    label: "Ambient trigger → Auto brightness ON"
-                )
-            }
+        }
+
+        if bluetooth.state == .connected,
+           becamePresent || Date().timeIntervalSince(lastHUDReassertAt) >= 5 {
+            bluetooth.enqueue(
+                HudCommands.autoBrightness(true),
+                label: becamePresent
+                    ? "Ambient trigger → Auto brightness ON"
+                    : "Ambient presence reassert → Auto brightness ON"
+            )
+            lastHUDReassertAt = Date()
         }
     }
 
@@ -306,10 +319,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
                 rssi: self.lastRSSI,
                 reason: "CoreBluetooth didConnect"
             )
-            central.stopScan()
+            self.connectionAttemptStartedAt = nil
             self.logger.log(
                 "AMBIENT BG",
-                "Persistent ambient BLE connection established; discovery scan stopped"
+                "Persistent ambient BLE connection established; hybrid discovery remains armed"
             )
         }
     }
@@ -320,6 +333,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
         error: Error?
     ) {
         Task { @MainActor in
+            self.connectionAttemptStartedAt = nil
             self.logger.log(
                 "AMBIENT BG",
                 "Ambient connection failed: \(error?.localizedDescription ?? "unknown")"
@@ -335,6 +349,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
     ) {
         Task { @MainActor in
             guard self.enabled else { return }
+            self.connectionAttemptStartedAt = nil
 
             self.logger.log(
                 "AMBIENT BG",
@@ -377,22 +392,50 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
                 try? await Task.sleep(for: .milliseconds(500))
                 guard self.enabled else { continue }
 
-                // Persistent GATT state is authoritative once established.
-                if self.trackedPeripheral?.state == .connected {
+                if self.trackedPeripheral?.state == .connecting,
+                   let started = self.connectionAttemptStartedAt,
+                   Date().timeIntervalSince(started) > 6 {
+                    self.logger.log(
+                        "AMBIENT BG",
+                        "Persistent connection stuck >6s; cancelling and returning to hybrid scan"
+                    )
+                    if let peripheral = self.trackedPeripheral {
+                        self.central.cancelPeripheralConnection(peripheral)
+                    }
+                    self.connectionAttemptStartedAt = nil
+                    self.startScanning()
+                    self.scheduleConnectionRetry()
                     continue
                 }
 
+                if self.trackedPeripheral?.state != .connected {
+                    self.startScanning()
+                }
+
+                let connected = self.trackedPeripheral?.state == .connected
                 let elapsed = Date().timeIntervalSince(self.lastSeen)
                 let timeout = Double(max(1, self.absenceTimeoutSeconds))
                 let missedWindows = Int(elapsed / timeout)
 
-                if self.lightPresent &&
+                if self.lightPresent && !connected &&
                     missedWindows >= self.absenceConfirmationWindows {
                     self.markAbsent(
                         reason: "\(self.absenceConfirmationWindows) missed advertisement windows"
                     )
                 }
+
+                if self.lightPresent,
+                   connected || elapsed <= timeout * Double(self.absenceConfirmationWindows),
+                   self.bluetooth.state == .connected,
+                   Date().timeIntervalSince(self.lastHUDReassertAt) >= 10 {
+                    self.bluetooth.enqueue(
+                        HudCommands.autoBrightness(true),
+                        label: "Ambient watchdog reassert → Auto brightness ON"
+                    )
+                    self.lastHUDReassertAt = Date()
+                }
             }
         }
     }
+
 }
