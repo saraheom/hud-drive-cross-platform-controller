@@ -48,7 +48,12 @@ final class V70ImperialUnitsAndUS1Tests: XCTestCase {
         )
 
         XCTAssertTrue(source.contains("detectUSRouteOne"))
+        XCTAssertTrue(source.contains("light shield"))
+        XCTAssertTrue(source.contains("if luminance(x, y) <= 90"))
         XCTAssertTrue(source.contains("return \"1\""))
-        XCTAssertTrue(source.contains("Double(ch) / Double(max(1, cw)) >= 1.65"))
+
+        // v71 corrected the v70 polarity mistake. Do not regress to the old
+        // assumption that the route numeral itself is white.
+        XCTAssertFalse(source.contains("numeral itself is close to white"))
     }
 }

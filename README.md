@@ -1599,3 +1599,19 @@ it for a centered narrow/tall dark component representing digit `1`.
 The physical HUD maneuver protocol still receives integer meters, matching the
 original Android packet. Exact physical-HUD formatting is therefore a separate
 firmware/protocol question from the screenshot-test UI.
+
+
+## v72 — stale v70 US-1 regression-test fix
+
+The v71 application target built successfully and all new v71 tests passed.
+
+CI failed only because `V70ImperialUnitsAndUS1Tests` still asserted the old v70
+US-1 heuristic, including the obsolete narrow/tall white-digit threshold.
+v71 intentionally replaced that logic after identifying the polarity mistake:
+Apple's US-route shield is light and its numeral is dark.
+
+v72 updates the old regression test to verify the current light-shield /
+dark-numeral fallback architecture and adds a less brittle guard that does not
+pin future tests to the removed v70 geometry constant.
+
+No runtime application behavior changed from v71.
