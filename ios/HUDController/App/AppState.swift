@@ -235,6 +235,7 @@ final class AppState {
         bluetooth.enqueue(HudCommands.keepAlive(), label: "Rehydrate → keep alive")
         bluetooth.enqueue(HudCommands.phoneName(UIDevice.current.name), label: "Rehydrate → phone name")
         bluetooth.enqueue(HudCommands.fullScreen(true), label: "Rehydrate → full screen")
+        bluetooth.enqueue(HudCommands.imperialUnits(), label: "Rehydrate → imperial units (mi/mph)")
         speedEngine.primeRectangularStyle()
         logger.log("HUD REHYDRATE", "PHASE 1 base END")
     }
@@ -242,6 +243,7 @@ final class AppState {
     private func rehydrateUserHUD(reason: String) {
         logger.log("HUD REHYDRATE", "PHASE 2 persisted state BEGIN")
 
+        bluetooth.enqueue(HudCommands.imperialUnits(), label: "Persisted units → imperial (mi/mph)")
         applyBrightness()
         applyTimeWeather()
         applyNotificationSettings()
@@ -273,6 +275,7 @@ final class AppState {
         // These are deliberately resent after firmware startup so the HUD's
         // own boot defaults cannot win. Rectangular speed-limit style is
         // hard-coded inside the speed engine/command path.
+        bluetooth.enqueue(HudCommands.imperialUnits(), label: "Reassert → imperial units (mi/mph)")
         applyBrightness()
         applyTimeWeather()
         obd.applyWidgetSelection()

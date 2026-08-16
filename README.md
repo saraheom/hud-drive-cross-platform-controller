@@ -1544,3 +1544,32 @@ adds a less brittle guard that checks the classifier architecture without
 pinning future tests to obsolete threshold constants.
 
 No runtime application code changed from v68.
+
+
+## v70 — original HUD imperial-unit command + US-1 visual fallback
+
+Field logs show Apple OCR distances are correct before BLE serialization:
+
+- 2.3 mi -> 3701 m
+- 150 ft -> 46 m
+- 80 ft -> 25 m
+- 0.4 mi -> 644 m
+
+The original decompiled Android app reveals that every HUD settings restore
+also sends `DisplaySpeedUintsCommandPacket`:
+
+- CommandPacket p1 = 9
+- p2 = 5
+- int32 type = 0 metric / 1 imperial
+
+Our iOS port had never implemented this command. v70 sends imperial type 1
+during base rehydration, persisted-state rehydration, display reassert, and
+immediately before each maneuver. This follows the original app rather than
+artificially changing correct meter distances to compensate for HUD formatting.
+
+For Apple `US 1 North`, Vision sometimes returns only `North`. v70 keeps the
+multi-ROI accurate OCR recovery and adds a conservative visual fallback: if
+shield OCR still fails, it examines the near-white connected component inside
+the shield ROI and recognizes a narrow/tall centered digit-1 shape.
+
+All v69 Apple arrow-template behavior is preserved.

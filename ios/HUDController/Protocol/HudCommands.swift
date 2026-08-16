@@ -28,6 +28,26 @@ enum HudCommands {
     }
 
 
+    /// Original decompiled DisplaySpeedUintsCommandPacket:
+    /// CommandPacket(p1=9, p2=5), payload=int32 unit type.
+    /// Original HUDWAY settings: 0 = metric (km), 1 = imperial (miles).
+    ///
+    /// Despite the class name, the stock app's settings provider uses this
+    /// same unitType for the HUD's distance/mileage presentation.
+    static func displayUnits(_ type: Int32) -> Data {
+        HudProtocol.frame(
+            command: 2,
+            p1: 9,
+            p2: 5,
+            payload: HudProtocol.int32(type)
+        )
+    }
+
+    static func imperialUnits() -> Data {
+        displayUnits(1)
+    }
+
+
     // MARK: - HUD notification / ANCS display configuration
 
     static func notificationSettingsInit() -> Data {

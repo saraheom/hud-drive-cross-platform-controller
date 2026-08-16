@@ -849,6 +849,150 @@ private enum AppleMapsOCRParser {
             }
         }
 
+        // Vision occasionally ignores the single digit "1" in Apple's
+        // US-route shield entirely (the full OCR line becomes only "North").
+        // Use a conservative visual fallback for US 1: locate the bright digit
+        // component in the shield region and require a narrow/tall "1" shape.
+        if let one = detectUSRouteOne(
+            image: image,
+            roadLine: roadLine
+        ) {
+            return one
+        }
+
+        return nil
+    }
+
+    private static func detectUSRouteOne(
+        image: UIImage,
+        roadLine: OCRLine
+    ) -> String? {
+        guard let cg = image.cgImage else { return nil }
+
+        let width = CGFloat(cg.width)
+        let height = CGFloat(cg.height)
+        let b = roadLine.box
+
+        // The shield is directly to the left of a short directional label such
+        // as North/South. Keep this narrow to avoid the maneuver arrow/distance.
+        let normalizedLeft = max(0, b.minX - 0.115)
+        let normalizedRight = max(normalizedLeft, b.minX - 0.010)
+        let halfHeight = max(0.030, b.height * 1.10)
+        let normalizedBottom = max(0, b.midY - halfHeight)
+        let normalizedTop = min(1, b.midY + halfHeight)
+
+        var rect = CGRect(
+            x: normalizedLeft * width,
+            y: (1 - normalizedTop) * height,
+            width: (normalizedRight - normalizedLeft) * width,
+            height: (normalizedTop - normalizedBottom) * height
+        ).integral
+        rect = rect.intersection(
+            CGRect(x: 0, y: 0, width: width, height: height)
+        )
+
+        guard rect.width > 18,
+              rect.height > 18,
+              let crop = cg.cropping(to: rect) else { return nil }
+
+        let w = crop.width
+        let h = crop.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+
+        guard let ctx = CGContext(
+            data: &bytes,
+            width: w,
+            height: h,
+            bitsPerComponent: 8,
+            bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        ctx.draw(crop, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        var points: [(x: Int, y: Int)] = []
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = (y * w + x) * 4
+                let r = Int(bytes[i])
+                let g = Int(bytes[i + 1])
+                let bl = Int(bytes[i + 2])
+
+                // Apple's shield fill is gray; the numeral itself is close to
+                // white. High threshold suppresses most of the shield body.
+                if r >= 225, g >= 225, bl >= 225 {
+                    points.append((x, y))
+                }
+            }
+        }
+
+        guard !points.isEmpty else { return nil }
+
+        // Connected components among near-white pixels.
+        var occupied = [Bool](repeating: false, count: w * h)
+        for pt in points {
+            occupied[pt.y * w + pt.x] = true
+        }
+        var visited = [Bool](repeating: false, count: w * h)
+        let neighbors = [
+            (-1,-1),(0,-1),(1,-1),
+            (-1, 0),       (1, 0),
+            (-1, 1),(0, 1),(1, 1)
+        ]
+        var components: [[(x: Int, y: Int)]] = []
+
+        for seed in points {
+            let si = seed.y * w + seed.x
+            guard !visited[si] else { continue }
+            visited[si] = true
+            var q = [seed]
+            var qi = 0
+            var component: [(x: Int, y: Int)] = []
+
+            while qi < q.count {
+                let cur = q[qi]
+                qi += 1
+                component.append(cur)
+
+                for (dx,dy) in neighbors {
+                    let nx = cur.x + dx
+                    let ny = cur.y + dy
+                    guard nx >= 0, nx < w, ny >= 0, ny < h else { continue }
+                    let ni = ny * w + nx
+                    guard occupied[ni], !visited[ni] else { continue }
+                    visited[ni] = true
+                    q.append((nx,ny))
+                }
+            }
+
+            if component.count >= 8 {
+                components.append(component)
+            }
+        }
+
+        for component in components {
+            let xs = component.map(\.x)
+            let ys = component.map(\.y)
+            guard let minX = xs.min(), let maxX = xs.max(),
+                  let minY = ys.min(), let maxY = ys.max() else { continue }
+
+            let cw = maxX - minX + 1
+            let ch = maxY - minY + 1
+            let centerX = Double(minX + maxX) * 0.5 / Double(max(1, w))
+
+            // A route-number "1" is a narrow, tall bright glyph near the
+            // horizontal center of the shield crop. Require strong geometry so
+            // this fallback does not invent US 1 from arbitrary street text.
+            if ch >= 12,
+               Double(ch) / Double(max(1, cw)) >= 1.65,
+               cw <= max(18, w / 3),
+               centerX >= 0.28,
+               centerX <= 0.72 {
+                return "1"
+            }
+        }
+
         return nil
     }
 

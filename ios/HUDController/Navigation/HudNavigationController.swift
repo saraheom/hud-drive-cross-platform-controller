@@ -32,6 +32,10 @@ final class HudNavigationController {
 
     func sendCurrent() {
         logger.log("NAV", "\(current.maneuver.label), \(current.distanceMeters)m, \(current.streetName)")
+        // The stock Android app applies DisplaySpeedUintsCommandPacket as part
+        // of HUD settings. Reassert it here too so a physical HUD reboot cannot
+        // format a correct meter distance using a stale/default unit mode.
+        bluetooth.enqueue(HudCommands.imperialUnits(), label: "Navigation → imperial units")
         bluetooth.enqueue(HudCommands.maneuver(current), label: "Maneuver")
     }
 
