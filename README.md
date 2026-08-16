@@ -1478,3 +1478,29 @@ existing firmware widget can be repurposed at the packet level, but numeric
 widgets such as average speed/distance are likely to accept structured numeric
 payloads rather than arbitrary strings and are not presented as working music
 solutions in v66.
+
+
+## v67 — Apple lane-guidance gate fix
+
+The v66 template masks were validated offline, but field logs still showed
+ordinary Apple route cards classified incorrectly before BLE serialization.
+
+Root cause: `classifyHighlightedLaneArrow` ran BEFORE the normal template
+classifier and could return a maneuver for a normal single-arrow card. Because
+that returned immediately, the validated left/right/straight template matcher
+never executed.
+
+v67 changes the lane path so it is eligible only when the screen contains an
+actual multi-lane signature:
+
+- a lower luminance threshold detects Apple's gray inactive lane arrows;
+- connected components are extracted;
+- at least 3 substantial arrow-like components must be present;
+- the components must span at least 28% of the card width;
+- only then is the bright white active lane arrow classified.
+
+Normal single-arrow cards therefore fall through to the v66 template matcher.
+
+This change is upstream of HUD packet generation. `HudManeuver.direction`
+mapping was inspected and remains correct:
+Right=2, Straight=4, Left=6.

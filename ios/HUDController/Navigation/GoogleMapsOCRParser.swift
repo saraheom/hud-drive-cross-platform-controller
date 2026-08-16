@@ -1262,45 +1262,157 @@ private enum AppleManeuverIconClassifier {
     ) -> HudManeuver? {
         let width = CGFloat(cgImage.width)
         let height = CGFloat(cgImage.height)
-        // Search the horizontal band immediately above the first distance.
-        // This excludes the white distance digits themselves.
-        var rect = CGRect(
-            x: width * 0.05,
-            y: max(0, distanceTop - max(150, distanceHeight * 3.2)),
-            width: width * 0.90,
-            height: max(90, min(150, distanceHeight * 2.5))
+
+        // Lane guidance occupies a horizontal band above the distance/street
+        // text and contains several lane arrows distributed across the card.
+        // A normal turn card has only ONE maneuver glyph. Previous versions
+        // looked at all bright pixels in this band and could therefore mistake
+        // a normal single-arrow card for lane guidance, bypassing the template
+        // classifier entirely.
+        let rect = CGRect(
+            x: width * 0.035,
+            y: max(0, distanceTop - max(185, distanceHeight * 3.5)),
+            width: width * 0.93,
+            height: max(120, min(185, distanceHeight * 2.9))
         ).intersection(CGRect(x: 0, y: 0, width: width, height: height))
-        guard rect.width > 40, rect.height > 40,
-              let crop = cgImage.cropping(to: rect.integral),
-              let pixels = thresholdedPixels(crop),
-              pixels.points.count > 35 else { return nil }
 
-        let xs = pixels.points.map(\.x)
-        let ys = pixels.points.map(\.y)
-        guard let minX = xs.min(), let maxX = xs.max(),
-              let minY = ys.min(), let maxY = ys.max() else { return nil }
-
-        let bw = maxX - minX + 1
-        let bh = maxY - minY + 1
-        let centerX = Double(minX + maxX) / 2.0 / Double(max(1, pixels.width))
-
-        // A normal single-turn card keeps its icon on the far left. Lane
-        // guidance is recognized only when the highlighted glyph occupies the
-        // middle/right portion of this full-width band.
-        guard centerX > 0.28 else { return nil }
-
-        if Double(bh) > Double(bw) * 1.15 { return .straight }
-
-        let midX = Double(minX + maxX) / 2.0
-        var leftTip = 0
-        var rightTip = 0
-        for point in pixels.points {
-            if Double(point.x) < midX - Double(bw) * 0.22 { leftTip += 1 }
-            if Double(point.x) > midX + Double(bw) * 0.22 { rightTip += 1 }
+        guard rect.width > 80,
+              rect.height > 50,
+              let crop = cgImage.cropping(to: rect.integral) else {
+            return nil
         }
-        if rightTip > leftTip * 6 / 5 { return .right }
-        if leftTip > rightTip * 6 / 5 { return .left }
-        return .straight
+
+        // First detect the full set of lane arrows with a deliberately lower
+        // luminance threshold so Apple's gray inactive arrows are included.
+        guard let grayPixels = thresholdedPixels(crop, minimum: 105),
+              grayPixels.points.count > 60 else {
+            return nil
+        }
+
+        let components = connectedComponents(from: grayPixels)
+            .filter { component in
+                let xs = component.map(\.x)
+                let ys = component.map(\.y)
+                guard let minX = xs.min(), let maxX = xs.max(),
+                      let minY = ys.min(), let maxY = ys.max() else { return false }
+
+                let w = maxX - minX + 1
+                let h = maxY - minY + 1
+
+                // Lane arrows are substantial glyphs. This excludes isolated
+                // anti-aliasing/noise and most text fragments.
+                return component.count >= 55 &&
+                       w >= 16 &&
+                       h >= 28 &&
+                       h <= grayPixels.height &&
+                       Double(h) >= Double(w) * 0.70
+            }
+
+        // Require an actual multi-lane pattern. Apple lane guidance examples
+        // typically expose 3–4 arrows. Requiring >=3 prevents a normal single
+        // turn arrow from ever pre-empting template classification.
+        guard components.count >= 3 else {
+            return nil
+        }
+
+        let centers = components.map { component -> Double in
+            let xs = component.map(\.x)
+            return Double((xs.min() ?? 0) + (xs.max() ?? 0)) * 0.5
+        }.sorted()
+
+        guard let first = centers.first,
+              let last = centers.last,
+              (last - first) / Double(max(1, grayPixels.width)) >= 0.28 else {
+            return nil
+        }
+
+        // Now isolate only the bright/white active lane arrow.
+        guard let whitePixels = thresholdedPixels(crop, minimum: 205),
+              let active = dominantArrowComponent(from: whitePixels),
+              active.count >= 20 else {
+            return nil
+        }
+
+        guard let normalized = normalizeGlyph(active) else {
+            return nil
+        }
+
+        let scores: [(HudManeuver, Double)] = [
+            (.left, bestShiftedIoU(normalized, leftTemplate)),
+            (.right, bestShiftedIoU(normalized, rightTemplate)),
+            (.straight, bestShiftedIoU(normalized, straightTemplate))
+        ].sorted { $0.1 > $1.1 }
+
+        guard let best = scores.first else { return nil }
+        let second = scores.dropFirst().first?.1 ?? 0
+
+        guard best.1 >= 0.52,
+              best.1 - second >= 0.10 else {
+            return nil
+        }
+
+        return best.0
+    }
+
+    private static func connectedComponents(
+        from pixels: PixelSet
+    ) -> [[(x: Int, y: Int)]] {
+        guard pixels.width > 0, pixels.height > 0 else { return [] }
+
+        let width = pixels.width
+        let height = pixels.height
+        var occupied = [Bool](repeating: false, count: width * height)
+
+        for point in pixels.points
+        where point.x >= 0 && point.x < width &&
+              point.y >= 0 && point.y < height {
+            occupied[point.y * width + point.x] = true
+        }
+
+        var visited = [Bool](repeating: false, count: width * height)
+        var output: [[(x: Int, y: Int)]] = []
+
+        let neighbors = [
+            (-1, -1), (0, -1), (1, -1),
+            (-1,  0),          (1,  0),
+            (-1,  1), (0,  1), (1,  1)
+        ]
+
+        for seed in pixels.points {
+            let index = seed.y * width + seed.x
+            guard index >= 0, index < visited.count,
+                  !visited[index] else { continue }
+
+            visited[index] = true
+            var queue = [seed]
+            var cursor = 0
+            var component: [(x: Int, y: Int)] = []
+
+            while cursor < queue.count {
+                let point = queue[cursor]
+                cursor += 1
+                component.append(point)
+
+                for (dx, dy) in neighbors {
+                    let nx = point.x + dx
+                    let ny = point.y + dy
+                    guard nx >= 0, nx < width,
+                          ny >= 0, ny < height else { continue }
+
+                    let ni = ny * width + nx
+                    guard occupied[ni], !visited[ni] else { continue }
+
+                    visited[ni] = true
+                    queue.append((x: nx, y: ny))
+                }
+            }
+
+            if component.count >= 8 {
+                output.append(component)
+            }
+        }
+
+        return output
     }
 
     private struct PixelSet {
@@ -1309,7 +1421,10 @@ private enum AppleManeuverIconClassifier {
         let points: [(x: Int, y: Int)]
     }
 
-    private static func thresholdedPixels(_ image: CGImage) -> PixelSet? {
+    private static func thresholdedPixels(
+        _ image: CGImage,
+        minimum: Int = 205
+    ) -> PixelSet? {
         let w = image.width
         let h = image.height
         guard w > 0, h > 0 else { return nil }
@@ -1339,7 +1454,7 @@ private enum AppleManeuverIconClassifier {
 
                 // Apple Maps route list uses a very bright maneuver glyph on a
                 // dark card. This threshold intentionally ignores gray road text.
-                if r > 205 && g > 205 && b > 205 {
+                if r > minimum && g > minimum && b > minimum {
                     points.append((x, y))
                 }
             }
