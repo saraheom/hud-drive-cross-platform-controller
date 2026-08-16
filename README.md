@@ -1528,3 +1528,19 @@ Important distance note: no OCR distance change was made. The log proves
 `0.4 mi` is parsed as 644 m. The physical HUD itself converts the meter field to
 feet and renders ~2112 ft. Preserving `0.4 mi` exactly requires identifying a
 firmware/unit-display control in the navigation packet rather than changing OCR.
+
+
+## v69 — stale v66 template-regression test fix
+
+The v68 application target built successfully. Both v68 tests passed.
+
+CI failed only because `V66AppleTemplateClassifierTests` still asserted the
+original v66 template thresholds (`0.62` absolute score and `0.16` margin).
+v68 intentionally replaced those values with separate turn and straight
+acceptance thresholds.
+
+v69 updates that old test to validate the current v68 template pipeline and
+adds a less brittle guard that checks the classifier architecture without
+pinning future tests to obsolete threshold constants.
+
+No runtime application code changed from v68.

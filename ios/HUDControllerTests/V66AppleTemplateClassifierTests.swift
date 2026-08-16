@@ -14,10 +14,16 @@ final class V66AppleTemplateClassifierTests: XCTestCase {
         XCTAssertTrue(source.contains("straightTemplate"))
         XCTAssertTrue(source.contains("bestShiftedIoU"))
         XCTAssertTrue(source.contains("normalizeGlyph"))
-        XCTAssertTrue(source.contains("best.1 >= 0.62"))
-        XCTAssertTrue(source.contains("best.1 - second >= 0.16"))
 
-        // Old geometry heuristics must not return.
+        // v68 keeps template matching but uses different acceptance thresholds
+        // for genuine turn candidates versus Straight.
+        XCTAssertTrue(source.contains("best.0 == .left || best.0 == .right"))
+        XCTAssertTrue(source.contains("best.1 >= 0.38"))
+        XCTAssertTrue(source.contains("margin >= 0.075"))
+        XCTAssertTrue(source.contains("best.1 >= 0.56"))
+        XCTAssertTrue(source.contains("margin >= 0.12"))
+
+        // Old geometric heuristics must remain absent.
         XCTAssertFalse(source.contains("centroidShift"))
         XCTAssertFalse(source.contains("leftIsTip"))
         XCTAssertFalse(source.contains("rightIsTip"))
