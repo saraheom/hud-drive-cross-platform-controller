@@ -1666,3 +1666,43 @@ behavior.
   `age > 4`. v73 intentionally tightened the raw-frame threshold to 3 seconds.
 
 No runtime application code changed from v73.
+
+
+## v75 — legal speed-limit display + Spotify wake without reauthorization
+
+### Speed-limit +5 display correction
+
+Field logs showed the new original-style OSM matcher selecting the correct
+legal speed, but the HUD sign was always five mph higher. The cause was the
+persisted warning tolerance being transmitted inside
+`HudSpeedLimitAndToleranceCommandPacket`.
+
+Example from the field log:
+
+`Speed limit 25 mph (+5)` with packet fields `limit=25, tolerance=5`.
+
+On this physical HUD firmware that tolerance is reflected in the displayed
+sign. v75 therefore separates the two concepts:
+
+- legal speed-limit sign packet: `limit=<legal limit>, tolerance=0`;
+- overspeed warning packet: `<legal limit> + user warning tolerance`.
+
+The existing +5 user setting remains useful as an overspeed-warning threshold
+without changing the number printed inside the speed-limit sign.
+
+### Spotify connection versus authorization
+
+The field log proves authorization was not lost in the garage. HUD Controller
+restored the App Remote token from Keychain on every retry, while `connect()`
+returned Spotify error -1000. Later, tapping Re-authorize invoked
+`authorizeAndPlayURI("")`, Spotify opened, and App Remote connected.
+
+Spotify's iOS SDK documents these as separate states: a saved access token can
+remain valid while plain `connect()` cannot wake a non-running Spotify process.
+
+v75 adds **Open Spotify / Resume Connection**, which calls the Spotify app-switch
+path while preserving the existing Keychain token. The destructive action is
+renamed **Reset Spotify Authorization** and remains available only as a
+troubleshooting fallback.
+
+Normal reconnect/retry behavior still never clears authorization.

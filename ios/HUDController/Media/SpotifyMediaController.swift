@@ -329,6 +329,40 @@ final class SpotifyMediaController: NSObject {
         beginAuthorization()
     }
 
+    /// Wake/open Spotify without discarding the saved App Remote token.
+    ///
+    /// Spotify documents that plain `connect()` cannot wake the Spotify app
+    /// when its process is not running. `authorizeAndPlayURI("")` performs the
+    /// required app switch. If the user has already approved HUD Controller,
+    /// Spotify can return/reuse authorization; we intentionally keep the
+    /// existing Keychain token throughout this operation.
+    func openSpotifyAndResumeConnection() {
+        userRequestedDisconnect = false
+
+        guard isConfigured else {
+            status = "Spotify Client ID is not configured"
+            return
+        }
+
+        // Preserve whatever authorization we already have.
+        _ = restoreTokenFromKeychain()
+
+        status = "Opening Spotify to resume connection…"
+        logger.log(
+            "MEDIA WAKE",
+            "Opening Spotify via authorizeAndPlayURI without clearing Keychain authorization"
+        )
+
+        appRemote.authorizeAndPlayURI("") { installed in
+            Task { @MainActor in
+                self.logger.log("MEDIA WAKE", "Spotify installed = \(installed)")
+                if !installed {
+                    self.status = "Spotify app is not installed"
+                }
+            }
+        }
+    }
+
     /// Explicit troubleshooting action. This is the only normal UI action that
     /// intentionally discards the saved Spotify authorization.
     func reauthorize() {
