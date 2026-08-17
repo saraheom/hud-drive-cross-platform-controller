@@ -109,9 +109,60 @@ enum HudCommands {
         return HudProtocol.frame(command: 2, p1: 111, p2: 0, payload: payload)
     }
 
+    private static func normalizedSourceDistanceText(
+        _ raw: String
+    ) -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Google commonly gives us "In 2.4 mi"; Apple gives "2.4 mi".
+        // The HUD line should show only the compact distance.
+        if value.lowercased().hasPrefix("in ") {
+            value = String(value.dropFirst(3))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // Normalize spelling while preserving the exact numeric token.
+        value = value
+            .replacingOccurrences(
+                of: #"(?i)\bfeet\b"#,
+                with: "ft",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)\bmiles?\b"#,
+                with: "mi",
+                options: .regularExpression
+            )
+
+        return value
+    }
+
     static func maneuver(_ instruction: NavigationInstruction) -> Data {
-        let text = [instruction.primaryText, instruction.streetName, instruction.currentStreet]
-            .joined(separator: "\n")
+        let exactDistance = normalizedSourceDistanceText(
+            instruction.displayDistanceText
+        )
+
+        // HudManeuverCommandPacket exposes only an Int32 meter distance. The
+        // physical firmware formats that field into coarse imperial buckets
+        // (e.g. 2.4 mi may render as 2 mi; 150 ft as 100 ft). Preserve the
+        // correct native meter value, but also surface the exact Maps text in
+        // the first maneuver-text line so the driver sees the exact source
+        // distance without depending on firmware rounding.
+        let primaryWithDistance: String
+        if exactDistance.isEmpty {
+            primaryWithDistance = instruction.primaryText
+        } else {
+            primaryWithDistance = "\(instruction.primaryText) • \(exactDistance)"
+        }
+
+        let text = [
+            primaryWithDistance,
+            instruction.streetName,
+            instruction.currentStreet
+        ]
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
+
         var payload = HudProtocol.javaWriteUTF(text)
         payload.append(HudProtocol.int32(Int32(instruction.maneuver.type)))
         payload.append(HudProtocol.int32(Int32(instruction.maneuver.direction)))

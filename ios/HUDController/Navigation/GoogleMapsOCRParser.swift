@@ -234,10 +234,11 @@ enum ExternalNavigationOCRParser {
 
         let unit = String(s[unitRange])
         if unit == "ft" || unit == "feet" {
-            // Preserve advertised feet across the integer-meter wire format.
-            // Rounding down can turn 500 ft into ~499 ft and the HUD then
-            // displays 400 ft. Ceil keeps boundary values on the intended side.
-            return Int(ceil(value / 3.28084))
+            // HudManeuverCommandPacket accepts integer meters only. Use the
+            // mathematically nearest meter; exact presentation is preserved
+            // separately in displayDistanceText rather than biasing the
+            // physical distance upward to influence firmware rounding.
+            return Int((value * 0.3048).rounded())
         }
         return Int((value * 1609.344).rounded())
     }

@@ -55,7 +55,11 @@ struct MediaView: View {
                                             state.spotify.connectOrAuthorize()
                                         }
 
-                                        Button("Re-authorize Spotify") {
+                                        Button("Open Spotify / Resume Connection") {
+                                            state.spotify.openSpotifyAndResumeConnection()
+                                        }
+
+                                        Button("Reset Spotify Authorization") {
                                             state.spotify.reauthorize()
                                         }
 
@@ -76,7 +80,7 @@ struct MediaView: View {
                             .buttonStyle(.bordered)
 
                             Text("""
-                            Once authorized, Spotify credentials stay in Keychain. When HUD Controller returns to the foreground while disconnected, it creates a fresh Spotify App Remote, restores the saved token, and reconnects automatically. Failed connections retry after 1, 2, 5, 10, then every 15 seconds; repeated failures automatically replace the stale App Remote without erasing authorization.
+                            Once authorized, Spotify credentials stay in Keychain. HUD Controller reconnects automatically and never clears the token during normal recovery. If Spotify itself has been suspended/terminated, iOS requires an app switch to wake it; use “Open Spotify / Resume Connection.” “Reset Spotify Authorization” is only for troubleshooting a genuinely invalid authorization.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

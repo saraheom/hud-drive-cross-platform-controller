@@ -136,8 +136,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         guard enabled, showSpeedLimit, bluetooth.state == .connected else { return }
 
         bluetooth.enqueue(
-            HudCommands.speedLimit(limit: 0, tolerance: speedTolerance),
-            label: "Speed-limit rectangle style prime"
+            HudCommands.speedLimit(limit: 0, tolerance: 0),
+            label: "Speed-limit rectangle style prime (display tolerance 0)"
         )
         lastSentLimit = -1
         logger.log("SPEED SESSION", "Primed rectangular speed-limit style immediately")
@@ -150,7 +150,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         logger.log(
             "SPEED SESSION",
-            "Rehydrating HUD speed/limit state (showLimit=\(showSpeedLimit), tolerance=+\(speedTolerance) mph)"
+            "Rehydrating HUD speed/limit state (showLimit=\(showSpeedLimit), signTolerance=0, warningTolerance=+\(speedTolerance) mph)"
         )
 
         if let location = locationManager.location {
@@ -164,6 +164,19 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
     }
 
+    private func sendOverspeedGaugeThreshold(
+        legalLimitMph: Int
+    ) {
+        guard legalLimitMph > 0,
+              bluetooth.state == .connected else { return }
+
+        let threshold = legalLimitMph + speedTolerance
+        bluetooth.enqueue(
+            HudCommands.speedWarningThreshold(threshold),
+            label: "Speed gauge warning threshold \(threshold) mph (limit \(legalLimitMph) + tolerance \(speedTolerance))"
+        )
+    }
+
     private func resendCurrentLimitIfPossible() {
         guard bluetooth.state == .connected,
               showSpeedLimit,
@@ -172,13 +185,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         bluetooth.enqueue(
             HudCommands.speedLimit(
                 limit: currentSpeedLimitMph,
-                tolerance: speedTolerance
+                tolerance: 0
             ),
-            label: "Speed limit \(currentSpeedLimitMph) mph (+\(speedTolerance))"
+            label: "Speed limit \(currentSpeedLimitMph) mph (HUD display tolerance 0; warning +\(speedTolerance))"
         )
-        bluetooth.enqueue(
-            HudCommands.speedWarningThreshold(currentSpeedLimitMph + speedTolerance),
-            label: "Speed warning \(currentSpeedLimitMph + speedTolerance) mph"
+        sendOverspeedGaugeThreshold(
+            legalLimitMph: currentSpeedLimitMph
         )
         lastSentLimit = currentSpeedLimitMph
     }
@@ -252,12 +264,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             if showSpeedLimit, limit != lastSentLimit, bluetooth.state == .connected {
                 lastSentLimit = limit
                 bluetooth.enqueue(
-                    HudCommands.speedLimit(limit: limit, tolerance: speedTolerance),
-                    label: "Speed limit \(limit) mph (+\(speedTolerance))"
+                    HudCommands.speedLimit(limit: limit, tolerance: 0),
+                    label: "Speed limit \(limit) mph (HUD display tolerance 0; warning +\(speedTolerance))"
                 )
-                bluetooth.enqueue(
-                    HudCommands.speedWarningThreshold(limit + speedTolerance),
-                    label: "Speed warning \(limit + speedTolerance)"
+                sendOverspeedGaugeThreshold(
+                    legalLimitMph: limit
                 )
             }
             status = "GPS \(currentSpeedMph) mph • limit \(limit) mph"

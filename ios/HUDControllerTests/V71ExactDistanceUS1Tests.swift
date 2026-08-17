@@ -25,7 +25,7 @@ final class V71ExactDistanceUS1Tests: XCTestCase {
             rawText: ""
         )
 
-        XCTAssertEqual(result.instruction.distanceMeters, 25)
+        XCTAssertEqual(result.instruction.distanceMeters, 24)
         XCTAssertEqual(result.instruction.displayDistanceText, "80 ft")
         XCTAssertEqual(result.originalDistanceText, "80 ft")
     }

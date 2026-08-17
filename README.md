@@ -1666,3 +1666,126 @@ behavior.
   `age > 4`. v73 intentionally tightened the raw-frame threshold to 3 seconds.
 
 No runtime application code changed from v73.
+
+
+## v75 — legal speed-limit display + Spotify wake without reauthorization
+
+### Speed-limit +5 display correction
+
+Field logs showed the new original-style OSM matcher selecting the correct
+legal speed, but the HUD sign was always five mph higher. The cause was the
+persisted warning tolerance being transmitted inside
+`HudSpeedLimitAndToleranceCommandPacket`.
+
+Example from the field log:
+
+`Speed limit 25 mph (+5)` with packet fields `limit=25, tolerance=5`.
+
+On this physical HUD firmware that tolerance is reflected in the displayed
+sign. v75 therefore separates the two concepts:
+
+- legal speed-limit sign packet: `limit=<legal limit>, tolerance=0`;
+- overspeed warning packet: `<legal limit> + user warning tolerance`.
+
+The existing +5 user setting remains useful as an overspeed-warning threshold
+without changing the number printed inside the speed-limit sign.
+
+### Spotify connection versus authorization
+
+The field log proves authorization was not lost in the garage. HUD Controller
+restored the App Remote token from Keychain on every retry, while `connect()`
+returned Spotify error -1000. Later, tapping Re-authorize invoked
+`authorizeAndPlayURI("")`, Spotify opened, and App Remote connected.
+
+Spotify's iOS SDK documents these as separate states: a saved access token can
+remain valid while plain `connect()` cannot wake a non-running Spotify process.
+
+v75 adds **Open Spotify / Resume Connection**, which calls the Spotify app-switch
+path while preserving the existing Keychain token. The destructive action is
+renamed **Reset Spotify Authorization** and remains available only as a
+troubleshooting fallback.
+
+Normal reconnect/retry behavior still never clears authorization.
+
+
+## v76 — capture crash/stall stability
+
+This release intentionally focuses on the navigation crash/stall issue before
+further speed-warning or distance tuning.
+
+Field evidence:
+- two drive logs end abruptly without a normal app lifecycle shutdown;
+- in the final long session, after raw ScreenCaptureKit frames stopped, recovery
+  reached more than 200 attempts;
+- the watchdog kept comparing against a frame timestamp hundreds of seconds old;
+- ambient BLE scanning was also being reissued/logged continuously.
+
+Changes:
+- ScreenCaptureKit recovery is serialized: only one recovery chain can run;
+- watchdog/error/foreground recovery requests are coalesced;
+- every new SCStream clears the previous stream's `lastFrameAt`;
+- a newly started stream is not declared stale before its first frame arrives;
+- a successful frame resets recovery backoff;
+- retry cadence is bounded at 1, 2, 4, 8, then 15 seconds;
+- capture-health Freeride invariant remains unchanged;
+- ambient BLE scanning is idempotent: one continuous CoreBluetooth scan rather
+  than reissuing scan calls every 500 ms.
+
+No intentional change was made to OCR distance conversion or overspeed-warning
+semantics in this crash-focused build.
+
+
+## v77 — combined crash stability + exact distance visibility + gauge warning
+
+### Distance investigation
+
+Drive logs prove OCR/update cadence is correct. Example Falls Bridge sequence:
+
+- 2.7 mi -> 4345 m -> maneuver sent
+- 2.6 mi -> 4184 m -> maneuver sent
+- 2.5 mi -> 4023 m -> maneuver sent
+- 2.4 mi -> 3862 m -> maneuver sent
+- 2.3 mi -> 3701 m -> maneuver sent
+- 2.2 mi -> 3541 m -> maneuver sent
+
+The original decompiled `HudManeuverCommandPacket` contains only:
+
+`writeInt(distance)`
+
+and the stock navigation manager sends `(int) distanceAlongStep` in meters.
+There is no float-distance or distance-text field in this packet.
+
+The physical HUD firmware itself therefore performs the imperial formatting.
+Observed firmware behavior is coarse (e.g. decimal miles collapse to whole
+miles and small feet values collapse to coarse ~100-ft buckets).
+
+v77 keeps the native meter field correct but additionally inserts the exact
+source OCR distance into the first maneuver text line:
+
+- `Right • 2.4 mi`
+- `Straight • 80 ft`
+- `Right • 150 ft`
+
+The dedicated firmware distance area may still show its coarse value, but the
+exact Maps value is now visible without firmware modification.
+
+Feet conversion now uses nearest-meter rounding (`ft * 0.3048`) rather than
+the earlier ceiling workaround.
+
+### Overspeed warning
+
+The legal speed-limit sign remains `tolerance=0`.
+
+The user's tolerance is applied only through
+`DisplaySpeedWarningCommandPacket` (`p1=9, p2=9`) at:
+
+`legal speed limit + configured tolerance`
+
+which is the firmware path intended to trigger the speed-gauge warning state /
+warning color. Changing the tolerance immediately reasserts the legal sign and
+the gauge threshold.
+
+### Crash reliability
+
+All v76 serialized ScreenCaptureKit recovery and idempotent ambient scanning
+changes are retained.

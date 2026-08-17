@@ -93,7 +93,7 @@ struct VehicleView: View {
                             ))
 
                             Stepper(
-                                "Warning tolerance: \(state.speedEngine.speedTolerance) mph",
+                                "Overspeed warning tolerance: \(state.speedEngine.speedTolerance) mph",
                                 value: Binding(
                                     get: { state.speedEngine.speedTolerance },
                                     set: { state.speedEngine.speedTolerance = $0 }

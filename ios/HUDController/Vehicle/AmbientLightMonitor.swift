@@ -46,6 +46,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
     private var watchdogTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var connectionAttemptStartedAt: Date?
+    private var isScanning = false
     private var lastHUDReassertAt = Date.distantPast
     private let absenceConfirmationWindows = 3
 
@@ -93,6 +94,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
 
     func stop() {
         central.stopScan()
+        isScanning = false
         watchdogTask?.cancel()
         watchdogTask = nil
         reconnectTask?.cancel()
@@ -108,16 +110,24 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate {
     }
 
     private func startScanning() {
-        guard enabled, central.state == .poweredOn else { return }
-        status = "Scanning for \(targetName)…"
-        logger.log(
-            "AMBIENT BG",
-            "Scanning BLE advertisements for \(targetName); background mode enabled"
-        )
+        guard enabled,
+              central.state == .poweredOn else { return }
 
+        // CBCentralManager.scanForPeripherals is already continuous. Reissuing
+        // it every 500 ms adds needless CoreBluetooth/log churn and can
+        // destabilize a long-running drive session.
+        guard !isScanning else { return }
+
+        isScanning = true
         central.scanForPeripherals(
             withServices: nil,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+            options: [
+                CBCentralManagerScanOptionAllowDuplicatesKey: true
+            ]
+        )
+        logger.log(
+            "AMBIENT BG",
+            "Started BLE advertisement scan for BLEDOM"
         )
     }
 

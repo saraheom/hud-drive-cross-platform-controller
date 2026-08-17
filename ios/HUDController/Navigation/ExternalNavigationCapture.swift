@@ -56,6 +56,9 @@ final class ExternalNavigationCapture: NSObject {
     private var lastProcessedAt = Date.distantPast
     private var lastFilter: SCContentFilter?
     private var recoveryTask: Task<Void, Never>?
+    private var recoveryInFlight = false
+    private var streamStartGeneration = 0
+    private var lastRecoveryRequestAt = Date.distantPast
     private var watchdogTask: Task<Void, Never>?
     private var arrivalTask: Task<Void, Never>?
     private var recoveryAttempt = 0
@@ -154,6 +157,8 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func requestAutomaticStartIfDesired() {
+        guard !recoveryInFlight else { return }
+
         guard captureDesired, autoRecoverAfterInterruption, stream == nil else { return }
 
         if let filter = lastFilter {
@@ -269,6 +274,9 @@ final class ExternalNavigationCapture: NSObject {
                 sampleHandlerQueue: outputQueue
             )
             self.stream = newStream
+                    self.lastFrameAt = nil
+                    self.streamStartGeneration += 1
+                    self.recoveryInFlight = false
             status = recovery ? "Recovering full-display capture…" : "Starting full-display capture…"
 
             newStream.startCapture { [weak self, weak newStream] error in
@@ -294,6 +302,8 @@ final class ExternalNavigationCapture: NSObject {
                     self.cachedFilterFailureCount = 0
                     self.needsUserReselection = false
                     self.lastFrameAt = Date()
+        recoveryAttempt = 0
+        recoveryInFlight = false
                     self.status = recovery
                         ? "Capture recovered"
                         : "Capturing display; OCR ~1 Hz"
@@ -347,27 +357,51 @@ final class ExternalNavigationCapture: NSObject {
 
     private func scheduleRecovery(reason: String) {
         guard captureDesired,
-              autoRecoverAfterInterruption,
-              lastFilter != nil else { return }
-        guard recoveryTask == nil else { return }
+              autoRecoverAfterInterruption else { return }
 
+        // Only one recovery chain may exist at a time. The previous design
+        // allowed the 1 Hz watchdog, SCStream error callback, and automatic
+        // foreground startup path to create overlapping restart attempts.
+        guard !recoveryInFlight else {
+            logger.log(
+                "SCREEN CAPTURE",
+                "Recovery already in flight; coalescing reason=\(reason)"
+            )
+            return
+        }
+
+        recoveryInFlight = true
         recoveryAttempt += 1
-        let delays = [1, 2, 4, 8, 15]
-        let delay = delays[min(recoveryAttempt - 1, delays.count - 1)]
 
-        status = "Capture interrupted — retrying in \(delay)s"
+        let delays: [Double] = [1, 2, 4, 8, 15]
+        let delay = delays[min(recoveryAttempt - 1, delays.count - 1)]
+        lastRecoveryRequestAt = Date()
+
         logger.log(
-            "SCREEN CAPTURE RECOVERY",
-            "attempt=\(recoveryAttempt) delay=\(delay)s reason=\(reason)"
+            "SCREEN CAPTURE",
+            "serialized recovery attempt=\(recoveryAttempt) delay=\(Int(delay))s reason=\(reason)"
         )
 
+        recoveryTask?.cancel()
         recoveryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard let self, !Task.isCancelled else { return }
-            self.recoveryTask = nil
+            guard let self,
+                  !Task.isCancelled,
+                  self.captureDesired else { return }
 
-            guard self.stream == nil, let filter = self.lastFilter else { return }
-            self.start(filter: filter, recovery: true)
+            self.recoveryInFlight = false
+
+            // If a healthy stream recovered while we were waiting, stop the
+            // chain and reset backoff.
+            if self.isCaptureHealthy {
+                self.recoveryAttempt = 0
+                return
+            }
+
+            // A cached filter may be retried silently. If iOS has invalidated
+            // it, the normal start path will set needsUserReselection and
+            // surface the system-picker notification instead of spinning.
+            self.requestAutomaticStartIfDesired()
         }
     }
 
@@ -379,12 +413,18 @@ final class ExternalNavigationCapture: NSObject {
 
                 guard self.captureDesired else { continue }
 
-                guard let activeStream = self.stream,
-                      let lastFrameAt = self.lastFrameAt else {
+                guard let activeStream = self.stream else {
                     self.enforceCaptureNavigationInvariant(
-                        reason: "watchdog sees no active stream/frame"
+                        reason: "watchdog sees no active stream"
                     )
                     self.requestAutomaticStartIfDesired()
+                    continue
+                }
+
+                // A newly created SCStream has not delivered its first frame
+                // yet. Never compare it against the previous stream's stale
+                // timestamp; give the new stream a short startup grace period.
+                guard let lastFrameAt = self.lastFrameAt else {
                     continue
                 }
 
