@@ -33,16 +33,10 @@ final class V75SpeedLimitSpotifyWakeTests: XCTestCase {
             "HUDController/Vehicle/OriginalSpeedLimitEngine.swift"
         )
 
-        XCTAssertTrue(
-            source.contains(
-                "HudCommands.speedWarningThreshold(currentSpeedLimitMph + speedTolerance)"
-            )
-        )
-        XCTAssertTrue(
-            source.contains(
-                "HudCommands.speedWarningThreshold(limit + speedTolerance)"
-            )
-        )
+        XCTAssertTrue(source.contains("func sendOverspeedGaugeThreshold"))
+        XCTAssertTrue(source.contains("let threshold = legalLimitMph + speedTolerance"))
+        XCTAssertTrue(source.contains("HudCommands.speedWarningThreshold(threshold)"))
+        XCTAssertTrue(source.contains("sendOverspeedGaugeThreshold("))
     }
 
     func testSpotifyWakeDoesNotClearSavedAuthorization() throws {

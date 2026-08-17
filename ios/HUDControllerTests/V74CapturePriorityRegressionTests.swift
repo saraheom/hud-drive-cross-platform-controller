@@ -17,6 +17,6 @@ final class V74CapturePriorityRegressionTests: XCTestCase {
         XCTAssertTrue(source.contains("private var isCaptureHealthy"))
         XCTAssertTrue(source.contains("Date().timeIntervalSince(lastFrameAt) <= 3.0"))
         XCTAssertTrue(source.contains("capture-health invariant"))
-        XCTAssertTrue(source.contains("watchdog sees no active stream/frame"))
+        XCTAssertTrue(source.contains("watchdog sees no active stream"))
     }
 }

@@ -1706,7 +1706,6 @@ renamed **Reset Spotify Authorization** and remains available only as a
 troubleshooting fallback.
 
 Normal reconnect/retry behavior still never clears authorization.
-<<<<<<< HEAD
 
 
 ## v76 — capture crash/stall stability
@@ -1790,5 +1789,19 @@ the gauge threshold.
 
 All v76 serialized ScreenCaptureKit recovery and idempotent ambient scanning
 changes are retained.
-=======
->>>>>>> abea8e88633ba38dd4a808a0b9604330613950ee
+
+
+## v78 — stale regression-test cleanup
+
+The v77 application target builds successfully. The CI failures were all old
+source-string assertions that predated the v76/v77 architecture changes.
+
+Updated tests:
+- V51 now verifies nearest-integer-meter conversion plus preserved exact source
+  distance text instead of the removed upward `ceil()` bias.
+- V57/V73/V74 now validate the serialized v76 watchdog wording/state rather
+  than the obsolete `no active stream/frame` string.
+- V75 now validates the v77 `sendOverspeedGaugeThreshold` helper instead of
+  expecting duplicated inline `limit + tolerance` expressions.
+
+No runtime application behavior changed from v77.

@@ -12,13 +12,14 @@ final class V51FieldReliabilityTests: XCTestCase {
         XCTAssertEqual(result.instruction.maneuver, .destination)
     }
 
-    func testFeetConversionDoesNotFallBelowDisplayedBoundary() {
+    func testFeetConversionUsesNearestIntegerMeterAndPreservesExactText() {
         let result = ExternalNavigationOCRParser.parse(
             lines: ["500 ft", "Ridge Ave", "900 ft", "River Ridge Ct", "End Route"],
             rawText: ""
         )
         XCTAssertEqual(result.source, .appleMaps)
-        XCTAssertGreaterThanOrEqual(Double(result.instruction.distanceMeters) * 3.28084, 500.0)
+        XCTAssertEqual(result.instruction.distanceMeters, 152)
+        XCTAssertEqual(result.instruction.displayDistanceText, "500 ft")
     }
 
     func testRouteShieldNoiseIsRemoved() {

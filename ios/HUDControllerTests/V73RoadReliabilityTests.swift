@@ -31,7 +31,7 @@ final class V73RoadReliabilityTests: XCTestCase {
         }
         XCTAssertLessThan(health.lowerBound, arm.lowerBound)
         XCTAssertTrue(source.contains("Date().timeIntervalSince(lastFrameAt) <= 3.0"))
-        XCTAssertTrue(source.contains("watchdog sees no active stream/frame"))
+        XCTAssertTrue(source.contains("watchdog sees no active stream"))
     }
 
     func testSpeedMatcherUsesOriginalHudwayGeometryAndThresholds() throws {
