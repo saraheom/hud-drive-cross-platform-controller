@@ -1805,3 +1805,19 @@ Updated tests:
   expecting duplicated inline `limit + tolerance` expressions.
 
 No runtime application behavior changed from v77.
+
+
+## v79 — TestFlight Release compile fix
+
+The v78 iOS CI path passed, but the TestFlight physical-device archive failed
+in `ExternalNavigationCapture.swift`.
+
+Xcode 27 Release compilation requires explicit `self` for captured instance
+properties inside the `SCStream.startCapture` completion closure.
+
+Fixed:
+
+- `recoveryAttempt = 0` -> `self.recoveryAttempt = 0`
+- `recoveryInFlight = false` -> `self.recoveryInFlight = false`
+
+No runtime behavior changed from v78.

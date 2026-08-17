@@ -302,8 +302,8 @@ final class ExternalNavigationCapture: NSObject {
                     self.cachedFilterFailureCount = 0
                     self.needsUserReselection = false
                     self.lastFrameAt = Date()
-        recoveryAttempt = 0
-        recoveryInFlight = false
+                    self.recoveryAttempt = 0
+                    self.recoveryInFlight = false
                     self.status = recovery
                         ? "Capture recovered"
                         : "Capturing display; OCR ~1 Hz"
