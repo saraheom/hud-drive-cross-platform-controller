@@ -1848,3 +1848,26 @@ maps it to Straight.
 
 A regression test reproduces the supplied multi-card screenshot and requires:
 `0.1 mi + merge -> Straight`, never the following 200-ft left turn.
+
+
+## v81 — Google merge regression-test access fix
+
+The v80 application target builds successfully. iOS CI failed while compiling
+the test target because three new white-box tests directly called
+`fileprivate` parser helpers:
+
+- `isExplicitGoogleManeuver`
+- `maneuverFromText`
+
+Those helpers remain private. v81 removes the invalid direct-access tests and
+keeps end-to-end tests through the public `ExternalNavigationOCRParser.parse`
+surface.
+
+The supplied route-list regression still requires the top current card:
+
+`In 0.1 mi + Use the left lane to merge ...`
+
+to parse as **Straight at 0.1 mi**, rather than selecting the following
+200-ft left turn.
+
+No runtime application code changed from v80.

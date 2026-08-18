@@ -2,31 +2,6 @@ import XCTest
 @testable import HUDController
 
 final class V80GoogleMergeCardTests: XCTestCase {
-    func testUseLeftLaneToMergeIsExplicitCurrentManeuver() {
-        XCTAssertTrue(
-            ExternalNavigationOCRParser.isExplicitGoogleManeuver(
-                "Use the left lane to merge onto Eakins Ovl/Martin Luther King Jr Dr/Spring Garden St"
-            )
-        )
-    }
-
-    func testUseRightLaneToMergeIsExplicitCurrentManeuver() {
-        XCTAssertTrue(
-            ExternalNavigationOCRParser.isExplicitGoogleManeuver(
-                "Use the right lane to merge onto I-76"
-            )
-        )
-    }
-
-    func testMergeMapsToStraightEvenThoughTextContainsLeft() {
-        XCTAssertEqual(
-            ExternalNavigationOCRParser.maneuverFromText(
-                "Use the left lane to merge onto Eakins Ovl"
-            ),
-            .straight
-        )
-    }
-
     func testExactScreenshotLayoutChoosesTopMergeNotNext200FootTurn() {
         let result = ExternalNavigationOCRParser.parse(
             lines: [
@@ -54,5 +29,24 @@ final class V80GoogleMergeCardTests: XCTestCase {
         XCTAssertEqual(result.instruction.displayDistanceText, "In 0.1 mi")
         XCTAssertTrue(result.instruction.streetName.contains("Eakins"))
         XCTAssertEqual(result.instruction.primaryText, "Continue straight")
+    }
+
+    func testRightLaneMergeAlsoWinsOverFollowingTurnCard() {
+        let result = ExternalNavigationOCRParser.parse(
+            lines: [
+                "Directions",
+                "In 0.3 mi",
+                "Use the right lane to merge onto I-76 E",
+                "800 feet",
+                "Turn left onto South St"
+            ],
+            rawText: ""
+        )
+
+        XCTAssertTrue(result.isValidNavigation)
+        XCTAssertEqual(result.source, .googleMaps)
+        XCTAssertEqual(result.instruction.maneuver, .straight)
+        XCTAssertEqual(result.instruction.displayDistanceText, "In 0.3 mi")
+        XCTAssertTrue(result.instruction.streetName.contains("I-76"))
     }
 }
