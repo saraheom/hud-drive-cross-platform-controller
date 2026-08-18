@@ -1957,3 +1957,21 @@ fallback and aligns its default `captureDesired` value with the physical-device
 implementation (`false`).
 
 No physical-device runtime behavior changed from v83.
+
+
+## v85 — user-armed capture regression-test cleanup
+
+The v84 application and simulator targets compile successfully. CI failed only
+in two v83 source-inspection tests.
+
+- The old manual-stop test counted every `captureDesired = false` occurrence in
+  `ExternalNavigationCapture.swift`. That file contains both the physical
+  ScreenCaptureKit implementation and the simulator fallback, so the count is
+  legitimately two. The test now inspects the real `stop()` implementation
+  instead.
+- The old app-switching test searched for a private helper named `apply(` that
+  no longer exists in the current capture/OCR architecture. The test now
+  validates the user-intent policy through the current HUD transport lifecycle
+  without pinning itself to that obsolete helper name.
+
+No runtime application behavior changed from v84.
