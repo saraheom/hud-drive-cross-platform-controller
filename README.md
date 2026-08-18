@@ -1871,3 +1871,70 @@ to parse as **Straight at 0.1 mi**, rather than selecting the following
 200-ft left turn.
 
 No runtime application code changed from v80.
+
+
+## v82 — Apple Maps ScreenCaptureKit transient/zombie recovery
+
+The Apple Maps drive log identified a deterministic failure in our watchdog:
+
+1. a healthy capture went 3.1 s without a frame;
+2. the old watchdog immediately destroyed it (`age > 3`);
+3. the replacement SCStream was created;
+4. `startCapture` neither completed nor failed and it produced no frames;
+5. because `lastFrameAt == nil` had unlimited startup grace, that zombie stream
+   remained forever and blocked clean manual/automatic restart.
+
+v82 splits capture health and destructive recovery:
+
+- **4 s soft boundary:** capture is unhealthy, so HUD Navigation is forced to
+  Freeride;
+- **8 s hard boundary:** only then is an existing stream torn down/rebuilt;
+- a newly created stream has an **8 s first-frame deadline**;
+- a replacement that never produces its first raw frame is discarded and the
+  normal cached-filter recovery/invalidation path continues;
+- `startCapture` completion no longer fabricates `lastFrameAt`;
+- only an actual `didOutputSampleBuffer` marks the stream healthy.
+
+This preserves the safety invariant while avoiding destruction of an Apple Maps
+capture because of a brief ~3 s scheduling hiccup.
+
+Notification banners may temporarily obscure OCR pixels, but the field log does
+not show them causing raw ScreenCaptureKit termination; they are therefore not
+treated as the root cause of this failure.
+
+
+## v83 — explicit user-armed capture session
+
+Capture now follows an explicit user-intent state rather than Maps visibility.
+
+### Policy
+
+Fresh install / never manually started:
+- capture intent OFF;
+- HUD remains Freeride;
+- no automatic picker/recovery is started.
+
+Manual Start Capture while HUD is connected:
+- capture intent becomes ARMED and is persisted;
+- the full-display picker starts the capture session;
+- switching to Home Screen or another app does not clear the intent;
+- OCR may temporarily classify the screen as inactive/unknown and put the HUD
+  in Freeride, but ScreenCaptureKit remains running.
+
+HUD BLE disconnect:
+- the actual SCStream is suspended;
+- Freeride is asserted;
+- the user-armed intent remains true.
+
+HUD BLE reconnect:
+- if the user had armed capture, cached-filter recovery resumes automatically;
+- if the user never armed capture, the HUD simply stays in Freeride.
+
+Manual Stop:
+- clears the user intent;
+- cancels recovery;
+- stops the stream;
+- future HUD reconnects do not restart capture.
+
+This separates "I want navigation capture during this HUD usage" from
+"the current screen happens to contain Maps navigation."

@@ -30,7 +30,7 @@ final class V73RoadReliabilityTests: XCTestCase {
             return
         }
         XCTAssertLessThan(health.lowerBound, arm.lowerBound)
-        XCTAssertTrue(source.contains("Date().timeIntervalSince(lastFrameAt) <= 3.0"))
+        XCTAssertTrue(source.contains("Date().timeIntervalSince(lastFrameAt) <= 4.0"))
         XCTAssertTrue(source.contains("watchdog sees no active stream"))
     }
 

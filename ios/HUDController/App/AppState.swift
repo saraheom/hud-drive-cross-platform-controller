@@ -43,6 +43,12 @@ final class AppState {
         bluetooth.onTransportReady = { [weak self] in
             guard let self else { return }
             self.speedEngine.primeRectangularStyle()
+
+            if #available(iOS 27.0, *),
+               let capture = self.externalCapture27 as? ExternalNavigationCapture {
+                capture.hudTransportReady(reason: "BLE transport ready")
+            }
+
             self.scheduleHUDRehydration(reason: "BLE transport ready")
         }
 
@@ -61,10 +67,14 @@ final class AppState {
             self.obd.transportDisconnected()
             if #available(iOS 27.0, *),
                let capture = self.externalCapture27 as? ExternalNavigationCapture {
-                // Do not stop ScreenCaptureKit; only mark HUD delivery unarmed.
-                capture.hudSessionDidReset(reason: "HUD BLE transport disconnected")
+                capture.hudTransportDisconnected(
+                    reason: "HUD BLE transport disconnected"
+                )
             }
-            self.logger.log("HUD SESSION", "BLE transport disconnected; preserved iPhone-side settings/capture")
+            self.logger.log(
+                "HUD SESSION",
+                "BLE transport disconnected; capture transport suspended while preserving explicit user intent"
+            )
         }
     }
 

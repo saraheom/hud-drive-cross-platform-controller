@@ -22,6 +22,7 @@ final class ExternalNavigationCapture: NSObject {
         streetName: ""
     )
     private(set) var lastFrameAt: Date?
+    private var streamCreatedAt: Date?
     private(set) var frameCount = 0
     private(set) var validNavigationFrames = 0
     private(set) var rejectedFrames = 0
@@ -95,8 +96,10 @@ final class ExternalNavigationCapture: NSObject {
             ? true : d.bool(forKey: "HUD.Capture.autoRecover")
         self.autoEnableNavigationMode = d.object(forKey: "HUD.Capture.autoNavMode") == nil
             ? true : d.bool(forKey: "HUD.Capture.autoNavMode")
+        // Capture is opt-in. A fresh install/session stays in Freeride
+        // until the user explicitly presses Start Capture.
         self.captureDesired = d.object(forKey: "HUD.Capture.desired") == nil
-            ? true : d.bool(forKey: "HUD.Capture.desired")
+            ? false : d.bool(forKey: "HUD.Capture.desired")
 
         super.init()
         picker.add(self)
@@ -107,6 +110,17 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     func presentFullDisplayPicker() {
+        guard navigation.bluetooth.state == .connected else {
+            status = "Connect HUD before starting capture"
+            logger.log(
+                "SCREEN CAPTURE",
+                "Manual Start ignored because HUD is not connected"
+            )
+            return
+        }
+
+        // This is the authoritative user intent flag. Once armed, app
+        // switching / Maps inactivity must never clear it.
         captureDesired = true
         requestRecoveryNotificationPermissionIfNeeded()
         var config = SCContentSharingPickerConfiguration()
@@ -159,7 +173,10 @@ final class ExternalNavigationCapture: NSObject {
     func requestAutomaticStartIfDesired() {
         guard !recoveryInFlight else { return }
 
-        guard captureDesired, autoRecoverAfterInterruption, stream == nil else { return }
+        guard captureDesired,
+              autoRecoverAfterInterruption,
+              navigation.bluetooth.state == .connected,
+              stream == nil else { return }
 
         if let filter = lastFilter {
             logger.log("SCREEN CAPTURE RECOVERY", "Capture desired; retrying cached full-display filter")
@@ -179,10 +196,81 @@ final class ExternalNavigationCapture: NSObject {
         presentFullDisplayPicker()
     }
 
+    /// HUD transport became available. If the user explicitly armed
+    /// capture earlier, resume it automatically; otherwise remain Freeride.
+    func hudTransportReady(reason: String) {
+        guard navigation.bluetooth.state == .connected else { return }
+
+        logger.log(
+            "SCREEN CAPTURE SESSION",
+            "HUD connected reason=\(reason) userArmed=\(captureDesired)"
+        )
+
+        guard captureDesired else {
+            forceFreerideForCaptureLoss(
+                reason: "HUD connected but user has not armed capture"
+            )
+            status = "Freeride — capture not started"
+            return
+        }
+
+        requestAutomaticStartIfDesired()
+    }
+
+    /// HUD transport disappeared. Suspend the actual SCStream but preserve the
+    /// user's armed intent so a transient HUD reconnect can resume capture
+    /// automatically. Manual Stop is the only normal action that clears the
+    /// intent flag.
+    func hudTransportDisconnected(reason: String) {
+        logger.log(
+            "SCREEN CAPTURE SESSION",
+            "HUD disconnected reason=\(reason); suspending stream, preserving userArmed=\(captureDesired)"
+        )
+
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveryInFlight = false
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        arrivalTask?.cancel()
+        arrivalTask = nil
+
+        forceFreerideForCaptureLoss(
+            reason: "HUD BLE transport disconnected"
+        )
+
+        guard let activeStream = stream else {
+            lastFrameAt = nil
+            streamCreatedAt = nil
+            status = captureDesired
+                ? "Capture armed — waiting for HUD reconnect"
+                : "Freeride — capture not started"
+            return
+        }
+
+        stream = nil
+        lastFrameAt = nil
+        streamCreatedAt = nil
+
+        activeStream.stopCapture { [weak self] error in
+            Task { @MainActor in
+                if let error {
+                    self?.logger.log(
+                        "SCREEN CAPTURE ERROR",
+                        "HUD-disconnect stop: \(error.localizedDescription)"
+                    )
+                }
+                self?.status = self?.captureDesired == true
+                    ? "Capture armed — waiting for HUD reconnect"
+                    : "Freeride — capture not started"
+            }
+        }
+    }
+
     private var isCaptureHealthy: Bool {
         guard stream != nil,
               let lastFrameAt else { return false }
-        return Date().timeIntervalSince(lastFrameAt) <= 3.0
+        return Date().timeIntervalSince(lastFrameAt) <= 4.0
     }
 
     private func enforceCaptureNavigationInvariant(reason: String) {
@@ -274,9 +362,10 @@ final class ExternalNavigationCapture: NSObject {
                 sampleHandlerQueue: outputQueue
             )
             self.stream = newStream
-                    self.lastFrameAt = nil
-                    self.streamStartGeneration += 1
-                    self.recoveryInFlight = false
+            self.lastFrameAt = nil
+            self.streamCreatedAt = Date()
+            self.streamStartGeneration += 1
+            self.recoveryInFlight = false
             status = recovery ? "Recovering full-display capture…" : "Starting full-display capture…"
 
             newStream.startCapture { [weak self, weak newStream] error in
@@ -286,6 +375,7 @@ final class ExternalNavigationCapture: NSObject {
                     if let error {
                         if self.stream === newStream {
                             self.stream = nil
+                            self.streamCreatedAt = nil
                         }
                         self.status = "Capture restart failed"
                         self.logger.log(
@@ -301,8 +391,11 @@ final class ExternalNavigationCapture: NSObject {
                     self.recoveryAttempt = 0
                     self.cachedFilterFailureCount = 0
                     self.needsUserReselection = false
-                    self.lastFrameAt = Date()
-                    self.recoveryAttempt = 0
+
+                    // Do NOT mark the stream healthy here. `startCapture`
+                    // completion only means the start request was accepted.
+                    // Capture health requires a real didOutputSampleBuffer
+                    // callback below.
                     self.recoveryInFlight = false
                     self.status = recovery
                         ? "Capture recovered"
@@ -316,6 +409,7 @@ final class ExternalNavigationCapture: NSObject {
             }
         } catch {
             stream = nil
+            streamCreatedAt = nil
             status = "Capture setup failed"
             logger.log("SCREEN CAPTURE ERROR", error.localizedDescription)
             cachedFilterFailureCount += 1
@@ -410,7 +504,6 @@ final class ExternalNavigationCapture: NSObject {
         watchdogTask = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-
                 guard self.captureDesired else { continue }
 
                 guard let activeStream = self.stream else {
@@ -421,21 +514,66 @@ final class ExternalNavigationCapture: NSObject {
                     continue
                 }
 
-                // A newly created SCStream has not delivered its first frame
-                // yet. Never compare it against the previous stream's stale
-                // timestamp; give the new stream a short startup grace period.
-                guard let lastFrameAt = self.lastFrameAt else {
+                // A replacement SCStream can enter a zombie state where
+                // startCapture neither completes nor fails and no frames ever
+                // arrive. The Apple Maps field log hit exactly this state.
+                if self.lastFrameAt == nil {
+                    let startupAge = Date().timeIntervalSince(
+                        self.streamCreatedAt ?? Date()
+                    )
+
+                    // It is not healthy until the first real frame arrives, so
+                    // Navigation remains Freeride during startup.
+                    self.enforceCaptureNavigationInvariant(
+                        reason: "stream awaiting first raw frame"
+                    )
+
+                    if startupAge > 8 {
+                        self.logger.log(
+                            "SCREEN CAPTURE WATCHDOG",
+                            "SCStream produced no first frame for \(String(format: "%.1f", startupAge))s; discarding zombie stream"
+                        )
+                        if self.stream === activeStream {
+                            self.stream = nil
+                            self.streamCreatedAt = nil
+                        }
+                        activeStream.stopCapture(completionHandler: nil)
+
+                        if self.autoRecoverAfterInterruption {
+                            self.cachedFilterFailureCount += 1
+                            self.handleFailedCachedFilterIfNeeded(
+                                reason: "no first raw frame within 8s"
+                            )
+                        }
+                    }
                     continue
                 }
 
+                guard let lastFrameAt = self.lastFrameAt else { continue }
                 let age = Date().timeIntervalSince(lastFrameAt)
-                if age > 3 {
+
+                // Soft health boundary: stale navigation is less safe than
+                // Freeride, but a brief scheduling stall does not justify
+                // destroying a working SCStream.
+                if age > 4 {
+                    self.enforceCaptureNavigationInvariant(
+                        reason: "raw frame heartbeat \(String(format: "%.1f", age))s old"
+                    )
+                }
+
+                // Hard recovery boundary. v81 used 3 s, and the Apple Maps
+                // trip showed a 3.1 s transient causing us to kill an
+                // otherwise valid stream. Require a sustained 8 s outage.
+                if age > 8 {
                     self.logger.log(
                         "SCREEN CAPTURE WATCHDOG",
                         "No raw screen frame for \(String(format: "%.1f", age))s; rebuilding SCStream"
                     )
 
-                    self.stream = nil
+                    if self.stream === activeStream {
+                        self.stream = nil
+                        self.streamCreatedAt = nil
+                    }
                     self.forceFreerideForCaptureLoss(
                         reason: "raw ScreenCaptureKit heartbeat stale \(String(format: "%.1f", age))s"
                     )
@@ -820,6 +958,7 @@ extension ExternalNavigationCapture: SCStreamDelegate {
         Task { @MainActor in
             if self.stream === stream {
                 self.stream = nil
+                self.streamCreatedAt = nil
             }
             self.watchdogTask?.cancel()
             self.watchdogTask = nil
@@ -857,7 +996,19 @@ extension ExternalNavigationCapture: SCStreamOutput {
         Task { @MainActor in
             // Raw stream heartbeat is deliberately independent of OCR. A slow
             // Vision pass must never be mistaken for a dead SCStream.
+            let firstFrame = self.lastFrameAt == nil
             self.lastFrameAt = Date()
+            self.streamCreatedAt = nil
+            self.recoveryAttempt = 0
+            self.recoveryInFlight = false
+
+            if firstFrame {
+                self.logger.log(
+                    "SCREEN CAPTURE",
+                    "First raw frame received; stream is healthy"
+                )
+            }
+
             self.process(pixelBuffer: buffer)
         }
     }
