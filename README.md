@@ -1821,3 +1821,30 @@ Fixed:
 - `recoveryInFlight = false` -> `self.recoveryInFlight = false`
 
 No runtime behavior changed from v78.
+
+
+## v80 — Google "Use the ... lane to merge" current-card fix
+
+A supplied Google Maps route-list screenshot exposed a gap between two parser
+stages.
+
+The maneuver classifier already mapped any text containing `merge` to the HUD
+Straight maneuver before checking left/right words. However,
+`isExplicitGoogleManeuver()` only accepted text that *started* with `merge`.
+
+Google's actual current card was:
+
+- `In 0.1 mi`
+- `Use the left lane to merge onto Eakins Ovl/...`
+
+Because that instruction starts with `Use the...`, the explicit-maneuver gate
+discarded it. The parser then continued down the route list and selected a later
+`200 feet` left-turn card.
+
+v80 recognizes `Use the left/right lane to merge ...` as an explicit Google
+maneuver. It therefore pairs the top 0.1-mi distance with the top merge
+instruction, after which the existing merge-before-left classifier correctly
+maps it to Straight.
+
+A regression test reproduces the supplied multi-card screenshot and requires:
+`0.1 mi + merge -> Straight`, never the following 200-ft left turn.

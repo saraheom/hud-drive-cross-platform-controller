@@ -260,7 +260,23 @@ enum ExternalNavigationOCRParser {
             "sharp left", "sharp right", "enter the roundabout",
             "at the roundabout"
         ]
-        return prefixes.contains(where: s.hasPrefix)
+
+        if prefixes.contains(where: s.hasPrefix) {
+            return true
+        }
+
+        // Google commonly phrases a merge as:
+        // "Use the left lane to merge onto ..."
+        // "Use the right lane to merge onto ..."
+        // This does not start with "merge", so the old explicit-maneuver gate
+        // skipped the CURRENT card and paired the next card's distance/turn.
+        if s.contains("merge"),
+           s.hasPrefix("use the "),
+           s.contains(" lane ") {
+            return true
+        }
+
+        return false
     }
 
     fileprivate static func maneuverFromText(_ text: String) -> HudManeuver {
