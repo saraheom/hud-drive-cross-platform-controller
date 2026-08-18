@@ -26,6 +26,9 @@ final class HudSettings {
     var brightness: Int { didSet { defaults.set(brightness, forKey: "HUD.Settings.brightness") } }
     var showTimeWeather: Bool { didSet { defaults.set(showTimeWeather, forKey: "HUD.Settings.showTimeWeather") } }
     var minimizeWidgets: Bool { didSet { defaults.set(minimizeWidgets, forKey: "HUD.Settings.minimizeWidgets") } }
+    var colorTheme: HudColorTheme {
+        didSet { defaults.set(colorTheme.rawValue, forKey: "HUD.Settings.colorTheme") }
+    }
     var selectedPreset: DashboardPreset {
         didSet { defaults.set(selectedPreset.name, forKey: "HUD.Settings.selectedPreset") }
     }
@@ -65,6 +68,9 @@ final class HudSettings {
         brightness = integer("HUD.Settings.brightness", default: 50)
         showTimeWeather = bool("HUD.Settings.showTimeWeather", default: true)
         minimizeWidgets = bool("HUD.Settings.minimizeWidgets", default: false)
+
+        let colorName = store.string(forKey: "HUD.Settings.colorTheme") ?? "Red"
+        colorTheme = HudColorTheme(rawValue: colorName) ?? .red
 
         let presetName = store.string(forKey: "HUD.Settings.selectedPreset") ?? "Freeride"
         selectedPreset = DashboardPreset.presets.first(where: { $0.name == presetName }) ?? DashboardPreset.presets[0]

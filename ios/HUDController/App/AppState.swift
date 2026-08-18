@@ -95,6 +95,18 @@ final class AppState {
     }
 
 
+    func applyColorTheme() {
+        bluetooth.enqueue(
+            HudCommands.baseColor(settings.colorTheme),
+            label: "HUD color theme \(settings.colorTheme.rawValue) \(settings.colorTheme.originalWireValue)"
+        )
+        logger.log(
+            "HUD COLOR",
+            "Applied \(settings.colorTheme.rawValue) raw=\(settings.colorTheme.originalWireValue)"
+        )
+    }
+
+
     func applyNotificationSettings() {
         logger.log("NOTIFICATION", "Applying HUD ANCS notification filter settings")
 
@@ -256,6 +268,7 @@ final class AppState {
         bluetooth.enqueue(HudCommands.imperialUnits(), label: "Persisted units → imperial (mi/mph)")
         applyBrightness()
         applyTimeWeather()
+        applyColorTheme()
         applyNotificationSettings()
         obd.hudDidBecomeReady()
         ambientLight.rehydrateHUDState()
@@ -274,7 +287,7 @@ final class AppState {
         logger.log(
             "HUD REHYDRATE",
             "PHASE 2 END brightness=\(settings.brightness) autoBrightness=\(settings.autoBrightness) " +
-            "timeWeather=\(settings.showTimeWeather) OBDauto=\(obd.autoConnect) " +
+            "timeWeather=\(settings.showTimeWeather) color=\(settings.colorTheme.rawValue) OBDauto=\(obd.autoConnect) " +
             "speedLimit=\(speedEngine.showSpeedLimit) tolerance=+\(speedEngine.speedTolerance)mph"
         )
     }
@@ -287,6 +300,7 @@ final class AppState {
         // hard-coded inside the speed engine/command path.
         bluetooth.enqueue(HudCommands.imperialUnits(), label: "Reassert → imperial units (mi/mph)")
         applyBrightness()
+        applyColorTheme()
         applyTimeWeather()
         obd.applyWidgetSelection()
         ambientLight.rehydrateHUDState()

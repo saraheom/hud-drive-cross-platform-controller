@@ -45,6 +45,66 @@ struct DashboardView: View {
                         }
                     }
 
+                    sectionTitle("HUD COLOR THEME")
+                    HudCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text(state.settings.colorTheme.rawValue)
+                                    .font(.headline)
+                                Spacer()
+                                Text("Original HUD palette")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            LazyVGrid(
+                                columns: Array(
+                                    repeating: GridItem(.flexible(), spacing: 10),
+                                    count: 5
+                                ),
+                                spacing: 12
+                            ) {
+                                ForEach(HudColorTheme.allCases) { theme in
+                                    Button {
+                                        state.settings.colorTheme = theme
+                                        state.applyColorTheme()
+                                    } label: {
+                                        VStack(spacing: 6) {
+                                            ZStack {
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .fill(theme.previewColor)
+                                                    .frame(height: 36)
+
+                                                if state.settings.colorTheme == theme {
+                                                    Image(systemName: "checkmark.circle.fill")
+                                                        .font(.title3)
+                                                        .foregroundStyle(.white)
+                                                        .shadow(radius: 2)
+                                                }
+                                            }
+
+                                            Text(theme.rawValue)
+                                                .font(.caption2)
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                                .foregroundStyle(.primary)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("\(theme.rawValue) HUD color")
+                                    .accessibilityAddTraits(
+                                        state.settings.colorTheme == theme
+                                            ? .isSelected : []
+                                    )
+                                }
+                            }
+
+                            Text("Uses the same 10 options and raw HUD color values as the original app.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     sectionTitle("SET UP YOUR HUD VIEWS")
                     HudCard {
                         Toggle("Minimize widgets", isOn: Binding(

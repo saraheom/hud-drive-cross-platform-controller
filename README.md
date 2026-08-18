@@ -1993,3 +1993,47 @@ v86 validates the actual policy instead:
 - simulator fallback assignments are excluded from that count.
 
 No runtime application code changed from v85.
+
+
+## v87 — original HUD color themes
+
+Reverse-engineered from HUDWAY Drive 1.4.6:
+
+`HwColorTable.kt` exposes exactly ten options, in this order:
+
+1. Red
+2. Green
+3. Blue
+4. Magenta
+5. Black
+6. Yellow
+7. Grey
+8. Cyan
+9. Ivory
+10. Maroon
+
+The stock app does **not** use conventional RGB values for those labels. It
+maps them to:
+
+- Red -> `#25E6F5`
+- Green -> `#F2357B`
+- Blue -> `#25F553`
+- Magenta -> `#4091F0`
+- Black -> `#995EE5`
+- Yellow -> `#D825F5`
+- Grey -> `#1229F6`
+- Cyan -> `#FFFFFF`
+- Ivory -> `#F49238`
+- Maroon -> `#F1F525`
+
+The Android path converts those opaque ARGB ints through
+`Integer.toHexString`, so the wire strings are `#ffRRGGBB`.
+
+`HudBaseColorCommandPacket` is `CommandPacket(120, 0)` and writes the color as
+a Java/DataOutputStream UTF string. v87 implements that same packet.
+
+The Dashboard now has a five-column `HUD COLOR THEME` block using the original
+ten-item order. Selection is persisted, sent immediately, and reasserted during
+HUD session rehydration so a physical HUD reboot does not revert the color.
+
+Default is Red, matching the stock settings provider.

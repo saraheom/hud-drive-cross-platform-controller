@@ -23,6 +23,17 @@ enum HudCommands {
         HudProtocol.frame(command: 2, p1: 8, p2: 1, payload: Data([enabled ? 1 : 0]))
     }
 
+    /// Original HUDWAY `HudBaseColorCommandPacket`:
+    /// CommandPacket(p1=120, p2=0), payload = DataOutputStream.writeUTF(color).
+    static func baseColor(_ theme: HudColorTheme) -> Data {
+        HudProtocol.frame(
+            command: 2,
+            p1: 120,
+            p2: 0,
+            payload: HudProtocol.javaWriteUTF(theme.originalWireValue)
+        )
+    }
+
     static func timeWeather(_ enabled: Bool) -> Data {
         HudProtocol.frame(command: 2, p1: 9, p2: 4, payload: Data([enabled ? 1 : 0]))
     }
