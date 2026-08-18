@@ -55,6 +55,20 @@ final class ExternalNavigationCapture: NSObject {
         qos: .utility
     )
     private var lastProcessedAt = Date.distantPast
+    // One reusable renderer avoids allocating a fresh Core Image context for
+    // every OCR sample.
+    private let captureCIContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    // Bounded OCR producer/consumer pipeline: one Vision request in flight
+    // plus at most one latest pending frame.
+    private var pendingOCRImage: UIImage?
+    private var ocrWorkerTask: Task<Void, Never>?
+    private var ocrWorkerStartedAt: Date?
+    private var lastOCRCompletedAt: Date?
+    private var ocrGeneration = 0
+    private var ocrSuspended = true
+    private var coalescedOCRFrames = 0
+    private var lastOCRStallLogAt = Date.distantPast
     private var lastFilter: SCContentFilter?
     private var recoveryTask: Task<Void, Never>?
     private var recoveryInFlight = false
@@ -137,6 +151,7 @@ final class ExternalNavigationCapture: NSObject {
 
     func stop() {
         captureDesired = false
+        suspendOCRPipeline(reason: "manual Stop Capture")
         recoveryTask?.cancel()
         recoveryTask = nil
         watchdogTask?.cancel()
@@ -227,6 +242,7 @@ final class ExternalNavigationCapture: NSObject {
             "HUD disconnected reason=\(reason); suspending stream, preserving userArmed=\(captureDesired)"
         )
 
+        suspendOCRPipeline(reason: "HUD transport disconnected")
         recoveryTask?.cancel()
         recoveryTask = nil
         recoveryInFlight = false
@@ -349,6 +365,7 @@ final class ExternalNavigationCapture: NSObject {
 
         lastFilter = filter
         UIApplication.shared.isIdleTimerDisabled = keepScreenAwake
+        resumeOCRPipeline(reason: recovery ? "SCStream recovery" : "SCStream start")
 
         let config = SCStreamConfiguration()
         config.capturesAudio = false
@@ -499,6 +516,119 @@ final class ExternalNavigationCapture: NSObject {
         }
     }
 
+    private func resumeOCRPipeline(reason: String) {
+        ocrGeneration += 1
+        ocrSuspended = false
+        pendingOCRImage = nil
+        lastProcessedAt = .distantPast
+        coalescedOCRFrames = 0
+        logger.log(
+            "OCR PIPELINE",
+            "Resumed generation=\(ocrGeneration) reason=\(reason)"
+        )
+    }
+
+    private func suspendOCRPipeline(reason: String) {
+        // Vision cannot be relied on to cancel once a text request is already
+        // executing. Invalidate the generation and release the sole pending
+        // frame. The one in-flight result is discarded when it returns.
+        ocrGeneration += 1
+        ocrSuspended = true
+        pendingOCRImage = nil
+        coalescedOCRFrames = 0
+        lastProcessedAt = .distantPast
+
+        logger.log(
+            "OCR PIPELINE",
+            "Suspended generation=\(ocrGeneration) reason=\(reason) inFlight=\(ocrWorkerTask != nil)"
+        )
+    }
+
+    private func enqueueLatestOCRImage(_ image: UIImage) {
+        guard captureDesired, !ocrSuspended else { return }
+
+        if pendingOCRImage != nil || ocrWorkerTask != nil {
+            coalescedOCRFrames += 1
+        }
+
+        // Replace any older waiting frame with the newest screenshot.
+        pendingOCRImage = image
+
+        guard ocrWorkerTask == nil else { return }
+
+        ocrWorkerTask = Task { @MainActor [weak self] in
+            await self?.runOCRWorker()
+        }
+    }
+
+    private func runOCRWorker() async {
+        defer {
+            ocrWorkerTask = nil
+            ocrWorkerStartedAt = nil
+
+            // If a frame arrived between the last dequeue and worker exit,
+            // make sure it cannot be stranded.
+            if !ocrSuspended,
+               captureDesired,
+               let image = pendingOCRImage {
+                pendingOCRImage = nil
+                enqueueLatestOCRImage(image)
+            }
+        }
+
+        while !ocrSuspended, captureDesired {
+            guard let image = pendingOCRImage else { return }
+            pendingOCRImage = nil
+
+            let generation = ocrGeneration
+            let started = Date()
+            ocrWorkerStartedAt = started
+
+            do {
+                let result = try await ExternalNavigationOCRParser.recognize(image)
+                let completed = Date()
+                lastOCRCompletedAt = completed
+                ocrWorkerStartedAt = nil
+
+                let latency = completed.timeIntervalSince(started)
+                let coalesced = coalescedOCRFrames
+                coalescedOCRFrames = 0
+
+                if latency >= 2.0 || coalesced > 0 {
+                    logger.log(
+                        "OCR PIPELINE",
+                        "Completed latency=\(String(format: "%.2f", latency))s coalesced=\(coalesced) generation=\(generation)"
+                    )
+                }
+
+                guard generation == ocrGeneration,
+                      !ocrSuspended,
+                      captureDesired else {
+                    logger.log(
+                        "OCR PIPELINE",
+                        "Discarded stale OCR result generation=\(generation) current=\(ocrGeneration)"
+                    )
+                    continue
+                }
+
+                frameCount += 1
+                apply(result, sourceLabel: "SCREEN OCR")
+            } catch {
+                ocrWorkerStartedAt = nil
+
+                guard generation == ocrGeneration,
+                      !ocrSuspended else {
+                    continue
+                }
+
+                logger.log(
+                    "OCR ERROR",
+                    "Bounded worker: \(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
     private func startWatchdog() {
         watchdogTask?.cancel()
         watchdogTask = Task { @MainActor [weak self] in
@@ -552,6 +682,24 @@ final class ExternalNavigationCapture: NSObject {
                 guard let lastFrameAt = self.lastFrameAt else { continue }
                 let age = Date().timeIntervalSince(lastFrameAt)
 
+                // Raw capture can remain healthy while Vision itself is
+                // stalled. Keep the capture and OCR heartbeats independent.
+                if age <= 4,
+                   let ocrStartedAt = self.ocrWorkerStartedAt {
+                    let ocrAge = Date().timeIntervalSince(ocrStartedAt)
+                    if ocrAge > 10,
+                       Date().timeIntervalSince(self.lastOCRStallLogAt) > 10 {
+                        self.lastOCRStallLogAt = Date()
+                        self.logger.log(
+                            "OCR WATCHDOG",
+                            "Vision request still in flight for \(String(format: "%.1f", ocrAge))s while raw capture is healthy; forcing Freeride without restarting SCStream"
+                        )
+                        self.deactivateNavigation(
+                            reason: "OCR worker stalled; raw capture still healthy"
+                        )
+                    }
+                }
+
                 // Soft health boundary: stale navigation is less safe than
                 // Freeride, but a brief scheduling stall does not justify
                 // destroying a working SCStream.
@@ -589,27 +737,20 @@ final class ExternalNavigationCapture: NSObject {
     }
 
     private func process(pixelBuffer: CVPixelBuffer) {
+        guard captureDesired, !ocrSuspended else { return }
         guard Date().timeIntervalSince(lastProcessedAt) >= 0.8 else { return }
         lastProcessedAt = Date()
 
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let context = CIContext(options: [.useSoftwareRenderer: false])
-        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return }
-        let image = UIImage(cgImage: cgImage)
-
-        Task {
-            do {
-                let result = try await ExternalNavigationOCRParser.recognize(image)
-                await MainActor.run {
-                    self.frameCount += 1
-                    self.apply(result, sourceLabel: "SCREEN OCR")
-                }
-            } catch {
-                await MainActor.run {
-                    self.logger.log("OCR ERROR", error.localizedDescription)
-                }
-            }
+        guard let cgImage = captureCIContext.createCGImage(
+            ciImage,
+            from: ciImage.extent
+        ) else {
+            logger.log("OCR ERROR", "Could not create CGImage from capture frame")
+            return
         }
+
+        enqueueLatestOCRImage(UIImage(cgImage: cgImage))
     }
 
     private func apply(_ result: ParsedExternalNavigation, sourceLabel: String) {

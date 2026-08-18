@@ -92,16 +92,7 @@ struct VehicleView: View {
                                 set: { state.speedEngine.showSpeedLimit = $0 }
                             ))
 
-                            Stepper(
-                                "Overspeed warning tolerance: \(state.speedEngine.speedTolerance) mph",
-                                value: Binding(
-                                    get: { state.speedEngine.speedTolerance },
-                                    set: { state.speedEngine.speedTolerance = $0 }
-                                ),
-                                in: 0...30
-                            )
-
-                            Text("Speed engine, speed-limit sign, and warning tolerance are saved immediately and restored after app relaunch.")
+                            Text("Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Speed warning follows the posted speed limit automatically, matching the original app's default Automatic mode.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 

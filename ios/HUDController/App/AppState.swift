@@ -288,7 +288,7 @@ final class AppState {
             "HUD REHYDRATE",
             "PHASE 2 END brightness=\(settings.brightness) autoBrightness=\(settings.autoBrightness) " +
             "timeWeather=\(settings.showTimeWeather) color=\(settings.colorTheme.rawValue) OBDauto=\(obd.autoConnect) " +
-            "speedLimit=\(speedEngine.showSpeedLimit) tolerance=+\(speedEngine.speedTolerance)mph"
+            "speedLimit=\(speedEngine.showSpeedLimit) warning=original-auto"
         )
     }
 

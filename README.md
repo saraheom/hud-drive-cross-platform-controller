@@ -2037,3 +2037,63 @@ ten-item order. Selection is persisted, sent immediately, and reasserted during
 HUD session rehydration so a physical HUD reboot does not revert the color.
 
 Default is Red, matching the stock settings provider.
+
+
+## v88 — bounded OCR pipeline + original automatic speed warning
+
+### Navigation crash root cause: unbounded OCR work
+
+The latest Apple Maps and Google Maps field logs showed a consistent signature:
+successful OCR stopped while the rest of the app continued logging and
+ScreenCaptureKit did not report a raw-frame heartbeat failure.
+
+The previous `process(pixelBuffer:)` path launched a new OCR `Task` about every
+0.8 seconds with no in-flight guard. When Vision slowed, more full-screen
+images/OCR jobs could accumulate behind it.
+
+v88 changes this to:
+
+`SCStream -> one latest-frame slot -> ONE Vision worker -> HUD`
+
+- exactly one Vision request can be in flight;
+- at most one pending UIImage is retained;
+- newer frames replace the older pending frame;
+- stale intermediate frames are intentionally discarded;
+- one reusable `CIContext` replaces per-frame CIContext allocation;
+- Stop Capture and HUD disconnect invalidate the OCR generation and release
+  the pending image;
+- the one already-running Vision request may finish, but its result is dropped
+  after a generation change;
+- if Vision stays in flight for >10 seconds while raw capture remains healthy,
+  the HUD is forced to Freeride without restarting ScreenCaptureKit.
+
+This prevents the OCR backlog/resource growth that matches the observed
+freeze-then-crash behavior.
+
+### Original HUDWAY speed-warning behavior
+
+HUDWAY Drive 1.4.6 was re-audited from the original JADX project.
+
+`HwSettingsProvider` defaults:
+- `SPEED_ALERTS_METHOD` = `0` (Automatic)
+- `SPEED_TOLERANCE_VALUE` = `0`
+
+In `HwDeviceCommunicationProxy.setSpeedLimit(...)`, Automatic mode creates a
+`DisplaySpeedWarningCommandPacket` and calls:
+
+`setSpeedThreshold(speedLimitValue)`
+
+The stock app therefore sends the warning threshold equal to the detected posted
+speed limit. It does not send `limit + tolerance` in that packet.
+
+v88:
+- removes our custom `speedTolerance` property;
+- removes the old persisted `HUD.Speed.toleranceMph` value;
+- removes the adjustable warning-tolerance Stepper from the Vehicle UI;
+- keeps the rectangular U.S. speed-limit sign with packet tolerance `0`;
+- sends `DisplaySpeedWarningCommandPacket` threshold equal to the posted limit
+  exactly.
+
+The original Android app does have an optional tolerance submenu, but this build
+intentionally omits it per the requested UI/behavior. The implemented warning
+path matches the stock default Automatic/tolerance=0 behavior.

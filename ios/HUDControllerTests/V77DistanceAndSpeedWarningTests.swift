@@ -57,9 +57,9 @@ final class V77DistanceAndSpeedWarningTests: XCTestCase {
         )
 
         XCTAssertTrue(source.contains("tolerance: 0"))
-        XCTAssertTrue(source.contains("sendOverspeedGaugeThreshold"))
-        XCTAssertTrue(source.contains("legalLimitMph + speedTolerance"))
-        XCTAssertTrue(source.contains("HudCommands.speedWarningThreshold(threshold)"))
+        XCTAssertTrue(source.contains("sendOriginalAutomaticSpeedWarning"))
+        XCTAssertTrue(source.contains("HudCommands.speedWarningThreshold(legalLimitMph)"))
+        XCTAssertFalse(source.contains("speedTolerance"))
     }
 
     func testCrashStabilitySerializationStillPresent() throws {

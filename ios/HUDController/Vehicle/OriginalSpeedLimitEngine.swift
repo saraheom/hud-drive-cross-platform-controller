@@ -62,20 +62,6 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    var speedTolerance: Int {
-        didSet {
-            let clamped = max(0, min(30, speedTolerance))
-            if clamped != speedTolerance {
-                speedTolerance = clamped
-                return
-            }
-            UserDefaults.standard.set(speedTolerance, forKey: "HUD.Speed.toleranceMph")
-            // Force the currently displayed limit/warning to refresh.
-            lastSentLimit = -1
-            resendCurrentLimitIfPossible()
-        }
-    }
-
     var showSpeedLimit: Bool {
         didSet {
             UserDefaults.standard.set(showSpeedLimit, forKey: "HUD.Speed.showLimit")
@@ -95,9 +81,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         self.enabled = d.object(forKey: "HUD.Speed.enabled") == nil
             ? true
             : d.bool(forKey: "HUD.Speed.enabled")
-        self.speedTolerance = d.object(forKey: "HUD.Speed.toleranceMph") == nil
-            ? 0
-            : max(0, min(30, d.integer(forKey: "HUD.Speed.toleranceMph")))
+        // Remove the custom app-side tolerance introduced by earlier builds.
+        // Stock HUDWAY Drive 1.4.6 defaults to Automatic alerts with
+        // SPEED_TOLERANCE_VALUE = 0.
+        d.removeObject(forKey: "HUD.Speed.toleranceMph")
         self.showSpeedLimit = d.object(forKey: "HUD.Speed.showLimit") == nil
             ? true
             : d.bool(forKey: "HUD.Speed.showLimit")
@@ -150,7 +137,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         logger.log(
             "SPEED SESSION",
-            "Rehydrating HUD speed/limit state (showLimit=\(showSpeedLimit), signTolerance=0, warningTolerance=+\(speedTolerance) mph)"
+            "Rehydrating HUD speed/limit state (showLimit=\(showSpeedLimit), originalAutoWarning=postedLimit)"
         )
 
         if let location = locationManager.location {
@@ -164,16 +151,21 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    private func sendOverspeedGaugeThreshold(
+    /// Decompiled stock HUDWAY Drive 1.4.6 Automatic mode:
+    /// DisplaySpeedWarningCommandPacket.setSpeedThreshold(speedLimitValue).
+    ///
+    /// The stock defaults are SPEED_ALERTS_METHOD=0 and
+    /// SPEED_TOLERANCE_VALUE=0, so the warning follows the posted limit
+    /// exactly. Do not add an app-side tolerance.
+    private func sendOriginalAutomaticSpeedWarning(
         legalLimitMph: Int
     ) {
         guard legalLimitMph > 0,
               bluetooth.state == .connected else { return }
 
-        let threshold = legalLimitMph + speedTolerance
         bluetooth.enqueue(
-            HudCommands.speedWarningThreshold(threshold),
-            label: "Speed gauge warning threshold \(threshold) mph (limit \(legalLimitMph) + tolerance \(speedTolerance))"
+            HudCommands.speedWarningThreshold(legalLimitMph),
+            label: "Original auto speed warning threshold = posted limit \(legalLimitMph) mph"
         )
     }
 
@@ -187,9 +179,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 limit: currentSpeedLimitMph,
                 tolerance: 0
             ),
-            label: "Speed limit \(currentSpeedLimitMph) mph (HUD display tolerance 0; warning +\(speedTolerance))"
+            label: "Speed limit \(currentSpeedLimitMph) mph (tolerance 0)"
         )
-        sendOverspeedGaugeThreshold(
+        sendOriginalAutomaticSpeedWarning(
             legalLimitMph: currentSpeedLimitMph
         )
         lastSentLimit = currentSpeedLimitMph
@@ -265,9 +257,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 lastSentLimit = limit
                 bluetooth.enqueue(
                     HudCommands.speedLimit(limit: limit, tolerance: 0),
-                    label: "Speed limit \(limit) mph (HUD display tolerance 0; warning +\(speedTolerance))"
+                    label: "Speed limit \(limit) mph (tolerance 0)"
                 )
-                sendOverspeedGaugeThreshold(
+                sendOriginalAutomaticSpeedWarning(
                     legalLimitMph: limit
                 )
             }
