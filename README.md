@@ -1938,3 +1938,22 @@ Manual Stop:
 
 This separates "I want navigation capture during this HUD usage" from
 "the current screen happens to contain Maps navigation."
+
+
+## v84 — simulator capture-interface parity fix
+
+v83 added two HUD transport lifecycle methods to the physical-device
+ScreenCaptureKit implementation:
+
+- `hudTransportReady(reason:)`
+- `hudTransportDisconnected(reason:)`
+
+`AppState` calls those methods on all iOS 27 builds, but the simulator fallback
+class did not expose the same API, causing iOS CI to fail during simulator
+compilation.
+
+v84 adds no-op/state-only implementations of those methods to the simulator
+fallback and aligns its default `captureDesired` value with the physical-device
+implementation (`false`).
+
+No physical-device runtime behavior changed from v83.

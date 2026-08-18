@@ -1043,7 +1043,7 @@ final class ExternalNavigationCapture: NSObject {
     var keepScreenAwake = false
     var autoRecoverAfterInterruption = false
     var autoEnableNavigationMode = true
-    private(set) var captureDesired = true
+    private(set) var captureDesired = false
 
     private let logger: LogManager
     private let navigation: HudNavigationController
@@ -1070,6 +1070,20 @@ final class ExternalNavigationCapture: NSObject {
     func appBecameActive() { }
     func requestAutomaticStartIfDesired() { }
     func hudSessionDidReset(reason: String) { }
+
+    // Simulator fallback keeps the same API surface as the physical-device
+    // ScreenCaptureKit implementation so AppState compiles identically.
+    func hudTransportReady(reason: String) {
+        status = captureDesired
+            ? "Simulator capture armed"
+            : "Freeride — capture not started"
+    }
+
+    func hudTransportDisconnected(reason: String) {
+        status = captureDesired
+            ? "Capture armed — waiting for HUD reconnect"
+            : "Freeride — capture not started"
+    }
 
     func analyzePhoto(_ image: UIImage) async {
         status = "Analyzing saved screenshot…"
