@@ -98,45 +98,49 @@ final class V83UserArmedCaptureSessionTests: XCTestCase {
         )
 
         XCTAssertTrue(stopBody.contains("captureDesired = false"))
-        XCTAssertTrue(stopBody.contains("forceFreerideForCaptureLoss"))
+        XCTAssertTrue(
+            stopBody.contains(
+                "deactivateNavigation(reason: \"Screen capture manually stopped\")"
+            )
+        )
     }
 
-    func testOtherAppsDoNotClearUserArmedCaptureIntent() throws {
+    func testOnlyManualStopClearsIntentInPhysicalImplementation() throws {
         let source = try source(
             "HUDController/Navigation/ExternalNavigationCapture.swift"
         )
 
-        // The explicit inactive/unknown-screen path may force Freeride, but
-        // capture intent remains armed. We validate the policy directly
-        // instead of pinning this test to a private helper name.
-        XCTAssertTrue(
-            source.contains(
-                "switching to Home Screen or another app does not clear"
-            ) ||
-            source.contains(
-                "app switching / Maps inactivity must never clear it"
-            )
-        )
-
-        guard let disconnectStart = source.range(
-            of: "func hudTransportDisconnected(reason: String)"
-        ),
-        let healthStart = source.range(
-            of: "private var isCaptureHealthy",
-            range: disconnectStart.upperBound..<source.endIndex
-        )
-        else {
-            XCTFail("HUD transport lifecycle implementation not found")
+        // The file contains a physical-device implementation followed by a
+        // simulator fallback. Scope this assertion only to the physical side.
+        guard let simulatorBoundary = source.range(of: "#else") else {
+            XCTFail("Simulator conditional boundary not found")
             return
         }
 
-        let transportBody = String(
-            source[disconnectStart.lowerBound..<healthStart.lowerBound]
+        let physicalSource = String(
+            source[..<simulatorBoundary.lowerBound]
         )
 
-        // Even an actual HUD transport loss preserves the user's armed intent;
-        // merely opening another app must therefore not clear it either.
-        XCTAssertFalse(transportBody.contains("captureDesired = false"))
-        XCTAssertTrue(transportBody.contains("preserving userArmed="))
+        let assignments = physicalSource.components(
+            separatedBy: "captureDesired = false"
+        ).count - 1
+
+        XCTAssertEqual(assignments, 1)
+
+        guard let stopStart = physicalSource.range(of: "func stop()"),
+              let nextFunction = physicalSource.range(
+                of: "\n    func ",
+                range: stopStart.upperBound..<physicalSource.endIndex
+              )
+        else {
+            XCTFail("Physical manual stop implementation not found")
+            return
+        }
+
+        let stopBody = String(
+            physicalSource[stopStart.lowerBound..<nextFunction.lowerBound]
+        )
+
+        XCTAssertTrue(stopBody.contains("captureDesired = false"))
     }
 }

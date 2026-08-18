@@ -1975,3 +1975,21 @@ in two v83 source-inspection tests.
   without pinning itself to that obsolete helper name.
 
 No runtime application behavior changed from v84.
+
+
+## v86 — second user-armed capture test cleanup
+
+v85 still failed two source-inspection assertions:
+
+- `stop()` intentionally uses `deactivateNavigation(...)`, not
+  `forceFreerideForCaptureLoss(...)`.
+- a test asserted the presence of a prose comment that was never part of the
+  runtime source.
+
+v86 validates the actual policy instead:
+- physical-device `stop()` clears `captureDesired` and deactivates navigation;
+- the physical-device implementation contains exactly one
+  `captureDesired = false` assignment, inside manual Stop;
+- simulator fallback assignments are excluded from that count.
+
+No runtime application code changed from v85.

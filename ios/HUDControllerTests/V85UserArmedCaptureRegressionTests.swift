@@ -21,6 +21,6 @@ final class V85UserArmedCaptureRegressionTests: XCTestCase {
         )
         XCTAssertFalse(source.contains(#""private func apply(""#))
         XCTAssertTrue(source.contains("func stop()"))
-        XCTAssertTrue(source.contains("hudTransportDisconnected"))
+        XCTAssertTrue(source.contains("simulatorBoundary"))
     }
 }
