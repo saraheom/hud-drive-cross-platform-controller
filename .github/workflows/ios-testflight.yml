@@ -19,72 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No Apple-ID/session secrets are needed here.
-      # Select the newest Xcode 27 already present on GitHub's xcode-27 image.
-      - name: Select newest installed Xcode 27
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Xcode installations present on this runner:"
-          ls -1d /Applications/Xcode*.app 2>/dev/null || true
-          echo
-
-          BEST_APP=""
-          BEST_BUILD=""
-          BEST_SERIAL=-1
-
-          for candidate in /Applications/Xcode*.app; do
-            [[ -d "$candidate/Contents/Developer" ]] || continue
-
-            info="$(
-              DEVELOPER_DIR="$candidate/Contents/Developer" \
-              xcodebuild -version 2>/dev/null || true
-            )"
-
-            version="$(printf '%s\n' "$info" | awk '/^Xcode /{print $2; exit}')"
-            build="$(printf '%s\n' "$info" | awk '/Build version/{print $3; exit}')"
-
-            [[ "$version" == 27.* ]] || continue
-            [[ "$build" =~ ^27A([0-9]+)[A-Za-z0-9]*$ ]] || continue
-
-            serial="${BASH_REMATCH[1]}"
-            echo "Found Xcode $version build $build at $candidate"
-
-            if (( serial > BEST_SERIAL )); then
-              BEST_SERIAL="$serial"
-              BEST_BUILD="$build"
-              BEST_APP="$candidate"
-            fi
-          done
-
-          if [[ -z "$BEST_APP" ]]; then
-            echo "::error::No Xcode 27 installation was found on this GitHub runner."
-            exit 1
-          fi
-
-          echo
-          echo "Selecting newest installed Xcode: $BEST_APP ($BEST_BUILD)"
-          sudo xcode-select --switch "$BEST_APP/Contents/Developer"
-
-          echo "Selected toolchain:"
-          xcodebuild -version
-          echo "iPhoneOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
-          echo "Simulator SDK: $(xcrun --sdk iphonesimulator --show-sdk-version)"
-
-          # 27A5228h = Xcode 27 beta 4, which App Store Connect rejected
-          # in our 2026-08-18 TestFlight run with error 90534.
-          #
-          # We intentionally do NOT hard-code a guessed beta-5/beta-6 build
-          # number. Anything newer than beta 4 is allowed through; App Store
-          # Connect remains the authority on the currently accepted beta/RC.
-          if (( BEST_SERIAL <= 5228 )); then
-            echo "::error title=GitHub Xcode image is still too old::Newest installed Xcode is $BEST_BUILD (beta 4 generation). App Store Connect rejected this toolchain with 90534. No app/signing change can fix that binary. Re-run after GitHub refreshes the xcode-27 image."
-            exit 1
-          fi
-
-          echo "Xcode build $BEST_BUILD is newer than the rejected beta-4 toolchain; continuing."
-
       - name: Install build tools
         run: |
           brew install xcodegen
@@ -172,19 +106,7 @@ jobs:
           xcodebuild -version
 
           XCODE_BUILD="$(xcodebuild -version | awk '/Build version/{print $3}')"
-          if [[ "$XCODE_BUILD" =~ ^27A([0-9]+)[A-Za-z0-9]*$ ]]; then
-            XCODE_SERIAL="${BASH_REMATCH[1]}"
-          else
-            echo "::error::Unexpected Xcode 27 build identifier: $XCODE_BUILD"
-            exit 1
-          fi
-
-          # The 2026-08-18 upload proved 27A5228h (beta 4) is rejected.
-          # Do not waste time archiving with that same toolchain again.
-          if (( XCODE_SERIAL <= 5228 )); then
-            echo "::error::Xcode $XCODE_BUILD is the rejected beta-4 generation. Wait for GitHub's xcode-27 image refresh and rerun."
-            exit 1
-          fi
+          echo "Xcode build: $XCODE_BUILD"
 
           SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
           echo "iPhoneOS SDK: $SDK_VERSION"
