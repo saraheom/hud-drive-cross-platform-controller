@@ -1,30 +1,33 @@
-# v88 — restore v86 TestFlight build path
+# v88 TestFlight — restore existing GitHub secrets
 
-This patch changes only `.github/workflows/ios-testflight.yml`.
+The previous replacement workflow accidentally referenced a new secret naming
+scheme (`P12_BASE64`, `PROFILE_BASE64`, etc.). The repository already had a
+working TestFlight secret set, so those values resolved to empty strings.
 
-It does NOT revert any v88 app code.
+This patch restores the existing secret names:
 
-The workflow now behaves like the successful v86 TestFlight run:
+- IOS_CERTIFICATE
+- IOS_CERTIFICATE_PASSWORD
+- IOS_MOBILE_PROVISION
+- APPLE_DEVELOPMENT_TEAM
+- APPLE_API_KEY_ID
+- APPLE_API_ISSUER
+- APPLE_API_PRIVATE_KEY_BASE64
+- SPOTIFY_CLIENT_ID
 
-- uses `runs-on: xcode-27`;
-- uses the Xcode selected by that runner;
-- prints the Xcode version/build for diagnostics;
-- validates the iPhoneOS SDK;
-- generates the project;
-- installs the same signing certificate/profile;
-- archives the current repository source;
-- exports the App Store IPA;
-- uploads it with the existing App Store Connect API-key / Fastlane flow.
+No new secrets are required.
 
-Removed:
-- the early rejection of Xcode 27 beta 4 / build `27A5228h`;
-- the extra Xcode-selection guard;
-- any requirement for APPLE_ID or FASTLANE_SESSION.
+The bundle identifier is derived directly from the App Store provisioning
+profile, so `HUD_BUNDLE_ID` no longer needs to be a repository secret.
 
-This means v88 source is built exactly through the same pipeline style that
-successfully uploaded v86 earlier on 2026-08-18.
+The workflow also validates all required existing secrets before installing
+tools or trying to sign the app.
 
-Install:
-1. Replace `.github/workflows/ios-testflight.yml` with the supplied file.
-2. Commit and push.
-3. Run `iOS TestFlight`.
+This fixes the latest failure:
+`SecKeychainItemImport: Unable to decode the provided data`
+
+It does not alter any v88 application source code.
+
+Note: after signing/archive is restored, App Store Connect may still return
+90534 if Apple's server continues rejecting the Xcode 27 beta 4 toolchain.
+That is a separate external toolchain issue.
