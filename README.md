@@ -31,3 +31,54 @@ It does not alter any v88 application source code.
 Note: after signing/archive is restored, App Store Connect may still return
 90534 if Apple's server continues rejecting the Xcode 27 beta 4 toolchain.
 That is a separate external toolchain issue.
+
+## v89 — direct ambient-light control foundation
+
+v89 expands the existing ELK-BLEDOM presence monitor into a single multi-device
+CoreBluetooth subsystem. The existing BLEDOM → HUD Auto Brightness behavior is
+preserved, but it is now independently switchable from direct ambient-light
+control.
+
+### Lotus Lantern / ELK-BLEDOM
+
+The supplied Lotus Lantern 6.5.08 decompile exposes its BLE implementation. v89
+implements that protocol directly:
+
+- GATT service: `FFF0` (`0000FFF0-0000-1000-8000-00805F9B34FB`)
+- write characteristic: `FFF3` (`0000FFF3-0000-1000-8000-00805F9B34FB`)
+- power ON: `7E 04 04 01 00 01 FF 00 EF`
+- power OFF: `7E 04 04 00 00 00 FF 00 EF`
+- RGB: `7E 07 05 03 RR GG BB 10 EF`
+- brightness: `7E 04 01 XX FF FF FF 00 EF` where `XX` is 0–100
+
+The app restores the saved color, brightness and power state after connection.
+It can also play a software-generated startup pulse: fade up/down once or twice,
+then fade back to the saved target brightness. A 15-second disconnect threshold
+prevents a momentary BLE dropout from replaying the startup animation.
+
+### Pairing and groups
+
+The Ambient Lighting page supports:
+
+- discovery of named and unnamed BLE peripherals;
+- persistent user names for lights;
+- remembered CoreBluetooth peripheral identifiers;
+- independent automatic reconnection;
+- app-level groups containing any subset of paired lights;
+- membership of one light in multiple groups;
+- group power, color and brightness fan-out through per-device protocol adapters.
+
+The two unnamed BLEDIM2-compatible lights can therefore be placed in their own
+group without including the ELK-BLEDOM controller.
+
+### BLEDIM2 protocol status
+
+The supplied BLEDIM2 1.960 APK is protected with the Jiagu/360 packer. Its
+visible DEX contains the protection loader and references such as `libjiagu.so`
+and `libjgdtc.so`; the real BLE command builder is not present in JADX output.
+
+v89 intentionally does **not** guess BLEDIM2 write packets. It already supports
+BLEDIM2 discovery, pairing, automatic reconnection, grouping, and complete GATT
+service/characteristic fingerprint logging. Once one BLEDIM2 Bluetooth HCI
+capture is supplied, the final adapter can be added without changing the UI,
+group model, or connection architecture.

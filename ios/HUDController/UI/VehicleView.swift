@@ -119,12 +119,38 @@ struct VehicleView: View {
                         }
                     }
 
-                    section("AMBIENT LIGHT → HUD BRIGHTNESS") {
+                    section("AMBIENT LIGHTING") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Monitor ambient-light BLE device", isOn: Binding(
-                                get: { state.ambientLight.enabled },
-                                set: { state.ambientLight.enabled = $0 }
+                            NavigationLink {
+                                AmbientLightingView(monitor: state.ambientLight)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "lightbulb.2.fill")
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Ambient Lighting Control")
+                                            .font(.headline)
+                                        Text("Connect, group, change color/brightness, and configure startup fades")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            Divider()
+                            Text("HUD AUTO-BRIGHTNESS TRIGGER")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Toggle("Use BLEDOM presence for HUD Auto Brightness", isOn: Binding(
+                                get: { state.ambientLight.hudBrightnessTriggerEnabled },
+                                set: { state.ambientLight.hudBrightnessTriggerEnabled = $0 }
                             ))
+                            .disabled(!state.ambientLight.enabled)
 
                             TextField("BLE advertised name", text: Binding(
                                 get: { state.ambientLight.targetName },
@@ -152,7 +178,7 @@ struct VehicleView: View {
                             }
 
                             Text("""
-                            BLEDOM does not need to appear in Settings → Bluetooth. Presence enables HUD Auto Brightness immediately. To prevent BLE advertisement gaps from flickering brightness, absence is confirmed only after three consecutive timeout windows (for example, a 2 s timeout requires about 6 s of confirmed absence).
+                            The advertised-name field above selects only the light whose presence drives HUD Auto Brightness. Other paired ambient lights do not affect HUD brightness. BLEDOM does not need to appear in Settings → Bluetooth; the same CoreBluetooth manager now handles presence detection and direct ambient-light control. Absence is still confirmed after three timeout windows.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)
