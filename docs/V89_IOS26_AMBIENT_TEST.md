@@ -56,3 +56,9 @@ v89.1 explicitly marks the helper `@MainActor` and changes the automatic
 Xcode 27 screen-capture CI is preserved as `Future iOS 27 Screen Capture CI
 (Manual)` and no longer runs automatically while this temporary branch is in
 use.
+
+## v89.2 TestFlight build-number guard
+
+The temporary ambient TestFlight workflow uses `1000 + GITHUB_RUN_NUMBER` as `CFBundleVersion`.
+The existing App Store Connect history had already reached build 43 while this newly-created workflow started at run 1, so using the raw workflow run number produced build 1 and App Store Connect rejected it.
+The same reserved build-number strategy is now used by the future Xcode 27 TestFlight workflow so returning to the normal capture build does not fall back into the old 1–43 range.

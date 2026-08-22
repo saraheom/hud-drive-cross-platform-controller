@@ -29,3 +29,20 @@ def test_ios26_project_excludes_real_capture_source():
     assert "UI/HudNavigationView.swift" in spec
     assert "AMBIENT_IOS26_TEST" in spec
     assert "screen-capture" not in spec
+
+
+def test_ios26_testflight_uses_reserved_monotonic_build_range():
+    workflow = (ROOT / ".github/workflows/ios-testflight-ambient-ios26.yml").read_text()
+    assert "IOS_BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))" in workflow
+    assert "Set :CFBundleVersion $IOS_BUILD_NUMBER" in workflow
+    assert 'CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER"' in workflow
+    assert 'test "$VERSION" = "$IOS_BUILD_NUMBER"' in workflow
+    assert 'CURRENT_PROJECT_VERSION="${{ github.run_number }}"' not in workflow
+
+
+def test_future_xcode27_testflight_uses_same_monotonic_build_strategy():
+    workflow = (ROOT / ".github/workflows/ios-testflight.yml").read_text()
+    assert "IOS_BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))" in workflow
+    assert "Set :CFBundleVersion $IOS_BUILD_NUMBER" in workflow
+    assert 'CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER"' in workflow
+    assert 'test "$VERSION" = "$IOS_BUILD_NUMBER"' in workflow

@@ -33,6 +33,18 @@ jobs:
           test "${IOS_SDK%%.*}" -eq 26
           test "${SIM_SDK%%.*}" -eq 26
 
+      - name: Resolve monotonic TestFlight build number
+        shell: bash
+        run: |
+          set -euo pipefail
+          IOS_BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))
+          if (( IOS_BUILD_NUMBER > 9999 )); then
+            echo "::error::Computed TestFlight build number $IOS_BUILD_NUMBER exceeds the 4-digit CFBundleVersion range reserved by this workflow."
+            exit 1
+          fi
+          echo "IOS_BUILD_NUMBER=$IOS_BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "TestFlight build number: $IOS_BUILD_NUMBER (workflow run $GITHUB_RUN_NUMBER)"
+
       - name: Install build tools
         run: |
           brew install xcodegen
@@ -43,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           xcodegen generate --spec project-ios26-ambient.yml
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" HUDController/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $IOS_BUILD_NUMBER" HUDController/Info.plist
           /usr/libexec/PlistBuddy -c "Set :SPOTIFY_CLIENT_ID $SPOTIFY_CLIENT_ID" HUDController/Info.plist
           echo "Generated bundle version:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" HUDController/Info.plist
@@ -125,7 +137,7 @@ jobs:
             -archivePath "$RUNNER_TEMP/HUDController.xcarchive" \
             DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
             PRODUCT_BUNDLE_IDENTIFIER="$HUD_BUNDLE_ID" \
-            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
@@ -138,7 +150,7 @@ jobs:
           VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$ARCHIVE_PLIST")
           SHORT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$ARCHIVE_PLIST")
           echo "Archived version: $SHORT_VERSION ($VERSION)"
-          test "$VERSION" = "$GITHUB_RUN_NUMBER"
+          test "$VERSION" = "$IOS_BUILD_NUMBER"
 
       - name: Export App Store IPA
         run: |
