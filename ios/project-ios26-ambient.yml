@@ -1,0 +1,103 @@
+name: HUDController
+options:
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  SpotifyiOS:
+    url: https://github.com/spotify/ios-sdk
+    exactVersion: 5.0.1
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  HUDController:
+    type: application
+    platform: iOS
+    sources:
+      - path: HUDController
+        excludes:
+          - Media/HudTextRendererProbe.swift
+          # The real full-display implementation requires the iOS 27 SDK.
+          - Navigation/ExternalNavigationCapture.swift
+          # Replaced by AmbientTest/HudNavigationViewIOS26.swift.
+          - UI/HudNavigationView.swift
+    dependencies:
+      - package: SpotifyiOS
+    info:
+      path: HUDController/Info.plist
+      properties:
+        CFBundleDisplayName: HUD Controller Ambient Test
+        NSBluetoothAlwaysUsageDescription: HUD Controller uses Bluetooth to communicate with your HUD and nearby BLE vehicle accessories.
+        NSLocationWhenInUseUsageDescription: HUD Controller uses GPS speed and road position to reproduce the original HUD speed and speed-limit behavior.
+        NSLocationAlwaysAndWhenInUseUsageDescription: HUD Controller uses location while driving so HUD speed and posted speed limits can continue updating in the background.
+        SPOTIFY_CLIENT_ID: ""
+        SPOTIFY_REDIRECT_URI: "jjunnyy-hud-login://spotify-callback"
+        LSApplicationQueriesSchemes:
+          - spotify
+        CFBundleURLTypes:
+          - CFBundleURLName: com.jjunnyy.hudcontroller.spotify
+            CFBundleURLSchemes:
+              - jjunnyy-hud-login
+        UIBackgroundModes:
+          - bluetooth-central
+          - location
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ${HUD_BUNDLE_ID}
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) AMBIENT_IOS26_TEST"
+    scheme:
+      testTargets:
+        - HUDControllerTests
+  HUDControllerTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: HUDControllerTests
+        excludes:
+          - V41TextRendererProbeTests.swift
+          - AppStateInitializationOrderTests.swift
+          - V59AppleArrowDirectionTests.swift
+          - V60AppleArrowComponentIsolationTests.swift
+          - V61AppleComponentRegressionTests.swift
+          - V62AppleArrowShieldTests.swift
+          - V58ExperimentalMusicBindingTests.swift
+          - V64AppleRoadFallbackTests.swift
+          - V64AppleCentroidShieldRecoveryTests.swift
+          # Capture-specific tests belong to the Xcode 27 target.
+          - ScreenCaptureBuildGuardTests.swift
+          - ScreenCaptureIOSAvailabilityTests.swift
+          - V30SourceTests.swift
+          - V45AutomaticNavigationTests.swift
+          - V45ReliabilityRegressionTests.swift
+          - V46NavigationSessionRegressionTests.swift
+          - V47DriveReliabilityTests.swift
+          - V51FieldReliabilityTests.swift
+          - V57NavigationCaptureMusicLabTests.swift
+          - V73RoadReliabilityTests.swift
+          - V74CapturePriorityRegressionTests.swift
+          - V76CaptureCrashStabilityTests.swift
+          - V78CurrentArchitectureGuardTests.swift
+          - V82AppleCaptureRecoveryTests.swift
+          - V83UserArmedCaptureSessionTests.swift
+          - V84SimulatorCaptureInterfaceTests.swift
+          - V85UserArmedCaptureRegressionTests.swift
+          - V86UserArmedCapturePolicyTests.swift
+          - V88BoundedOCRAndOriginalSpeedWarningTests.swift
+    dependencies:
+      - target: HUDController
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ${HUD_BUNDLE_ID}.tests
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) AMBIENT_IOS26_TEST"

@@ -82,3 +82,12 @@ BLEDIM2 discovery, pairing, automatic reconnection, grouping, and complete GATT
 service/characteristic fingerprint logging. Once one BLEDIM2 Bluetooth HCI
 capture is supplied, the final adapter can be added without changing the UI,
 group model, or connection architecture.
+
+## v89 temporary iOS 26 ambient-light TestFlight flavor
+
+A parallel Xcode 26 build flavor is included for testing Ambient Lighting while
+the Xcode 27 GitHub preview image is unavailable/incompatible. Run the GitHub
+Actions workflow **Build and Upload iOS 26 Ambient TestFlight**. It compiles
+with `ios/project-ios26-ambient.yml`, which excludes the iOS 27
+ScreenCaptureKit implementation but keeps the v89 ambient-light subsystem and
+the rest of the HUD controller. See `docs/V89_IOS26_AMBIENT_TEST.md`.
