@@ -624,6 +624,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.sendPower(id, on: true, reason: "startup")
             self.sendBrightness(id, percent: 0, reason: "startup")
 
+            @MainActor
             func fade(from: Int, to: Int) async -> Bool {
                 for step in 1...steps {
                     guard !Task.isCancelled else { return false }

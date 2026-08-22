@@ -1,4 +1,4 @@
-name: iOS CI
+name: iOS CI — Ambient Test (Xcode 26)
 
 on:
   workflow_dispatch:
@@ -6,93 +6,76 @@ on:
     paths:
       - "ios/**"
       - ".github/workflows/ios-ci.yml"
+      - ".github/workflows/ios-testflight-ambient-ios26.yml"
   pull_request:
     paths:
       - "ios/**"
+      - ".github/workflows/ios-ci.yml"
 
 jobs:
   build:
-    runs-on: xcode-27
+    runs-on: macos-26
     env:
       HUD_BUNDLE_ID: com.example.hudcontroller
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify Xcode 27 toolchain
+      - name: Select Xcode 26 toolchain
+        shell: bash
         run: |
           set -euo pipefail
+          SELECTED="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print | sort -V | tail -1)"
+          if [[ -n "$SELECTED" ]]; then
+            echo "Selecting $SELECTED"
+            sudo xcode-select -s "$SELECTED/Contents/Developer"
+          else
+            echo "No explicit Xcode_26*.app bundle found; checking runner default."
+          fi
+
           xcodebuild -version
           IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-version)"
           SIM_SDK="$(xcrun --sdk iphonesimulator --show-sdk-version)"
           echo "iPhoneOS SDK: $IOS_SDK"
           echo "Simulator SDK: $SIM_SDK"
-          test "${IOS_SDK%%.*}" -ge 27
-          test "${SIM_SDK%%.*}" -ge 27
+          test "${IOS_SDK%%.*}" -eq 26
+          test "${SIM_SDK%%.*}" -eq 26
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Validate iOS 27 device ScreenCaptureKit framework
+      - name: Validate temporary ambient-test source boundary
+        shell: bash
         run: |
           set -euo pipefail
-          DEVICE_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          SIM_SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-          test -d "$DEVICE_SDK/System/Library/Frameworks/ScreenCaptureKit.framework"
-          echo "Device ScreenCaptureKit found: $DEVICE_SDK/System/Library/Frameworks/ScreenCaptureKit.framework"
-          if [ -d "$SIM_SDK/System/Library/Frameworks/ScreenCaptureKit.framework" ]; then
-            echo "Simulator framework directory exists; Swift module availability will still be handled conditionally."
-          else
-            echo "Simulator ScreenCaptureKit framework is absent; expected for the device-only iOS 27 sample path."
-          fi
-
-      - name: Validate simulator does not link ScreenCaptureKit
-        run: |
-          set -euo pipefail
-          if grep -R "weak_framework ScreenCaptureKit" ios/project.yml; then
-            echo "ScreenCaptureKit must not be globally linked for simulator builds."
+          grep -q 'Navigation/ExternalNavigationCapture.swift' ios/project-ios26-ambient.yml
+          test -f ios/HUDController/AmbientTest/ExternalNavigationCaptureIOS26Stub.swift
+          test -f ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift
+          if grep -q 'screen-capture' ios/project-ios26-ambient.yml; then
+            echo "ERROR: temporary iOS 26 ambient project must not request the screen-capture background mode."
             exit 1
           fi
-          echo "No global ScreenCaptureKit linker flag present."
+          echo "iOS 27 ScreenCaptureKit path is excluded from the temporary ambient-test target."
 
-      - name: Generate project
+      - name: Generate iOS 26 ambient-test project
         working-directory: ios
-        run: xcodegen generate
+        run: xcodegen generate --spec project-ios26-ambient.yml
 
-      - name: Validate App Shortcut utterances
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re, sys
-          path = Path("ios/HUDController/Shortcuts/HudShortcuts.swift")
-          text = path.read_text()
-          for match in re.finditer(r'phrases:\s*\[(.*?)\]', text, re.S):
-              strings = re.findall(r'"([^"]+)"', match.group(1))
-              bad = [s for s in strings if r'\(.applicationName)' not in s]
-              if bad:
-                  print("Invalid App Shortcut phrases:", bad)
-                  sys.exit(1)
-          print("App Shortcut utterances OK")
-          PY
-
-      - name: Sanity-check UIKit usage
-        run: |
-          if grep -R "UIDevice" ios/HUDController --include='*.swift' >/dev/null; then
-            grep -R "import UIKit" ios/HUDController --include='*.swift' >/dev/null
-          fi
-          echo "UIKit sanity check OK"
-
-      - name: Validate generated test-host product names
+      - name: Validate generated build settings
         working-directory: ios
+        shell: bash
         run: |
-          APP_PRODUCT=$(xcodebuild -project HUDController.xcodeproj -scheme HUDController -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*FULL_PRODUCT_NAME = / {print $2; exit}')
-          EXECUTABLE=$(xcodebuild -project HUDController.xcodeproj -scheme HUDController -showBuildSettings 2>/dev/null | awk -F' = ' '/^[[:space:]]*EXECUTABLE_NAME = / {print $2; exit}')
-          echo "App product: $APP_PRODUCT"
-          echo "Executable: $EXECUTABLE"
-          test "$APP_PRODUCT" = "HUDController.app"
-          test "$EXECUTABLE" = "HUDController"
-          echo "Test-host product naming OK"
+          set -euo pipefail
+          xcodebuild \
+            -project HUDController.xcodeproj \
+            -scheme HUDController \
+            -showBuildSettings \
+            | tee "$RUNNER_TEMP/build-settings.txt"
+          grep -q 'AMBIENT_IOS26_TEST' "$RUNNER_TEMP/build-settings.txt"
+          grep -q 'IPHONEOS_DEPLOYMENT_TARGET = 17.0' "$RUNNER_TEMP/build-settings.txt"
+          echo "Temporary ambient-test compilation condition is active."
 
       - name: Select available iPhone Simulator
+        shell: bash
         run: |
           set -euo pipefail
           UDID="$(xcrun simctl list devices available -j | python3 -c '
@@ -120,7 +103,7 @@ jobs:
           grep -A1 "@ObservationIgnored" ios/HUDController/Media/SpotifyMediaController.swift | grep -q "private lazy var"
           echo "Spotify lazy internals are excluded from Observation."
 
-      - name: Build for iOS Simulator
+      - name: Build ambient test for iOS Simulator
         working-directory: ios
         run: |
           set -o pipefail
@@ -132,7 +115,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Run unit tests
+      - name: Run ambient-compatible unit tests
         working-directory: ios
         run: |
           set -o pipefail

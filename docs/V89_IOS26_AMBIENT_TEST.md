@@ -42,3 +42,17 @@ No ambient-light code needs to be reimplemented.  Use the normal
 `ios/project.yml` and existing Xcode-27 TestFlight workflow again.  The
 Xcode-26-only stub files are guarded by `AMBIENT_IOS26_TEST` and therefore do
 not declare anything in the normal target.
+
+## v89.1 CI correction
+
+The first v89 push still triggered the legacy `iOS CI` workflow on the
+`xcode-27` preview runner. That build exposed one real Swift concurrency error
+in the new startup fade helper: the nested async `fade` function lost the
+surrounding main-actor isolation and called `sendBrightness` from a nonisolated
+context.
+
+v89.1 explicitly marks the helper `@MainActor` and changes the automatic
+`iOS CI` workflow to build `project-ios26-ambient.yml` on `macos-26`. The old
+Xcode 27 screen-capture CI is preserved as `Future iOS 27 Screen Capture CI
+(Manual)` and no longer runs automatically while this temporary branch is in
+use.

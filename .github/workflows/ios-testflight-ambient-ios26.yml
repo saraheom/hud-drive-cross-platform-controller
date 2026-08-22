@@ -14,11 +14,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select stable Xcode 26.6 toolchain
+      - name: Select stable Xcode 26 toolchain
+        shell: bash
         run: |
           set -euo pipefail
-          if [ -d /Applications/Xcode_26.6.app ]; then
-            sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          SELECTED="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print | sort -V | tail -1)"
+          if [[ -n "$SELECTED" ]]; then
+            echo "Selecting $SELECTED"
+            sudo xcode-select -s "$SELECTED/Contents/Developer"
+          else
+            echo "No explicit Xcode_26*.app bundle found; checking runner default."
           fi
           xcodebuild -version
           IOS_SDK="$(xcrun --sdk iphoneos --show-sdk-version)"
