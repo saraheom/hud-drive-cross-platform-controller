@@ -73,6 +73,7 @@ final class HudOBDController {
     private(set) var connected = false
     private(set) var supportedPIDs = ""
     private(set) var status = "Not connected"
+    var onConnectionChanged: ((Bool) -> Void)?
 
     var freerideLeft: HudSideWidget { didSet { saveWidget(freerideLeft, key: "HUD.Widget.freerideLeft") } }
     var freerideRight: HudSideWidget { didSet { saveWidget(freerideRight, key: "HUD.Widget.freerideRight") } }
@@ -116,6 +117,7 @@ final class HudOBDController {
             } else if self.autoConnect {
                 self.startAutoConnectLoop(reason: "HUD reported OBD disconnected")
             }
+            self.onConnectionChanged?(connected)
             self.logger.log("OBD EVENT", "connected=\(connected), supported=\(pids)")
         }
     }
@@ -163,6 +165,7 @@ final class HudOBDController {
         connected = false
         supportedPIDs = ""
         status = "Disconnect requested"
+        onConnectionChanged?(false)
         bluetooth.enqueue(
             HudCommands.obdConnection(enabled: false, deviceName: deviceName),
             label: "OBD disconnect"
@@ -223,6 +226,7 @@ final class HudOBDController {
         connected = false
         supportedPIDs = ""
         status = autoConnect ? "HUD reset detected; reconnecting OBD…" : "HUD reset detected"
+        onConnectionChanged?(false)
         logger.log("OBD SESSION", "\(reason); cleared stale OBD connection state")
 
         if autoConnect {
@@ -240,8 +244,12 @@ final class HudOBDController {
         autoConnectAttempt = 0
         connected = false
         supportedPIDs = ""
-        status = "HUD disconnected"
-        logger.log("OBD SESSION", "HUD BLE transport disconnected; cleared OBD state")
+        status = "HUD disconnected — physical OBD power unknown"
+        // Do NOT emit a physical-power-negative signal here. The HUD itself can
+        // reboot/overheat while the independently powered OBD2 adapter remains
+        // alive. AmbientLightMonitor decides engine OFF from its independent OBD
+        // BLE witness instead of conflating HUD transport loss with OBD power loss.
+        logger.log("OBD SESSION", "HUD BLE transport disconnected; cleared HUD-side OBD link state only; physical OBD power remains unknown")
     }
 
     private func startAutoConnectLoop(reason: String) {

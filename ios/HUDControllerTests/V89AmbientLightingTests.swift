@@ -35,15 +35,31 @@ final class V89AmbientLightingTests: XCTestCase {
         XCTAssertTrue(source.contains("absenceConfirmationWindows = 3"))
     }
 
-    func testBLEDIM2WritesRemainBlockedUntilCaptured() throws {
+    func testBLEDIM2ExperimentalCB01PacketsAndFFF1Path() throws {
+        XCTAssertEqual(
+            Array(BLEDIM2Protocol.power(true)),
+            [0x7E, 0xFF, 0x04, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xEF]
+        )
+        XCTAssertEqual(
+            Array(BLEDIM2Protocol.power(false)),
+            [0x7E, 0xFF, 0x04, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xEF]
+        )
+        XCTAssertEqual(
+            Array(BLEDIM2Protocol.color(AmbientRGB(red: 0x12, green: 0x34, blue: 0x56))),
+            [0x7E, 0xFF, 0x05, 0x03, 0x12, 0x34, 0x56, 0xFF, 0xEF]
+        )
+        XCTAssertEqual(
+            Array(BLEDIM2Protocol.brightness(50)),
+            [0x7E, 0xFF, 0x01, 0x32, 0x00, 0xFF, 0xFF, 0xFF, 0xEF]
+        )
+
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("HUDController/Vehicle/AmbientLightMonitor.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
-
-        XCTAssertTrue(source.contains("logBLEDIM2Unsupported"))
-        XCTAssertTrue(source.contains("supplied BLEDIM2 1.960 APK is packed"))
-        XCTAssertTrue(source.contains("AMBIENT GATT"))
+        XCTAssertTrue(source.contains("BLEDIM2 FFF0/FFF1 experimental"))
+        XCTAssertTrue(source.contains("isBLEDIMWriteCharacteristic"))
+        XCTAssertTrue(source.contains("EXPERIMENTAL CB01"))
     }
 }

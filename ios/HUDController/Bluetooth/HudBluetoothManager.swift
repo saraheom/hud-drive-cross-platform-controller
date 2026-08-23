@@ -68,6 +68,8 @@ final class HudBluetoothManager: NSObject {
         return autoReconnectEnabled ? "Enabled" : "Disabled"
     }
 
+    var userDisconnectRequested: Bool { userRequestedDisconnect }
+
     let logger: LogManager
 
     init(logger: LogManager) {

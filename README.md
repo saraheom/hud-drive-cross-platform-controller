@@ -91,3 +91,57 @@ Actions workflow **Build and Upload iOS 26 Ambient TestFlight**. It compiles
 with `ios/project-ios26-ambient.yml`, which excludes the iOS 27
 ScreenCaptureKit implementation but keeps the v89 ambient-light subsystem and
 the rest of the HUD controller. See `docs/V89_IOS26_AMBIENT_TEST.md`.
+
+## v90 — vehicle-aware ambient lighting + BLEDIM2/CB01 test control
+
+v90 builds on the iOS 26 ambient-test branch and adds the physical car-light
+state machine documented in `docs/V90_VEHICLE_AMBIENT_AUTOMATION.md`.
+
+Highlights:
+- enables experimental BLEDIM2/CB01 control on the physically observed
+  `FFF0/FFF1` GATT path;
+- auto-migrates the known Door, Dashboard and Center Console controller roles;
+- day startup pulses the Door light only;
+- night startup pulses all powered role lights synchronously;
+- later headlight activation fades in Dashboard + Center Console together;
+- shutdown test fades active lights to runtime 0 without overwriting preferred
+  brightness;
+- preserves the Xcode 26 temporary CI/TestFlight path and the reserved monotonic
+  TestFlight build-number range;
+- leaves the stock-default Automatic speed-warning packet behavior unchanged;
+  the missing physical orange threshold tick remains a separate visual-renderer
+  audit item.
+
+v90 final test packaging also keeps late GATT readiness eligible for the normal
+headlight-join fade and avoids persisting UserDefaults on every intermediate fade
+frame; only final runtime brightness states are committed.
+
+
+## v90.1 — engine-switched HUD/OBD power state
+
+The physical HUD and OBD2 adapter in this vehicle are both hardwired to an
+engine-switched fuse. v90.1 therefore uses that power domain directly instead of
+requiring a live RPM PID:
+
+- HUD transport ready => engine power ON immediately;
+- OBD connection through the HUD => corroborating engine power ON;
+- HUD transport lost + OBD unavailable => engine OFF candidate;
+- both signals must stay absent for the configurable confirmation delay (default
+  2.0 s) before engine OFF is committed;
+- any HUD/OBD recovery during that window cancels the candidate as a transient BLE
+  dropout;
+- confirmed engine OFF automatically runs the existing fade-to-runtime-0 shutdown
+  path without changing preferred brightness.
+
+The manual **Fade Out Now** control remains for stationary diagnostics. Vehicle
+startup classification now requires engine power ON plus the door/headlight light
+presence pattern, so an ambient-light reconnect by itself cannot create a false
+new driving session.
+
+## v90.2 — HUD thermal/reboot protection with independent OBD witness
+
+- A HUD BLE disconnect by itself no longer counts as engine OFF.
+- HUD-side OBD link state is cleared on HUD loss for UI correctness, but that event is no longer emitted as physical OBD power loss.
+- The existing ambient CoreBluetooth scan watches the configured OBD name (`OBDII` by default) and can learn its iOS UUID when the HUD is deliberately switched off while the engine remains running.
+- Once calibrated, direct OBD BLE advertisements veto shutdown during HUD-only overheat/reboot outages.
+- Automatic shutdown is inhibited until the independent OBD witness is calibrated. If the OBD adapter is Bluetooth Classic and cannot be observed by iOS, the app refuses to infer engine OFF and keeps `Fade Out Now` as the safe manual path.

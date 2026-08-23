@@ -31,6 +31,140 @@ struct AmbientLightingView: View {
                     }
                 }
 
+                section("VEHICLE-AWARE LIGHTING") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Toggle("Enable vehicle-aware startup / headlight automation", isOn: Binding(
+                            get: { monitor.vehicleAutomationEnabled },
+                            set: { monitor.vehicleAutomationEnabled = $0 }
+                        ))
+
+                        HStack(alignment: .top) {
+                            Image(systemName: monitor.vehicleSessionActive ? "car.fill" : "car")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(monitor.vehicleAutomationStatus)
+                                    .font(.subheadline)
+                                Text("HUD power confirms engine ON. During a HUD-only outage, an independently observed OBD2 BLE advertisement keeps engine power ON. Automatic shutdown is inhibited until that OBD witness has been calibrated.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(monitor.enginePowerPresent ? Color.green : Color.secondary)
+                                .frame(width: 9, height: 9)
+                            Text(monitor.enginePowerStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "wave.3.right")
+                                .foregroundStyle(.secondary)
+                            Text(monitor.independentOBDWitnessStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text("OBD witness calibration: while the engine remains running, switch only the physical HUD off once. If the OBD2 adapter is BLE and resumes advertising, HUD Controller learns its iOS UUID automatically. A later HUD thermal reboot will then be ignored while that OBD witness remains present.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+
+                        Picker("Startup pulses", selection: Binding(
+                            get: { monitor.vehicleStartupCycles },
+                            set: { monitor.setVehicleStartupCycles($0) }
+                        )) {
+                            Text("1×").tag(1)
+                            Text("2×").tag(2)
+                        }
+                        .pickerStyle(.segmented)
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
+                        valueSlider(
+                            title: "Startup pulse duration",
+                            value: Binding(
+                                get: { monitor.vehicleStartupPulseDurationSeconds },
+                                set: { monitor.setVehicleStartupPulseDuration($0) }
+                            ),
+                            range: 0.4...6.0,
+                            step: 0.1,
+                            suffix: "s"
+                        )
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
+                        valueSlider(
+                            title: "Day/night classification window",
+                            value: Binding(
+                                get: { monitor.startupClassificationSeconds },
+                                set: { monitor.setStartupClassificationDuration($0) }
+                            ),
+                            range: 1.0...8.0,
+                            step: 0.5,
+                            suffix: "s"
+                        )
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
+                        valueSlider(
+                            title: "Headlight join fade",
+                            value: Binding(
+                                get: { monitor.headlightJoinFadeSeconds },
+                                set: { monitor.setHeadlightJoinFadeDuration($0) }
+                            ),
+                            range: 0.4...6.0,
+                            step: 0.1,
+                            suffix: "s"
+                        )
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
+                        valueSlider(
+                            title: "Engine-off confirmation",
+                            value: Binding(
+                                get: { monitor.engineOffConfirmationSeconds },
+                                set: { monitor.setEngineOffConfirmationDuration($0) }
+                            ),
+                            range: 0.5...8.0,
+                            step: 0.5,
+                            suffix: "s"
+                        )
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
+                        valueSlider(
+                            title: "Shutdown fade",
+                            value: Binding(
+                                get: { monitor.shutdownFadeSeconds },
+                                set: { monitor.setShutdownFadeDuration($0) }
+                            ),
+                            range: 0.4...10.0,
+                            step: 0.1,
+                            suffix: "s"
+                        )
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
+                        HStack {
+                            Button("Preview Current Startup") {
+                                monitor.previewVehicleStartupNow()
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Fade Out Now") {
+                                monitor.fadeOutForVehicleShutdown()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
+                        Button("Restore Preferred Brightness") {
+                            monitor.restorePreferredBrightnessNow()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
+                        Text("Safety rule: a HUD disconnect alone never means engine OFF. Automatic shutdown is allowed only after the independent OBD BLE witness has been calibrated, the HUD is absent, the OBD witness fails to appear after its acquisition window, and the engine-off confirmation delay also expires. If the OBD adapter is Bluetooth Classic and cannot be seen by iOS, automatic shutdown stays inhibited rather than risking a false fade; Fade Out Now remains available.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 section("PAIRED LIGHTS") {
                     VStack(spacing: 10) {
                         if monitor.pairedDevices.isEmpty {
@@ -147,9 +281,9 @@ struct AmbientLightingView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Lotus Lantern / ELK-BLEDOM: full power, RGB and brightness control", systemImage: "checkmark.circle.fill")
                             .font(.subheadline)
-                        Label("BLEDIM2: discovery, pairing, reconnect and GATT fingerprint logging are enabled", systemImage: "waveform.path.ecg")
+                        Label("BLEDIM2 / CB01: experimental FFF0/FFF1 power, RGB and brightness control", systemImage: "testtube.2")
                             .font(.subheadline)
-                        Text("The supplied BLEDIM2 1.960 APK is Jiagu-packed, so its write packets are not statically recoverable from JADX. HUD Controller will not guess commands. After the two units connect, the exported HUD log will contain their services and writable characteristics; one Bluetooth HCI command capture from the BLEDIM2 app will complete that adapter.")
+                        Text("Your two BLEDIM controllers both exposed FFF0 → FFF1 (writeWithoutResponse + notify). v90 enables the common CB01/BLEDIM 9-byte command family on that exact path and logs every transmitted packet. This payload profile could not be extracted from the Jiagu-packed BLEDIM2 APK, so validate it while stationary before relying on automation.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -174,6 +308,26 @@ struct AmbientLightingView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HudCard { content() }
+        }
+    }
+
+    @ViewBuilder
+    private func valueSlider(
+        title: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double,
+        suffix: String
+    ) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(String(format: "%.1f %@", value.wrappedValue, suffix))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: value, in: range, step: step)
         }
     }
 
@@ -264,6 +418,22 @@ struct AmbientDeviceControlView: View {
                                 }
                             }
 
+                            Picker("Vehicle role", selection: Binding<AmbientLightRole?>(
+                                get: { monitor.pairedDevice(deviceID)?.role },
+                                set: { monitor.setRole(deviceID, to: $0) }
+                            )) {
+                                Text("Unassigned").tag(AmbientLightRole?.none)
+                                ForEach(AmbientLightRole.allCases) { role in
+                                    Text(role.displayName).tag(Optional(role))
+                                }
+                            }
+
+                            if let role = device.role {
+                                Text(role.powerSourceDescription)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
                             Toggle("Auto-connect", isOn: Binding(
                                 get: { monitor.pairedDevice(deviceID)?.autoConnect ?? false },
                                 set: { monitor.setAutoConnect(deviceID, enabled: $0) }
@@ -279,42 +449,49 @@ struct AmbientDeviceControlView: View {
                     }
 
                     section("LIGHT CONTROL") {
-                        if device.protocolKind == .bledim2 {
-                            BLEDIM2PendingControlCard(connected: monitor.isConnected(deviceID))
-                        } else {
-                            VStack(alignment: .leading, spacing: 14) {
-                                Toggle("Power", isOn: Binding(
-                                    get: { monitor.pairedDevice(deviceID)?.powerOn ?? false },
-                                    set: { monitor.setPower(deviceID, on: $0) }
-                                ))
+                        VStack(alignment: .leading, spacing: 14) {
+                            Toggle("Power", isOn: Binding(
+                                get: { monitor.pairedDevice(deviceID)?.powerOn ?? false },
+                                set: { monitor.setPower(deviceID, on: $0) }
+                            ))
 
-                                ColorPicker("Color", selection: $color, supportsOpacity: false)
-                                    .onChange(of: color) { _, newColor in
-                                        monitor.setColor(deviceID, color: newColor.ambientRGB)
-                                    }
-
-                                HStack {
-                                    Text("Brightness")
-                                    Spacer()
-                                    Text("\(Int(brightness))%")
-                                        .monospacedDigit()
+                            ColorPicker("Color", selection: $color, supportsOpacity: false)
+                                .onChange(of: color) { _, newColor in
+                                    monitor.setColor(deviceID, color: newColor.ambientRGB)
                                 }
-                                Slider(
-                                    value: $brightness,
-                                    in: 0...100,
-                                    step: 1,
-                                    onEditingChanged: { editing in
-                                        if !editing {
-                                            monitor.setBrightness(deviceID, percent: Int(brightness))
-                                        }
-                                    }
-                                )
 
-                                if !monitor.isControllable(deviceID) {
-                                    Text("Waiting for Lotus Lantern FFF3 write characteristic. The controls are saved locally and will be restored when the device is ready.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                            HStack {
+                                Text("Preferred brightness")
+                                Spacer()
+                                Text("\(Int(brightness))%")
+                                    .monospacedDigit()
+                            }
+                            Slider(
+                                value: $brightness,
+                                in: 0...100,
+                                step: 1,
+                                onEditingChanged: { editing in
+                                    if !editing {
+                                        monitor.setBrightness(deviceID, percent: Int(brightness))
+                                    }
                                 }
+                            )
+
+                            if let current = monitor.pairedDevice(deviceID)?.lastAppliedBrightness {
+                                LabeledContent("Last applied", value: "\(current)%")
+                                    .font(.caption)
+                            }
+
+                            if device.protocolKind == .bledim2 {
+                                Label("Experimental CB01/BLEDIM profile on FFF0/FFF1", systemImage: "testtube.2")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+
+                            if !monitor.isControllable(deviceID) {
+                                Text("Waiting for the controller's writable characteristic. Selections are saved locally and will be applied when control becomes ready.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -325,7 +502,6 @@ struct AmbientDeviceControlView: View {
                                 get: { monitor.pairedDevice(deviceID)?.startupAnimationEnabled ?? false },
                                 set: { monitor.setStartupAnimationEnabled(deviceID, enabled: $0) }
                             ))
-                            .disabled(device.protocolKind != .lotusLantern)
 
                             Picker("Fade pulses", selection: Binding(
                                 get: { monitor.pairedDevice(deviceID)?.startupCycles ?? 1 },
@@ -335,7 +511,6 @@ struct AmbientDeviceControlView: View {
                                 Text("2×").tag(2)
                             }
                             .pickerStyle(.segmented)
-                            .disabled(device.protocolKind != .lotusLantern)
 
                             HStack {
                                 Text("Pulse duration")
@@ -347,15 +522,16 @@ struct AmbientDeviceControlView: View {
                                 get: { monitor.pairedDevice(deviceID)?.startupDurationSeconds ?? 1.5 },
                                 set: { monitor.setStartupDuration(deviceID, seconds: $0) }
                             ), in: 0.4...5.0, step: 0.1)
-                            .disabled(device.protocolKind != .lotusLantern)
 
                             Button("Preview Startup Animation") {
                                 monitor.previewStartupAnimation(deviceID)
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(device.protocolKind != .lotusLantern || !monitor.isControllable(deviceID))
+                            .disabled(!monitor.isControllable(deviceID))
 
-                            Text("A fresh session fades 0 → target → 0 once or twice, then fades back to the saved target brightness. A short BLE dropout does not replay the animation; the device must stay disconnected for 15 seconds first.")
+                            Text(monitor.vehicleAutomationEnabled
+                                 ? "Vehicle-aware mode supersedes this per-device reconnect animation so day/night pulses stay synchronized. Use Preview Current Startup on the main Ambient Lighting page."
+                                 : "A fresh session fades 0 → target → 0 once or twice, then fades back to the saved target brightness. A short BLE dropout does not replay the animation; the device must stay disconnected for 15 seconds first.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -409,24 +585,6 @@ struct AmbientDeviceControlView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.caption).foregroundStyle(.secondary)
             HudCard { content() }
-        }
-    }
-}
-
-private struct BLEDIM2PendingControlCard: View {
-    let connected: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(
-                connected ? "Connected for protocol diagnostics" : "Waiting for BLEDIM2 controller",
-                systemImage: connected ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash"
-            )
-            .font(.headline)
-
-            Text("Power, color, brightness and startup animation are intentionally disabled for this protocol in v89. The 1.960 APK is protected by Jiagu and does not expose its BLE write commands to JADX. HUD Controller is logging the controller's complete GATT fingerprint so we can add exact packets without sending unsafe guesses.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 }
@@ -514,13 +672,13 @@ struct AmbientGroupControlView: View {
                             )
                             .disabled(group.memberIDs.isEmpty)
 
-                            let pendingCount = group.memberIDs.filter {
+                            let experimentalCount = group.memberIDs.filter {
                                 monitor.pairedDevice($0)?.protocolKind == .bledim2
                             }.count
-                            if pendingCount > 0 {
-                                Text("\(pendingCount) BLEDIM2 member\(pendingCount == 1 ? "" : "s") will keep the selected state saved, but write commands are skipped until the BLEDIM2 packet adapter is captured.")
+                            if experimentalCount > 0 {
+                                Text("\(experimentalCount) BLEDIM2/CB01 member\(experimentalCount == 1 ? " uses" : "s use") the experimental FFF1 compatibility profile; every group TX is logged.")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(.orange)
                             }
                         }
                     }

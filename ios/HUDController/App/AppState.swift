@@ -36,12 +36,17 @@ final class AppState {
             self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
         }
 
+        obd.onConnectionChanged = { [weak ambientLight] connected in
+            ambientLight?.obdPowerSignal(connected)
+        }
+
         spotify.onTrackChanged = { [weak self] artist, track in
             self?.pushSpotifyMetadataToHUD(artist: artist, track: track)
         }
 
         bluetooth.onTransportReady = { [weak self] in
             guard let self else { return }
+            self.ambientLight.hudTransportPowerSignal(true)
             self.speedEngine.primeRectangularStyle()
 
             if #available(iOS 27.0, *),
@@ -60,6 +65,11 @@ final class AppState {
 
         bluetooth.onTransportDisconnected = { [weak self] in
             guard let self else { return }
+            if !self.bluetooth.userDisconnectRequested {
+                self.ambientLight.hudTransportPowerSignal(false)
+            } else {
+                self.logger.log("AMBIENT ENGINE", "Ignoring user-requested HUD disconnect as an engine-power OFF signal")
+            }
             self.hudRehydrateTask?.cancel()
             self.hudRehydrateTask = nil
             self.hudReassertTask?.cancel()

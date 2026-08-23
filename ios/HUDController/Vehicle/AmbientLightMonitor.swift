@@ -2,8 +2,9 @@ import Foundation
 import CoreBluetooth
 import Observation
 
-/// v89 expands the original BLEDOM presence monitor into a multi-device ambient
-/// lighting controller while preserving the HUD Auto Brightness trigger path.
+/// v90.1 expands the original BLEDOM presence monitor into a multi-device ambient
+/// lighting controller, BLEDIM2/CB01 test adapter and vehicle-power choreography
+/// while preserving the HUD Auto Brightness trigger path.
 ///
 /// One CBCentralManager owns all ambient-light BLE work so the controller UI and
 /// the legacy BLEDOM presence detector never compete for the same peripheral.
@@ -64,7 +65,64 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         absenceTimeoutSeconds = Self.clampedTimeout(value)
     }
 
-    // MARK: - v89 controller state
+    // MARK: - v90 vehicle-aware automation
+
+    var vehicleAutomationEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(vehicleAutomationEnabled, forKey: "HUD.Ambient.v90.vehicleAutomation")
+            if vehicleAutomationEnabled {
+                evaluateVehicleLightingAutomation()
+            } else {
+                resetVehicleAutomationRuntime(reason: "automation disabled")
+            }
+        }
+    }
+
+    var vehicleStartupCycles: Int {
+        didSet { UserDefaults.standard.set(max(1, min(2, vehicleStartupCycles)), forKey: "HUD.Ambient.v90.startupCycles") }
+    }
+    var vehicleStartupPulseDurationSeconds: Double {
+        didSet { UserDefaults.standard.set(max(0.4, min(6.0, vehicleStartupPulseDurationSeconds)), forKey: "HUD.Ambient.v90.startupDuration") }
+    }
+    var startupClassificationSeconds: Double {
+        didSet { UserDefaults.standard.set(max(1.0, min(8.0, startupClassificationSeconds)), forKey: "HUD.Ambient.v90.classification") }
+    }
+    var headlightJoinFadeSeconds: Double {
+        didSet { UserDefaults.standard.set(max(0.4, min(6.0, headlightJoinFadeSeconds)), forKey: "HUD.Ambient.v90.headlightFade") }
+    }
+    var shutdownFadeSeconds: Double {
+        didSet { UserDefaults.standard.set(max(0.4, min(10.0, shutdownFadeSeconds)), forKey: "HUD.Ambient.v90.shutdownFade") }
+    }
+    var engineOffConfirmationSeconds: Double {
+        didSet { UserDefaults.standard.set(max(0.5, min(8.0, engineOffConfirmationSeconds)), forKey: "HUD.Ambient.v90.engineOffConfirmation") }
+    }
+
+    private(set) var vehicleAutomationStatus = "Idle — waiting for engine-switched HUD power"
+    private(set) var enginePowerPresent = false
+    private(set) var enginePowerStatus = "Engine power unknown — waiting for HUD / OBD"
+    private(set) var vehicleSessionActive = false
+    private(set) var vehicleHeadlightsActive = false
+    private(set) var vehicleShutdownLatched = false
+
+    private var startupClassificationTask: Task<Void, Never>?
+    private var headlightJoinTask: Task<Void, Never>?
+    private var vehicleAnimationTask: Task<Void, Never>?
+    private var vehicleStartupCompleted = false
+    private var vehicleJoinedHeadlightIDs: Set<UUID> = []
+    private var allPowerAbsentSince: Date?
+    private var previousHeadlightPowerPresent = false
+    private var hudEnginePowerSignalPresent = false
+    private var obdEnginePowerSignalPresent = false
+    private var engineOffConfirmationTask: Task<Void, Never>?
+    private var hudOutageBeganAt: Date?
+    private var directOBDLastSeen = Date.distantPast
+    private var directOBDPeripheralID: UUID?
+    private var directOBDWitnessProven: Bool
+    private let directOBDRecentSeconds: TimeInterval = 3.0
+    private let directOBDAcquireWindowSeconds: TimeInterval = 3.0
+    private(set) var independentOBDWitnessStatus = "Independent OBD witness not calibrated"
+
+    // MARK: - v90 controller state
 
     private(set) var discoveredDevices: [AmbientDiscoveredDevice] = []
     private(set) var pairedDevices: [AmbientLightDevice]
@@ -114,6 +172,26 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ? legacyEnabled : d.bool(forKey: "HUD.Ambient.hudBrightnessTrigger")
         self.absenceTimeoutSeconds = d.object(forKey: "HUD.Ambient.timeout") == nil
             ? 5 : Self.clampedTimeout(d.integer(forKey: "HUD.Ambient.timeout"))
+        self.vehicleAutomationEnabled = d.object(forKey: "HUD.Ambient.v90.vehicleAutomation") == nil
+            ? false : d.bool(forKey: "HUD.Ambient.v90.vehicleAutomation")
+        self.vehicleStartupCycles = d.object(forKey: "HUD.Ambient.v90.startupCycles") == nil
+            ? 1 : max(1, min(2, d.integer(forKey: "HUD.Ambient.v90.startupCycles")))
+        self.vehicleStartupPulseDurationSeconds = d.object(forKey: "HUD.Ambient.v90.startupDuration") == nil
+            ? 1.5 : max(0.4, min(6.0, d.double(forKey: "HUD.Ambient.v90.startupDuration")))
+        self.startupClassificationSeconds = d.object(forKey: "HUD.Ambient.v90.classification") == nil
+            ? 4.0 : max(1.0, min(8.0, d.double(forKey: "HUD.Ambient.v90.classification")))
+        self.headlightJoinFadeSeconds = d.object(forKey: "HUD.Ambient.v90.headlightFade") == nil
+            ? 1.5 : max(0.4, min(6.0, d.double(forKey: "HUD.Ambient.v90.headlightFade")))
+        self.shutdownFadeSeconds = d.object(forKey: "HUD.Ambient.v90.shutdownFade") == nil
+            ? 2.0 : max(0.4, min(10.0, d.double(forKey: "HUD.Ambient.v90.shutdownFade")))
+        self.engineOffConfirmationSeconds = d.object(forKey: "HUD.Ambient.v90.engineOffConfirmation") == nil
+            ? 2.0 : max(0.5, min(8.0, d.double(forKey: "HUD.Ambient.v90.engineOffConfirmation")))
+        self.directOBDWitnessProven = d.bool(forKey: "HUD.Ambient.v90_2.directOBDWitnessProven")
+        if let raw = d.string(forKey: "HUD.Ambient.v90_2.directOBDPeripheralUUID") {
+            self.directOBDPeripheralID = UUID(uuidString: raw)
+        } else {
+            self.directOBDPeripheralID = nil
+        }
         self.pairedDevices = Self.decode([AmbientLightDevice].self, key: "HUD.Ambient.v89.pairedDevices") ?? []
         self.groups = Self.decode([AmbientLightGroup].self, key: "HUD.Ambient.v89.groups") ?? []
 
@@ -126,6 +204,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
 
         migrateLegacyBLEDOMPairingIfNeeded()
+        migrateKnownVehicleRoles()
+        independentOBDWitnessStatus = directOBDWitnessProven
+            ? "Independent OBD BLE witness calibrated"
+            : "Not calibrated — switch only the HUD off once while the engine stays on"
     }
 
     // MARK: - Persistence
@@ -168,6 +250,28 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         logger.log("AMBIENT CTRL", "Migrated remembered BLEDOM \(id) into v89 ambient controller")
     }
 
+    private static func knownVehicleRole(for id: UUID) -> AmbientLightRole? {
+        let upper = id.uuidString.uppercased()
+        if upper.hasPrefix("FBD8C9A0-") { return .door }
+        if upper.hasPrefix("7A3B5F81-") { return .dashboard }
+        if upper.hasPrefix("51FA23D6-") { return .centerConsole }
+        return nil
+    }
+
+    /// v90 knows the three controllers from the supplied physical test. This is
+    /// only a migration convenience; the role remains editable in the UI.
+    private func migrateKnownVehicleRoles() {
+        var changed = false
+        for index in pairedDevices.indices where pairedDevices[index].role == nil {
+            if let role = Self.knownVehicleRole(for: pairedDevices[index].id) {
+                pairedDevices[index].role = role
+                changed = true
+                logger.log("AMBIENT ROLE", "Auto-assigned \(pairedDevices[index].displayName) → \(role.displayName)")
+            }
+        }
+        if changed { persistPairedDevices() }
+    }
+
     // MARK: - Start / stop / discovery
 
     func start() {
@@ -206,6 +310,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         animationTasks.removeAll()
         sessionResetTasks.values.forEach { $0.cancel() }
         sessionResetTasks.removeAll()
+        startupClassificationTask?.cancel()
+        startupClassificationTask = nil
+        headlightJoinTask?.cancel()
+        headlightJoinTask = nil
+        vehicleAnimationTask?.cancel()
+        vehicleAnimationTask = nil
+        engineOffConfirmationTask?.cancel()
+        engineOffConfirmationTask = nil
 
         var idsToDisconnect = Set(pairedDevices.map(\.id))
         if let trackedPeripheral { idsToDisconnect.insert(trackedPeripheral.identifier) }
@@ -306,7 +418,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 id: discovered.id,
                 customName: custom,
                 advertisedName: discovered.advertisedName,
-                protocolKind: kind
+                protocolKind: kind,
+                role: Self.knownVehicleRole(for: discovered.id)
             )
         )
         persistPairedDevices()
@@ -353,6 +466,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         if let peripheral = peripheralsByID[id], peripheral.state == .connected {
             peripheral.discoverServices(nil)
         }
+    }
+
+    func setRole(_ id: UUID, to role: AmbientLightRole?) {
+        updateDevice(id) { $0.role = role }
+        logger.log("AMBIENT ROLE", "\(pairedDevice(id)?.displayName ?? id.uuidString) → \(role?.displayName ?? "Unassigned")")
+        evaluateVehicleLightingAutomation()
     }
 
     func setAutoConnect(_ id: UUID, enabled: Bool) {
@@ -403,9 +522,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     func isControllable(_ id: UUID) -> Bool {
-        guard let device = pairedDevice(id), device.protocolKind == .lotusLantern else { return false }
-        guard !isEncryptedLotusName(device.advertisedName) else { return false }
+        guard let device = pairedDevice(id) else { return false }
+        if device.protocolKind == .lotusLantern && isEncryptedLotusName(device.advertisedName) { return false }
         return isConnected(id) && writeCharacteristicsByID[id] != nil
+    }
+
+    func isLogicallyPowered(_ id: UUID) -> Bool {
+        guard pairedDevice(id) != nil else { return false }
+        let recentlyAdvertised = lastSeenByID[id].map { Date().timeIntervalSince($0) <= 8 } ?? false
+        let connected = peripheralsByID[id]?.state == .connected
+        return recentlyAdvertised || connected
     }
 
     func connectionLabel(_ id: UUID) -> String {
@@ -418,10 +544,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         default: state = "Disconnected"
         }
 
-        if state == "Connected" && device.protocolKind == .bledim2 {
-            return "Connected • GATT diagnostics"
+        if state == "Connected" && writeCharacteristicsByID[id] != nil {
+            return device.protocolKind == .bledim2
+                ? "Connected • experimental FFF1 control ready"
+                : "Connected • control ready"
         }
-        if state == "Connected" && device.protocolKind == .lotusLantern && writeCharacteristicsByID[id] == nil {
+        if state == "Connected" && writeCharacteristicsByID[id] == nil {
             return "Connected • discovering control characteristic"
         }
         return state
@@ -458,7 +586,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         animationTasks[id]?.cancel()
         animationTasks[id] = nil
         let clamped = max(0, min(100, percent))
-        updateDevice(id) { $0.brightness = clamped }
+        updateDevice(id) {
+            $0.brightness = clamped
+            $0.lastAppliedBrightness = clamped
+        }
         sendBrightness(id, percent: clamped, reason: "manual")
     }
 
@@ -473,6 +604,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     func setStartupDuration(_ id: UUID, seconds: Double) {
         updateDevice(id) { $0.startupDurationSeconds = max(0.4, min(5.0, seconds)) }
     }
+
+    func setVehicleStartupCycles(_ cycles: Int) { vehicleStartupCycles = max(1, min(2, cycles)) }
+    func setVehicleStartupPulseDuration(_ seconds: Double) { vehicleStartupPulseDurationSeconds = max(0.4, min(6.0, seconds)) }
+    func setStartupClassificationDuration(_ seconds: Double) { startupClassificationSeconds = max(1.0, min(8.0, seconds)) }
+    func setHeadlightJoinFadeDuration(_ seconds: Double) { headlightJoinFadeSeconds = max(0.4, min(6.0, seconds)) }
+    func setShutdownFadeDuration(_ seconds: Double) { shutdownFadeSeconds = max(0.4, min(10.0, seconds)) }
+    func setEngineOffConfirmationDuration(_ seconds: Double) { engineOffConfirmationSeconds = max(0.5, min(8.0, seconds)) }
 
     func previewStartupAnimation(_ id: UUID) {
         animatedConnectionSession.remove(id)
@@ -504,37 +642,59 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func sendPower(_ id: UUID, on: Bool, reason: String) {
         guard let device = pairedDevice(id) else { return }
+        let data: Data
         switch device.protocolKind {
         case .lotusLantern:
-            writeLotus(LotusLanternProtocol.power(on), to: id, label: "power \(on ? "ON" : "OFF") \(reason)")
+            data = LotusLanternProtocol.power(on)
         case .bledim2:
-            logBLEDIM2Unsupported(device, command: "power")
+            data = BLEDIM2Protocol.power(on)
         }
+        writeAmbient(data, to: id, label: "power \(on ? "ON" : "OFF") \(reason)")
     }
 
     private func sendColor(_ id: UUID, color: AmbientRGB, reason: String) {
         guard let device = pairedDevice(id) else { return }
+        let data: Data
         switch device.protocolKind {
         case .lotusLantern:
-            writeLotus(LotusLanternProtocol.color(color), to: id, label: "RGB \(color.red),\(color.green),\(color.blue) \(reason)")
+            data = LotusLanternProtocol.color(color)
         case .bledim2:
-            logBLEDIM2Unsupported(device, command: "RGB")
+            data = BLEDIM2Protocol.color(color)
         }
+        writeAmbient(data, to: id, label: "RGB \(color.red),\(color.green),\(color.blue) \(reason)")
     }
 
     private func sendBrightness(_ id: UUID, percent: Int, reason: String) {
         guard let device = pairedDevice(id) else { return }
+        let clamped = max(0, min(100, percent))
+        let data: Data
         switch device.protocolKind {
         case .lotusLantern:
-            writeLotus(LotusLanternProtocol.brightness(percent), to: id, label: "brightness \(percent)% \(reason)")
+            data = LotusLanternProtocol.brightness(clamped)
         case .bledim2:
-            logBLEDIM2Unsupported(device, command: "brightness")
+            data = BLEDIM2Protocol.brightness(clamped)
         }
+        writeAmbient(data, to: id, label: "brightness \(clamped)% \(reason)")
     }
 
-    private func writeLotus(_ data: Data, to id: UUID, label: String) {
+    /// Sends runtime brightness without changing the user's preferred steady-state
+    /// brightness. This is the key invariant for vehicle shutdown: physical/last
+    /// applied state may end at zero while the next startup still knows its target.
+    private func applyRuntimeBrightness(_ id: UUID, percent: Int, reason: String, persist: Bool = false) {
+        let clamped = max(0, min(100, percent))
+        if let index = pairedDevices.firstIndex(where: { $0.id == id }) {
+            // Fade loops can emit dozens of frames in a couple of seconds. Keep the
+            // observable runtime state current, but avoid serializing the entire
+            // paired-device array to UserDefaults on every animation step.
+            pairedDevices[index].lastAppliedBrightness = clamped
+            if persist { persistPairedDevices() }
+        }
+        sendBrightness(id, percent: clamped, reason: reason)
+    }
+
+    private func writeAmbient(_ data: Data, to id: UUID, label: String) {
         guard let device = pairedDevice(id) else { return }
-        guard !isEncryptedLotusName(device.advertisedName) else {
+        if device.protocolKind == .lotusLantern && isEncryptedLotusName(device.advertisedName) {
             logger.log("AMBIENT CTRL", "Blocked encrypted ELK-* write for \(device.displayName); encrypted dialect is not enabled")
             return
         }
@@ -545,28 +705,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
 
         let writeType: CBCharacteristicWriteType
-        // LED controllers are often optimized for write-without-response. Use
-        // it when advertised so fades do not build a response queue; fall back
-        // to acknowledged writes on controllers that require them.
         if characteristic.properties.contains(.writeWithoutResponse) {
             writeType = .withoutResponse
         } else if characteristic.properties.contains(.write) {
             writeType = .withResponse
         } else {
-            logger.log("AMBIENT CTRL", "FFF3 is not writable for \(device.displayName)")
+            logger.log("AMBIENT CTRL", "Control characteristic is not writable for \(device.displayName)")
             return
         }
 
         peripheral.writeValue(data, for: characteristic, type: writeType)
-        logger.log("AMBIENT TX", "\(device.displayName) \(label): \(Self.hex(data))")
-    }
-
-    private func logBLEDIM2Unsupported(_ device: AmbientLightDevice, command: String) {
-        logger.log(
-            "AMBIENT BLEDIM2",
-            "Deferred \(command) for \(device.displayName): supplied BLEDIM2 1.960 APK is packed; capture exact write protocol first"
-        )
-        controllerStatus = "BLEDIM2 connected for diagnostics; write protocol capture still needed"
+        let qualifier = device.protocolKind == .bledim2 ? " [EXPERIMENTAL CB01]" : ""
+        logger.log("AMBIENT TX", "\(device.displayName)\(qualifier) \(label): \(Self.hex(data))")
     }
 
     private func isEncryptedLotusName(_ name: String) -> Bool {
@@ -583,16 +733,23 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     // MARK: - Startup animation
 
     private func restoreDeviceState(_ id: UUID) {
-        guard let device = pairedDevice(id), device.protocolKind == .lotusLantern else { return }
+        guard let device = pairedDevice(id), isControllable(id) else { return }
         sendColor(id, color: device.color, reason: "restore")
-        sendBrightness(id, percent: device.brightness, reason: "restore")
+        let runtimeTarget = vehicleAutomationEnabled ? device.runtimeBrightness : device.brightness
+        applyRuntimeBrightness(id, percent: runtimeTarget, reason: "restore")
         sendPower(id, on: device.powerOn, reason: "restore")
     }
 
     private func runStartupAnimationIfNeeded(_ id: UUID, force: Bool = false) {
         guard let device = pairedDevice(id),
-              device.protocolKind == .lotusLantern,
               isControllable(id) else { return }
+
+        // Vehicle-aware mode owns synchronization across all three lights. Never
+        // let a single-device reconnect independently replay the old pulse.
+        guard !vehicleAutomationEnabled else {
+            vehicleControlBecameReady(id)
+            return
+        }
 
         if !force && animatedConnectionSession.contains(id) {
             restoreDeviceState(id)
@@ -622,7 +779,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             )
             self.sendColor(id, color: device.color, reason: "startup")
             self.sendPower(id, on: true, reason: "startup")
-            self.sendBrightness(id, percent: 0, reason: "startup")
+            self.applyRuntimeBrightness(id, percent: 0, reason: "startup")
 
             @MainActor
             func fade(from: Int, to: Int) async -> Bool {
@@ -630,7 +787,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     guard !Task.isCancelled else { return false }
                     let fraction = Double(step) / Double(steps)
                     let value = Int((Double(from) + (Double(to - from) * fraction)).rounded())
-                    self.sendBrightness(id, percent: value, reason: "startup fade")
+                    self.applyRuntimeBrightness(id, percent: value, reason: "startup fade")
                     try? await Task.sleep(nanoseconds: stepNanoseconds)
                 }
                 return !Task.isCancelled
@@ -643,7 +800,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard await fade(from: 0, to: target) else { return }
 
             self.sendColor(id, color: device.color, reason: "startup final")
-            self.sendBrightness(id, percent: target, reason: "startup final")
+            self.applyRuntimeBrightness(id, percent: target, reason: "startup final", persist: true)
             self.sendPower(id, on: true, reason: "startup final")
             self.logger.log("AMBIENT ANIM", "Startup animation complete \(device.displayName)")
             self.animationTasks[id] = nil
@@ -665,6 +822,556 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             }
             self.sessionResetTasks[id] = nil
         }
+    }
+
+    // MARK: - Vehicle-aware choreography
+
+    private func deviceID(for role: AmbientLightRole) -> UUID? {
+        pairedDevices.first(where: { $0.role == role })?.id
+    }
+
+    private func roleIDs(_ roles: Set<AmbientLightRole>) -> [UUID] {
+        pairedDevices.compactMap { device in
+            guard let role = device.role, roles.contains(role) else { return nil }
+            return device.id
+        }
+    }
+
+    private func headlightPowerPresent() -> Bool {
+        roleIDs([.dashboard, .centerConsole]).contains(where: { isLogicallyPowered($0) })
+    }
+
+    private func allRolePowerAbsent() -> Bool {
+        let ids = pairedDevices.compactMap { $0.role == nil ? nil : $0.id }
+        guard !ids.isEmpty else { return true }
+        return ids.allSatisfy { !isLogicallyPowered($0) }
+    }
+
+    private func resetVehicleAutomationRuntime(reason: String) {
+        startupClassificationTask?.cancel()
+        startupClassificationTask = nil
+        headlightJoinTask?.cancel()
+        headlightJoinTask = nil
+        vehicleAnimationTask?.cancel()
+        vehicleAnimationTask = nil
+        engineOffConfirmationTask?.cancel()
+        engineOffConfirmationTask = nil
+        hudOutageBeganAt = nil
+        vehicleSessionActive = false
+        vehicleStartupCompleted = false
+        vehicleHeadlightsActive = false
+        previousHeadlightPowerPresent = false
+        vehicleShutdownLatched = false
+        vehicleJoinedHeadlightIDs.removeAll()
+        allPowerAbsentSince = nil
+        vehicleAutomationStatus = vehicleAutomationEnabled
+            ? (enginePowerPresent ? "Engine power ON — waiting for door-light power" : "Idle — waiting for engine-switched HUD power")
+            : "Vehicle automation disabled"
+        logger.log("AMBIENT AUTO", "Vehicle automation runtime reset: \(reason)")
+    }
+
+    /// The HUD and OBD2 adapter share the engine-switched power domain, but the
+    /// HUD can thermally reboot while the engine remains on. A HUD disconnect by
+    /// itself therefore NEVER means engine OFF. While the HUD is absent, the app
+    /// looks for the OBD2 adapter directly in the ambient CoreBluetooth scan.
+    /// Once that independent witness has been observed/calibrated, its continued
+    /// BLE presence vetoes shutdown during HUD-only outages. If the witness has
+    /// never been calibrated, automatic shutdown is inhibited rather than risking
+    /// a false fade while driving.
+    func hudTransportPowerSignal(_ present: Bool) {
+        hudEnginePowerSignalPresent = present
+        if present {
+            hudOutageBeganAt = nil
+            confirmEnginePowerOn(source: "HUD transport")
+        } else {
+            hudOutageBeganAt = Date()
+            engineOffConfirmationTask?.cancel()
+            engineOffConfirmationTask = nil
+            if isDirectOBDRecentlyPresent() {
+                confirmEnginePowerOn(source: "independent OBD BLE witness")
+            } else if directOBDWitnessProven {
+                enginePowerStatus = "HUD unavailable • waiting for independent OBD witness"
+                logger.log("AMBIENT ENGINE", "HUD transport lost; waiting for calibrated independent OBD witness before considering engine OFF")
+            } else {
+                enginePowerStatus = "HUD unavailable • OBD witness not calibrated • auto-shutdown inhibited"
+                logger.log("AMBIENT ENGINE", "HUD transport lost, but independent OBD witness is not calibrated; refusing automatic engine-OFF decision")
+            }
+        }
+    }
+
+    func obdPowerSignal(_ present: Bool) {
+        obdEnginePowerSignalPresent = present
+        if present {
+            confirmEnginePowerOn(source: "OBD2 connected through HUD")
+        } else if hudEnginePowerSignalPresent {
+            // The HUD itself still proves that the engine-switched power domain is ON.
+            confirmEnginePowerOn(source: "HUD transport")
+        } else {
+            evaluateIndependentOBDWitnessForEngineState()
+        }
+    }
+
+    private func currentOBDTargetName() -> String {
+        let stored = UserDefaults.standard.string(forKey: "HUD.OBD.deviceName") ?? "OBDII"
+        let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "OBDII" : trimmed
+    }
+
+    private func matchesIndependentOBDWitness(id: UUID, name: String) -> Bool {
+        if let known = directOBDPeripheralID, known == id { return true }
+        let target = currentOBDTargetName()
+        guard !name.isEmpty, !target.isEmpty else { return false }
+        return name.localizedCaseInsensitiveContains(target)
+    }
+
+    private func recordIndependentOBDWitness(id: UUID, name: String, rssi: Int) {
+        directOBDLastSeen = Date()
+        directOBDPeripheralID = id
+        if !directOBDWitnessProven {
+            directOBDWitnessProven = true
+            UserDefaults.standard.set(true, forKey: "HUD.Ambient.v90_2.directOBDWitnessProven")
+            UserDefaults.standard.set(id.uuidString, forKey: "HUD.Ambient.v90_2.directOBDPeripheralUUID")
+            logger.log("AMBIENT ENGINE", "Calibrated independent OBD BLE witness name=\(name.isEmpty ? currentOBDTargetName() : name) id=\(id)")
+        }
+        independentOBDWitnessStatus = "OBD witness present • \(name.isEmpty ? currentOBDTargetName() : name) • \(rssi) dBm"
+        if !hudEnginePowerSignalPresent {
+            confirmEnginePowerOn(source: "independent OBD BLE witness")
+        }
+    }
+
+    private func isDirectOBDRecentlyPresent(now: Date = Date()) -> Bool {
+        directOBDWitnessProven && now.timeIntervalSince(directOBDLastSeen) <= directOBDRecentSeconds
+    }
+
+    private func evaluateIndependentOBDWitnessForEngineState(now: Date = Date()) {
+        if hudEnginePowerSignalPresent || obdEnginePowerSignalPresent {
+            confirmEnginePowerOn(source: hudEnginePowerSignalPresent ? "HUD transport" : "OBD2 connected through HUD")
+            return
+        }
+
+        if isDirectOBDRecentlyPresent(now: now) {
+            engineOffConfirmationTask?.cancel()
+            engineOffConfirmationTask = nil
+            confirmEnginePowerOn(source: "independent OBD BLE witness")
+            return
+        }
+
+        guard directOBDWitnessProven else {
+            engineOffConfirmationTask?.cancel()
+            engineOffConfirmationTask = nil
+            enginePowerStatus = "HUD unavailable • OBD witness not calibrated • auto-shutdown inhibited"
+            return
+        }
+
+        // Give a powered OBD adapter a few seconds to resume advertising after
+        // its HUD-side Bluetooth link disappears. This is the discriminator
+        // between a HUD-only reboot and the whole engine-switched domain losing power.
+        if let began = hudOutageBeganAt, now.timeIntervalSince(began) < directOBDAcquireWindowSeconds {
+            enginePowerStatus = "HUD unavailable • checking OBD power witness…"
+            return
+        }
+
+        scheduleEnginePowerOffConfirmation(source: "HUD absent and calibrated OBD witness absent")
+    }
+
+    private func confirmEnginePowerOn(source: String) {
+        engineOffConfirmationTask?.cancel()
+        engineOffConfirmationTask = nil
+        let wasOff = !enginePowerPresent
+        enginePowerPresent = true
+        enginePowerStatus = "Engine power ON • \(source)"
+
+        if wasOff {
+            startupClassificationTask?.cancel()
+            startupClassificationTask = nil
+            headlightJoinTask?.cancel()
+            headlightJoinTask = nil
+            vehicleAnimationTask?.cancel()
+            vehicleAnimationTask = nil
+            vehicleSessionActive = false
+            vehicleStartupCompleted = false
+            vehicleHeadlightsActive = false
+            previousHeadlightPowerPresent = false
+            vehicleShutdownLatched = false
+            vehicleJoinedHeadlightIDs.removeAll()
+            allPowerAbsentSince = nil
+            vehicleAutomationStatus = "Engine power ON • waiting for door-light power"
+            logger.log("AMBIENT ENGINE", "Engine-switched power ON via \(source); armed fresh vehicle-light session")
+        }
+
+        evaluateVehicleLightingAutomation()
+    }
+
+    private func scheduleEnginePowerOffConfirmation(source: String) {
+        guard enginePowerPresent else {
+            enginePowerStatus = "Engine power OFF / unavailable"
+            return
+        }
+        guard !hudEnginePowerSignalPresent, !obdEnginePowerSignalPresent else {
+            enginePowerStatus = hudEnginePowerSignalPresent
+                ? "Engine power ON • HUD transport"
+                : "Engine power ON • OBD2 connected through HUD"
+            return
+        }
+        guard directOBDWitnessProven else {
+            enginePowerStatus = "HUD unavailable • OBD witness not calibrated • auto-shutdown inhibited"
+            return
+        }
+        guard !isDirectOBDRecentlyPresent() else {
+            confirmEnginePowerOn(source: "independent OBD BLE witness")
+            return
+        }
+        guard engineOffConfirmationTask == nil else { return }
+
+        let delay = max(0.5, engineOffConfirmationSeconds)
+        enginePowerStatus = "Engine power OFF candidate • OBD witness absent • confirming \(String(format: "%.1f", delay))s"
+        logger.log("AMBIENT ENGINE", "\(source); calibrated OBD witness absent; confirming engine OFF for \(String(format: "%.1f", delay))s")
+        engineOffConfirmationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled,
+                  !self.hudEnginePowerSignalPresent,
+                  !self.obdEnginePowerSignalPresent,
+                  !self.isDirectOBDRecentlyPresent() else { return }
+            self.engineOffConfirmationTask = nil
+            self.confirmEnginePowerOff()
+        }
+    }
+
+    private func confirmEnginePowerOff() {
+        guard enginePowerPresent else { return }
+        enginePowerPresent = false
+        enginePowerStatus = "Engine power OFF • HUD + calibrated OBD witness absent"
+        independentOBDWitnessStatus = directOBDWitnessProven
+            ? "Calibrated OBD witness absent"
+            : "Independent OBD witness not calibrated"
+        logger.log("AMBIENT ENGINE", "Engine-switched power OFF confirmed only after HUD loss + calibrated independent OBD witness absence")
+
+        if vehicleAutomationEnabled, vehicleSessionActive, !vehicleShutdownLatched {
+            performVehicleShutdownFade(trigger: "engine power OFF")
+        } else if vehicleAutomationEnabled {
+            vehicleAutomationStatus = "Engine power OFF • waiting for next engine start"
+        }
+    }
+
+    /// Called by the watchdog and after role/presence changes. Ambient-light BLE
+    /// presence still drives day/night/headlight state, while engine ON/OFF comes
+    /// from the separately powered HUD/OBD signals above.
+    private func evaluateVehicleLightingAutomation() {
+        guard vehicleAutomationEnabled, enabled else { return }
+
+        guard enginePowerPresent else {
+            vehicleAutomationStatus = vehicleShutdownLatched
+                ? "Engine power OFF • shutdown faded to 0%"
+                : "Waiting for engine-switched HUD / OBD power"
+            return
+        }
+
+        if allRolePowerAbsent() {
+            if allPowerAbsentSince == nil { allPowerAbsentSince = Date() }
+            if let since = allPowerAbsentSince, Date().timeIntervalSince(since) >= 15,
+               vehicleSessionActive || vehicleShutdownLatched {
+                resetVehicleAutomationRuntime(reason: "all three light power sources absent for 15s")
+            }
+        } else {
+            allPowerAbsentSince = nil
+        }
+
+        guard !vehicleShutdownLatched else {
+            vehicleAutomationStatus = "Shutdown faded to 0% — waiting for physical power-off"
+            return
+        }
+
+        let doorPresent = deviceID(for: .door).map { isLogicallyPowered($0) } ?? false
+        let headlightsPresent = headlightPowerPresent()
+
+        if !vehicleSessionActive && doorPresent && startupClassificationTask == nil {
+            beginVehicleStartupClassification()
+            return
+        }
+
+        if vehicleSessionActive && vehicleStartupCompleted {
+            if !previousHeadlightPowerPresent && headlightsPresent {
+                scheduleHeadlightJoinFade()
+            } else if previousHeadlightPowerPresent && !headlightsPresent {
+                vehicleJoinedHeadlightIDs.subtract(roleIDs([.dashboard, .centerConsole]))
+                vehicleHeadlightsActive = false
+                vehicleAutomationStatus = "Driving • headlights off • door light active"
+                logger.log("AMBIENT AUTO", "Headlight-fed lights lost physical power; no fade-out command is possible after power removal")
+            }
+        }
+        previousHeadlightPowerPresent = headlightsPresent
+    }
+
+    private func beginVehicleStartupClassification() {
+        vehicleSessionActive = true
+        vehicleStartupCompleted = false
+        vehicleShutdownLatched = false
+        previousHeadlightPowerPresent = headlightPowerPresent()
+        vehicleAutomationStatus = "Engine power ON • classifying day/night…"
+        logger.log(
+            "AMBIENT AUTO",
+            "Vehicle startup window begin \(String(format: "%.1f", startupClassificationSeconds))s; waiting for headlight-fed controllers"
+        )
+
+        // Any controller that becomes writable during this window is immediately
+        // forced to zero so the synchronized pulse starts from a known state.
+        for id in pairedDevices.compactMap({ $0.role == nil ? nil : $0.id }) where isControllable(id) {
+            prepareForVehicleStartup(id)
+        }
+
+        startupClassificationTask?.cancel()
+        startupClassificationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.startupClassificationSeconds))
+            guard !Task.isCancelled, self.vehicleAutomationEnabled, !self.vehicleShutdownLatched else { return }
+            self.startupClassificationTask = nil
+            self.finishVehicleStartupClassification()
+        }
+    }
+
+    private func finishVehicleStartupClassification() {
+        let nightStart = headlightPowerPresent()
+        let roleSet: Set<AmbientLightRole> = nightStart
+            ? [.door, .dashboard, .centerConsole]
+            : [.door]
+        let ids = roleIDs(roleSet).filter { isLogicallyPowered($0) && isControllable($0) }
+
+        vehicleHeadlightsActive = nightStart
+        previousHeadlightPowerPresent = nightStart
+        vehicleStartupCompleted = true
+        if nightStart {
+            // Only mark controllers that actually reached a writable state in
+            // this synchronized startup. A physically powered controller whose
+            // GATT setup finishes later must still be eligible for the normal
+            // headlight-join fade rather than being silently considered joined.
+            vehicleJoinedHeadlightIDs.formUnion(ids.filter {
+                pairedDevice($0)?.role?.isHeadlightFed == true
+            })
+            vehicleAutomationStatus = "Night startup • synchronized three-light pulse"
+            logger.log("AMBIENT AUTO", "Night startup classified; pulsing all powered role lights together")
+        } else {
+            vehicleAutomationStatus = "Day startup • door-light pulse"
+            logger.log("AMBIENT AUTO", "Day startup classified; pulsing door light only")
+        }
+        runVehicleStartupPulse(ids: ids, label: nightStart ? "night startup" : "day startup")
+    }
+
+    private func prepareForVehicleStartup(_ id: UUID) {
+        guard let device = pairedDevice(id), isControllable(id) else { return }
+        sendPower(id, on: true, reason: "vehicle startup prepare")
+        sendColor(id, color: device.color, reason: "vehicle startup prepare")
+        applyRuntimeBrightness(id, percent: 0, reason: "vehicle startup prepare")
+    }
+
+    private func runVehicleStartupPulse(ids: [UUID], label: String) {
+        let ids = ids.filter { isControllable($0) }
+        guard !ids.isEmpty else {
+            vehicleAutomationStatus += " • waiting for BLE control readiness"
+            return
+        }
+
+        vehicleAnimationTask?.cancel()
+        let cycles = max(1, min(2, vehicleStartupCycles))
+        let duration = max(0.4, vehicleStartupPulseDurationSeconds)
+        vehicleAnimationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for id in ids {
+                guard let device = self.pairedDevice(id) else { continue }
+                self.sendPower(id, on: true, reason: label)
+                self.sendColor(id, color: device.color, reason: label)
+                self.applyRuntimeBrightness(id, percent: 0, reason: "\(label) start")
+            }
+
+            let steps = 12
+            let halfFade = max(0.2, duration / 2.0)
+            let stepDelay = halfFade / Double(steps)
+
+            @MainActor
+            func fade(fractionFrom start: Double, to end: Double) async -> Bool {
+                for step in 1...steps {
+                    guard !Task.isCancelled else { return false }
+                    let t = Double(step) / Double(steps)
+                    let fraction = start + ((end - start) * t)
+                    for id in ids {
+                        guard let device = self.pairedDevice(id) else { continue }
+                        let value = Int((Double(device.brightness) * fraction).rounded())
+                        self.applyRuntimeBrightness(id, percent: value, reason: "\(label) synchronized fade")
+                    }
+                    try? await Task.sleep(for: .seconds(stepDelay))
+                }
+                return true
+            }
+
+            for _ in 0..<cycles {
+                guard await fade(fractionFrom: 0, to: 1) else { return }
+                guard await fade(fractionFrom: 1, to: 0) else { return }
+            }
+            guard await fade(fractionFrom: 0, to: 1) else { return }
+            for id in ids {
+                guard let device = self.pairedDevice(id) else { continue }
+                self.applyRuntimeBrightness(id, percent: device.brightness, reason: "\(label) final preferred", persist: true)
+            }
+            self.vehicleAnimationTask = nil
+            self.vehicleAutomationStatus = self.vehicleHeadlightsActive
+                ? "Driving • headlights on • all powered lights at preferred brightness"
+                : "Driving • daylight • door light at preferred brightness"
+            self.logger.log("AMBIENT AUTO", "Vehicle startup pulse complete: \(label)")
+        }
+    }
+
+    private func scheduleHeadlightJoinFade() {
+        guard headlightJoinTask == nil else { return }
+        vehicleHeadlightsActive = true
+        vehicleAutomationStatus = "Headlights detected • preparing dashboard + console fade-in"
+        headlightJoinTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            // Coalesce the two headlight-fed BLE controllers, which may become
+            // ready a fraction of a second apart even though power arrived together.
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, self.vehicleAutomationEnabled, !self.vehicleShutdownLatched else { return }
+            self.headlightJoinTask = nil
+            self.fadeInNewHeadlightDevices()
+        }
+    }
+
+    private func fadeInNewHeadlightDevices() {
+        let candidates = roleIDs([.dashboard, .centerConsole]).filter {
+            isLogicallyPowered($0) && isControllable($0) && !vehicleJoinedHeadlightIDs.contains($0)
+        }
+        guard !candidates.isEmpty else { return }
+        vehicleJoinedHeadlightIDs.formUnion(candidates)
+        vehicleHeadlightsActive = true
+        fade(ids: candidates, toPreferredOver: headlightJoinFadeSeconds, reason: "headlight join")
+        vehicleAutomationStatus = "Driving • headlights on • dashboard + console joined"
+        logger.log("AMBIENT AUTO", "Headlight OFF→ON; fading in \(candidates.count) headlight-fed light(s)")
+    }
+
+    private func fade(ids: [UUID], toPreferredOver seconds: Double, reason: String) {
+        let ids = ids.filter { isControllable($0) }
+        guard !ids.isEmpty else { return }
+        vehicleAnimationTask?.cancel()
+        vehicleAnimationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for id in ids {
+                guard let device = self.pairedDevice(id) else { continue }
+                self.sendPower(id, on: true, reason: reason)
+                self.sendColor(id, color: device.color, reason: reason)
+                self.applyRuntimeBrightness(id, percent: 0, reason: "\(reason) start")
+            }
+            let steps = 16
+            let delay = max(0.4, seconds) / Double(steps)
+            for step in 1...steps {
+                guard !Task.isCancelled else { return }
+                let fraction = Double(step) / Double(steps)
+                for id in ids {
+                    guard let device = self.pairedDevice(id) else { continue }
+                    let value = Int((Double(device.brightness) * fraction).rounded())
+                    self.applyRuntimeBrightness(id, percent: value, reason: reason)
+                }
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            for id in ids {
+                guard let device = self.pairedDevice(id) else { continue }
+                self.applyRuntimeBrightness(id, percent: device.brightness, reason: "\(reason) final preferred", persist: true)
+            }
+            self.vehicleAnimationTask = nil
+        }
+    }
+
+    /// Manual test entry point; automatic engine-power shutdown uses the same
+    /// implementation so there is only one fade-to-zero path to validate.
+    func fadeOutForVehicleShutdown() {
+        guard vehicleAutomationEnabled else {
+            vehicleAutomationStatus = "Enable vehicle automation first"
+            return
+        }
+        performVehicleShutdownFade(trigger: "manual Fade Out Now")
+    }
+
+    private func performVehicleShutdownFade(trigger: String) {
+        guard vehicleAutomationEnabled else { return }
+        startupClassificationTask?.cancel()
+        startupClassificationTask = nil
+        headlightJoinTask?.cancel()
+        headlightJoinTask = nil
+        vehicleAnimationTask?.cancel()
+
+        let ids = pairedDevices.compactMap { device -> UUID? in
+            guard device.role != nil, isLogicallyPowered(device.id), isControllable(device.id) else { return nil }
+            return device.id
+        }
+        vehicleShutdownLatched = true
+        vehicleAutomationStatus = "\(trigger) • fading powered lights to 0%"
+        logger.log("AMBIENT AUTO", "Shutdown fade trigger=\(trigger) for \(ids.count) powered controllable light(s); preferred brightness preserved")
+
+        vehicleAnimationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let starts = Dictionary(uniqueKeysWithValues: ids.compactMap { id in
+                self.pairedDevice(id).map { (id, $0.runtimeBrightness) }
+            })
+            let steps = 20
+            let delay = max(0.4, self.shutdownFadeSeconds) / Double(steps)
+            for step in 1...steps {
+                guard !Task.isCancelled else { return }
+                let remaining = 1.0 - (Double(step) / Double(steps))
+                for id in ids {
+                    let start = starts[id] ?? 0
+                    self.applyRuntimeBrightness(id, percent: Int((Double(start) * remaining).rounded()), reason: "vehicle shutdown fade")
+                }
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            for id in ids { self.applyRuntimeBrightness(id, percent: 0, reason: "vehicle shutdown final", persist: true) }
+            self.vehicleAnimationTask = nil
+            self.vehicleAutomationStatus = self.enginePowerPresent
+                ? "Manual shutdown preview complete • preferred brightness preserved"
+                : "Engine power OFF • shutdown faded to 0% • preferred brightness preserved"
+            self.logger.log("AMBIENT AUTO", "Shutdown fade complete trigger=\(trigger); lastApplied=0, preferred targets unchanged")
+        }
+    }
+
+    /// Convenient stationary test without power-cycling the car. It reclassifies
+    /// the currently powered set as day/night and runs the configured startup pulse.
+    func previewVehicleStartupNow() {
+        guard vehicleAutomationEnabled else { return }
+        vehicleShutdownLatched = false
+        vehicleSessionActive = true
+        vehicleStartupCompleted = true
+        finishVehicleStartupClassification()
+    }
+
+    func restorePreferredBrightnessNow() {
+        vehicleShutdownLatched = false
+        let ids = pairedDevices.compactMap { device -> UUID? in
+            guard device.role != nil, isLogicallyPowered(device.id), isControllable(device.id) else { return nil }
+            return device.id
+        }
+        fade(ids: ids, toPreferredOver: headlightJoinFadeSeconds, reason: "restore preferred")
+        vehicleAutomationStatus = "Restoring preferred brightness"
+    }
+
+    private func vehicleControlBecameReady(_ id: UUID) {
+        guard vehicleAutomationEnabled, let device = pairedDevice(id), device.role != nil else {
+            restoreDeviceState(id)
+            return
+        }
+        if vehicleShutdownLatched {
+            sendColor(id, color: device.color, reason: "shutdown reconnect")
+            sendPower(id, on: true, reason: "shutdown reconnect")
+            applyRuntimeBrightness(id, percent: 0, reason: "shutdown reconnect keep zero", persist: true)
+            return
+        }
+        if startupClassificationTask != nil && !vehicleStartupCompleted {
+            prepareForVehicleStartup(id)
+            return
+        }
+        if vehicleSessionActive && vehicleStartupCompleted,
+           let role = device.role, role.isHeadlightFed, headlightPowerPresent(),
+           !vehicleJoinedHeadlightIDs.contains(id) {
+            fadeInNewHeadlightDevices()
+            return
+        }
+        restoreDeviceState(id)
     }
 
     // MARK: - Connection management
@@ -859,6 +1566,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 serviceUUIDs: advertisedServices
             )
 
+            if self.matchesIndependentOBDWitness(id: id, name: name) {
+                self.recordIndependentOBDWitness(id: id, name: name, rssi: RSSI.intValue)
+            }
+
             let matchesBrightnessTarget = self.hudBrightnessTriggerEnabled &&
                 !self.targetName.isEmpty &&
                 name.localizedCaseInsensitiveContains(self.targetName)
@@ -878,6 +1589,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             if let device = self.pairedDevice(id), device.autoConnect {
                 self.maintainConnection(to: peripheral, reason: "paired advertisement")
             }
+            self.evaluateVehicleLightingAutomation()
         }
     }
 
@@ -916,6 +1628,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             let id = peripheral.identifier
             self.peripheralsByID[id] = peripheral
             peripheral.delegate = self
+            self.lastSeenByID[id] = Date()
             self.connectionStartedByID[id] = nil
             self.sessionResetTasks[id]?.cancel()
             self.sessionResetTasks[id] = nil
@@ -939,6 +1652,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 self.controllerStatus = "Connected to ambient light; discovering GATT"
                 peripheral.discoverServices(nil)
             }
+            self.evaluateVehicleLightingAutomation()
         }
     }
 
@@ -999,6 +1713,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.startScanning()
             self.scheduleConnectionRetry()
             self.scheduleStartupSessionReset(id)
+            self.evaluateVehicleLightingAutomation()
         }
     }
 
@@ -1045,29 +1760,48 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     "\(id) service=\(service.uuid.uuidString) char=\(uuid) props=\(properties)"
                 )
 
-                if let device = self.pairedDevice(id),
-                   device.protocolKind == .lotusLantern,
-                   self.isLotusService(service.uuid),
-                   self.isLotusWriteCharacteristic(characteristic.uuid),
-                   characteristic.properties.contains(.write) || characteristic.properties.contains(.writeWithoutResponse) {
-                    if self.writeCharacteristicsByID[id] == nil { newlyReady = true }
-                    self.writeCharacteristicsByID[id] = characteristic
+                if let device = self.pairedDevice(id) {
+                    let writable = characteristic.properties.contains(.write) || characteristic.properties.contains(.writeWithoutResponse)
+                    let matchesControl: Bool
+                    switch device.protocolKind {
+                    case .lotusLantern:
+                        matchesControl = self.isLotusService(service.uuid) && self.isLotusWriteCharacteristic(characteristic.uuid)
+                    case .bledim2:
+                        matchesControl = self.isBLEDIMService(service.uuid) && self.isBLEDIMWriteCharacteristic(characteristic.uuid)
+                    }
+                    if matchesControl && writable {
+                        if self.writeCharacteristicsByID[id] == nil { newlyReady = true }
+                        self.writeCharacteristicsByID[id] = characteristic
+                        if characteristic.properties.contains(.notify) {
+                            peripheral.setNotifyValue(true, for: characteristic)
+                        }
+                    }
                 }
             }
             self.characteristicUUIDsByID[id] = set
 
-            if let device = self.pairedDevice(id), device.protocolKind == .bledim2 {
-                self.controllerStatus = "BLEDIM2 GATT fingerprint captured — export HUD log for protocol work"
-            }
-
             if newlyReady, let device = self.pairedDevice(id) {
-                self.controllerStatus = "\(device.displayName) ready"
-                self.logger.log(
-                    "AMBIENT CTRL",
-                    "Lotus Lantern FFF0/FFF3 control ready for \(device.displayName)"
-                )
+                self.controllerStatus = "\(device.displayName) control ready"
+                let path = device.protocolKind == .bledim2 ? "BLEDIM2 FFF0/FFF1 experimental" : "Lotus Lantern FFF0/FFF3 verified"
+                self.logger.log("AMBIENT CTRL", "\(path) control ready for \(device.displayName)")
                 self.runStartupAnimationIfNeeded(id)
+                self.evaluateVehicleLightingAutomation()
             }
+        }
+    }
+
+    nonisolated func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        Task { @MainActor in
+            if let error {
+                self.logger.log("AMBIENT RX", "Notify/read failed \(peripheral.identifier) char=\(characteristic.uuid.uuidString): \(error.localizedDescription)")
+                return
+            }
+            guard let value = characteristic.value else { return }
+            self.logger.log("AMBIENT RX", "\(peripheral.identifier) char=\(characteristic.uuid.uuidString): \(Self.hex(value))")
         }
     }
 
@@ -1093,6 +1827,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private func isLotusWriteCharacteristic(_ uuid: CBUUID) -> Bool {
         let value = uuid.uuidString.uppercased()
         return value == "FFF3" || value == LotusLanternProtocol.writeCharacteristicUUID.uppercased()
+    }
+
+    private func isBLEDIMService(_ uuid: CBUUID) -> Bool {
+        let value = uuid.uuidString.uppercased()
+        return value == "FFF0" || value == BLEDIM2Protocol.serviceUUID.uppercased()
+    }
+
+    private func isBLEDIMWriteCharacteristic(_ uuid: CBUUID) -> Bool {
+        let value = uuid.uuidString.uppercased()
+        return value == "FFF1" || value == BLEDIM2Protocol.writeCharacteristicUUID.uppercased()
     }
 
     private func propertyDescription(_ properties: CBCharacteristicProperties) -> String {
@@ -1188,6 +1932,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     )
                     self.lastHUDReassertAt = Date()
                 }
+
+                self.evaluateIndependentOBDWitnessForEngineState()
+                self.evaluateVehicleLightingAutomation()
             }
         }
     }
