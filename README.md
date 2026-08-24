@@ -214,3 +214,7 @@ The iOS 26 application build passed, but one older v90 source-inspection unit te
 still expected the pre-v90.5 shutdown implementation. The test now matches the
 corrected Door-power-loss/headlight-courtesy shutdown behavior. No runtime code
 changed from v90.5.1.
+
+## v90.7 — BLEDIM2 official iOS protocol recovered
+
+An Apple Bluetooth diagnostic/sysdiagnose PacketLogger capture of the official BLEDIM2 iOS app resolved the previously unknown FFF1 command protocol. BLEDIM2 uses `55 AA` framed writes with an incrementing sequence byte, big-endian payload length, and an additive modulo-256 checksum. Captured commands are `0x80` power, `0x82` RGB, and `0x88` brightness. Normal BLEDIM controls and vehicle automation are re-enabled; the disproved v90 `7E FF ... EF` guesses remain retired. See `docs/V90_7_BLEDIM2_OFFICIAL_IOS_PROTOCOL.md`.

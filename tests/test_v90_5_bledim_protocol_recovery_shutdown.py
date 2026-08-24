@@ -3,15 +3,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_v905_bledim_disables_unverified_normal_writes_and_adds_raw_fff1_lab():
+def test_v907_bledim_uses_recovered_official_ios_protocol_and_keeps_raw_lab():
     model = (ROOT / "ios/HUDController/Vehicle/AmbientLightModels.swift").read_text()
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     view = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
-    assert "command payload capture required" in model
+    assert "Control protocol recovered from official BLEDIM2 iOS Bluetooth capture" in model
+    assert "55 AA <sequence> <command> <length-be16>" in model
+    assert "command: 0x80" in model
+    assert "command: 0x82" in model
+    assert "command: 0x88" in model
     assert "sendRawBLEDIMHex" in monitor
-    assert "FFF1 replay" in monitor
+    assert "BLEDIM2 FFF1 control ready" in monitor
+    assert "Normal BLEDIM controls disabled" not in view
+    assert "bledimUndecoded" not in view
     assert "F000FFC0/FFC1/FFC2" in view
-    assert "Normal BLEDIM controls disabled" in view
     assert "0x7E, 0xFF, 0x04" not in model
 
 
@@ -45,13 +50,12 @@ def test_v905_engine_off_arms_latch_even_if_no_light_is_ready_yet():
     assert "post-lock" in monitor
 
 
-def test_v9051_bledim_disabled_flag_is_scoped_across_all_device_sections():
+def test_v907_bledim_controls_and_animation_are_unlocked():
     view = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
     device_scope = view.split("if let device = monitor.pairedDevice(deviceID) {", 1)[1]
-    assert "let bledimUndecoded = device.protocolKind == .bledim2" in device_scope[:400]
-    # The flag is consumed by both LIGHT CONTROL and STARTUP ANIMATION, so it must
-    # be declared in their common device scope rather than inside LIGHT CONTROL.
-    light_control = device_scope.split('section("LIGHT CONTROL")', 1)[1].split('if device.protocolKind == .bledim2', 1)[0]
-    assert "let bledimUndecoded" not in light_control
+    assert "bledimUndecoded" not in device_scope
+    assert "Recovered official BLEDIM2 protocol" in device_scope
+    assert "power 0x80" in view
+    assert "RGB 0x82" in view
+    assert "brightness 0x88" in view
     assert 'section("STARTUP ANIMATION")' in device_scope
-    assert "if bledimUndecoded" in device_scope.split('section("STARTUP ANIMATION")', 1)[1]

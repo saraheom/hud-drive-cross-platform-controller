@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_bledim2_fff1_transport_is_kept_but_disproved_guess_is_removed():
+def test_bledim2_fff1_transport_uses_official_ios_capture_protocol():
     model = (ROOT / "ios/HUDController/Vehicle/AmbientLightModels.swift").read_text()
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "static let fff1" in model
@@ -11,9 +11,13 @@ def test_bledim2_fff1_transport_is_kept_but_disproved_guess_is_removed():
     assert "0x7E, 0xFF, 0x04" not in model
     assert "0x7E, 0xFF, 0x05, 0x03" not in model
     assert "0x7E, 0xFF, 0x01" not in model
+    assert "0x55, 0xAA, sequence, command" in model
+    assert "command: 0x80" in model
+    assert "command: 0x82" in model
+    assert "command: 0x88" in model
     assert "isBLEDIMWriteCharacteristic" in monitor
-    assert "BLEDIM2 FFF0/FFF1 raw transport ready" in monitor
-    assert "BLEDIM write blocked until FFF1 payload is captured" in monitor
+    assert "BLEDIM2 FFF0/FFF1 control ready" in monitor
+    assert "BLEDIM write blocked until FFF1 payload is captured" not in monitor
 
 
 def test_vehicle_roles_match_physical_test_devices():

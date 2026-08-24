@@ -35,7 +35,7 @@ final class V89AmbientLightingTests: XCTestCase {
         XCTAssertTrue(source.contains("absenceConfirmationWindows = 3"))
     }
 
-    func testBLEDIM2FFF1TransportRemainsButGuessedPacketsAreBlocked() throws {
+    func testBLEDIM2FFF1TransportUsesRecoveredOfficialIOSProtocol() throws {
         XCTAssertEqual(BLEDIM2Protocol.serviceUUID, "0000FFF0-0000-1000-8000-00805F9B34FB")
         XCTAssertEqual(BLEDIM2Protocol.writeCharacteristicUUID, "0000FFF1-0000-1000-8000-00805F9B34FB")
 
@@ -44,10 +44,13 @@ final class V89AmbientLightingTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("HUDController/Vehicle/AmbientLightMonitor.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        XCTAssertTrue(source.contains("BLEDIM2 FFF0/FFF1 raw transport ready"))
+        XCTAssertTrue(source.contains("BLEDIM2 FFF0/FFF1 control ready"))
         XCTAssertTrue(source.contains("isBLEDIMWriteCharacteristic"))
-        XCTAssertTrue(source.contains("BLEDIM write blocked until FFF1 payload is captured"))
+        XCTAssertTrue(source.contains("BLEDIM2Protocol.power"))
+        XCTAssertTrue(source.contains("BLEDIM2Protocol.color"))
+        XCTAssertTrue(source.contains("BLEDIM2Protocol.brightness"))
         XCTAssertTrue(source.contains("sendRawBLEDIMHex"))
+        XCTAssertFalse(source.contains("BLEDIM write blocked until FFF1 payload is captured"))
         XCTAssertFalse(source.contains("EXPERIMENTAL CB01"))
     }
 }

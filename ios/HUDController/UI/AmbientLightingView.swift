@@ -311,9 +311,9 @@ struct AmbientLightingView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Lotus Lantern / ELK-BLEDOM: full power, RGB and brightness control", systemImage: "checkmark.circle.fill")
                             .font(.subheadline)
-                        Label("BLEDIM2 / FFF1: transport verified; command payload capture required", systemImage: "waveform")
+                        Label("BLEDIM2 / FFF1: full power, RGB and brightness control recovered from official iOS capture", systemImage: "checkmark.circle.fill")
                             .font(.subheadline)
-                        Text("Both BLEDIM controllers expose FFF0 → FFF1 (writeWithoutResponse + notify), but the v90 7E…EF packets produced no physical response. Those guessed packets came from a different FFE0/FFE1 controller family, so v90.5 disables automatic BLEDIM writes instead of continuing to send the wrong protocol. Device-information reads, advertisement metadata and a raw FFF1 replay lab are enabled for exact protocol recovery.")
+                        Text("The official BLEDIM2 iOS app writes a 55 AA framed protocol to FFF1. v90.7 reproduces the captured power (0x80), RGB (0x82), brightness (0x88), sequence and checksum format. The old v90 7E…EF guesses remain retired.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -426,14 +426,12 @@ struct AmbientDeviceControlView: View {
     @State private var color = Color.white
     @State private var brightness = 100.0
     @State private var rawBLEDIMHex = ""
-    @State private var rawBLEDIMStatus = "Paste an FFF1 packet captured from the official BLEDIM/BLEDIM2 app."
+    @State private var rawBLEDIMStatus = "Advanced diagnostic only — normal BLEDIM2 controls now use the recovered protocol."
 
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
                 if let device = monitor.pairedDevice(deviceID) {
-                    let bledimUndecoded = device.protocolKind == .bledim2
-
                     section("DEVICE") {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -501,13 +499,11 @@ struct AmbientDeviceControlView: View {
                                 get: { monitor.pairedDevice(deviceID)?.powerOn ?? false },
                                 set: { monitor.setPower(deviceID, on: $0) }
                             ))
-                            .disabled(bledimUndecoded)
 
                             ColorPicker("Color", selection: $color, supportsOpacity: false)
                                 .onChange(of: color) { _, newColor in
                                     monitor.setColor(deviceID, color: newColor.ambientRGB)
                                 }
-                                .disabled(bledimUndecoded)
 
                             HStack {
                                 Text("Preferred brightness")
@@ -525,7 +521,6 @@ struct AmbientDeviceControlView: View {
                                     }
                                 }
                             )
-                            .disabled(bledimUndecoded)
 
                             if let current = monitor.pairedDevice(deviceID)?.lastAppliedBrightness {
                                 LabeledContent("Last applied", value: "\(current)%")
@@ -538,14 +533,7 @@ struct AmbientDeviceControlView: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            if bledimUndecoded {
-                                Label("Normal BLEDIM controls disabled — FFF1 packet format not decoded yet", systemImage: "exclamationmark.triangle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                                Text("The previous v90 packet family was physically disproved by both of your controllers. Settings above are intentionally disabled until an exact official-app packet capture is replayed successfully.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            } else if !monitor.isControllable(deviceID) {
+                            if !monitor.isControllable(deviceID) {
                                 Text("Waiting for the controller's writable characteristic. Selections are saved locally and will be applied when control becomes ready.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -584,9 +572,17 @@ struct AmbientDeviceControlView: View {
 
                                 Divider()
 
-                                Text("Raw FFF1 replay")
+                                Text("Recovered official BLEDIM2 protocol")
                                     .font(.caption.weight(.semibold))
-                                TextField("Captured hex bytes, e.g. AA 01 02 55", text: $rawBLEDIMHex, axis: .vertical)
+                                Text("55 AA <seq> <cmd> <length> <payload> <checksum> • power 0x80 • RGB 0x82 • brightness 0x88 • checksum = modulo-256 sum of all preceding frame bytes")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+
+                                Divider()
+
+                                Text("Raw FFF1 replay — advanced diagnostic")
+                                    .font(.caption.weight(.semibold))
+                                TextField("Hex bytes, e.g. 55 AA 01 80 00 01 01 82", text: $rawBLEDIMHex, axis: .vertical)
                                     .textFieldStyle(.roundedBorder)
                                     .font(.system(.caption, design: .monospaced))
                                     .lineLimit(2...4)
@@ -601,7 +597,7 @@ struct AmbientDeviceControlView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
 
-                                Text("Safety: this lab is hard-wired to the verified FFF1 application characteristic only. It never writes to the F000FFC0/FFC1/FFC2 TI firmware-update service. Use only packets captured from the official BLEDIM/BLEDIM2 app for this controller.")
+                                Text("Safety: this lab is hard-wired to the verified FFF1 application characteristic only and never writes to the F000FFC0/FFC1/FFC2 TI firmware-update service. Normal light controls above should be used for routine operation.")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -610,51 +606,42 @@ struct AmbientDeviceControlView: View {
 
                     section("STARTUP ANIMATION") {
                         VStack(alignment: .leading, spacing: 12) {
-                            if bledimUndecoded {
-                                Label("Animation unavailable until the BLEDIM FFF1 command payload is decoded", systemImage: "lock.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text("The app can connect to this controller and replay captured FFF1 packets, but it intentionally does not send guessed brightness frames during startup or vehicle automation.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Toggle("Fade on/off when a fresh light session connects", isOn: Binding(
-                                    get: { monitor.pairedDevice(deviceID)?.startupAnimationEnabled ?? false },
-                                    set: { monitor.setStartupAnimationEnabled(deviceID, enabled: $0) }
-                                ))
+                            Toggle("Fade on/off when a fresh light session connects", isOn: Binding(
+                                get: { monitor.pairedDevice(deviceID)?.startupAnimationEnabled ?? false },
+                                set: { monitor.setStartupAnimationEnabled(deviceID, enabled: $0) }
+                            ))
 
-                                Picker("Fade pulses", selection: Binding(
-                                    get: { monitor.pairedDevice(deviceID)?.startupCycles ?? 1 },
-                                    set: { monitor.setStartupCycles(deviceID, cycles: $0) }
-                                )) {
-                                    Text("1×").tag(1)
-                                    Text("2×").tag(2)
-                                }
-                                .pickerStyle(.segmented)
-
-                                HStack {
-                                    Text("Pulse duration")
-                                    Spacer()
-                                    Text(String(format: "%.1f s", monitor.pairedDevice(deviceID)?.startupDurationSeconds ?? 1.5))
-                                        .monospacedDigit()
-                                }
-                                Slider(value: Binding(
-                                    get: { monitor.pairedDevice(deviceID)?.startupDurationSeconds ?? 1.5 },
-                                    set: { monitor.setStartupDuration(deviceID, seconds: $0) }
-                                ), in: 0.4...5.0, step: 0.1)
-
-                                Button("Preview Startup Animation") {
-                                    monitor.previewStartupAnimation(deviceID)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(!monitor.isControllable(deviceID))
-
-                                Text(monitor.vehicleAutomationEnabled
-                                     ? "Vehicle-aware mode supersedes this per-device reconnect animation so day/night pulses stay synchronized. Use Preview Current Startup on the main Ambient Lighting page."
-                                     : "A fresh session fades 0 → target → 0 once or twice, then fades back to the saved target brightness. A short BLE dropout does not replay the animation; the device must stay disconnected for 15 seconds first.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            Picker("Fade pulses", selection: Binding(
+                                get: { monitor.pairedDevice(deviceID)?.startupCycles ?? 1 },
+                                set: { monitor.setStartupCycles(deviceID, cycles: $0) }
+                            )) {
+                                Text("1×").tag(1)
+                                Text("2×").tag(2)
                             }
+                            .pickerStyle(.segmented)
+
+                            HStack {
+                                Text("Pulse duration")
+                                Spacer()
+                                Text(String(format: "%.1f s", monitor.pairedDevice(deviceID)?.startupDurationSeconds ?? 1.5))
+                                    .monospacedDigit()
+                            }
+                            Slider(value: Binding(
+                                get: { monitor.pairedDevice(deviceID)?.startupDurationSeconds ?? 1.5 },
+                                set: { monitor.setStartupDuration(deviceID, seconds: $0) }
+                            ), in: 0.4...5.0, step: 0.1)
+
+                            Button("Preview Startup Animation") {
+                                monitor.previewStartupAnimation(deviceID)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!monitor.isControllable(deviceID))
+
+                            Text(monitor.vehicleAutomationEnabled
+                                 ? "Vehicle-aware mode supersedes this per-device reconnect animation so day/night pulses stay synchronized. Use Preview Current Startup on the main Ambient Lighting page."
+                                 : "A fresh session fades 0 → target → 0 once or twice, then fades back to the saved target brightness. A short BLE dropout does not replay the animation; the device must stay disconnected for 15 seconds first.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
 
@@ -793,13 +780,13 @@ struct AmbientGroupControlView: View {
                             )
                             .disabled(group.memberIDs.isEmpty)
 
-                            let experimentalCount = group.memberIDs.filter {
+                            let bledimCount = group.memberIDs.filter {
                                 monitor.pairedDevice($0)?.protocolKind == .bledim2
                             }.count
-                            if experimentalCount > 0 {
-                                Text("\(experimentalCount) BLEDIM2/FFF1 member\(experimentalCount == 1 ? " is" : "s are") diagnostic-only in v90.5. Group commands continue to verified Lotus members, while BLEDIM writes are skipped until the packet format is captured.")
+                            if bledimCount > 0 {
+                                Text("\(bledimCount) BLEDIM2/FFF1 member\(bledimCount == 1 ? " uses" : "s use") the recovered official-iOS 55 AA protocol. Group commands fan out normally across Lotus and BLEDIM members.")
                                     .font(.caption)
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }

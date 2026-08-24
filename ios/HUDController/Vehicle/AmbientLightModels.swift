@@ -18,7 +18,7 @@ enum AmbientLightProtocolKind: String, Codable, CaseIterable, Identifiable {
     var controlStatus: String {
         switch self {
         case .lotusLantern: return "Control protocol verified from Lotus Lantern 6.5.08"
-        case .bledim2: return "FFF0/FFF1 transport verified; command payload capture required"
+        case .bledim2: return "Control protocol recovered from official BLEDIM2 iOS Bluetooth capture"
         }
     }
 }
@@ -186,15 +186,56 @@ enum LotusLanternProtocol {
     }
 }
 
-/// v90.5 transport definition for the user's two BLEDIM2-compatible controllers.
-/// Physical testing verifies application service FFF0 and writable/notifiable FFF1,
-/// but v90's guessed 7E...EF payloads were ignored by both controllers. Those
-/// frames belonged to a different FFE0/FFE1 LED-controller family and are therefore
-/// intentionally removed. Only the verified GATT transport remains here until an
-/// official BLEDIM/BLEDIM2 traffic capture supplies the real command bytes.
+/// v90.7 BLEDIM2 protocol recovered directly from the official BLEDIM2 iOS app.
+/// The 2026-08-24 Apple PacketLogger/sysdiagnose capture shows ATT Write Commands
+/// to FFF0 -> FFF1 with a 55 AA framed protocol:
+///   55 AA <sequence> <command> <length-be16> <payload...> <checksum>
+/// where checksum is the modulo-256 sum of every preceding byte in the frame.
+/// Captured commands: 0x80 power, 0x82 RGB, 0x88 brightness.
 enum BLEDIM2Protocol {
     static let serviceUUID = CBUUIDString.fff0
     static let writeCharacteristicUUID = CBUUIDString.fff1
+
+    static func power(_ on: Bool, sequence: UInt8) -> Data {
+        frame(sequence: sequence, command: 0x80, payload: [on ? 0x01 : 0x00])
+    }
+
+    static func color(_ rgb: AmbientRGB, sequence: UInt8) -> Data {
+        // Exact 12-byte payload shape observed from official BLEDIM2:
+        // 00 RR GG BB 00 00 FF 00 80 00 00 00
+        frame(
+            sequence: sequence,
+            command: 0x82,
+            payload: [
+                0x00, UInt8(rgb.red), UInt8(rgb.green), UInt8(rgb.blue),
+                0x00, 0x00, 0xFF, 0x00, 0x80, 0x00, 0x00, 0x00
+            ]
+        )
+    }
+
+    static func brightness(_ percent: Int, sequence: UInt8) -> Data {
+        let clamped = max(0, min(100, percent))
+        // Official app transmits the brightness channel on a 0...255 scale.
+        let value = UInt8((Double(clamped) * 255.0 / 100.0).rounded())
+        return frame(
+            sequence: sequence,
+            command: 0x88,
+            payload: [0x02, value, 0x00, 0x00, 0x00, 0x00]
+        )
+    }
+
+    static func frame(sequence: UInt8, command: UInt8, payload: [UInt8]) -> Data {
+        precondition(payload.count <= Int(UInt16.max))
+        let length = UInt16(payload.count)
+        var bytes: [UInt8] = [
+            0x55, 0xAA, sequence, command,
+            UInt8((length >> 8) & 0xFF), UInt8(length & 0xFF)
+        ]
+        bytes.append(contentsOf: payload)
+        let checksum = UInt8(truncatingIfNeeded: bytes.reduce(0) { $0 + Int($1) })
+        bytes.append(checksum)
+        return Data(bytes)
+    }
 }
 
 /// Keep UUID literals in one place while still making the recovered values

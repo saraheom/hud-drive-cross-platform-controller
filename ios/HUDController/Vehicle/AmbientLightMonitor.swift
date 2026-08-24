@@ -2,9 +2,10 @@ import Foundation
 import CoreBluetooth
 import Observation
 
-/// v90.5 expands the original BLEDOM presence monitor into a multi-device ambient
-/// lighting controller, verified Lotus control, BLEDIM2 FFF1 protocol diagnostics,
-/// vehicle-power choreography, and automatic Door day/night brightness management
+/// v90.7 expands the original BLEDOM presence monitor into a multi-device ambient
+/// lighting controller with verified Lotus control and BLEDIM2 FFF1 control recovered
+/// from the official iOS app, plus vehicle-power choreography and automatic Door
+/// day/night brightness management
 /// while preserving the HUD Auto Brightness trigger path.
 ///
 /// One CBCentralManager owns all ambient-light BLE work so the controller UI and
@@ -170,12 +171,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var characteristicUUIDsByID: [UUID: Set<String>] = [:]
     private var writeCharacteristicsByID: [UUID: CBCharacteristic] = [:]
 
-    /// v90.5 diagnostics for the still-undecoded BLEDIM2 application protocol.
-    /// The controller exposes FFF0/FFF1, but the command payload is intentionally
-    /// not guessed after physical testing disproved the old FFE0/FFE1-family frames.
+    /// BLEDIM2 diagnostics remain available even though v90.7 has recovered the
+    /// application command protocol. They are useful for confirming firmware/GATT
+    /// consistency across the Door and Dashboard controllers.
     private(set) var bledimDeviceInfoByID: [UUID: [String: String]] = [:]
     private(set) var bledimAdvertisementSummaryByID: [UUID: String] = [:]
     private var bledimLastAdvertisementSignatureByID: [UUID: String] = [:]
+
+    /// Official BLEDIM2 uses a monotonically increasing one-byte sequence field.
+    /// It participates in the checksum but does not alter the command semantics.
+    /// One app-level counter matches the official app's behavior across devices.
+    private var bledimSequence: UInt8 = 0x08
 
     private var animationTasks: [UUID: Task<Void, Never>] = [:]
     private var animatedConnectionSession: Set<UUID> = []
@@ -555,10 +561,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     func isControllable(_ id: UUID) -> Bool {
         guard let device = pairedDevice(id) else { return false }
-        // v90.5: FFF1 transport is proven for BLEDIM2, but the command payload is
-        // not. Treat it as diagnostic-only until an official traffic capture is
-        // replayed successfully; vehicle automation must never send guessed bytes.
-        if device.protocolKind == .bledim2 { return false }
         if device.protocolKind == .lotusLantern && isEncryptedLotusName(device.advertisedName) { return false }
         return isConnected(id) && writeCharacteristicsByID[id] != nil
     }
@@ -587,7 +589,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         if state == "Connected" && writeCharacteristicsByID[id] != nil {
             return device.protocolKind == .bledim2
-                ? "Connected • FFF1 transport ready • commands not decoded"
+                ? "Connected • BLEDIM2 FFF1 control ready"
                 : "Connected • control ready"
         }
         if state == "Connected" && writeCharacteristicsByID[id] == nil {
@@ -628,10 +630,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         peripheral.discoverServices(nil)
     }
 
-    /// v90.5 protocol-lab escape hatch. This writes ONLY to the already-verified
-    /// FFF1 application characteristic. It never touches the TI F000FFC0 OAD
-    /// firmware-update service. The user can paste bytes recovered from an Android
-    /// Bluetooth HCI snoop capture and test them without rebuilding the iOS app.
+    /// Advanced protocol-lab escape hatch. This writes ONLY to the verified FFF1
+    /// application characteristic and never touches the TI F000FFC0 OAD service.
+    /// Normal operation uses BLEDIM2Protocol; raw replay is retained for diagnostics.
     @discardableResult
     func sendRawBLEDIMHex(_ id: UUID, hex: String) -> String {
         guard let device = pairedDevice(id), device.protocolKind == .bledim2 else {
@@ -759,38 +760,68 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func sendPower(_ id: UUID, on: Bool, reason: String) {
         guard let device = pairedDevice(id) else { return }
-        guard device.protocolKind == .lotusLantern else {
-            logger.log("AMBIENT CTRL", "BLEDIM write blocked until FFF1 payload is captured: power \(on ? "ON" : "OFF") \(reason) for \(device.displayName)")
-            return
+        switch device.protocolKind {
+        case .lotusLantern:
+            writeAmbient(
+                LotusLanternProtocol.power(on),
+                to: id,
+                label: "power \(on ? "ON" : "OFF") \(reason)"
+            )
+        case .bledim2:
+            let sequence = nextBLEDIMSequence()
+            writeAmbient(
+                BLEDIM2Protocol.power(on, sequence: sequence),
+                to: id,
+                label: "BLEDIM2 seq=\(String(format: "%02X", sequence)) power \(on ? "ON" : "OFF") \(reason)"
+            )
         }
-        writeAmbient(LotusLanternProtocol.power(on), to: id, label: "power \(on ? "ON" : "OFF") \(reason)")
     }
 
     private func sendColor(_ id: UUID, color: AmbientRGB, reason: String) {
         guard let device = pairedDevice(id) else { return }
-        guard device.protocolKind == .lotusLantern else {
-            logger.log("AMBIENT CTRL", "BLEDIM write blocked until FFF1 payload is captured: RGB \(color.red),\(color.green),\(color.blue) \(reason) for \(device.displayName)")
-            return
+        let packet: Data
+        let protocolLabel: String
+        switch device.protocolKind {
+        case .lotusLantern:
+            packet = LotusLanternProtocol.color(color)
+            protocolLabel = "RGB"
+        case .bledim2:
+            let sequence = nextBLEDIMSequence()
+            packet = BLEDIM2Protocol.color(color, sequence: sequence)
+            protocolLabel = "BLEDIM2 seq=\(String(format: "%02X", sequence)) RGB"
         }
         writeAmbient(
-            LotusLanternProtocol.color(color),
+            packet,
             to: id,
-            label: "RGB \(color.red),\(color.green),\(color.blue) \(reason)"
+            label: "\(protocolLabel) \(color.red),\(color.green),\(color.blue) \(reason)"
         )
     }
 
     private func sendBrightness(_ id: UUID, percent: Int, reason: String) {
         guard let device = pairedDevice(id) else { return }
         let clamped = max(0, min(100, percent))
-        guard device.protocolKind == .lotusLantern else {
-            logger.log("AMBIENT CTRL", "BLEDIM write blocked until FFF1 payload is captured: brightness \(clamped)% \(reason) for \(device.displayName)")
-            return
+        let packet: Data
+        let protocolLabel: String
+        switch device.protocolKind {
+        case .lotusLantern:
+            packet = LotusLanternProtocol.brightness(clamped)
+            protocolLabel = "brightness"
+        case .bledim2:
+            let sequence = nextBLEDIMSequence()
+            packet = BLEDIM2Protocol.brightness(clamped, sequence: sequence)
+            protocolLabel = "BLEDIM2 seq=\(String(format: "%02X", sequence)) brightness"
         }
         writeAmbient(
-            LotusLanternProtocol.brightness(clamped),
+            packet,
             to: id,
-            label: "brightness \(clamped)% \(reason)"
+            label: "\(protocolLabel) \(clamped)% \(reason)"
         )
+    }
+
+    private func nextBLEDIMSequence() -> UInt8 {
+        bledimSequence &+= 1
+        if bledimSequence == 0 { bledimSequence = 1 }
+        return bledimSequence
     }
 
     /// Sends runtime brightness without changing the user's preferred steady-state
@@ -1579,27 +1610,21 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return isLogicallyPowered(device.id)
         }
         let ids = poweredHeadlightDevices.filter { isControllable($0.id) }.map(\.id)
-        let undecodedPowered = poweredHeadlightDevices.filter { $0.protocolKind == .bledim2 && !isControllable($0.id) }
+        let pendingControl = poweredHeadlightDevices.filter { !isControllable($0.id) }
         vehicleShutdownLatched = true
         vehicleAutomationStatus = "\(trigger) • suppressing headlight-fed courtesy lights"
         logger.log(
             "AMBIENT AUTO",
-            "Shutdown trigger=\(trigger); Door expected power-off immediately; fading \(ids.count) powered controllable headlight-fed light(s) to 0; \(undecodedPowered.count) powered BLEDIM headlight-fed light(s) cannot yet be commanded. Shutdown latch remains until next engine ON so later courtesy lights can be held at zero once their protocol is decoded."
+            "Shutdown trigger=\(trigger); Door expected power-off immediately; fading \(ids.count) powered controllable headlight-fed light(s) to 0; \(pendingControl.count) powered headlight-fed light(s) are waiting for BLE control readiness. Shutdown latch remains until next engine ON so later courtesy lights are held at zero."
         )
-        for device in undecodedPowered {
-            logger.log("AMBIENT AUTO", "Courtesy suppression unavailable for \(device.displayName): BLEDIM FFF1 command payload not decoded")
+        for device in pendingControl {
+            logger.log("AMBIENT AUTO", "Courtesy suppression pending for \(device.displayName): waiting for writable control characteristic")
         }
 
         guard !ids.isEmpty else {
-            if !undecodedPowered.isEmpty {
-                vehicleAutomationStatus = enginePowerPresent
-                    ? "Manual shutdown preview • BLEDIM headlight control not decoded"
-                    : "Engine power OFF • suppression armed, but BLEDIM headlight control is not decoded"
-            } else {
-                vehicleAutomationStatus = enginePowerPresent
-                    ? "Manual shutdown preview • no controllable headlight-fed lights currently powered"
-                    : "Engine power OFF • courtesy-light suppression armed"
-            }
+            vehicleAutomationStatus = enginePowerPresent
+                ? "Manual shutdown preview • no controllable headlight-fed lights currently powered"
+                : "Engine power OFF • courtesy-light suppression armed"
             return
         }
 
@@ -2131,16 +2156,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
             if newlyReady, let device = self.pairedDevice(id) {
                 if device.protocolKind == .bledim2 {
-                    self.controllerStatus = "\(device.displayName) FFF1 transport ready • payload capture required"
+                    self.controllerStatus = "\(device.displayName) BLEDIM2 FFF1 control ready"
                     self.logger.log(
                         "AMBIENT CTRL",
-                        "BLEDIM2 FFF0/FFF1 raw transport ready for \(device.displayName); automatic writes disabled after v90 packet-family mismatch"
+                        "BLEDIM2 FFF0/FFF1 control ready for \(device.displayName); using official-iOS-capture 55 AA protocol"
                     )
                 } else {
                     self.controllerStatus = "\(device.displayName) control ready"
                     self.logger.log("AMBIENT CTRL", "Lotus Lantern FFF0/FFF3 verified control ready for \(device.displayName)")
-                    self.runStartupAnimationIfNeeded(id)
                 }
+                self.runStartupAnimationIfNeeded(id)
                 self.evaluateVehicleLightingAutomation()
             }
         }
