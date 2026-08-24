@@ -3,15 +3,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_bledim2_cb01_packet_profile_and_fff1_control_path():
+def test_bledim2_fff1_transport_is_kept_but_disproved_guess_is_removed():
     model = (ROOT / "ios/HUDController/Vehicle/AmbientLightModels.swift").read_text()
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "static let fff1" in model
-    assert "0x7E, 0xFF, 0x04" in model
-    assert "0x7E, 0xFF, 0x05, 0x03" in model
-    assert "0x7E, 0xFF, 0x01" in model
+    assert "static let writeCharacteristicUUID = CBUUIDString.fff1" in model
+    assert "0x7E, 0xFF, 0x04" not in model
+    assert "0x7E, 0xFF, 0x05, 0x03" not in model
+    assert "0x7E, 0xFF, 0x01" not in model
     assert "isBLEDIMWriteCharacteristic" in monitor
-    assert "BLEDIM2 FFF0/FFF1 experimental" in monitor
+    assert "BLEDIM2 FFF0/FFF1 raw transport ready" in monitor
+    assert "BLEDIM write blocked until FFF1 payload is captured" in monitor
 
 
 def test_vehicle_roles_match_physical_test_devices():
@@ -29,9 +31,10 @@ def test_shutdown_zero_is_runtime_state_not_preferred_brightness():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "var lastAppliedBrightness: Int?" in model
     assert "var brightness: Int" in model
-    assert 'applyRuntimeBrightness(id, percent: 0, reason: "vehicle shutdown final", persist: true)' in monitor
+    assert 'pairedDevices[index].lastAppliedBrightness = 0' in monitor
+    assert 'reason: "vehicle shutdown headlight final", persist: true' in monitor
     assert "$0.brightness = 0" not in monitor
-    assert "preferred brightness preserved" in monitor
+    assert "preferred targets unchanged" in monitor
 
 
 def test_automation_classifies_day_night_and_coalesces_headlight_join():
@@ -81,4 +84,4 @@ def test_fade_loop_does_not_persist_userdefaults_on_every_brightness_frame():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "private func applyRuntimeBrightness(_ id: UUID, percent: Int, reason: String, persist: Bool = false)" in monitor
     assert "if persist { persistPairedDevices() }" in monitor
-    assert 'reason: "vehicle shutdown final", persist: true' in monitor
+    assert 'reason: "vehicle shutdown headlight final", persist: true' in monitor

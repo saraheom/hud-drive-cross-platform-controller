@@ -2,9 +2,9 @@ import Foundation
 import CoreBluetooth
 import Observation
 
-/// v90.3 expands the original BLEDOM presence monitor into a multi-device ambient
-/// lighting controller, BLEDIM2/CB01 test adapter, vehicle-power choreography,
-/// and automatic Door day/night brightness management
+/// v90.5 expands the original BLEDOM presence monitor into a multi-device ambient
+/// lighting controller, verified Lotus control, BLEDIM2 FFF1 protocol diagnostics,
+/// vehicle-power choreography, and automatic Door day/night brightness management
 /// while preserving the HUD Auto Brightness trigger path.
 ///
 /// One CBCentralManager owns all ambient-light BLE work so the controller UI and
@@ -169,6 +169,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var serviceUUIDsByID: [UUID: Set<String>] = [:]
     private var characteristicUUIDsByID: [UUID: Set<String>] = [:]
     private var writeCharacteristicsByID: [UUID: CBCharacteristic] = [:]
+
+    /// v90.5 diagnostics for the still-undecoded BLEDIM2 application protocol.
+    /// The controller exposes FFF0/FFF1, but the command payload is intentionally
+    /// not guessed after physical testing disproved the old FFE0/FFE1-family frames.
+    private(set) var bledimDeviceInfoByID: [UUID: [String: String]] = [:]
+    private(set) var bledimAdvertisementSummaryByID: [UUID: String] = [:]
+    private var bledimLastAdvertisementSignatureByID: [UUID: String] = [:]
+
     private var animationTasks: [UUID: Task<Void, Never>] = [:]
     private var animatedConnectionSession: Set<UUID> = []
     private var sessionResetTasks: [UUID: Task<Void, Never>] = [:]
@@ -547,7 +555,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     func isControllable(_ id: UUID) -> Bool {
         guard let device = pairedDevice(id) else { return false }
+        // v90.5: FFF1 transport is proven for BLEDIM2, but the command payload is
+        // not. Treat it as diagnostic-only until an official traffic capture is
+        // replayed successfully; vehicle automation must never send guessed bytes.
+        if device.protocolKind == .bledim2 { return false }
         if device.protocolKind == .lotusLantern && isEncryptedLotusName(device.advertisedName) { return false }
+        return isConnected(id) && writeCharacteristicsByID[id] != nil
+    }
+
+    func isBLEDIMRawTransportReady(_ id: UUID) -> Bool {
+        guard let device = pairedDevice(id), device.protocolKind == .bledim2 else { return false }
         return isConnected(id) && writeCharacteristicsByID[id] != nil
     }
 
@@ -570,7 +587,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         if state == "Connected" && writeCharacteristicsByID[id] != nil {
             return device.protocolKind == .bledim2
-                ? "Connected • experimental FFF1 control ready"
+                ? "Connected • FFF1 transport ready • commands not decoded"
                 : "Connected • control ready"
         }
         if state == "Connected" && writeCharacteristicsByID[id] == nil {
@@ -588,6 +605,71 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let s = services.isEmpty ? "—" : services.joined(separator: ", ")
         let c = characteristics.isEmpty ? "—" : characteristics.joined(separator: ", ")
         return "Services: \(s)\nCharacteristics: \(c)"
+    }
+
+    func bledimDeviceInfoSummary(_ id: UUID) -> String {
+        guard let values = bledimDeviceInfoByID[id], !values.isEmpty else {
+            return "Waiting for readable Device Information values…"
+        }
+        return values.keys.sorted().map { "\($0): \(values[$0] ?? "")" }.joined(separator: "\n")
+    }
+
+    func bledimAdvertisementSummary(_ id: UUID) -> String {
+        bledimAdvertisementSummaryByID[id] ?? "Waiting for advertisement metadata…"
+    }
+
+    func refreshBLEDIMDiagnostics(_ id: UUID) {
+        guard let device = pairedDevice(id), device.protocolKind == .bledim2,
+              let peripheral = peripheralsByID[id], peripheral.state == .connected else {
+            controllerStatus = "Connect the BLEDIM device before refreshing diagnostics"
+            return
+        }
+        logger.log("AMBIENT INFO", "Refreshing BLEDIM GATT + Device Information diagnostics for \(device.displayName)")
+        peripheral.discoverServices(nil)
+    }
+
+    /// v90.5 protocol-lab escape hatch. This writes ONLY to the already-verified
+    /// FFF1 application characteristic. It never touches the TI F000FFC0 OAD
+    /// firmware-update service. The user can paste bytes recovered from an Android
+    /// Bluetooth HCI snoop capture and test them without rebuilding the iOS app.
+    @discardableResult
+    func sendRawBLEDIMHex(_ id: UUID, hex: String) -> String {
+        guard let device = pairedDevice(id), device.protocolKind == .bledim2 else {
+            return "This device is not configured as BLEDIM2 / FFF1"
+        }
+        guard isBLEDIMRawTransportReady(id),
+              let peripheral = peripheralsByID[id],
+              let characteristic = writeCharacteristicsByID[id] else {
+            return "FFF1 transport is not ready"
+        }
+
+        var compact = hex
+            .replacingOccurrences(of: "0x", with: "", options: .caseInsensitive)
+        for separator in [" ", "\n", "\t", ",", ":", "-"] {
+            compact = compact.replacingOccurrences(of: separator, with: "")
+        }
+        guard !compact.isEmpty, compact.count % 2 == 0, compact.count <= 128,
+              compact.allSatisfy({ $0.isHexDigit }) else {
+            return "Enter 1–64 bytes of hexadecimal data (for example: AA 01 02 55)"
+        }
+
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(compact.count / 2)
+        var index = compact.startIndex
+        while index < compact.endIndex {
+            let next = compact.index(index, offsetBy: 2)
+            guard let value = UInt8(compact[index..<next], radix: 16) else {
+                return "Invalid hexadecimal packet"
+            }
+            bytes.append(value)
+            index = next
+        }
+        let data = Data(bytes)
+        let writeType: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse)
+            ? .withoutResponse : .withResponse
+        peripheral.writeValue(data, for: characteristic, type: writeType)
+        logger.log("AMBIENT RAW", "BLEDIM FFF1 replay \(device.displayName) bytes=\(bytes.count): \(Self.hex(data))")
+        return "Sent \(bytes.count) byte\(bytes.count == 1 ? "" : "s") to FFF1"
     }
 
     // MARK: - Device state / commands
@@ -677,39 +759,38 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func sendPower(_ id: UUID, on: Bool, reason: String) {
         guard let device = pairedDevice(id) else { return }
-        let data: Data
-        switch device.protocolKind {
-        case .lotusLantern:
-            data = LotusLanternProtocol.power(on)
-        case .bledim2:
-            data = BLEDIM2Protocol.power(on)
+        guard device.protocolKind == .lotusLantern else {
+            logger.log("AMBIENT CTRL", "BLEDIM write blocked until FFF1 payload is captured: power \(on ? "ON" : "OFF") \(reason) for \(device.displayName)")
+            return
         }
-        writeAmbient(data, to: id, label: "power \(on ? "ON" : "OFF") \(reason)")
+        writeAmbient(LotusLanternProtocol.power(on), to: id, label: "power \(on ? "ON" : "OFF") \(reason)")
     }
 
     private func sendColor(_ id: UUID, color: AmbientRGB, reason: String) {
         guard let device = pairedDevice(id) else { return }
-        let data: Data
-        switch device.protocolKind {
-        case .lotusLantern:
-            data = LotusLanternProtocol.color(color)
-        case .bledim2:
-            data = BLEDIM2Protocol.color(color)
+        guard device.protocolKind == .lotusLantern else {
+            logger.log("AMBIENT CTRL", "BLEDIM write blocked until FFF1 payload is captured: RGB \(color.red),\(color.green),\(color.blue) \(reason) for \(device.displayName)")
+            return
         }
-        writeAmbient(data, to: id, label: "RGB \(color.red),\(color.green),\(color.blue) \(reason)")
+        writeAmbient(
+            LotusLanternProtocol.color(color),
+            to: id,
+            label: "RGB \(color.red),\(color.green),\(color.blue) \(reason)"
+        )
     }
 
     private func sendBrightness(_ id: UUID, percent: Int, reason: String) {
         guard let device = pairedDevice(id) else { return }
         let clamped = max(0, min(100, percent))
-        let data: Data
-        switch device.protocolKind {
-        case .lotusLantern:
-            data = LotusLanternProtocol.brightness(clamped)
-        case .bledim2:
-            data = BLEDIM2Protocol.brightness(clamped)
+        guard device.protocolKind == .lotusLantern else {
+            logger.log("AMBIENT CTRL", "BLEDIM write blocked until FFF1 payload is captured: brightness \(clamped)% \(reason) for \(device.displayName)")
+            return
         }
-        writeAmbient(data, to: id, label: "brightness \(clamped)% \(reason)")
+        writeAmbient(
+            LotusLanternProtocol.brightness(clamped),
+            to: id,
+            label: "brightness \(clamped)% \(reason)"
+        )
     }
 
     /// Sends runtime brightness without changing the user's preferred steady-state
@@ -750,8 +831,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
 
         peripheral.writeValue(data, for: characteristic, type: writeType)
-        let qualifier = device.protocolKind == .bledim2 ? " [EXPERIMENTAL CB01]" : ""
-        logger.log("AMBIENT TX", "\(device.displayName)\(qualifier) \(label): \(Self.hex(data))")
+        logger.log("AMBIENT TX", "\(device.displayName) \(label): \(Self.hex(data))")
     }
 
     private func isEncryptedLotusName(_ name: String) -> Bool {
@@ -1147,10 +1227,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             : "Independent OBD witness not calibrated"
         logger.log("AMBIENT ENGINE", "Engine-switched power OFF confirmed only after HUD loss + calibrated independent OBD witness absence")
 
-        if vehicleAutomationEnabled, vehicleSessionActive, !vehicleShutdownLatched {
+        if vehicleAutomationEnabled, !vehicleShutdownLatched {
+            // Arm the shutdown latch even if no light was controllable at this exact
+            // instant. In daylight the Dashboard/Console may power up only after the
+            // driver exits/locks the car; they must still be suppressed when they
+            // appear  later during the courtesy-headlight interval.
             performVehicleShutdownFade(trigger: "engine power OFF")
         } else if vehicleAutomationEnabled {
-            vehicleAutomationStatus = "Engine power OFF • waiting for next engine start"
+            vehicleAutomationStatus = "Engine power OFF • courtesy-light suppression armed"
         }
     }
 
@@ -1162,7 +1246,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         guard enginePowerPresent else {
             vehicleAutomationStatus = vehicleShutdownLatched
-                ? "Engine power OFF • shutdown faded to 0%"
+                ? "Engine power OFF • headlight courtesy suppression armed"
                 : "Waiting for engine-switched HUD / OBD power"
             return
         }
@@ -1178,7 +1262,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
 
         guard !vehicleShutdownLatched else {
-            vehicleAutomationStatus = "Shutdown faded to 0% — waiting for physical power-off"
+            vehicleAutomationStatus = "Shutdown latch active — suppressing headlight-fed courtesy lights until next engine ON"
             return
         }
 
@@ -1475,13 +1559,49 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         doorBrightnessTask?.cancel()
         doorBrightnessTask = nil
 
-        let ids = pairedDevices.compactMap { device -> UUID? in
-            guard device.role != nil, isLogicallyPowered(device.id), isControllable(device.id) else { return nil }
-            return device.id
+        // Corrected physical shutdown sequence (v90.5): the Door controller is on
+        // the engine-switched circuit and loses electrical power immediately when
+        // the engine turns off. There is no opportunity to transmit a fade to it.
+        // Record runtime zero locally without overwriting its Day/Night targets.
+        if let doorID = deviceID(for: .door),
+           let index = pairedDevices.firstIndex(where: { $0.id == doorID }) {
+            pairedDevices[index].lastAppliedBrightness = 0
+            persistPairedDevices()
+            logger.log("AMBIENT AUTO", "Engine OFF: Door power is expected to disappear immediately; runtime recorded as 0 without sending a fade")
         }
+
+        // Only the headlight-fed pair can still be electrically alive after engine
+        // OFF. At night they remain on; after a daylight lock they can turn on again
+        // for the courtesy-headlight interval. Verified protocols are faded now; any
+        // later verified reconnect is held at zero by vehicleControlBecameReady().
+        let poweredHeadlightDevices = pairedDevices.filter { device in
+            guard let role = device.role, role.isHeadlightFed else { return false }
+            return isLogicallyPowered(device.id)
+        }
+        let ids = poweredHeadlightDevices.filter { isControllable($0.id) }.map(\.id)
+        let undecodedPowered = poweredHeadlightDevices.filter { $0.protocolKind == .bledim2 && !isControllable($0.id) }
         vehicleShutdownLatched = true
-        vehicleAutomationStatus = "\(trigger) • fading powered lights to 0%"
-        logger.log("AMBIENT AUTO", "Shutdown fade trigger=\(trigger) for \(ids.count) powered controllable light(s); preferred brightness preserved")
+        vehicleAutomationStatus = "\(trigger) • suppressing headlight-fed courtesy lights"
+        logger.log(
+            "AMBIENT AUTO",
+            "Shutdown trigger=\(trigger); Door expected power-off immediately; fading \(ids.count) powered controllable headlight-fed light(s) to 0; \(undecodedPowered.count) powered BLEDIM headlight-fed light(s) cannot yet be commanded. Shutdown latch remains until next engine ON so later courtesy lights can be held at zero once their protocol is decoded."
+        )
+        for device in undecodedPowered {
+            logger.log("AMBIENT AUTO", "Courtesy suppression unavailable for \(device.displayName): BLEDIM FFF1 command payload not decoded")
+        }
+
+        guard !ids.isEmpty else {
+            if !undecodedPowered.isEmpty {
+                vehicleAutomationStatus = enginePowerPresent
+                    ? "Manual shutdown preview • BLEDIM headlight control not decoded"
+                    : "Engine power OFF • suppression armed, but BLEDIM headlight control is not decoded"
+            } else {
+                vehicleAutomationStatus = enginePowerPresent
+                    ? "Manual shutdown preview • no controllable headlight-fed lights currently powered"
+                    : "Engine power OFF • courtesy-light suppression armed"
+            }
+            return
+        }
 
         vehicleAnimationTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1495,16 +1615,22 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 let remaining = 1.0 - (Double(step) / Double(steps))
                 for id in ids {
                     let start = starts[id] ?? 0
-                    self.applyRuntimeBrightness(id, percent: Int((Double(start) * remaining).rounded()), reason: "vehicle shutdown fade")
+                    self.applyRuntimeBrightness(
+                        id,
+                        percent: Int((Double(start) * remaining).rounded()),
+                        reason: "vehicle shutdown headlight fade"
+                    )
                 }
                 try? await Task.sleep(for: .seconds(delay))
             }
-            for id in ids { self.applyRuntimeBrightness(id, percent: 0, reason: "vehicle shutdown final", persist: true) }
+            for id in ids {
+                self.applyRuntimeBrightness(id, percent: 0, reason: "vehicle shutdown headlight final", persist: true)
+            }
             self.vehicleAnimationTask = nil
             self.vehicleAutomationStatus = self.enginePowerPresent
-                ? "Manual shutdown preview complete • preferred brightness preserved"
-                : "Engine power OFF • shutdown faded to 0% • preferred brightness preserved"
-            self.logger.log("AMBIENT AUTO", "Shutdown fade complete trigger=\(trigger); lastApplied=0, preferred targets unchanged")
+                ? "Manual shutdown preview complete • Door unchanged physically"
+                : "Engine power OFF • headlight-fed courtesy lights held at 0%"
+            self.logger.log("AMBIENT AUTO", "Headlight-fed shutdown fade complete trigger=\(trigger); preferred targets unchanged; shutdown latch remains armed")
         }
     }
 
@@ -1542,9 +1668,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
         if vehicleShutdownLatched {
-            sendColor(id, color: device.color, reason: "shutdown reconnect")
-            sendPower(id, on: true, reason: "shutdown reconnect")
-            applyRuntimeBrightness(id, percent: 0, reason: "shutdown reconnect keep zero", persist: true)
+            if device.role == .door {
+                if let index = pairedDevices.firstIndex(where: { $0.id == id }) {
+                    pairedDevices[index].lastAppliedBrightness = 0
+                    persistPairedDevices()
+                }
+                logger.log("AMBIENT AUTO", "Door control appeared while shutdown latched; no command sent because Door should be engine-power OFF")
+                return
+            }
+            if let role = device.role, role.isHeadlightFed {
+                sendColor(id, color: device.color, reason: "post-lock courtesy suppression")
+                sendPower(id, on: true, reason: "post-lock courtesy suppression")
+                applyRuntimeBrightness(id, percent: 0, reason: "post-lock courtesy keep zero", persist: true)
+                logger.log("AMBIENT AUTO", "Headlight-fed light appeared while engine OFF; held at 0% for courtesy/headlight delay")
+            }
             return
         }
         if startupClassificationTask != nil && !vehicleStartupCompleted {
@@ -1760,6 +1897,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 rssi: RSSI.intValue,
                 serviceUUIDs: advertisedServices
             )
+            self.captureBLEDIMAdvertisement(
+                id: id,
+                name: name,
+                rssi: RSSI.intValue,
+                serviceUUIDs: advertisedServices,
+                advertisementData: advertisementData
+            )
 
             if self.matchesIndependentOBDWitness(id: id, name: name) {
                 self.recordIndependentOBDWitness(id: id, name: name, rssi: RSSI.intValue)
@@ -1955,6 +2099,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     "\(id) service=\(service.uuid.uuidString) char=\(uuid) props=\(properties)"
                 )
 
+                if let device = self.pairedDevice(id), device.protocolKind == .bledim2,
+                   characteristic.properties.contains(.read) {
+                    let serviceValue = service.uuid.uuidString.uppercased()
+                    // Read standard Device Information + Battery values. These are
+                    // diagnostics only; never read/write the TI OAD firmware service.
+                    if serviceValue == "180A" || serviceValue == "180F" {
+                        peripheral.readValue(for: characteristic)
+                    }
+                }
+
                 if let device = self.pairedDevice(id) {
                     let writable = characteristic.properties.contains(.write) || characteristic.properties.contains(.writeWithoutResponse)
                     let matchesControl: Bool
@@ -1976,10 +2130,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.characteristicUUIDsByID[id] = set
 
             if newlyReady, let device = self.pairedDevice(id) {
-                self.controllerStatus = "\(device.displayName) control ready"
-                let path = device.protocolKind == .bledim2 ? "BLEDIM2 FFF0/FFF1 experimental" : "Lotus Lantern FFF0/FFF3 verified"
-                self.logger.log("AMBIENT CTRL", "\(path) control ready for \(device.displayName)")
-                self.runStartupAnimationIfNeeded(id)
+                if device.protocolKind == .bledim2 {
+                    self.controllerStatus = "\(device.displayName) FFF1 transport ready • payload capture required"
+                    self.logger.log(
+                        "AMBIENT CTRL",
+                        "BLEDIM2 FFF0/FFF1 raw transport ready for \(device.displayName); automatic writes disabled after v90 packet-family mismatch"
+                    )
+                } else {
+                    self.controllerStatus = "\(device.displayName) control ready"
+                    self.logger.log("AMBIENT CTRL", "Lotus Lantern FFF0/FFF3 verified control ready for \(device.displayName)")
+                    self.runStartupAnimationIfNeeded(id)
+                }
                 self.evaluateVehicleLightingAutomation()
             }
         }
@@ -1996,6 +2157,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 return
             }
             guard let value = characteristic.value else { return }
+            if self.pairedDevice(peripheral.identifier)?.protocolKind == .bledim2 {
+                self.recordBLEDIMDiagnosticValue(
+                    peripheralID: peripheral.identifier,
+                    characteristic: characteristic,
+                    value: value
+                )
+            }
             self.logger.log("AMBIENT RX", "\(peripheral.identifier) char=\(characteristic.uuid.uuidString): \(Self.hex(value))")
         }
     }
@@ -2010,6 +2178,78 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.logger.log(
                 "AMBIENT TX",
                 "Write failed \(peripheral.identifier) char=\(characteristic.uuid.uuidString): \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func recordBLEDIMDiagnosticValue(
+        peripheralID: UUID,
+        characteristic: CBCharacteristic,
+        value: Data
+    ) {
+        let uuid = characteristic.uuid.uuidString.uppercased()
+        let labels: [String: String] = [
+            "2A29": "Manufacturer",
+            "2A24": "Model",
+            "2A25": "Serial",
+            "2A27": "Hardware revision",
+            "2A26": "Firmware revision",
+            "2A28": "Software revision",
+            "2A23": "System ID",
+            "2A2A": "IEEE data",
+            "2A50": "PnP ID",
+            "2A19": "Battery"
+        ]
+        guard let label = labels[uuid] else { return }
+
+        let rendered: String
+        if uuid == "2A19", let first = value.first {
+            rendered = "\(first)% (hex \(Self.hex(value)))"
+        } else if ["2A29", "2A24", "2A25", "2A27", "2A26", "2A28"].contains(uuid),
+                  let text = String(data: value, encoding: .utf8)?
+                    .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.controlCharacters)),
+                  !text.isEmpty {
+            rendered = "\(text) (hex \(Self.hex(value)))"
+        } else {
+            rendered = Self.hex(value)
+        }
+
+        var values = bledimDeviceInfoByID[peripheralID] ?? [:]
+        guard values[label] != rendered else { return }
+        values[label] = rendered
+        bledimDeviceInfoByID[peripheralID] = values
+        logger.log("AMBIENT INFO", "BLEDIM \(peripheralID) \(label)=\(rendered)")
+    }
+
+    private func captureBLEDIMAdvertisement(
+        id: UUID,
+        name: String,
+        rssi: Int,
+        serviceUUIDs: [String],
+        advertisementData: [String: Any]
+    ) {
+        guard pairedDevice(id)?.protocolKind == .bledim2 else { return }
+
+        let manufacturer = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data)
+            .map(Self.hex) ?? "—"
+        let serviceData = (advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] ?? [:])
+            .map { "\($0.key.uuidString.uppercased())=\(Self.hex($0.value))" }
+            .sorted()
+            .joined(separator: ",")
+        let txPower = (advertisementData[CBAdvertisementDataTxPowerLevelKey] as? NSNumber)
+            .map { String($0.intValue) } ?? "—"
+        let connectable = (advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber)
+            .map { $0.boolValue ? "true" : "false" } ?? "—"
+        let services = serviceUUIDs.sorted().joined(separator: ",")
+        let metadataSignature = "name=\(name)|services=\(services)|mfg=\(manufacturer)|serviceData=\(serviceData)|tx=\(txPower)|connectable=\(connectable)"
+        let summary = "name=\(name.isEmpty ? "(unnamed)" : name)\nRSSI=\(rssi) dBm\nservices=\(services.isEmpty ? "—" : services)\nmanufacturer=\(manufacturer)\nserviceData=\(serviceData.isEmpty ? "—" : serviceData)\ntxPower=\(txPower)\nconnectable=\(connectable)"
+        bledimAdvertisementSummaryByID[id] = summary
+
+        if bledimLastAdvertisementSignatureByID[id] != metadataSignature {
+            bledimLastAdvertisementSignatureByID[id] = metadataSignature
+            logger.log(
+                "AMBIENT ADV",
+                "BLEDIM \(id) metadata name=\(name.isEmpty ? "(unnamed)" : name) services=\(services.isEmpty ? "—" : services) manufacturer=\(manufacturer) serviceData=\(serviceData.isEmpty ? "—" : serviceData) txPower=\(txPower) connectable=\(connectable)"
             )
         }
     }

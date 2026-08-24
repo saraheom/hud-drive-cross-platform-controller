@@ -1,5 +1,8 @@
 # v90 — Vehicle-aware ambient lighting + BLEDIM2/CB01 control test
 
+> **v90.5 protocol correction:** The experimental BLEDIM `7E FF ... EF` frames documented below were physically tested on both paired BLEDIM2-compatible controllers and produced no color/brightness/power change. They are retired and must not be used. The verified transport is FFF0/FFF1, but the command payload still requires an official-app capture. See `V90_5_BLEDIM_PROTOCOL_RECOVERY_AND_SHUTDOWN.md`.
+
+
 This phase keeps the temporary Xcode 26 / iOS 26-SDK build path so ambient
 lighting can be tested while the Xcode 27 hosted runner is still pending.
 ScreenCaptureKit navigation remains excluded only from the temporary project.

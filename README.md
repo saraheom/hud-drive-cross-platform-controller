@@ -176,3 +176,24 @@ All v90.2 HUD-outage protection and independent OBD witness logic is retained.
 ## v90.4 — courtesy-headlight-aware engine startup
 
 Vehicle-entry behavior was corrected: Dashboard + Center Console can be powered by courtesy headlights before the engine starts in both daylight and darkness. v90.4 therefore ignores pre-engine headlight-fed presence for startup classification. Once engine-switched HUD/OBD power appears, the app waits the configurable post-engine settle window. If the headlight-fed pair turns off, the startup is Day and only Door pulses to its daytime target. If either remains powered, the startup is Night and the available role lights pulse together, with Door ending at its nighttime target.
+
+## v90.5 — retire invalid BLEDIM packets + corrected arrival/courtesy shutdown
+
+Field testing proved that both BLEDIM2-compatible controllers accept the BLE
+connection and expose `FFF0/FFF1`, but ignore the v90 `7E FF ... EF` packet
+family. Those guessed writes are removed. BLEDIM normal Power/Color/Brightness
+and automated fades are intentionally disabled until the exact FFF1 application
+payload is captured.
+
+A new per-device **BLEDIM FFF1 Protocol Lab** records advertisement metadata,
+reads standard Device Information/Battery values, logs FFF1 notifications, and
+can replay an exact captured hex frame only to FFF1. It never writes the TI OAD
+`F000FFC0/FFC1/FFC2` firmware-update service.
+
+Shutdown behavior is also corrected for the physical wiring. Door is engine-fed
+and loses power immediately at engine OFF, so the app records Door runtime 0
+without trying to fade it. Dashboard + Center Console are headlight-fed and the
+shutdown latch stays armed until the next engine start, allowing verified
+headlight controllers to be faded/held at 0 during the post-lock 1–2 minute
+courtesy-headlight interval. Until BLEDIM FFF1 is decoded, this suppression is
+fully available for Lotus but not yet for the BLEDIM Dashboard light.

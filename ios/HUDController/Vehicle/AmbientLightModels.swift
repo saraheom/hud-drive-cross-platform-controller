@@ -11,14 +11,14 @@ enum AmbientLightProtocolKind: String, Codable, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .lotusLantern: return "Lotus Lantern / ELK-BLEDOM"
-        case .bledim2: return "BLEDIM2 / CB01"
+        case .bledim2: return "BLEDIM2 / FFF1"
         }
     }
 
     var controlStatus: String {
         switch self {
         case .lotusLantern: return "Control protocol verified from Lotus Lantern 6.5.08"
-        case .bledim2: return "Experimental FFF0/FFF1 CB01 compatibility profile"
+        case .bledim2: return "FFF0/FFF1 transport verified; command payload capture required"
         }
     }
 }
@@ -186,32 +186,15 @@ enum LotusLanternProtocol {
     }
 }
 
-/// v90 experimental compatibility profile for the user's two BLEDIM2/CB01
-/// controllers. Their physical GATT fingerprint confirms application service
-/// FFF0 and writable/notifiable characteristic FFF1. The supplied BLEDIM2 APK is
-/// Jiagu-packed, so the payloads cannot be proven from that APK; these are the
-/// common 9-byte CB01/BLEDIM command family and are intentionally logged on every
-/// transmission for controlled physical validation.
+/// v90.5 transport definition for the user's two BLEDIM2-compatible controllers.
+/// Physical testing verifies application service FFF0 and writable/notifiable FFF1,
+/// but v90's guessed 7E...EF payloads were ignored by both controllers. Those
+/// frames belonged to a different FFE0/FFE1 LED-controller family and are therefore
+/// intentionally removed. Only the verified GATT transport remains here until an
+/// official BLEDIM/BLEDIM2 traffic capture supplies the real command bytes.
 enum BLEDIM2Protocol {
     static let serviceUUID = CBUUIDString.fff0
     static let writeCharacteristicUUID = CBUUIDString.fff1
-
-    static func power(_ on: Bool) -> Data {
-        Data([0x7E, 0xFF, 0x04, on ? 0x01 : 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xEF])
-    }
-
-    static func color(_ rgb: AmbientRGB) -> Data {
-        Data([
-            0x7E, 0xFF, 0x05, 0x03,
-            UInt8(rgb.red), UInt8(rgb.green), UInt8(rgb.blue),
-            0xFF, 0xEF
-        ])
-    }
-
-    static func brightness(_ percent: Int) -> Data {
-        let value = UInt8(max(0, min(100, percent)))
-        return Data([0x7E, 0xFF, 0x01, value, 0x00, 0xFF, 0xFF, 0xFF, 0xEF])
-    }
 }
 
 /// Keep UUID literals in one place while still making the recovered values

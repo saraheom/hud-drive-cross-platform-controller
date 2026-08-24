@@ -35,31 +35,19 @@ final class V89AmbientLightingTests: XCTestCase {
         XCTAssertTrue(source.contains("absenceConfirmationWindows = 3"))
     }
 
-    func testBLEDIM2ExperimentalCB01PacketsAndFFF1Path() throws {
-        XCTAssertEqual(
-            Array(BLEDIM2Protocol.power(true)),
-            [0x7E, 0xFF, 0x04, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xEF]
-        )
-        XCTAssertEqual(
-            Array(BLEDIM2Protocol.power(false)),
-            [0x7E, 0xFF, 0x04, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xEF]
-        )
-        XCTAssertEqual(
-            Array(BLEDIM2Protocol.color(AmbientRGB(red: 0x12, green: 0x34, blue: 0x56))),
-            [0x7E, 0xFF, 0x05, 0x03, 0x12, 0x34, 0x56, 0xFF, 0xEF]
-        )
-        XCTAssertEqual(
-            Array(BLEDIM2Protocol.brightness(50)),
-            [0x7E, 0xFF, 0x01, 0x32, 0x00, 0xFF, 0xFF, 0xFF, 0xEF]
-        )
+    func testBLEDIM2FFF1TransportRemainsButGuessedPacketsAreBlocked() throws {
+        XCTAssertEqual(BLEDIM2Protocol.serviceUUID, "0000FFF0-0000-1000-8000-00805F9B34FB")
+        XCTAssertEqual(BLEDIM2Protocol.writeCharacteristicUUID, "0000FFF1-0000-1000-8000-00805F9B34FB")
 
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("HUDController/Vehicle/AmbientLightMonitor.swift")
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
-        XCTAssertTrue(source.contains("BLEDIM2 FFF0/FFF1 experimental"))
+        XCTAssertTrue(source.contains("BLEDIM2 FFF0/FFF1 raw transport ready"))
         XCTAssertTrue(source.contains("isBLEDIMWriteCharacteristic"))
-        XCTAssertTrue(source.contains("EXPERIMENTAL CB01"))
+        XCTAssertTrue(source.contains("BLEDIM write blocked until FFF1 payload is captured"))
+        XCTAssertTrue(source.contains("sendRawBLEDIMHex"))
+        XCTAssertFalse(source.contains("EXPERIMENTAL CB01"))
     }
 }
