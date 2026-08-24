@@ -145,3 +145,30 @@ new driving session.
 - The existing ambient CoreBluetooth scan watches the configured OBD name (`OBDII` by default) and can learn its iOS UUID when the HUD is deliberately switched off while the engine remains running.
 - Once calibrated, direct OBD BLE advertisements veto shutdown during HUD-only overheat/reboot outages.
 - Automatic shutdown is inhibited until the independent OBD witness is calibrated. If the OBD adapter is Bluetooth Classic and cannot be observed by iOS, the app refuses to infer engine OFF and keeps `Fade Out Now` as the safe manual path.
+
+## v90.3 — automatic door day/night brightness
+
+The door controller is powered for the entire engine session, so v90.3 gives it
+two independent vehicle-automation brightness targets:
+
+- **Door daytime brightness** (default 100%)
+- **Door nighttime brightness** (default 45%)
+
+Night/headlight state is redundant: either the Dashboard light **or** the Center
+Console/BLEDOM light being logically powered is sufficient to select the night
+target. Day returns only after both headlight-fed controllers are absent.
+
+The door transitions use the existing Headlight join fade duration. At a
+daytime startup the door pulse ends at the daytime target. At a nighttime
+startup its synchronized pulse ends at the nighttime target while Dashboard and
+Center Console end at their own preferred brightness. If headlights turn on
+later while driving, Dashboard/Console fade in while Door fades to its night
+target. If headlights later turn off and both headlight-fed lights disappear,
+Door fades back to its daytime target.
+
+These day/night values are separate from the door device's generic/manual
+preferred brightness and only update runtime/last-applied brightness. Engine
+shutdown still fades all powered lights to 0 without destroying any preferred
+or day/night target.
+
+All v90.2 HUD-outage protection and independent OBD witness logic is retained.

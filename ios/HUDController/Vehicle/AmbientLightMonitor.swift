@@ -2,8 +2,9 @@ import Foundation
 import CoreBluetooth
 import Observation
 
-/// v90.1 expands the original BLEDOM presence monitor into a multi-device ambient
-/// lighting controller, BLEDIM2/CB01 test adapter and vehicle-power choreography
+/// v90.3 expands the original BLEDOM presence monitor into a multi-device ambient
+/// lighting controller, BLEDIM2/CB01 test adapter, vehicle-power choreography,
+/// and automatic Door day/night brightness management
 /// while preserving the HUD Auto Brightness trigger path.
 ///
 /// One CBCentralManager owns all ambient-light BLE work so the controller UI and
@@ -90,6 +91,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     var headlightJoinFadeSeconds: Double {
         didSet { UserDefaults.standard.set(max(0.4, min(6.0, headlightJoinFadeSeconds)), forKey: "HUD.Ambient.v90.headlightFade") }
     }
+
+    /// v90.3: the door controller is powered for the entire engine session, so its
+    /// steady-state brightness can be independently tuned for daylight and night.
+    /// These targets are vehicle-automation settings and intentionally do not
+    /// overwrite the device's generic/manual preferred brightness.
+    var doorDayBrightness: Int {
+        didSet { UserDefaults.standard.set(max(0, min(100, doorDayBrightness)), forKey: "HUD.Ambient.v90_3.doorDayBrightness") }
+    }
+    var doorNightBrightness: Int {
+        didSet { UserDefaults.standard.set(max(0, min(100, doorNightBrightness)), forKey: "HUD.Ambient.v90_3.doorNightBrightness") }
+    }
+
     var shutdownFadeSeconds: Double {
         didSet { UserDefaults.standard.set(max(0.4, min(10.0, shutdownFadeSeconds)), forKey: "HUD.Ambient.v90.shutdownFade") }
     }
@@ -107,6 +120,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var startupClassificationTask: Task<Void, Never>?
     private var headlightJoinTask: Task<Void, Never>?
     private var vehicleAnimationTask: Task<Void, Never>?
+    private var doorBrightnessTask: Task<Void, Never>?
     private var vehicleStartupCompleted = false
     private var vehicleJoinedHeadlightIDs: Set<UUID> = []
     private var allPowerAbsentSince: Date?
@@ -182,6 +196,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ? 4.0 : max(1.0, min(8.0, d.double(forKey: "HUD.Ambient.v90.classification")))
         self.headlightJoinFadeSeconds = d.object(forKey: "HUD.Ambient.v90.headlightFade") == nil
             ? 1.5 : max(0.4, min(6.0, d.double(forKey: "HUD.Ambient.v90.headlightFade")))
+        self.doorDayBrightness = d.object(forKey: "HUD.Ambient.v90_3.doorDayBrightness") == nil
+            ? 100 : max(0, min(100, d.integer(forKey: "HUD.Ambient.v90_3.doorDayBrightness")))
+        self.doorNightBrightness = d.object(forKey: "HUD.Ambient.v90_3.doorNightBrightness") == nil
+            ? 45 : max(0, min(100, d.integer(forKey: "HUD.Ambient.v90_3.doorNightBrightness")))
         self.shutdownFadeSeconds = d.object(forKey: "HUD.Ambient.v90.shutdownFade") == nil
             ? 2.0 : max(0.4, min(10.0, d.double(forKey: "HUD.Ambient.v90.shutdownFade")))
         self.engineOffConfirmationSeconds = d.object(forKey: "HUD.Ambient.v90.engineOffConfirmation") == nil
@@ -316,6 +334,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         headlightJoinTask = nil
         vehicleAnimationTask?.cancel()
         vehicleAnimationTask = nil
+        doorBrightnessTask?.cancel()
+        doorBrightnessTask = nil
         engineOffConfirmationTask?.cancel()
         engineOffConfirmationTask = nil
 
@@ -609,6 +629,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     func setVehicleStartupPulseDuration(_ seconds: Double) { vehicleStartupPulseDurationSeconds = max(0.4, min(6.0, seconds)) }
     func setStartupClassificationDuration(_ seconds: Double) { startupClassificationSeconds = max(1.0, min(8.0, seconds)) }
     func setHeadlightJoinFadeDuration(_ seconds: Double) { headlightJoinFadeSeconds = max(0.4, min(6.0, seconds)) }
+
+    func setDoorDayBrightness(_ percent: Int) {
+        doorDayBrightness = max(0, min(100, percent))
+        applyDoorTargetAfterSettingChange(changedNightTarget: false)
+    }
+
+    func setDoorNightBrightness(_ percent: Int) {
+        doorNightBrightness = max(0, min(100, percent))
+        applyDoorTargetAfterSettingChange(changedNightTarget: true)
+    }
+
     func setShutdownFadeDuration(_ seconds: Double) { shutdownFadeSeconds = max(0.4, min(10.0, seconds)) }
     func setEngineOffConfirmationDuration(_ seconds: Double) { engineOffConfirmationSeconds = max(0.5, min(8.0, seconds)) }
 
@@ -838,13 +869,53 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func headlightPowerPresent() -> Bool {
+        // Either headlight-fed controller is sufficient to classify the vehicle as
+        // "night/headlights on". This gives the door dimming logic redundant
+        // witnesses: Dashboard OR Center Console/BLEDOM.
         roleIDs([.dashboard, .centerConsole]).contains(where: { isLogicallyPowered($0) })
+    }
+
+    private func doorTargetBrightness(night: Bool) -> Int {
+        max(0, min(100, night ? doorNightBrightness : doorDayBrightness))
+    }
+
+    var doorBrightnessModeStatus: String {
+        let night = headlightPowerPresent()
+        let target = doorTargetBrightness(night: night)
+        if !vehicleAutomationEnabled {
+            return "Door day/night automation off • day \(doorDayBrightness)% • night \(doorNightBrightness)%"
+        }
+        return "\(night ? "Night" : "Day") door target \(target)% • night = Dashboard OR Center Console present"
+    }
+
+    private func vehicleTargetBrightness(for device: AmbientLightDevice, night: Bool) -> Int {
+        if device.role == .door {
+            return doorTargetBrightness(night: night)
+        }
+        return max(0, min(100, device.brightness))
     }
 
     private func allRolePowerAbsent() -> Bool {
         let ids = pairedDevices.compactMap { $0.role == nil ? nil : $0.id }
         guard !ids.isEmpty else { return true }
         return ids.allSatisfy { !isLogicallyPowered($0) }
+    }
+
+    private func applyDoorTargetAfterSettingChange(changedNightTarget: Bool) {
+        guard vehicleAutomationEnabled,
+              enabled,
+              enginePowerPresent,
+              vehicleSessionActive,
+              vehicleStartupCompleted,
+              !vehicleShutdownLatched else { return }
+
+        let night = headlightPowerPresent()
+        guard night == changedNightTarget else { return }
+        transitionDoorBrightness(
+            to: doorTargetBrightness(night: night),
+            over: headlightJoinFadeSeconds,
+            reason: night ? "night target changed" : "day target changed"
+        )
     }
 
     private func resetVehicleAutomationRuntime(reason: String) {
@@ -1096,8 +1167,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             } else if previousHeadlightPowerPresent && !headlightsPresent {
                 vehicleJoinedHeadlightIDs.subtract(roleIDs([.dashboard, .centerConsole]))
                 vehicleHeadlightsActive = false
-                vehicleAutomationStatus = "Driving • headlights off • door light active"
-                logger.log("AMBIENT AUTO", "Headlight-fed lights lost physical power; no fade-out command is possible after power removal")
+                transitionDoorBrightness(
+                    to: doorTargetBrightness(night: false),
+                    over: headlightJoinFadeSeconds,
+                    reason: "headlights off → daytime door brightness"
+                )
+                vehicleAutomationStatus = "Driving • headlights off • door returning to daytime brightness"
+                logger.log("AMBIENT AUTO", "Headlight-fed lights lost physical power; door fading to daytime target \(doorDayBrightness)%. No fade-out command is possible for the now-unpowered headlight lights.")
             }
         }
         previousHeadlightPowerPresent = headlightsPresent
@@ -1187,6 +1263,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             let halfFade = max(0.2, duration / 2.0)
             let stepDelay = halfFade / Double(steps)
 
+            let nightTarget = self.vehicleHeadlightsActive
+            let targets = Dictionary(uniqueKeysWithValues: ids.compactMap { id -> (UUID, Int)? in
+                guard let device = self.pairedDevice(id) else { return nil }
+                return (id, self.vehicleTargetBrightness(for: device, night: nightTarget))
+            })
+
             @MainActor
             func fade(fractionFrom start: Double, to end: Double) async -> Bool {
                 for step in 1...steps {
@@ -1194,8 +1276,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     let t = Double(step) / Double(steps)
                     let fraction = start + ((end - start) * t)
                     for id in ids {
-                        guard let device = self.pairedDevice(id) else { continue }
-                        let value = Int((Double(device.brightness) * fraction).rounded())
+                        let target = targets[id] ?? 0
+                        let value = Int((Double(target) * fraction).rounded())
                         self.applyRuntimeBrightness(id, percent: value, reason: "\(label) synchronized fade")
                     }
                     try? await Task.sleep(for: .seconds(stepDelay))
@@ -1209,13 +1291,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             }
             guard await fade(fractionFrom: 0, to: 1) else { return }
             for id in ids {
-                guard let device = self.pairedDevice(id) else { continue }
-                self.applyRuntimeBrightness(id, percent: device.brightness, reason: "\(label) final preferred", persist: true)
+                let target = targets[id] ?? 0
+                self.applyRuntimeBrightness(id, percent: target, reason: "\(label) final vehicle target", persist: true)
             }
             self.vehicleAnimationTask = nil
             self.vehicleAutomationStatus = self.vehicleHeadlightsActive
-                ? "Driving • headlights on • all powered lights at preferred brightness"
-                : "Driving • daylight • door light at preferred brightness"
+                ? "Driving • headlights on • door at night target \(self.doorNightBrightness)%"
+                : "Driving • daylight • door at day target \(self.doorDayBrightness)%"
             self.logger.log("AMBIENT AUTO", "Vehicle startup pulse complete: \(label)")
         }
     }
@@ -1236,15 +1318,67 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func fadeInNewHeadlightDevices() {
+        // Night is true when EITHER headlight-fed controller is present. Dim the
+        // always-powered door light independently of whether both headlight GATT
+        // paths are writable yet.
+        transitionDoorBrightness(
+            to: doorTargetBrightness(night: true),
+            over: headlightJoinFadeSeconds,
+            reason: "headlights on → nighttime door brightness"
+        )
+
         let candidates = roleIDs([.dashboard, .centerConsole]).filter {
             isLogicallyPowered($0) && isControllable($0) && !vehicleJoinedHeadlightIDs.contains($0)
         }
-        guard !candidates.isEmpty else { return }
-        vehicleJoinedHeadlightIDs.formUnion(candidates)
         vehicleHeadlightsActive = true
+
+        guard !candidates.isEmpty else {
+            vehicleAutomationStatus = "Driving • headlights on • door dimming to night target; waiting for headlight-light control"
+            logger.log("AMBIENT AUTO", "Headlight OFF→ON; door target=\(doorNightBrightness)% while headlight-fed controllers wait for control readiness")
+            return
+        }
+
+        vehicleJoinedHeadlightIDs.formUnion(candidates)
         fade(ids: candidates, toPreferredOver: headlightJoinFadeSeconds, reason: "headlight join")
-        vehicleAutomationStatus = "Driving • headlights on • dashboard + console joined"
-        logger.log("AMBIENT AUTO", "Headlight OFF→ON; fading in \(candidates.count) headlight-fed light(s)")
+        vehicleAutomationStatus = "Driving • headlights on • dashboard + console joining; door → \(doorNightBrightness)%"
+        logger.log("AMBIENT AUTO", "Headlight OFF→ON; fading in \(candidates.count) headlight-fed light(s) and dimming door to \(doorNightBrightness)%")
+    }
+
+    private func transitionDoorBrightness(to targetPercent: Int, over seconds: Double, reason: String) {
+        guard !vehicleShutdownLatched,
+              let doorID = deviceID(for: .door),
+              isLogicallyPowered(doorID),
+              isControllable(doorID),
+              let door = pairedDevice(doorID) else { return }
+
+        let target = max(0, min(100, targetPercent))
+        let start = door.runtimeBrightness
+
+        doorBrightnessTask?.cancel()
+        if start == target {
+            applyRuntimeBrightness(doorID, percent: target, reason: "\(reason) already at target", persist: true)
+            return
+        }
+
+        sendPower(doorID, on: true, reason: reason)
+        sendColor(doorID, color: door.color, reason: reason)
+        logger.log("AMBIENT AUTO", "Door brightness transition \(start)% → \(target)% reason=\(reason)")
+
+        doorBrightnessTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let steps = 16
+            let delay = max(0.4, seconds) / Double(steps)
+            for step in 1...steps {
+                guard !Task.isCancelled else { return }
+                let t = Double(step) / Double(steps)
+                let value = Int((Double(start) + (Double(target - start) * t)).rounded())
+                self.applyRuntimeBrightness(doorID, percent: value, reason: reason)
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            self.applyRuntimeBrightness(doorID, percent: target, reason: "\(reason) final", persist: true)
+            self.doorBrightnessTask = nil
+            self.logger.log("AMBIENT AUTO", "Door brightness transition complete at \(target)% reason=\(reason)")
+        }
     }
 
     private func fade(ids: [UUID], toPreferredOver seconds: Double, reason: String) {
@@ -1296,6 +1430,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         headlightJoinTask?.cancel()
         headlightJoinTask = nil
         vehicleAnimationTask?.cancel()
+        doorBrightnessTask?.cancel()
+        doorBrightnessTask = nil
 
         let ids = pairedDevices.compactMap { device -> UUID? in
             guard device.role != nil, isLogicallyPowered(device.id), isControllable(device.id) else { return nil }
@@ -1342,12 +1478,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     func restorePreferredBrightnessNow() {
         vehicleShutdownLatched = false
-        let ids = pairedDevices.compactMap { device -> UUID? in
-            guard device.role != nil, isLogicallyPowered(device.id), isControllable(device.id) else { return nil }
+        let nonDoorIDs = pairedDevices.compactMap { device -> UUID? in
+            guard device.role != nil,
+                  device.role != .door,
+                  isLogicallyPowered(device.id),
+                  isControllable(device.id) else { return nil }
             return device.id
         }
-        fade(ids: ids, toPreferredOver: headlightJoinFadeSeconds, reason: "restore preferred")
-        vehicleAutomationStatus = "Restoring preferred brightness"
+        fade(ids: nonDoorIDs, toPreferredOver: headlightJoinFadeSeconds, reason: "restore preferred")
+        transitionDoorBrightness(
+            to: doorTargetBrightness(night: headlightPowerPresent()),
+            over: headlightJoinFadeSeconds,
+            reason: "restore current door day/night target"
+        )
+        vehicleAutomationStatus = "Restoring current brightness targets"
     }
 
     private func vehicleControlBecameReady(_ id: UUID) {
@@ -1363,6 +1507,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
         if startupClassificationTask != nil && !vehicleStartupCompleted {
             prepareForVehicleStartup(id)
+            return
+        }
+        if vehicleSessionActive && vehicleStartupCompleted,
+           device.role == .door {
+            transitionDoorBrightness(
+                to: doorTargetBrightness(night: headlightPowerPresent()),
+                over: headlightJoinFadeSeconds,
+                reason: "door control ready"
+            )
             return
         }
         if vehicleSessionActive && vehicleStartupCompleted,

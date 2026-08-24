@@ -116,6 +116,36 @@ struct AmbientLightingView: View {
                         )
                         .disabled(!monitor.vehicleAutomationEnabled)
 
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Door day / night brightness")
+                                .font(.subheadline.weight(.semibold))
+
+                            percentSlider(
+                                title: "Daytime",
+                                value: Binding(
+                                    get: { Double(monitor.doorDayBrightness) },
+                                    set: { monitor.setDoorDayBrightness(Int($0.rounded())) }
+                                )
+                            )
+
+                            percentSlider(
+                                title: "Night",
+                                value: Binding(
+                                    get: { Double(monitor.doorNightBrightness) },
+                                    set: { monitor.setDoorNightBrightness(Int($0.rounded())) }
+                                )
+                            )
+
+                            Text(monitor.doorBrightnessModeStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Text("Night is detected when either the Dashboard light or Center Console/BLEDOM light is powered. The door fades between these two targets using the Headlight join fade duration. Day returns only after both headlight-fed lights are absent.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .disabled(!monitor.vehicleAutomationEnabled)
+
                         valueSlider(
                             title: "Engine-off confirmation",
                             value: Binding(
@@ -153,7 +183,7 @@ struct AmbientLightingView: View {
                         }
                         .disabled(!monitor.vehicleAutomationEnabled)
 
-                        Button("Restore Preferred Brightness") {
+                        Button("Restore Current Brightness Targets") {
                             monitor.restorePreferredBrightnessNow()
                         }
                         .buttonStyle(.bordered)
@@ -331,6 +361,19 @@ struct AmbientLightingView: View {
         }
     }
 
+    private func percentSlider(title: String, value: Binding<Double>) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(Int(value.wrappedValue.rounded()))%")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: value, in: 0...100, step: 1)
+        }
+    }
+
     private func statusDot(active: Bool) -> some View {
         Circle()
             .fill(active ? Color.green : Color.secondary)
@@ -480,6 +523,12 @@ struct AmbientDeviceControlView: View {
                             if let current = monitor.pairedDevice(deviceID)?.lastAppliedBrightness {
                                 LabeledContent("Last applied", value: "\(current)%")
                                     .font(.caption)
+                            }
+
+                            if device.role == .door, monitor.vehicleAutomationEnabled {
+                                Text("Vehicle automation currently owns the Door steady-state brightness using the separate Daytime/Night targets on the main Ambient Lighting page. This preferred value remains available for manual control and does not get overwritten by automatic dimming.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
 
                             if device.protocolKind == .bledim2 {
