@@ -432,6 +432,8 @@ struct AmbientDeviceControlView: View {
         ScrollView {
             VStack(spacing: 18) {
                 if let device = monitor.pairedDevice(deviceID) {
+                    let bledimUndecoded = device.protocolKind == .bledim2
+
                     section("DEVICE") {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -495,8 +497,6 @@ struct AmbientDeviceControlView: View {
 
                     section("LIGHT CONTROL") {
                         VStack(alignment: .leading, spacing: 14) {
-                            let bledimUndecoded = device.protocolKind == .bledim2
-
                             Toggle("Power", isOn: Binding(
                                 get: { monitor.pairedDevice(deviceID)?.powerOn ?? false },
                                 set: { monitor.setPower(deviceID, on: $0) }

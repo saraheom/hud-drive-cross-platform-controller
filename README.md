@@ -197,3 +197,13 @@ shutdown latch stays armed until the next engine start, allowing verified
 headlight controllers to be faded/held at 0 during the post-lock 1–2 minute
 courtesy-headlight interval. Until BLEDIM FFF1 is decoded, this suppression is
 fully available for Lotus but not yet for the BLEDIM Dashboard light.
+
+
+## v90.5.1 — iOS 26 TestFlight compile fix
+
+The v90.5 TestFlight archive reached Swift compilation but failed in
+`AmbientLightingView.swift` because the `bledimUndecoded` UI guard was declared
+inside the LIGHT CONTROL section and then referenced again from the sibling
+STARTUP ANIMATION section. v90.5.1 moves that guard to the common paired-device
+scope. No BLE protocol, vehicle-state, or shutdown behavior changes from v90.5.
+A source regression test now requires the guard to remain in the shared scope.

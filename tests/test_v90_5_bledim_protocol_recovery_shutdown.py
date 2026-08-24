@@ -43,3 +43,15 @@ def test_v905_engine_off_arms_latch_even_if_no_light_is_ready_yet():
     assert "vehicleSessionActive" not in block
     assert 'performVehicleShutdownFade(trigger: "engine power OFF")' in block
     assert "post-lock" in monitor
+
+
+def test_v9051_bledim_disabled_flag_is_scoped_across_all_device_sections():
+    view = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
+    device_scope = view.split("if let device = monitor.pairedDevice(deviceID) {", 1)[1]
+    assert "let bledimUndecoded = device.protocolKind == .bledim2" in device_scope[:400]
+    # The flag is consumed by both LIGHT CONTROL and STARTUP ANIMATION, so it must
+    # be declared in their common device scope rather than inside LIGHT CONTROL.
+    light_control = device_scope.split('section("LIGHT CONTROL")', 1)[1].split('if device.protocolKind == .bledim2', 1)[0]
+    assert "let bledimUndecoded" not in light_control
+    assert 'section("STARTUP ANIMATION")' in device_scope
+    assert "if bledimUndecoded" in device_scope.split('section("STARTUP ANIMATION")', 1)[1]
