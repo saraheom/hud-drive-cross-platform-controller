@@ -172,3 +172,7 @@ shutdown still fades all powered lights to 0 without destroying any preferred
 or day/night target.
 
 All v90.2 HUD-outage protection and independent OBD witness logic is retained.
+
+## v90.4 — courtesy-headlight-aware engine startup
+
+Vehicle-entry behavior was corrected: Dashboard + Center Console can be powered by courtesy headlights before the engine starts in both daylight and darkness. v90.4 therefore ignores pre-engine headlight-fed presence for startup classification. Once engine-switched HUD/OBD power appears, the app waits the configurable post-engine settle window. If the headlight-fed pair turns off, the startup is Day and only Door pulses to its daytime target. If either remains powered, the startup is Night and the available role lights pulse together, with Door ending at its nighttime target.

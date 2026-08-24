@@ -93,7 +93,7 @@ struct AmbientLightingView: View {
                         .disabled(!monitor.vehicleAutomationEnabled)
 
                         valueSlider(
-                            title: "Day/night classification window",
+                            title: "Post-engine headlight settle window",
                             value: Binding(
                                 get: { monitor.startupClassificationSeconds },
                                 set: { monitor.setStartupClassificationDuration($0) }
@@ -140,7 +140,7 @@ struct AmbientLightingView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Text("Night is detected when either the Dashboard light or Center Console/BLEDOM light is powered. The door fades between these two targets using the Headlight join fade duration. Day returns only after both headlight-fed lights are absent.")
+                            Text("On vehicle entry, Dashboard + Center Console may turn on before the engine because of courtesy headlights; that pre-engine state is ignored. After engine power appears, the app waits the settle window: if either headlight-fed light remains powered it classifies Night; if both turn off it classifies Day. During driving, night is detected when either the Dashboard light or Center Console/BLEDOM light is powered, and Day returns only after both are absent.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }

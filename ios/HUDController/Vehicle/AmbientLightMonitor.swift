@@ -129,6 +129,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var obdEnginePowerSignalPresent = false
     private var engineOffConfirmationTask: Task<Void, Never>?
     private var hudOutageBeganAt: Date?
+    /// v90.4: engine-start timestamp anchors the courtesy-headlight settling
+    /// window. Headlight advertisements from before this instant are explicitly
+    /// ignored when classifying the startup as day or night.
+    private var enginePowerBecamePresentAt: Date?
     private var directOBDLastSeen = Date.distantPast
     private var directOBDPeripheralID: UUID?
     private var directOBDWitnessProven: Bool
@@ -869,10 +873,30 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func headlightPowerPresent() -> Bool {
-        // Either headlight-fed controller is sufficient to classify the vehicle as
-        // "night/headlights on". This gives the door dimming logic redundant
-        // witnesses: Dashboard OR Center Console/BLEDOM.
+        // Steady-state driving detector. Either headlight-fed controller is
+        // sufficient, and the normal 8-second logical-presence hysteresis keeps
+        // brief BLE dropouts from changing the door brightness.
         roleIDs([.dashboard, .centerConsole]).contains(where: { isLogicallyPowered($0) })
+    }
+
+    /// Startup classification intentionally does NOT use the normal 8-second
+    /// logical-presence hysteresis. On this vehicle, entering the car powers the
+    /// Dashboard and Center Console lights before the engine starts regardless of
+    /// daylight. A daylight engine start then removes that headlight power.
+    ///
+    /// Therefore, a startup counts as night only when at least one headlight-fed
+    /// controller is still actively connected after engine power appears, or it
+    /// produced a fresh advertisement AFTER engine power appeared. Pre-engine
+    /// courtesy-light advertisements cannot make a daylight start look like night.
+    private func startupHeadlightPowerPresent(now: Date = Date()) -> Bool {
+        let engineOnAt = enginePowerBecamePresentAt ?? now
+        return roleIDs([.dashboard, .centerConsole]).contains { id in
+            if peripheralsByID[id]?.state == .connected {
+                return true
+            }
+            guard let seen = lastSeenByID[id], seen >= engineOnAt else { return false }
+            return now.timeIntervalSince(seen) <= 2.0
+        }
     }
 
     private func doorTargetBrightness(night: Bool) -> Int {
@@ -880,12 +904,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     var doorBrightnessModeStatus: String {
-        let night = headlightPowerPresent()
-        let target = doorTargetBrightness(night: night)
         if !vehicleAutomationEnabled {
             return "Door day/night automation off • day \(doorDayBrightness)% • night \(doorNightBrightness)%"
         }
-        return "\(night ? "Night" : "Day") door target \(target)% • night = Dashboard OR Center Console present"
+        guard enginePowerPresent else {
+            return "Engine off • pre-engine courtesy headlights are ignored for day/night classification"
+        }
+        let night = vehicleStartupCompleted ? vehicleHeadlightsActive : startupHeadlightPowerPresent()
+        let target = doorTargetBrightness(night: night)
+        return "\(night ? "Night" : "Day") door target \(target)% • after startup, night = Dashboard OR Center Console present"
     }
 
     private func vehicleTargetBrightness(for device: AmbientLightDevice, night: Bool) -> Int {
@@ -928,6 +955,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         engineOffConfirmationTask?.cancel()
         engineOffConfirmationTask = nil
         hudOutageBeganAt = nil
+        if !enginePowerPresent { enginePowerBecamePresentAt = nil }
         vehicleSessionActive = false
         vehicleStartupCompleted = false
         vehicleHeadlightsActive = false
@@ -1053,6 +1081,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         enginePowerStatus = "Engine power ON • \(source)"
 
         if wasOff {
+            enginePowerBecamePresentAt = Date()
             startupClassificationTask?.cancel()
             startupClassificationTask = nil
             headlightJoinTask?.cancel()
@@ -1066,8 +1095,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             vehicleShutdownLatched = false
             vehicleJoinedHeadlightIDs.removeAll()
             allPowerAbsentSince = nil
-            vehicleAutomationStatus = "Engine power ON • waiting for door-light power"
-            logger.log("AMBIENT ENGINE", "Engine-switched power ON via \(source); armed fresh vehicle-light session")
+            vehicleAutomationStatus = "Engine power ON • waiting for door + courtesy-headlight settle"
+            logger.log("AMBIENT ENGINE", "Engine-switched power ON via \(source); courtesy-headlight state before engine will be ignored for startup classification")
         }
 
         evaluateVehicleLightingAutomation()
@@ -1183,15 +1212,28 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         vehicleSessionActive = true
         vehicleStartupCompleted = false
         vehicleShutdownLatched = false
-        previousHeadlightPowerPresent = headlightPowerPresent()
-        vehicleAutomationStatus = "Engine power ON • classifying day/night…"
+
+        // The Dashboard/Console may have been powered before the engine because
+        // the vehicle turns its courtesy headlights on when the driver enters.
+        // Do not treat that pre-engine condition as night. The classification
+        // deadline is anchored to the engine-power transition, not to whenever
+        // the Door BLE connection happens to finish.
+        let now = Date()
+        let engineOnAt = enginePowerBecamePresentAt ?? now
+        let elapsedSinceEngineOn = max(0, now.timeIntervalSince(engineOnAt))
+        let remainingSettle = max(0.5, startupClassificationSeconds - elapsedSinceEngineOn)
+
+        previousHeadlightPowerPresent = false
+        vehicleAutomationStatus = "Engine ON • settling courtesy headlights for day/night classification…"
         logger.log(
             "AMBIENT AUTO",
-            "Vehicle startup window begin \(String(format: "%.1f", startupClassificationSeconds))s; waiting for headlight-fed controllers"
+            "Post-engine startup settle begin; configured=\(String(format: "%.1f", startupClassificationSeconds))s elapsed=\(String(format: "%.1f", elapsedSinceEngineOn))s remaining=\(String(format: "%.1f", remainingSettle))s. Pre-engine Dashboard/Console presence is ignored."
         )
 
-        // Any controller that becomes writable during this window is immediately
-        // forced to zero so the synchronized pulse starts from a known state.
+        // Once the engine session begins, move any currently controllable role
+        // light to zero. At night they remain electrically powered and will take
+        // part in the synchronized pulse. In daylight the headlight-fed pair will
+        // lose physical power during the settling window, leaving Door only.
         for id in pairedDevices.compactMap({ $0.role == nil ? nil : $0.id }) where isControllable(id) {
             prepareForVehicleStartup(id)
         }
@@ -1199,7 +1241,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         startupClassificationTask?.cancel()
         startupClassificationTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            try? await Task.sleep(for: .seconds(self.startupClassificationSeconds))
+            try? await Task.sleep(for: .seconds(remainingSettle))
             guard !Task.isCancelled, self.vehicleAutomationEnabled, !self.vehicleShutdownLatched else { return }
             self.startupClassificationTask = nil
             self.finishVehicleStartupClassification()
@@ -1207,7 +1249,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func finishVehicleStartupClassification() {
-        let nightStart = headlightPowerPresent()
+        let nightStart = startupHeadlightPowerPresent()
         let roleSet: Set<AmbientLightRole> = nightStart
             ? [.door, .dashboard, .centerConsole]
             : [.door]
@@ -1224,11 +1266,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             vehicleJoinedHeadlightIDs.formUnion(ids.filter {
                 pairedDevice($0)?.role?.isHeadlightFed == true
             })
-            vehicleAutomationStatus = "Night startup • synchronized three-light pulse"
-            logger.log("AMBIENT AUTO", "Night startup classified; pulsing all powered role lights together")
+            vehicleAutomationStatus = "Night startup • headlight-fed lights remained powered after engine start"
+            logger.log("AMBIENT AUTO", "Night startup classified after post-engine settle; at least one headlight-fed controller remained powered, pulsing available role lights together")
         } else {
-            vehicleAutomationStatus = "Day startup • door-light pulse"
-            logger.log("AMBIENT AUTO", "Day startup classified; pulsing door light only")
+            vehicleAutomationStatus = "Day startup • courtesy headlights turned off after engine start"
+            logger.log("AMBIENT AUTO", "Day startup classified after post-engine settle; headlight-fed controllers lost power, pulsing Door only")
         }
         runVehicleStartupPulse(ids: ids, label: nightStart ? "night startup" : "day startup")
     }
