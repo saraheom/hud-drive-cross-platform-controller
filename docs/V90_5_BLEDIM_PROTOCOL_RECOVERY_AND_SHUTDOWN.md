@@ -75,3 +75,13 @@ immediately restored to its preferred color/power state at runtime brightness 0.
 At present the Lotus controller can be suppressed this way. The Dashboard BLEDIM
 controller cannot yet be commanded until its FFF1 payload is decoded; the app
 logs this limitation explicitly rather than pretending the fade succeeded.
+
+## v90.5.2 — iOS CI regression-test correction
+
+The v90.5.1 application target built successfully on the Xcode 26 CI path, but
+`V90VehicleAmbientAutomationTests.testShutdownPreservesPreferredBrightness`
+still asserted the pre-v90.5 shutdown source strings. The test now validates the
+corrected physical sequence: Door runtime state is recorded as zero without a BLE
+fade when engine-switched power disappears; only still-powered headlight-fed
+lights receive the final zero command; preferred/day/night brightness targets
+remain unchanged. Runtime application behavior is unchanged from v90.5.1.

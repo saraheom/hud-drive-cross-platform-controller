@@ -207,3 +207,10 @@ inside the LIGHT CONTROL section and then referenced again from the sibling
 STARTUP ANIMATION section. v90.5.1 moves that guard to the common paired-device
 scope. No BLE protocol, vehicle-state, or shutdown behavior changes from v90.5.
 A source regression test now requires the guard to remain in the shared scope.
+
+## v90.5.2 — iOS CI stale shutdown-test fix
+
+The iOS 26 application build passed, but one older v90 source-inspection unit test
+still expected the pre-v90.5 shutdown implementation. The test now matches the
+corrected Door-power-loss/headlight-courtesy shutdown behavior. No runtime code
+changed from v90.5.1.

@@ -24,9 +24,18 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(model.contains("var lastAppliedBrightness: Int?"))
         XCTAssertTrue(model.contains("var brightness: Int"))
-        XCTAssertTrue(monitor.contains("applyRuntimeBrightness(id, percent: 0, reason: \"vehicle shutdown final\", persist: true)"))
-        XCTAssertTrue(monitor.contains("preferred brightness preserved"))
+
+        // v90.5 corrected physical shutdown semantics:
+        // - Door is engine-switched and loses power immediately, so runtime zero is
+        //   recorded locally without transmitting a fade.
+        // - Only still-powered headlight-fed lights receive the final zero command.
+        // - User preferred/day/night brightness targets must remain unchanged.
+        XCTAssertTrue(monitor.contains("pairedDevices[index].lastAppliedBrightness = 0"))
+        XCTAssertTrue(monitor.contains("without overwriting its Day/Night targets"))
+        XCTAssertTrue(monitor.contains("applyRuntimeBrightness(id, percent: 0, reason: \"vehicle shutdown headlight final\", persist: true)"))
+        XCTAssertTrue(monitor.contains("preferred targets unchanged"))
         XCTAssertFalse(monitor.contains("$0.brightness = 0"))
+        XCTAssertFalse(monitor.contains("pairedDevices[index].brightness = 0"))
     }
 
     func testDayNightAndHeadlightJoinStateMachineExists() throws {
