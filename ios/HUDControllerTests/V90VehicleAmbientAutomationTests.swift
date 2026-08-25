@@ -44,7 +44,13 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
         XCTAssertTrue(source.contains("private func startSynchronizedBreathSession()"))
         XCTAssertTrue(source.contains("from = Double(clampedStart); to = 0"))
         XCTAssertTrue(source.contains("from = 0; to = 100"))
-        XCTAssertTrue(source.contains("from = 100; to = Double(clampedStart)"))
+        // v90.8.1: every repetition returns to the captured initial brightness,
+        // except the last return leg may land on a target changed while the breath
+        // is running. Keep CI aligned with the runtime implementation rather than
+        // the older v90.8 fixed-return source string.
+        XCTAssertTrue(source.contains("to = Double(cycleIndex == safeCycles - 1 ? clampedReturn : clampedStart)"))
+        XCTAssertTrue(source.contains("let perCycleDuration = max(1.0, min(15.0, breathDurationSeconds))"))
+        XCTAssertTrue(source.contains("let totalDuration = perCycleDuration * Double(cycles)"))
     }
 
     func testEnginePowerUsesHUDAndOBDWitness() throws {

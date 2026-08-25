@@ -273,3 +273,10 @@ not Door; later field testing confirmed the same protocol works on both controll
 - One repetition is `initial/current → 0% → 100% → initial/current`.
 - If a manual or active Door day/night target changes while the breath is running, earlier repetitions still return to the original starting brightness and the final repetition returns smoothly to the latest target.
 - `Breath duration / cycle` is 1–15 seconds **per repetition**. Therefore 3× at 9 seconds takes 27 seconds total.
+
+## v90.8.2 — iOS CI breath regression fix
+
+- Runtime behavior is unchanged from v90.8.1.
+- Fixes a stale Swift source-regression assertion that still expected the pre-v90.8.1 fixed return leg (`100% -> initial`) on every breath cycle.
+- CI now validates the intended v90.8.1 behavior: earlier cycles return to the captured initial brightness, while only the last return leg may end at a target changed during the running breath.
+- CI also verifies that the configured breath duration is per cycle and total duration is `per-cycle duration × cycle count`.
