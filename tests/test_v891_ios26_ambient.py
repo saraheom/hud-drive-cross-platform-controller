@@ -3,9 +3,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_startup_fade_is_explicitly_main_actor_isolated():
+def test_smooth_animation_engine_is_main_actor_isolated():
     source = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-    assert "@MainActor\n            func fade(from: Int, to: Int) async -> Bool" in source
+    assert "@MainActor\n@Observable\nfinal class AmbientLightMonitor" in source
+    assert "private func transitionBrightness(" in source
+    assert "let frameInterval = 0.05" in source
+    assert "private func startSynchronizedBreathSession()" in source
 
 
 def test_temporary_ci_uses_xcode26_ambient_project():

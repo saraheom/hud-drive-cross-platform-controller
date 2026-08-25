@@ -218,3 +218,58 @@ changed from v90.5.1.
 ## v90.7 — BLEDIM2 official iOS protocol recovered
 
 An Apple Bluetooth diagnostic/sysdiagnose PacketLogger capture of the official BLEDIM2 iOS app resolved the previously unknown FFF1 command protocol. BLEDIM2 uses `55 AA` framed writes with an incrementing sequence byte, big-endian payload length, and an additive modulo-256 checksum. Captured commands are `0x80` power, `0x82` RGB, and `0x88` brightness. Normal BLEDIM controls and vehicle automation are re-enabled; the disproved v90 `7E FF ... EF` guesses remain retired. See `docs/V90_7_BLEDIM2_OFFICIAL_IOS_PROTOCOL.md`.
+
+
+## v90.8 — simplified ambient state machine, smooth breath, presets, shortcuts
+
+v90.8 supersedes the earlier startup/headlight-join/shutdown choreography. Field
+observation established that all three ambient-light controllers can remain powered
+after engine shutdown, so engine OFF no longer sends any automatic ambient-light
+brightness or power command. The vehicle-state machine is intentionally limited to
+one responsibility: while the engine-power session is ON, Dashboard or Center
+Console headlight presence selects the Door's night target; absence of both selects
+the Door's day target. A short internal post-engine settle still rejects the
+pre-engine courtesy-headlight state.
+
+Ambient animation/control is now independent of that vehicle state machine:
+
+- one optional per-light **Animation on power-up** toggle (fresh BLE/power session or manual OFF -> ON);
+- one global **Breath** animation only: current -> 0% -> 100% -> current;
+- user-selectable 2x, 3x, 4x, or 5x repeats;
+- user-selectable 1-15 second total breath duration;
+- enabled lights discovered together are coalesced onto one shared animation clock,
+  and late GATT-ready lights join the current breath phase;
+- every manual device/group brightness change and every automatic Door day/night
+  change uses a shared 1-15 second smooth transition instead of a target jump;
+- animation/transition frames run on a 20 Hz scheduler and suppress duplicate rounded
+  brightness writes.
+
+Each individual light and each group now has five persistent color preset blocks.
+Tap a block to apply it; long-press a block to replace that slot with the current
+color-picker value. Device presets and group presets are independent.
+
+The Ambient Lighting page no longer exposes the general Nearby BLE Devices list.
+CoreBluetooth scanning, remembered UUID reconnect, OBD witness detection, and all
+paired-light behavior remain active in the background.
+
+A persistent three-button quick-action strip appears at the top of every main app
+surface except My Trips/Logs:
+
+- **Navigation** selects Navigation, arms HUD navigation, and presents the full-display
+  capture picker in the normal iOS 27 build;
+- **Music** selects Media and performs a one-tap Spotify recovery, authorizing only if
+  needed or otherwise waking Spotify/resuming App Remote without clearing Keychain;
+- **Ambient** selects Vehicle and deep-links directly to Ambient Lighting -> Paired
+  Lights.
+
+The BLEDIM2 protocol remains the official iOS-capture `55 AA` FFF1 implementation.
+The 2026-08-24 PacketLogger capture was made with the **Dashboard** BLEDIM controller,
+not Door; later field testing confirmed the same protocol works on both controllers.
+
+
+## v90.8.1 — Breath duration clarification
+
+- Breath always uses each light's actual runtime brightness at animation start; 50% was only an example.
+- One repetition is `initial/current → 0% → 100% → initial/current`.
+- If a manual or active Door day/night target changes while the breath is running, earlier repetitions still return to the original starting brightness and the final repetition returns smoothly to the latest target.
+- `Breath duration / cycle` is 1–15 seconds **per repetition**. Therefore 3× at 9 seconds takes 27 seconds total.

@@ -19,44 +19,35 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
         XCTAssertTrue(source.contains(".centerConsole"))
     }
 
-    func testShutdownPreservesPreferredBrightness() throws {
-        let model = try source("HUDController/Vehicle/AmbientLightModels.swift")
+    func testEngineOffLeavesAmbientLightsAtCurrentLevel() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(model.contains("var lastAppliedBrightness: Int?"))
-        XCTAssertTrue(model.contains("var brightness: Int"))
-
-        // v90.5 corrected physical shutdown semantics:
-        // - Door is engine-switched and loses power immediately, so runtime zero is
-        //   recorded locally without transmitting a fade.
-        // - Only still-powered headlight-fed lights receive the final zero command.
-        // - User preferred/day/night brightness targets must remain unchanged.
-        XCTAssertTrue(monitor.contains("pairedDevices[index].lastAppliedBrightness = 0"))
-        XCTAssertTrue(monitor.contains("without overwriting its Day/Night targets"))
-        XCTAssertTrue(monitor.contains("applyRuntimeBrightness(id, percent: 0, reason: \"vehicle shutdown headlight final\", persist: true)"))
-        XCTAssertTrue(monitor.contains("preferred targets unchanged"))
-        XCTAssertFalse(monitor.contains("$0.brightness = 0"))
-        XCTAssertFalse(monitor.contains("pairedDevices[index].brightness = 0"))
+        XCTAssertTrue(monitor.contains("Engine power OFF confirmed; v90.8 leaves all ambient lights at their current brightness"))
+        XCTAssertTrue(monitor.contains("waits for the vehicle to remove physical power"))
+        XCTAssertFalse(monitor.contains("performVehicleShutdownFade(trigger: \"engine power OFF\")"))
+        XCTAssertFalse(monitor.contains("vehicleShutdownLatched"))
     }
 
-    func testDayNightAndHeadlightJoinStateMachineExists() throws {
+    func testDoorDayNightStateMachineIsSimplified() throws {
         let source = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(source.contains("beginVehicleStartupClassification"))
         XCTAssertTrue(source.contains("finishVehicleStartupClassification"))
-        XCTAssertTrue(source.contains("Night startup classified"))
-        XCTAssertTrue(source.contains("Day startup classified"))
-        XCTAssertTrue(source.contains("Headlight OFF→ON"))
-        XCTAssertTrue(source.contains("fadeInNewHeadlightDevices"))
+        XCTAssertTrue(source.contains("startupHeadlightPowerPresent()"))
+        XCTAssertTrue(source.contains("applyCurrentDoorDayNightTarget"))
+        XCTAssertFalse(source.contains("fadeInNewHeadlightDevices"))
+        XCTAssertFalse(source.contains("vehicleJoinedHeadlightIDs"))
     }
 
-
-    func testLateHeadlightGATTReadinessRemainsEligibleForJoinFade() throws {
+    func testSmoothBrightnessAndSynchronizedBreathExist() throws {
         let source = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(source.contains("vehicleJoinedHeadlightIDs.formUnion(ids.filter"))
-        XCTAssertTrue(source.contains("pairedDevice($0)?.role?.isHeadlightFed == true"))
-        XCTAssertFalse(source.contains("vehicleJoinedHeadlightIDs.formUnion(roleIDs([.dashboard, .centerConsole]).filter { isLogicallyPowered($0) })"))
+        XCTAssertTrue(source.contains("private func transitionBrightness("))
+        XCTAssertTrue(source.contains("let frameInterval = 0.05"))
+        XCTAssertTrue(source.contains("private func startSynchronizedBreathSession()"))
+        XCTAssertTrue(source.contains("from = Double(clampedStart); to = 0"))
+        XCTAssertTrue(source.contains("from = 0; to = 100"))
+        XCTAssertTrue(source.contains("from = 100; to = Double(clampedStart)"))
     }
 
-    func testEnginePowerUsesHUDAndOBDSignalsWithDebouncedAutomaticShutdown() throws {
+    func testEnginePowerUsesHUDAndOBDWitness() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         let appState = try source("HUDController/App/AppState.swift")
         let obd = try source("HUDController/Vehicle/HudOBDController.swift")
@@ -65,12 +56,10 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
         XCTAssertTrue(monitor.contains("func obdPowerSignal(_ present: Bool)"))
         XCTAssertTrue(monitor.contains("scheduleEnginePowerOffConfirmation"))
         XCTAssertTrue(monitor.contains("directOBDWitnessProven"))
-        XCTAssertTrue(monitor.contains("performVehicleShutdownFade(trigger: \"engine power OFF\")"))
         XCTAssertTrue(appState.contains("self.ambientLight.hudTransportPowerSignal(true)"))
         XCTAssertTrue(appState.contains("self.ambientLight.hudTransportPowerSignal(false)"))
         XCTAssertTrue(appState.contains("!self.bluetooth.userDisconnectRequested"))
         XCTAssertTrue(obd.contains("var onConnectionChanged: ((Bool) -> Void)?"))
-        XCTAssertTrue(obd.contains("self.onConnectionChanged?(connected)"))
         XCTAssertFalse(monitor.contains("engineRPM >"))
     }
 

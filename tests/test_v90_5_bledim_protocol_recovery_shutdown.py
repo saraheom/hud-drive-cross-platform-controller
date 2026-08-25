@@ -14,9 +14,7 @@ def test_v907_bledim_uses_recovered_official_ios_protocol_and_keeps_raw_lab():
     assert "command: 0x88" in model
     assert "sendRawBLEDIMHex" in monitor
     assert "BLEDIM2 FFF1 control ready" in monitor
-    assert "Normal BLEDIM controls disabled" not in view
-    assert "bledimUndecoded" not in view
-    assert "F000FFC0/FFC1/FFC2" in view
+    assert "FFF1 protocol / raw replay" in view
     assert "0x7E, 0xFF, 0x04" not in model
 
 
@@ -31,31 +29,27 @@ def test_v905_reads_bledim_device_information_and_advertisement_metadata():
     assert 'serviceValue == "180A" || serviceValue == "180F"' in monitor
 
 
-def test_v905_engine_off_does_not_try_to_fade_door_and_keeps_courtesy_latch():
-    monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-    block = monitor.split("private func performVehicleShutdownFade", 1)[1].split("/// Convenient stationary test", 1)[0]
-    assert "Door power is expected to disappear immediately" in block
-    assert "role.isHeadlightFed" in block
-    assert "device.role != nil" not in block
-    assert "vehicleShutdownLatched = true" in block
-    assert "Shutdown latch remains until next engine ON" in block
-    assert 'pairedDevices[index].lastAppliedBrightness = 0' in block
-
-
-def test_v905_engine_off_arms_latch_even_if_no_light_is_ready_yet():
+def test_v908_engine_off_leaves_all_lights_unchanged():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     block = monitor.split("private func confirmEnginePowerOff()", 1)[1].split("private func evaluateVehicleLightingAutomation", 1)[0]
-    assert "vehicleSessionActive" not in block
-    assert 'performVehicleShutdownFade(trigger: "engine power OFF")' in block
-    assert "post-lock" in monitor
+    assert "leaves all ambient lights at their current brightness" in block
+    assert "waits for the vehicle to remove physical power" in block
+    assert "transitionBrightness(" not in block
+    assert "sendBrightness(" not in block
+    assert "performVehicleShutdownFade" not in block
 
 
-def test_v907_bledim_controls_and_animation_are_unlocked():
+def test_v908_old_courtesy_shutdown_latch_is_removed():
+    monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
+    assert "vehicleShutdownLatched" not in monitor
+    assert "vehicleJoinedHeadlightIDs" not in monitor
+    assert "headlightJoinTask" not in monitor
+
+
+def test_v907_bledim_controls_and_breath_are_unlocked():
     view = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
     device_scope = view.split("if let device = monitor.pairedDevice(deviceID) {", 1)[1]
     assert "bledimUndecoded" not in device_scope
-    assert "Recovered official BLEDIM2 protocol" in device_scope
-    assert "power 0x80" in view
-    assert "RGB 0x82" in view
-    assert "brightness 0x88" in view
-    assert 'section("STARTUP ANIMATION")' in device_scope
+    assert 'section("LIGHT CONTROL")' in device_scope
+    assert 'section("ANIMATION")' in device_scope
+    assert "Preview Breath" in device_scope

@@ -7,12 +7,12 @@ def monitor_source():
     return (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
 
 
-def test_engine_start_timestamp_anchors_startup_settle_window():
+def test_engine_start_timestamp_anchors_hidden_courtesy_settle_window():
     src = monitor_source()
     assert "enginePowerBecamePresentAt" in src
     assert "enginePowerBecamePresentAt = Date()" in src
     assert "startupClassificationSeconds - elapsedSinceEngineOn" in src
-    assert "Pre-engine Dashboard/Console presence is ignored" in src
+    assert "no light brightness is changed during the settle window" in src
 
 
 def test_startup_night_detector_rejects_pre_engine_advertisements():
@@ -24,18 +24,18 @@ def test_startup_night_detector_rejects_pre_engine_advertisements():
     assert "isLogicallyPowered" not in block
 
 
-def test_finish_startup_uses_strict_post_engine_detector_not_steady_hysteresis():
+def test_finish_startup_only_classifies_door_day_night():
     src = monitor_source()
-    block = src.split("private func finishVehicleStartupClassification()", 1)[1].split("private func prepareForVehicleStartup", 1)[0]
-    assert "let nightStart = startupHeadlightPowerPresent()" in block
-    assert "headlightPowerPresent()" not in block
-    assert "courtesy headlights turned off after engine start" in block
-    assert "headlight-fed lights remained powered after engine start" in block
+    block = src.split("private func finishVehicleStartupClassification()", 1)[1].split("private func applyCurrentDoorDayNightTarget", 1)[0]
+    assert "startupHeadlightPowerPresent()" in block
+    assert "applyCurrentDoorDayNightTarget" in block
+    assert "Vehicle startup pulse" not in block
+    assert "fadeIn" not in block
 
 
-def test_ui_explains_entry_courtesy_headlight_behavior():
+def test_ui_keeps_courtesy_logic_concise_and_hides_old_tuning_controls():
     view = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
-    assert 'title: "Post-engine headlight settle window"' in view
-    assert "courtesy headlights" in view
-    assert "pre-engine state is ignored" in view
-    assert "if either headlight-fed light remains powered it classifies Night" in view
+    assert "Pre-engine courtesy headlights are ignored by a short internal settle window" in view
+    assert "Post-engine headlight settle window" not in view
+    assert "Headlight join fade" not in view
+    assert "Shutdown fade" not in view

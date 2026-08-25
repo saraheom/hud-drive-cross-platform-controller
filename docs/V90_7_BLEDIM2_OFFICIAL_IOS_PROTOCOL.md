@@ -1,6 +1,6 @@
 # v90.7 — BLEDIM2 protocol recovered from official iOS capture
 
-On 2026-08-24 the official BLEDIM2 iOS app was captured using Apple's Bluetooth diagnostic profile and an iPhone sysdiagnose/PacketLogger trace while controlling the Door BLEDIM-A controller.
+On 2026-08-24 the official BLEDIM2 iOS app was captured using Apple's Bluetooth diagnostic profile and an iPhone sysdiagnose/PacketLogger trace while controlling the Dashboard BLEDIM-A controller (`7A3B5F81…5F81`).
 
 The trace proves that the application transport is ATT Write Command (`0x52`) to the value handle corresponding to service `FFF0`, characteristic `FFF1`.
 
@@ -94,4 +94,4 @@ Before relying on vehicle choreography, manually verify one BLEDIM device while 
 3. Set brightness 20%, 50%, 100%.
 4. Export the HUD diagnostic log if anything differs from the requested effect.
 
-Once the Door test passes, verify the Dashboard controller with the same short sequence.
+The Dashboard capture is the authoritative source for this protocol. Subsequent v90.7 field testing confirmed the same Power/RGB/Brightness implementation also works on the Door controller (`FBD8C9A0…C9A0`).

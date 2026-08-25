@@ -2,9 +2,11 @@ import SwiftUI
 
 struct VehicleView: View {
     @Bindable var state: AppState
+    @State private var path: [VehicleRoute] = []
+    @State private var handledAmbientShortcut = 0
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(spacing: 18) {
                     ConnectionCard(state: state)
@@ -121,15 +123,13 @@ struct VehicleView: View {
 
                     section("AMBIENT LIGHTING") {
                         VStack(alignment: .leading, spacing: 12) {
-                            NavigationLink {
-                                AmbientLightingView(monitor: state.ambientLight)
-                            } label: {
+                            NavigationLink(value: VehicleRoute.ambient(focusPairedLights: false)) {
                                 HStack {
                                     Image(systemName: "lightbulb.2.fill")
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("Ambient Lighting Control")
                                             .font(.headline)
-                                        Text("Connect, group, change color/brightness, and configure startup fades")
+                                        Text("Paired lights, groups, presets, smooth brightness and power-up breath")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
@@ -189,6 +189,27 @@ struct VehicleView: View {
             }
             .background(HudTheme.background.ignoresSafeArea())
             .navigationTitle("Vehicle")
+            .navigationDestination(for: VehicleRoute.self) { route in
+                switch route {
+                case .ambient(let focusPairedLights):
+                    AmbientLightingView(
+                        monitor: state.ambientLight,
+                        focusPairedLightsOnAppear: focusPairedLights
+                    )
+                }
+            }
+            .onAppear {
+                let request = state.ambientLight.pairedLightsFocusRequest
+                if request > 0, request != handledAmbientShortcut {
+                    handledAmbientShortcut = request
+                    path = [.ambient(focusPairedLights: true)]
+                }
+            }
+            .onChange(of: state.ambientLight.pairedLightsFocusRequest) { _, request in
+                guard request != handledAmbientShortcut else { return }
+                handledAmbientShortcut = request
+                path = [.ambient(focusPairedLights: true)]
+            }
         }
     }
 
@@ -201,4 +222,8 @@ struct VehicleView: View {
             HudCard { content() }
         }
     }
+}
+
+private enum VehicleRoute: Hashable {
+    case ambient(focusPairedLights: Bool)
 }

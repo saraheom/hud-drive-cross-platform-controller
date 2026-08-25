@@ -2,11 +2,11 @@ import Foundation
 import CoreBluetooth
 import Observation
 
-/// v90.7 expands the original BLEDOM presence monitor into a multi-device ambient
-/// lighting controller with verified Lotus control and BLEDIM2 FFF1 control recovered
-/// from the official iOS app, plus vehicle-power choreography and automatic Door
-/// day/night brightness management
-/// while preserving the HUD Auto Brightness trigger path.
+/// v90.8 keeps the verified Lotus + BLEDIM2 control path while simplifying vehicle
+/// behavior around three concepts: smooth brightness transitions, one synchronized
+/// power-up breath animation, and Door day/night brightness while the engine session
+/// is active. Bluetooth discovery remains active in the background even though the
+/// nearby-device list is hidden from the normal UI.
 ///
 /// One CBCentralManager owns all ambient-light BLE work so the controller UI and
 /// the legacy BLEDOM presence detector never compete for the same peripheral.
@@ -80,17 +80,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    var vehicleStartupCycles: Int {
-        didSet { UserDefaults.standard.set(max(1, min(2, vehicleStartupCycles)), forKey: "HUD.Ambient.v90.startupCycles") }
-    }
-    var vehicleStartupPulseDurationSeconds: Double {
-        didSet { UserDefaults.standard.set(max(0.4, min(6.0, vehicleStartupPulseDurationSeconds)), forKey: "HUD.Ambient.v90.startupDuration") }
-    }
     var startupClassificationSeconds: Double {
         didSet { UserDefaults.standard.set(max(1.0, min(8.0, startupClassificationSeconds)), forKey: "HUD.Ambient.v90.classification") }
-    }
-    var headlightJoinFadeSeconds: Double {
-        didSet { UserDefaults.standard.set(max(0.4, min(6.0, headlightJoinFadeSeconds)), forKey: "HUD.Ambient.v90.headlightFade") }
     }
 
     /// v90.3: the door controller is powered for the entire engine session, so its
@@ -104,11 +95,22 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         didSet { UserDefaults.standard.set(max(0, min(100, doorNightBrightness)), forKey: "HUD.Ambient.v90_3.doorNightBrightness") }
     }
 
-    var shutdownFadeSeconds: Double {
-        didSet { UserDefaults.standard.set(max(0.4, min(10.0, shutdownFadeSeconds)), forKey: "HUD.Ambient.v90.shutdownFade") }
-    }
     var engineOffConfirmationSeconds: Double {
         didSet { UserDefaults.standard.set(max(0.5, min(8.0, engineOffConfirmationSeconds)), forKey: "HUD.Ambient.v90.engineOffConfirmation") }
+    }
+
+    /// v90.8 shared transition profile. Every manual brightness change and every
+    /// automatic Door day/night change uses this same smooth interpolation duration.
+    var brightnessTransitionSeconds: Double {
+        didSet { UserDefaults.standard.set(max(1.0, min(15.0, brightnessTransitionSeconds)), forKey: "HUD.Ambient.v90_8.transitionDuration") }
+    }
+
+    /// One global power-up animation profile keeps multiple lights on a common timebase.
+    var breathCycles: Int {
+        didSet { UserDefaults.standard.set(max(2, min(5, breathCycles)), forKey: "HUD.Ambient.v90_8.breathCycles") }
+    }
+    var breathDurationSeconds: Double {
+        didSet { UserDefaults.standard.set(max(1.0, min(15.0, breathDurationSeconds)), forKey: "HUD.Ambient.v90_8.breathDuration") }
     }
 
     private(set) var vehicleAutomationStatus = "Idle — waiting for engine-switched HUD power"
@@ -116,15 +118,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private(set) var enginePowerStatus = "Engine power unknown — waiting for HUD / OBD"
     private(set) var vehicleSessionActive = false
     private(set) var vehicleHeadlightsActive = false
-    private(set) var vehicleShutdownLatched = false
 
     private var startupClassificationTask: Task<Void, Never>?
-    private var headlightJoinTask: Task<Void, Never>?
-    private var vehicleAnimationTask: Task<Void, Never>?
-    private var doorBrightnessTask: Task<Void, Never>?
     private var vehicleStartupCompleted = false
-    private var vehicleJoinedHeadlightIDs: Set<UUID> = []
-    private var allPowerAbsentSince: Date?
     private var previousHeadlightPowerPresent = false
     private var hudEnginePowerSignalPresent = false
     private var obdEnginePowerSignalPresent = false
@@ -184,8 +180,26 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var bledimSequence: UInt8 = 0x08
 
     private var animationTasks: [UUID: Task<Void, Never>] = [:]
+    private var brightnessTransitionTasks: [UUID: Task<Void, Never>] = [:]
     private var animatedConnectionSession: Set<UUID> = []
     private var sessionResetTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// All enabled lights that power up close together share one breath timeline.
+    /// A late GATT-ready device can join the active timeline instead of starting an
+    /// independent animation several seconds out of phase.
+    private var synchronizedBreathTask: Task<Void, Never>?
+    private var pendingBreathStartTask: Task<Void, Never>?
+    private var activeBreathIDs: Set<UUID> = []
+    private var activeBreathStartBrightness: [UUID: Int] = [:]
+    /// Final steady-state target for the last leg of the breath. Normally this is
+    /// the brightness at animation start. If the user/vehicle changes the target
+    /// while the breath is running, only the final leg of the last repetition
+    /// returns to that new target so the animation stays smooth.
+    private var activeBreathReturnBrightness: [UUID: Int] = [:]
+    private var activeBreathStartedAt: Date?
+
+    /// UI deep-link token used by the persistent Ambient shortcut.
+    private(set) var pairedLightsFocusRequest = 0
 
     private let peripheralIDKey = "HUD.Ambient.peripheralUUID"
     private let pairedDevicesKey = "HUD.Ambient.v89.pairedDevices"
@@ -206,22 +220,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ? 5 : Self.clampedTimeout(d.integer(forKey: "HUD.Ambient.timeout"))
         self.vehicleAutomationEnabled = d.object(forKey: "HUD.Ambient.v90.vehicleAutomation") == nil
             ? false : d.bool(forKey: "HUD.Ambient.v90.vehicleAutomation")
-        self.vehicleStartupCycles = d.object(forKey: "HUD.Ambient.v90.startupCycles") == nil
-            ? 1 : max(1, min(2, d.integer(forKey: "HUD.Ambient.v90.startupCycles")))
-        self.vehicleStartupPulseDurationSeconds = d.object(forKey: "HUD.Ambient.v90.startupDuration") == nil
-            ? 1.5 : max(0.4, min(6.0, d.double(forKey: "HUD.Ambient.v90.startupDuration")))
         self.startupClassificationSeconds = d.object(forKey: "HUD.Ambient.v90.classification") == nil
             ? 4.0 : max(1.0, min(8.0, d.double(forKey: "HUD.Ambient.v90.classification")))
-        self.headlightJoinFadeSeconds = d.object(forKey: "HUD.Ambient.v90.headlightFade") == nil
-            ? 1.5 : max(0.4, min(6.0, d.double(forKey: "HUD.Ambient.v90.headlightFade")))
         self.doorDayBrightness = d.object(forKey: "HUD.Ambient.v90_3.doorDayBrightness") == nil
             ? 100 : max(0, min(100, d.integer(forKey: "HUD.Ambient.v90_3.doorDayBrightness")))
         self.doorNightBrightness = d.object(forKey: "HUD.Ambient.v90_3.doorNightBrightness") == nil
             ? 45 : max(0, min(100, d.integer(forKey: "HUD.Ambient.v90_3.doorNightBrightness")))
-        self.shutdownFadeSeconds = d.object(forKey: "HUD.Ambient.v90.shutdownFade") == nil
-            ? 2.0 : max(0.4, min(10.0, d.double(forKey: "HUD.Ambient.v90.shutdownFade")))
         self.engineOffConfirmationSeconds = d.object(forKey: "HUD.Ambient.v90.engineOffConfirmation") == nil
             ? 2.0 : max(0.5, min(8.0, d.double(forKey: "HUD.Ambient.v90.engineOffConfirmation")))
+        self.brightnessTransitionSeconds = d.object(forKey: "HUD.Ambient.v90_8.transitionDuration") == nil
+            ? 3.0 : max(1.0, min(15.0, d.double(forKey: "HUD.Ambient.v90_8.transitionDuration")))
+        self.breathCycles = d.object(forKey: "HUD.Ambient.v90_8.breathCycles") == nil
+            ? 2 : max(2, min(5, d.integer(forKey: "HUD.Ambient.v90_8.breathCycles")))
+        self.breathDurationSeconds = d.object(forKey: "HUD.Ambient.v90_8.breathDuration") == nil
+            ? 6.0 : max(1.0, min(15.0, d.double(forKey: "HUD.Ambient.v90_8.breathDuration")))
         self.directOBDWitnessProven = d.bool(forKey: "HUD.Ambient.v90_2.directOBDWitnessProven")
         if let raw = d.string(forKey: "HUD.Ambient.v90_2.directOBDPeripheralUUID") {
             self.directOBDPeripheralID = UUID(uuidString: raw)
@@ -344,16 +356,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         animationTasks.values.forEach { $0.cancel() }
         animationTasks.removeAll()
+        brightnessTransitionTasks.values.forEach { $0.cancel() }
+        brightnessTransitionTasks.removeAll()
+        synchronizedBreathTask?.cancel()
+        synchronizedBreathTask = nil
+        pendingBreathStartTask?.cancel()
+        pendingBreathStartTask = nil
+        activeBreathIDs.removeAll()
+        activeBreathStartBrightness.removeAll()
+        activeBreathReturnBrightness.removeAll()
+        activeBreathStartedAt = nil
         sessionResetTasks.values.forEach { $0.cancel() }
         sessionResetTasks.removeAll()
         startupClassificationTask?.cancel()
         startupClassificationTask = nil
-        headlightJoinTask?.cancel()
-        headlightJoinTask = nil
-        vehicleAnimationTask?.cancel()
-        vehicleAnimationTask = nil
-        doorBrightnessTask?.cancel()
-        doorBrightnessTask = nil
         engineOffConfirmationTask?.cancel()
         engineOffConfirmationTask = nil
 
@@ -675,47 +691,72 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     // MARK: - Device state / commands
 
+    func requestPairedLightsFocus() {
+        pairedLightsFocusRequest &+= 1
+    }
+
     func setPower(_ id: UUID, on: Bool) {
-        animationTasks[id]?.cancel()
-        animationTasks[id] = nil
+        cancelBrightnessTransition(for: id)
+        removeFromActiveBreath(id)
         updateDevice(id) { $0.powerOn = on }
         sendPower(id, on: on, reason: "manual")
+
+        // A user-requested OFF -> ON is also a real light power-up event. If this
+        // light has Animation enabled, use the same synchronized Breath path as a
+        // fresh BLE/power session rather than maintaining a second animation type.
+        if on, pairedDevice(id)?.startupAnimationEnabled == true, isControllable(id) {
+            animatedConnectionSession.remove(id)
+            queuePowerUpBreath(id, force: true)
+        }
     }
 
     func setColor(_ id: UUID, color: AmbientRGB) {
-        animationTasks[id]?.cancel()
-        animationTasks[id] = nil
         updateDevice(id) { $0.color = color }
         sendColor(id, color: color, reason: "manual")
     }
 
+    /// Manual brightness changes always interpolate from the last applied runtime
+    /// value to the new preferred target. The target is persisted immediately; the
+    /// runtime value is persisted only when the transition reaches its final frame.
     func setBrightness(_ id: UUID, percent: Int) {
-        animationTasks[id]?.cancel()
-        animationTasks[id] = nil
         let clamped = max(0, min(100, percent))
-        updateDevice(id) {
-            $0.brightness = clamped
-            $0.lastAppliedBrightness = clamped
+        updateDevice(id) { $0.brightness = clamped }
+
+        // If a power-up breath is already in progress, do not cancel it or jump
+        // brightness. Preserve the requested breath path and make the final leg of
+        // the LAST repetition land smoothly on the newly selected target.
+        if activeBreathIDs.contains(id) {
+            activeBreathReturnBrightness[id] = clamped
+            logger.log("AMBIENT ANIM", "Breath final target updated to \(clamped)% by manual brightness")
+            return
         }
-        sendBrightness(id, percent: clamped, reason: "manual")
+
+        transitionBrightness(
+            ids: [id],
+            targets: [id: clamped],
+            over: brightnessTransitionSeconds,
+            reason: "manual brightness"
+        )
     }
 
     func setStartupAnimationEnabled(_ id: UUID, enabled: Bool) {
         updateDevice(id) { $0.startupAnimationEnabled = enabled }
     }
 
+    // Retained for persisted/source compatibility with pre-v90.8 builds. The new UI
+    // uses one global breath profile so enabled lights can share a common timeline.
     func setStartupCycles(_ id: UUID, cycles: Int) {
-        updateDevice(id) { $0.startupCycles = max(1, min(2, cycles)) }
+        updateDevice(id) { $0.startupCycles = max(2, min(5, cycles)) }
     }
 
     func setStartupDuration(_ id: UUID, seconds: Double) {
-        updateDevice(id) { $0.startupDurationSeconds = max(0.4, min(5.0, seconds)) }
+        updateDevice(id) { $0.startupDurationSeconds = max(1.0, min(15.0, seconds)) }
     }
 
-    func setVehicleStartupCycles(_ cycles: Int) { vehicleStartupCycles = max(1, min(2, cycles)) }
-    func setVehicleStartupPulseDuration(_ seconds: Double) { vehicleStartupPulseDurationSeconds = max(0.4, min(6.0, seconds)) }
     func setStartupClassificationDuration(_ seconds: Double) { startupClassificationSeconds = max(1.0, min(8.0, seconds)) }
-    func setHeadlightJoinFadeDuration(_ seconds: Double) { headlightJoinFadeSeconds = max(0.4, min(6.0, seconds)) }
+    func setBrightnessTransitionDuration(_ seconds: Double) { brightnessTransitionSeconds = max(1.0, min(15.0, seconds)) }
+    func setBreathCycles(_ cycles: Int) { breathCycles = max(2, min(5, cycles)) }
+    func setBreathDuration(_ seconds: Double) { breathDurationSeconds = max(1.0, min(15.0, seconds)) }
 
     func setDoorDayBrightness(_ percent: Int) {
         doorDayBrightness = max(0, min(100, percent))
@@ -727,12 +768,30 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         applyDoorTargetAfterSettingChange(changedNightTarget: true)
     }
 
-    func setShutdownFadeDuration(_ seconds: Double) { shutdownFadeSeconds = max(0.4, min(10.0, seconds)) }
     func setEngineOffConfirmationDuration(_ seconds: Double) { engineOffConfirmationSeconds = max(0.5, min(8.0, seconds)) }
 
     func previewStartupAnimation(_ id: UUID) {
         animatedConnectionSession.remove(id)
-        runStartupAnimationIfNeeded(id, force: true)
+        queuePowerUpBreath(id, force: true)
+    }
+
+    func setDevicePresetColor(_ id: UUID, slot: Int, color: AmbientRGB) {
+        guard (0..<5).contains(slot) else { return }
+        updateDevice(id) { device in
+            var presets = device.resolvedPresetColors
+            presets[slot] = color
+            device.presetColors = presets
+        }
+        logger.log("AMBIENT PRESET", "Saved device preset \(slot + 1) for \(pairedDevice(id)?.displayName ?? id.uuidString) = \(color.red),\(color.green),\(color.blue)")
+    }
+
+    func setGroupPresetColor(_ groupID: UUID, slot: Int, color: AmbientRGB) {
+        guard (0..<5).contains(slot), let index = groups.firstIndex(where: { $0.id == groupID }) else { return }
+        var presets = groups[index].resolvedPresetColors
+        presets[slot] = color
+        groups[index].presetColors = presets
+        persistGroups()
+        logger.log("AMBIENT PRESET", "Saved group preset \(slot + 1) for \(groups[index].name) = \(color.red),\(color.green),\(color.blue)")
     }
 
     func setGroupPower(_ groupID: UUID, on: Bool) {
@@ -747,13 +806,102 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     func setGroupBrightness(_ groupID: UUID, percent: Int) {
         guard let group = group(groupID) else { return }
-        for id in group.memberIDs { setBrightness(id, percent: percent) }
+        let clamped = max(0, min(100, percent))
+        let ids = group.memberIDs.filter { pairedDevice($0) != nil }
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            if let index = pairedDevices.firstIndex(where: { $0.id == id }) {
+                pairedDevices[index].brightness = clamped
+            }
+        }
+        persistPairedDevices()
+
+        let breathing = ids.filter { activeBreathIDs.contains($0) }
+        for id in breathing { activeBreathReturnBrightness[id] = clamped }
+        if !breathing.isEmpty {
+            logger.log("AMBIENT ANIM", "Breath final target updated to \(clamped)% for \(breathing.count) group member(s)")
+        }
+
+        let steady = ids.filter { !activeBreathIDs.contains($0) }
+        if !steady.isEmpty {
+            transitionBrightness(
+                ids: steady,
+                targets: Dictionary(uniqueKeysWithValues: steady.map { ($0, clamped) }),
+                over: brightnessTransitionSeconds,
+                reason: "group manual brightness"
+            )
+        }
     }
 
     private func updateDevice(_ id: UUID, mutation: (inout AmbientLightDevice) -> Void) {
         guard let index = pairedDevices.firstIndex(where: { $0.id == id }) else { return }
         mutation(&pairedDevices[index])
         persistPairedDevices()
+    }
+
+    private func cancelBrightnessTransition(for id: UUID) {
+        brightnessTransitionTasks[id]?.cancel()
+        brightnessTransitionTasks[id] = nil
+    }
+
+    private func transitionBrightness(
+        ids requestedIDs: [UUID],
+        targets: [UUID: Int],
+        over seconds: Double,
+        reason: String
+    ) {
+        let ids = requestedIDs.filter { isControllable($0) && targets[$0] != nil }
+        guard !ids.isEmpty else {
+            logger.log("AMBIENT FADE", "Transition queued/saved but no requested light is currently controllable: \(reason)")
+            return
+        }
+
+        for id in ids {
+            cancelBrightnessTransition(for: id)
+            removeFromActiveBreath(id)
+        }
+
+        let starts = Dictionary(uniqueKeysWithValues: ids.compactMap { id in
+            pairedDevice(id).map { (id, $0.runtimeBrightness) }
+        })
+        let duration = max(1.0, min(15.0, seconds))
+        let frameInterval = 0.05 // 20 Hz, matching the feel of continuously moving the slider.
+        let frames = max(1, Int(ceil(duration / frameInterval)))
+        let frameDelay = duration / Double(frames)
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var lastSent = starts
+            self.logger.log(
+                "AMBIENT FADE",
+                "Smooth brightness transition begin ids=\(ids.count) duration=\(String(format: "%.1f", duration))s reason=\(reason)"
+            )
+
+            for frame in 1...frames {
+                guard !Task.isCancelled else { return }
+                let t = Double(frame) / Double(frames)
+                for id in ids {
+                    let start = starts[id] ?? 0
+                    let target = max(0, min(100, targets[id] ?? start))
+                    let value = Int((Double(start) + Double(target - start) * t).rounded())
+                    if lastSent[id] != value {
+                        self.applyRuntimeBrightness(id, percent: value, reason: reason)
+                        lastSent[id] = value
+                    }
+                }
+                try? await Task.sleep(for: .seconds(frameDelay))
+            }
+
+            guard !Task.isCancelled else { return }
+            for id in ids {
+                let target = max(0, min(100, targets[id] ?? starts[id] ?? 0))
+                self.applyRuntimeBrightness(id, percent: target, reason: "\(reason) final", persist: true)
+                self.brightnessTransitionTasks[id] = nil
+            }
+            self.logger.log("AMBIENT FADE", "Smooth brightness transition complete reason=\(reason)")
+        }
+
+        for id in ids { brightnessTransitionTasks[id] = task }
     }
 
     // MARK: - Packet adapters
@@ -876,26 +1024,27 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         data.map { String(format: "%02X", $0) }.joined(separator: " ")
     }
 
-    // MARK: - Startup animation
+    // MARK: - Power-up breath animation
 
     private func restoreDeviceState(_ id: UUID) {
         guard let device = pairedDevice(id), isControllable(id) else { return }
         sendColor(id, color: device.color, reason: "restore")
-        let runtimeTarget = vehicleAutomationEnabled ? device.runtimeBrightness : device.brightness
-        applyRuntimeBrightness(id, percent: runtimeTarget, reason: "restore")
+        let runtimeTarget: Int
+        if vehicleAutomationEnabled, device.role == .door, enginePowerPresent, vehicleStartupCompleted {
+            runtimeTarget = doorTargetBrightness(night: vehicleHeadlightsActive)
+        } else {
+            runtimeTarget = device.runtimeBrightness
+        }
+        applyRuntimeBrightness(id, percent: runtimeTarget, reason: "restore", persist: true)
         sendPower(id, on: device.powerOn, reason: "restore")
     }
 
     private func runStartupAnimationIfNeeded(_ id: UUID, force: Bool = false) {
-        guard let device = pairedDevice(id),
-              isControllable(id) else { return }
+        queuePowerUpBreath(id, force: force)
+    }
 
-        // Vehicle-aware mode owns synchronization across all three lights. Never
-        // let a single-device reconnect independently replay the old pulse.
-        guard !vehicleAutomationEnabled else {
-            vehicleControlBecameReady(id)
-            return
-        }
+    private func queuePowerUpBreath(_ id: UUID, force: Bool = false) {
+        guard let device = pairedDevice(id), isControllable(id) else { return }
 
         if !force && animatedConnectionSession.contains(id) {
             restoreDeviceState(id)
@@ -908,55 +1057,162 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
-        animationTasks[id]?.cancel()
+        cancelBrightnessTransition(for: id)
         animatedConnectionSession.insert(id)
+        activeBreathIDs.insert(id)
+        activeBreathStartBrightness[id] = device.runtimeBrightness
+        activeBreathReturnBrightness[id] = device.runtimeBrightness
+        sendColor(id, color: device.color, reason: "power-up breath prepare")
+        sendPower(id, on: true, reason: "power-up breath prepare")
 
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let steps = 12
-            let cycles = max(1, min(2, device.startupCycles))
-            let target = max(1, min(100, device.brightness))
-            let fadeSeconds = max(0.2, device.startupDurationSeconds / 2.0)
-            let stepNanoseconds = UInt64((fadeSeconds / Double(steps)) * 1_000_000_000)
-
-            self.logger.log(
-                "AMBIENT ANIM",
-                "Startup animation begin \(device.displayName) cycles=\(cycles) target=\(target)%"
-            )
-            self.sendColor(id, color: device.color, reason: "startup")
-            self.sendPower(id, on: true, reason: "startup")
-            self.applyRuntimeBrightness(id, percent: 0, reason: "startup")
-
-            @MainActor
-            func fade(from: Int, to: Int) async -> Bool {
-                for step in 1...steps {
-                    guard !Task.isCancelled else { return false }
-                    let fraction = Double(step) / Double(steps)
-                    let value = Int((Double(from) + (Double(to - from) * fraction)).rounded())
-                    self.applyRuntimeBrightness(id, percent: value, reason: "startup fade")
-                    try? await Task.sleep(nanoseconds: stepNanoseconds)
-                }
-                return !Task.isCancelled
-            }
-
-            for _ in 0..<cycles {
-                guard await fade(from: 0, to: target) else { return }
-                guard await fade(from: target, to: 0) else { return }
-            }
-            guard await fade(from: 0, to: target) else { return }
-
-            self.sendColor(id, color: device.color, reason: "startup final")
-            self.applyRuntimeBrightness(id, percent: target, reason: "startup final", persist: true)
-            self.sendPower(id, on: true, reason: "startup final")
-            self.logger.log("AMBIENT ANIM", "Startup animation complete \(device.displayName)")
-            self.animationTasks[id] = nil
+        // If another light's breath is already running, this device joins the same
+        // phase on the next 20-Hz frame. That makes late GATT discovery visually
+        // synchronized instead of starting a second independent animation.
+        if synchronizedBreathTask != nil {
+            logger.log("AMBIENT ANIM", "Joined active synchronized breath: \(device.displayName)")
+            return
         }
-        animationTasks[id] = task
+
+        pendingBreathStartTask?.cancel()
+        pendingBreathStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            // Small coalescing window catches controllers that become writable only
+            // a fraction of a second apart without adding a noticeable startup delay.
+            try? await Task.sleep(for: .seconds(0.35))
+            guard !Task.isCancelled else { return }
+            self.pendingBreathStartTask = nil
+            self.startSynchronizedBreathSession()
+        }
     }
 
-    /// Do not replay the startup pulse for a momentary BLE dropout. A device
-    /// must remain disconnected for 15 seconds before the next connection is
-    /// treated as a fresh ambient-light power session.
+    private func startSynchronizedBreathSession() {
+        let ready = activeBreathIDs.filter { id in
+            guard let device = pairedDevice(id) else { return false }
+            return device.startupAnimationEnabled && device.powerOn && isControllable(id)
+        }
+        guard !ready.isEmpty else {
+            activeBreathIDs.removeAll()
+            activeBreathStartBrightness.removeAll()
+            activeBreathReturnBrightness.removeAll()
+            return
+        }
+
+        activeBreathIDs = Set(ready)
+        activeBreathStartedAt = Date()
+        let cycles = max(2, min(5, breathCycles))
+        // User-selected duration is PER BREATH REPETITION, not for the whole set.
+        // Example: 3× at 9 s/cycle = 27 s from beginning to end.
+        let perCycleDuration = max(1.0, min(15.0, breathDurationSeconds))
+        let totalDuration = perCycleDuration * Double(cycles)
+        let frameInterval = 0.05
+        let frames = max(1, Int(ceil(totalDuration / frameInterval)))
+        let frameDelay = totalDuration / Double(frames)
+
+        logger.log(
+            "AMBIENT ANIM",
+            "Synchronized breath begin lights=\(ready.count) cycles=\(cycles) perCycle=\(String(format: "%.1f", perCycleDuration))s total=\(String(format: "%.1f", totalDuration))s"
+        )
+
+        synchronizedBreathTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var lastSent: [UUID: Int] = [:]
+
+            for frame in 0...frames {
+                guard !Task.isCancelled else { return }
+                let progress = min(1.0, Double(frame) / Double(frames))
+                let ids = Array(self.activeBreathIDs)
+                for id in ids {
+                    guard self.isControllable(id), let start = self.activeBreathStartBrightness[id] else { continue }
+                    let returnTarget = self.activeBreathReturnBrightness[id] ?? start
+                    let value = self.breathBrightness(
+                        start: start,
+                        returnTarget: returnTarget,
+                        progress: progress,
+                        cycles: cycles
+                    )
+                    if lastSent[id] != value {
+                        self.applyRuntimeBrightness(id, percent: value, reason: "synchronized power-up breath")
+                        lastSent[id] = value
+                    }
+                }
+                if frame < frames {
+                    try? await Task.sleep(for: .seconds(frameDelay))
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            let finishedIDs = Array(self.activeBreathIDs)
+            for id in finishedIDs {
+                guard let start = self.activeBreathStartBrightness[id] else { continue }
+                let returnTarget = self.activeBreathReturnBrightness[id] ?? start
+                self.applyRuntimeBrightness(id, percent: returnTarget, reason: "power-up breath final", persist: true)
+            }
+
+            self.synchronizedBreathTask = nil
+            self.activeBreathStartedAt = nil
+            self.activeBreathIDs.removeAll()
+            self.activeBreathStartBrightness.removeAll()
+            self.activeBreathReturnBrightness.removeAll()
+            self.logger.log("AMBIENT ANIM", "Synchronized breath complete lights=\(finishedIDs.count)")
+
+            // Door day/night automation is deliberately separate from the power-up
+            // breath. If the active engine/headlight state requires another steady
+            // target, the final repetition already returns to that target when it
+            // changed during the breath; this call is a no-op if already aligned.
+            if self.vehicleAutomationEnabled, self.enginePowerPresent, self.vehicleStartupCompleted {
+                self.applyCurrentDoorDayNightTarget(reason: "post-breath door target")
+            }
+        }
+    }
+
+    private func breathBrightness(start: Int, returnTarget: Int, progress: Double, cycles: Int) -> Int {
+        let clampedStart = max(0, min(100, start))
+        let clampedReturn = max(0, min(100, returnTarget))
+        let p = max(0.0, min(1.0, progress))
+        if p >= 1.0 { return clampedReturn }
+
+        let safeCycles = max(1, cycles)
+        let cyclePosition = p * Double(safeCycles)
+        let cycleIndex = min(safeCycles - 1, Int(floor(cyclePosition)))
+        let local = cyclePosition - floor(cyclePosition)
+        let leg = min(2, Int(floor(local * 3.0)))
+        let legProgress = min(1.0, (local * 3.0) - Double(leg))
+        // Half-cosine easing removes visible corners without changing the requested
+        // current -> 0 -> 100 -> return path. Earlier repetitions always return to
+        // the initial brightness. If the app target changes during the breath, only
+        // the FINAL repetition returns to that new target.
+        let eased = 0.5 - (0.5 * cos(Double.pi * legProgress))
+
+        let from: Double
+        let to: Double
+        switch leg {
+        case 0:
+            from = Double(clampedStart); to = 0
+        case 1:
+            from = 0; to = 100
+        default:
+            from = 100
+            to = Double(cycleIndex == safeCycles - 1 ? clampedReturn : clampedStart)
+        }
+        return max(0, min(100, Int((from + (to - from) * eased).rounded())))
+    }
+
+    private func removeFromActiveBreath(_ id: UUID) {
+        activeBreathIDs.remove(id)
+        activeBreathStartBrightness[id] = nil
+        activeBreathReturnBrightness[id] = nil
+        if activeBreathIDs.isEmpty {
+            pendingBreathStartTask?.cancel()
+            pendingBreathStartTask = nil
+            synchronizedBreathTask?.cancel()
+            synchronizedBreathTask = nil
+            activeBreathStartedAt = nil
+        }
+    }
+
+    /// Do not replay the power-up breath for a momentary BLE dropout. A device must
+    /// remain disconnected for 15 seconds before the next connection is considered
+    /// a genuinely fresh physical power session.
     private func scheduleStartupSessionReset(_ id: UUID) {
         sessionResetTasks[id]?.cancel()
         sessionResetTasks[id] = Task { @MainActor [weak self] in
@@ -964,7 +1220,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard let self, !Task.isCancelled else { return }
             if self.peripheralsByID[id]?.state != .connected {
                 self.animatedConnectionSession.remove(id)
-                self.logger.log("AMBIENT ANIM", "Startup session reset after 15s disconnect for \(id)")
+                self.removeFromActiveBreath(id)
+                self.logger.log("AMBIENT ANIM", "Power-up animation re-armed after 15s disconnect for \(id)")
             }
             self.sessionResetTasks[id] = nil
         }
@@ -1019,24 +1276,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return "Door day/night automation off • day \(doorDayBrightness)% • night \(doorNightBrightness)%"
         }
         guard enginePowerPresent else {
-            return "Engine off • pre-engine courtesy headlights are ignored for day/night classification"
+            return "Engine off • Door brightness is not changed"
         }
-        let night = vehicleStartupCompleted ? vehicleHeadlightsActive : startupHeadlightPowerPresent()
-        let target = doorTargetBrightness(night: night)
-        return "\(night ? "Night" : "Day") door target \(target)% • after startup, night = Dashboard OR Center Console present"
-    }
-
-    private func vehicleTargetBrightness(for device: AmbientLightDevice, night: Bool) -> Int {
-        if device.role == .door {
-            return doorTargetBrightness(night: night)
+        guard vehicleStartupCompleted else {
+            return "Engine on • waiting briefly for courtesy headlights to settle"
         }
-        return max(0, min(100, device.brightness))
-    }
-
-    private func allRolePowerAbsent() -> Bool {
-        let ids = pairedDevices.compactMap { $0.role == nil ? nil : $0.id }
-        guard !ids.isEmpty else { return true }
-        return ids.allSatisfy { !isLogicallyPowered($0) }
+        let target = doorTargetBrightness(night: vehicleHeadlightsActive)
+        return "\(vehicleHeadlightsActive ? "Night" : "Day") • Door target \(target)%"
     }
 
     private func applyDoorTargetAfterSettingChange(changedNightTarget: Bool) {
@@ -1044,14 +1290,19 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
               enabled,
               enginePowerPresent,
               vehicleSessionActive,
-              vehicleStartupCompleted,
-              !vehicleShutdownLatched else { return }
+              vehicleStartupCompleted else { return }
 
         let night = headlightPowerPresent()
         guard night == changedNightTarget else { return }
+        let target = doorTargetBrightness(night: night)
+        if let doorID = deviceID(for: .door), activeBreathIDs.contains(doorID) {
+            activeBreathReturnBrightness[doorID] = target
+            logger.log("AMBIENT ANIM", "Door breath final target updated to \(target)% by \(night ? "night" : "day") setting")
+            return
+        }
         transitionDoorBrightness(
-            to: doorTargetBrightness(night: night),
-            over: headlightJoinFadeSeconds,
+            to: target,
+            over: brightnessTransitionSeconds,
             reason: night ? "night target changed" : "day target changed"
         )
     }
@@ -1059,10 +1310,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private func resetVehicleAutomationRuntime(reason: String) {
         startupClassificationTask?.cancel()
         startupClassificationTask = nil
-        headlightJoinTask?.cancel()
-        headlightJoinTask = nil
-        vehicleAnimationTask?.cancel()
-        vehicleAnimationTask = nil
         engineOffConfirmationTask?.cancel()
         engineOffConfirmationTask = nil
         hudOutageBeganAt = nil
@@ -1071,9 +1318,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         vehicleStartupCompleted = false
         vehicleHeadlightsActive = false
         previousHeadlightPowerPresent = false
-        vehicleShutdownLatched = false
-        vehicleJoinedHeadlightIDs.removeAll()
-        allPowerAbsentSince = nil
         vehicleAutomationStatus = vehicleAutomationEnabled
             ? (enginePowerPresent ? "Engine power ON — waiting for door-light power" : "Idle — waiting for engine-switched HUD power")
             : "Vehicle automation disabled"
@@ -1195,19 +1439,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             enginePowerBecamePresentAt = Date()
             startupClassificationTask?.cancel()
             startupClassificationTask = nil
-            headlightJoinTask?.cancel()
-            headlightJoinTask = nil
-            vehicleAnimationTask?.cancel()
-            vehicleAnimationTask = nil
             vehicleSessionActive = false
             vehicleStartupCompleted = false
             vehicleHeadlightsActive = false
             previousHeadlightPowerPresent = false
-            vehicleShutdownLatched = false
-            vehicleJoinedHeadlightIDs.removeAll()
-            allPowerAbsentSince = nil
-            vehicleAutomationStatus = "Engine power ON • waiting for door + courtesy-headlight settle"
-            logger.log("AMBIENT ENGINE", "Engine-switched power ON via \(source); courtesy-headlight state before engine will be ignored for startup classification")
+                        vehicleAutomationStatus = "Engine power ON • waiting briefly for courtesy headlights to settle"
+            logger.log("AMBIENT ENGINE", "Engine-switched power ON via \(source); starting simplified Door day/night settle window")
         }
 
         evaluateVehicleLightingAutomation()
@@ -1256,479 +1493,153 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         independentOBDWitnessStatus = directOBDWitnessProven
             ? "Calibrated OBD witness absent"
             : "Independent OBD witness not calibrated"
-        logger.log("AMBIENT ENGINE", "Engine-switched power OFF confirmed only after HUD loss + calibrated independent OBD witness absence")
-
-        if vehicleAutomationEnabled, !vehicleShutdownLatched {
-            // Arm the shutdown latch even if no light was controllable at this exact
-            // instant. In daylight the Dashboard/Console may power up only after the
-            // driver exits/locks the car; they must still be suppressed when they
-            // appear  later during the courtesy-headlight interval.
-            performVehicleShutdownFade(trigger: "engine power OFF")
-        } else if vehicleAutomationEnabled {
-            vehicleAutomationStatus = "Engine power OFF • courtesy-light suppression armed"
+        startupClassificationTask?.cancel()
+        startupClassificationTask = nil
+        vehicleSessionActive = false
+        vehicleStartupCompleted = false
+        vehicleHeadlightsActive = false
+        previousHeadlightPowerPresent = false
+        enginePowerBecamePresentAt = nil
+        logger.log(
+            "AMBIENT ENGINE",
+            "Engine power OFF confirmed; v90.8 leaves all ambient lights at their current brightness and waits for the vehicle to remove physical power"
+        )
+        if vehicleAutomationEnabled {
+            vehicleAutomationStatus = "Engine OFF • lights unchanged until vehicle power changes"
         }
     }
 
-    /// Called by the watchdog and after role/presence changes. Ambient-light BLE
-    /// presence still drives day/night/headlight state, while engine ON/OFF comes
-    /// from the separately powered HUD/OBD signals above.
+    /// Simplified v90.8 vehicle-aware behavior. Engine state only gates Door
+    /// day/night brightness; it no longer owns startup/shutdown animations or
+    /// suppresses courtesy lights. Power-up animation is handled independently by
+    /// each light's Animation toggle and the shared synchronized breath timeline.
     private func evaluateVehicleLightingAutomation() {
         guard vehicleAutomationEnabled, enabled else { return }
 
         guard enginePowerPresent else {
-            vehicleAutomationStatus = vehicleShutdownLatched
-                ? "Engine power OFF • headlight courtesy suppression armed"
-                : "Waiting for engine-switched HUD / OBD power"
+            vehicleSessionActive = false
+            vehicleStartupCompleted = false
+            vehicleHeadlightsActive = false
+            previousHeadlightPowerPresent = false
+            vehicleAutomationStatus = "Engine OFF • ambient lights left unchanged until vehicle power changes"
             return
         }
 
-        if allRolePowerAbsent() {
-            if allPowerAbsentSince == nil { allPowerAbsentSince = Date() }
-            if let since = allPowerAbsentSince, Date().timeIntervalSince(since) >= 15,
-               vehicleSessionActive || vehicleShutdownLatched {
-                resetVehicleAutomationRuntime(reason: "all three light power sources absent for 15s")
+        if !vehicleSessionActive {
+            vehicleSessionActive = true
+        }
+
+        // Keep the existing hidden post-engine settling delay so entry courtesy
+        // headlights do not briefly force the Door to the night target in daylight.
+        if !vehicleStartupCompleted {
+            if startupClassificationTask == nil {
+                beginVehicleStartupClassification()
             }
-        } else {
-            allPowerAbsentSince = nil
-        }
-
-        guard !vehicleShutdownLatched else {
-            vehicleAutomationStatus = "Shutdown latch active — suppressing headlight-fed courtesy lights until next engine ON"
             return
         }
 
-        let doorPresent = deviceID(for: .door).map { isLogicallyPowered($0) } ?? false
         let headlightsPresent = headlightPowerPresent()
-
-        if !vehicleSessionActive && doorPresent && startupClassificationTask == nil {
-            beginVehicleStartupClassification()
-            return
-        }
-
-        if vehicleSessionActive && vehicleStartupCompleted {
-            if !previousHeadlightPowerPresent && headlightsPresent {
-                scheduleHeadlightJoinFade()
-            } else if previousHeadlightPowerPresent && !headlightsPresent {
-                vehicleJoinedHeadlightIDs.subtract(roleIDs([.dashboard, .centerConsole]))
-                vehicleHeadlightsActive = false
-                transitionDoorBrightness(
-                    to: doorTargetBrightness(night: false),
-                    over: headlightJoinFadeSeconds,
-                    reason: "headlights off → daytime door brightness"
-                )
-                vehicleAutomationStatus = "Driving • headlights off • door returning to daytime brightness"
-                logger.log("AMBIENT AUTO", "Headlight-fed lights lost physical power; door fading to daytime target \(doorDayBrightness)%. No fade-out command is possible for the now-unpowered headlight lights.")
-            }
+        if headlightsPresent != previousHeadlightPowerPresent {
+            vehicleHeadlightsActive = headlightsPresent
+            applyCurrentDoorDayNightTarget(
+                reason: headlightsPresent
+                    ? "headlight-fed lights on → night Door brightness"
+                    : "headlight-fed lights off → day Door brightness"
+            )
+            logger.log(
+                "AMBIENT AUTO",
+                "Headlight state changed while engine ON: \(headlightsPresent ? "night" : "day") Door target=\(doorTargetBrightness(night: headlightsPresent))%"
+            )
         }
         previousHeadlightPowerPresent = headlightsPresent
+        vehicleAutomationStatus = headlightsPresent
+            ? "Engine ON • night • Door target \(doorNightBrightness)%"
+            : "Engine ON • day • Door target \(doorDayBrightness)%"
     }
 
     private func beginVehicleStartupClassification() {
         vehicleSessionActive = true
         vehicleStartupCompleted = false
-        vehicleShutdownLatched = false
 
-        // The Dashboard/Console may have been powered before the engine because
-        // the vehicle turns its courtesy headlights on when the driver enters.
-        // Do not treat that pre-engine condition as night. The classification
-        // deadline is anchored to the engine-power transition, not to whenever
-        // the Door BLE connection happens to finish.
         let now = Date()
         let engineOnAt = enginePowerBecamePresentAt ?? now
         let elapsedSinceEngineOn = max(0, now.timeIntervalSince(engineOnAt))
         let remainingSettle = max(0.5, startupClassificationSeconds - elapsedSinceEngineOn)
 
-        previousHeadlightPowerPresent = false
-        vehicleAutomationStatus = "Engine ON • settling courtesy headlights for day/night classification…"
+        vehicleAutomationStatus = "Engine ON • waiting briefly for courtesy headlights to settle"
         logger.log(
             "AMBIENT AUTO",
-            "Post-engine startup settle begin; configured=\(String(format: "%.1f", startupClassificationSeconds))s elapsed=\(String(format: "%.1f", elapsedSinceEngineOn))s remaining=\(String(format: "%.1f", remainingSettle))s. Pre-engine Dashboard/Console presence is ignored."
+            "Simplified day/night settle begin remaining=\(String(format: "%.1f", remainingSettle))s; no light brightness is changed during the settle window"
         )
-
-        // Once the engine session begins, move any currently controllable role
-        // light to zero. At night they remain electrically powered and will take
-        // part in the synchronized pulse. In daylight the headlight-fed pair will
-        // lose physical power during the settling window, leaving Door only.
-        for id in pairedDevices.compactMap({ $0.role == nil ? nil : $0.id }) where isControllable(id) {
-            prepareForVehicleStartup(id)
-        }
 
         startupClassificationTask?.cancel()
         startupClassificationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .seconds(remainingSettle))
-            guard !Task.isCancelled, self.vehicleAutomationEnabled, !self.vehicleShutdownLatched else { return }
+            guard !Task.isCancelled, self.vehicleAutomationEnabled, self.enginePowerPresent else { return }
             self.startupClassificationTask = nil
             self.finishVehicleStartupClassification()
         }
     }
 
     private func finishVehicleStartupClassification() {
-        let nightStart = startupHeadlightPowerPresent()
-        let roleSet: Set<AmbientLightRole> = nightStart
-            ? [.door, .dashboard, .centerConsole]
-            : [.door]
-        let ids = roleIDs(roleSet).filter { isLogicallyPowered($0) && isControllable($0) }
-
-        vehicleHeadlightsActive = nightStart
-        previousHeadlightPowerPresent = nightStart
+        let night = startupHeadlightPowerPresent()
+        vehicleHeadlightsActive = night
+        previousHeadlightPowerPresent = night
         vehicleStartupCompleted = true
-        if nightStart {
-            // Only mark controllers that actually reached a writable state in
-            // this synchronized startup. A physically powered controller whose
-            // GATT setup finishes later must still be eligible for the normal
-            // headlight-join fade rather than being silently considered joined.
-            vehicleJoinedHeadlightIDs.formUnion(ids.filter {
-                pairedDevice($0)?.role?.isHeadlightFed == true
-            })
-            vehicleAutomationStatus = "Night startup • headlight-fed lights remained powered after engine start"
-            logger.log("AMBIENT AUTO", "Night startup classified after post-engine settle; at least one headlight-fed controller remained powered, pulsing available role lights together")
-        } else {
-            vehicleAutomationStatus = "Day startup • courtesy headlights turned off after engine start"
-            logger.log("AMBIENT AUTO", "Day startup classified after post-engine settle; headlight-fed controllers lost power, pulsing Door only")
-        }
-        runVehicleStartupPulse(ids: ids, label: nightStart ? "night startup" : "day startup")
-    }
-
-    private func prepareForVehicleStartup(_ id: UUID) {
-        guard let device = pairedDevice(id), isControllable(id) else { return }
-        sendPower(id, on: true, reason: "vehicle startup prepare")
-        sendColor(id, color: device.color, reason: "vehicle startup prepare")
-        applyRuntimeBrightness(id, percent: 0, reason: "vehicle startup prepare")
-    }
-
-    private func runVehicleStartupPulse(ids: [UUID], label: String) {
-        let ids = ids.filter { isControllable($0) }
-        guard !ids.isEmpty else {
-            vehicleAutomationStatus += " • waiting for BLE control readiness"
-            return
-        }
-
-        vehicleAnimationTask?.cancel()
-        let cycles = max(1, min(2, vehicleStartupCycles))
-        let duration = max(0.4, vehicleStartupPulseDurationSeconds)
-        vehicleAnimationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for id in ids {
-                guard let device = self.pairedDevice(id) else { continue }
-                self.sendPower(id, on: true, reason: label)
-                self.sendColor(id, color: device.color, reason: label)
-                self.applyRuntimeBrightness(id, percent: 0, reason: "\(label) start")
-            }
-
-            let steps = 12
-            let halfFade = max(0.2, duration / 2.0)
-            let stepDelay = halfFade / Double(steps)
-
-            let nightTarget = self.vehicleHeadlightsActive
-            let targets = Dictionary(uniqueKeysWithValues: ids.compactMap { id -> (UUID, Int)? in
-                guard let device = self.pairedDevice(id) else { return nil }
-                return (id, self.vehicleTargetBrightness(for: device, night: nightTarget))
-            })
-
-            @MainActor
-            func fade(fractionFrom start: Double, to end: Double) async -> Bool {
-                for step in 1...steps {
-                    guard !Task.isCancelled else { return false }
-                    let t = Double(step) / Double(steps)
-                    let fraction = start + ((end - start) * t)
-                    for id in ids {
-                        let target = targets[id] ?? 0
-                        let value = Int((Double(target) * fraction).rounded())
-                        self.applyRuntimeBrightness(id, percent: value, reason: "\(label) synchronized fade")
-                    }
-                    try? await Task.sleep(for: .seconds(stepDelay))
-                }
-                return true
-            }
-
-            for _ in 0..<cycles {
-                guard await fade(fractionFrom: 0, to: 1) else { return }
-                guard await fade(fractionFrom: 1, to: 0) else { return }
-            }
-            guard await fade(fractionFrom: 0, to: 1) else { return }
-            for id in ids {
-                let target = targets[id] ?? 0
-                self.applyRuntimeBrightness(id, percent: target, reason: "\(label) final vehicle target", persist: true)
-            }
-            self.vehicleAnimationTask = nil
-            self.vehicleAutomationStatus = self.vehicleHeadlightsActive
-                ? "Driving • headlights on • door at night target \(self.doorNightBrightness)%"
-                : "Driving • daylight • door at day target \(self.doorDayBrightness)%"
-            self.logger.log("AMBIENT AUTO", "Vehicle startup pulse complete: \(label)")
-        }
-    }
-
-    private func scheduleHeadlightJoinFade() {
-        guard headlightJoinTask == nil else { return }
-        vehicleHeadlightsActive = true
-        vehicleAutomationStatus = "Headlights detected • preparing dashboard + console fade-in"
-        headlightJoinTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            // Coalesce the two headlight-fed BLE controllers, which may become
-            // ready a fraction of a second apart even though power arrived together.
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled, self.vehicleAutomationEnabled, !self.vehicleShutdownLatched else { return }
-            self.headlightJoinTask = nil
-            self.fadeInNewHeadlightDevices()
-        }
-    }
-
-    private func fadeInNewHeadlightDevices() {
-        // Night is true when EITHER headlight-fed controller is present. Dim the
-        // always-powered door light independently of whether both headlight GATT
-        // paths are writable yet.
-        transitionDoorBrightness(
-            to: doorTargetBrightness(night: true),
-            over: headlightJoinFadeSeconds,
-            reason: "headlights on → nighttime door brightness"
+        vehicleAutomationStatus = night
+            ? "Engine ON • night • Door target \(doorNightBrightness)%"
+            : "Engine ON • day • Door target \(doorDayBrightness)%"
+        logger.log(
+            "AMBIENT AUTO",
+            "Simplified startup classification complete: \(night ? "night" : "day"); applying Door target only"
         )
-
-        let candidates = roleIDs([.dashboard, .centerConsole]).filter {
-            isLogicallyPowered($0) && isControllable($0) && !vehicleJoinedHeadlightIDs.contains($0)
-        }
-        vehicleHeadlightsActive = true
-
-        guard !candidates.isEmpty else {
-            vehicleAutomationStatus = "Driving • headlights on • door dimming to night target; waiting for headlight-light control"
-            logger.log("AMBIENT AUTO", "Headlight OFF→ON; door target=\(doorNightBrightness)% while headlight-fed controllers wait for control readiness")
-            return
-        }
-
-        vehicleJoinedHeadlightIDs.formUnion(candidates)
-        fade(ids: candidates, toPreferredOver: headlightJoinFadeSeconds, reason: "headlight join")
-        vehicleAutomationStatus = "Driving • headlights on • dashboard + console joining; door → \(doorNightBrightness)%"
-        logger.log("AMBIENT AUTO", "Headlight OFF→ON; fading in \(candidates.count) headlight-fed light(s) and dimming door to \(doorNightBrightness)%")
+        applyCurrentDoorDayNightTarget(reason: night ? "startup night Door target" : "startup day Door target")
     }
 
-    private func transitionDoorBrightness(to targetPercent: Int, over seconds: Double, reason: String) {
-        guard !vehicleShutdownLatched,
+    private func applyCurrentDoorDayNightTarget(reason: String) {
+        guard vehicleAutomationEnabled, enginePowerPresent, vehicleStartupCompleted,
               let doorID = deviceID(for: .door),
-              isLogicallyPowered(doorID),
-              isControllable(doorID),
+              isLogicallyPowered(doorID), isControllable(doorID),
               let door = pairedDevice(doorID) else { return }
 
-        let target = max(0, min(100, targetPercent))
-        let start = door.runtimeBrightness
-
-        doorBrightnessTask?.cancel()
-        if start == target {
+        let target = doorTargetBrightness(night: vehicleHeadlightsActive)
+        if activeBreathIDs.contains(doorID) {
+            activeBreathReturnBrightness[doorID] = target
+            logger.log("AMBIENT ANIM", "Door breath final target updated to \(target)% reason=\(reason)")
+            return
+        }
+        if door.runtimeBrightness == target {
             applyRuntimeBrightness(doorID, percent: target, reason: "\(reason) already at target", persist: true)
             return
         }
-
         sendPower(doorID, on: true, reason: reason)
         sendColor(doorID, color: door.color, reason: reason)
-        logger.log("AMBIENT AUTO", "Door brightness transition \(start)% → \(target)% reason=\(reason)")
-
-        doorBrightnessTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let steps = 16
-            let delay = max(0.4, seconds) / Double(steps)
-            for step in 1...steps {
-                guard !Task.isCancelled else { return }
-                let t = Double(step) / Double(steps)
-                let value = Int((Double(start) + (Double(target - start) * t)).rounded())
-                self.applyRuntimeBrightness(doorID, percent: value, reason: reason)
-                try? await Task.sleep(for: .seconds(delay))
-            }
-            self.applyRuntimeBrightness(doorID, percent: target, reason: "\(reason) final", persist: true)
-            self.doorBrightnessTask = nil
-            self.logger.log("AMBIENT AUTO", "Door brightness transition complete at \(target)% reason=\(reason)")
-        }
-    }
-
-    private func fade(ids: [UUID], toPreferredOver seconds: Double, reason: String) {
-        let ids = ids.filter { isControllable($0) }
-        guard !ids.isEmpty else { return }
-        vehicleAnimationTask?.cancel()
-        vehicleAnimationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for id in ids {
-                guard let device = self.pairedDevice(id) else { continue }
-                self.sendPower(id, on: true, reason: reason)
-                self.sendColor(id, color: device.color, reason: reason)
-                self.applyRuntimeBrightness(id, percent: 0, reason: "\(reason) start")
-            }
-            let steps = 16
-            let delay = max(0.4, seconds) / Double(steps)
-            for step in 1...steps {
-                guard !Task.isCancelled else { return }
-                let fraction = Double(step) / Double(steps)
-                for id in ids {
-                    guard let device = self.pairedDevice(id) else { continue }
-                    let value = Int((Double(device.brightness) * fraction).rounded())
-                    self.applyRuntimeBrightness(id, percent: value, reason: reason)
-                }
-                try? await Task.sleep(for: .seconds(delay))
-            }
-            for id in ids {
-                guard let device = self.pairedDevice(id) else { continue }
-                self.applyRuntimeBrightness(id, percent: device.brightness, reason: "\(reason) final preferred", persist: true)
-            }
-            self.vehicleAnimationTask = nil
-        }
-    }
-
-    /// Manual test entry point; automatic engine-power shutdown uses the same
-    /// implementation so there is only one fade-to-zero path to validate.
-    func fadeOutForVehicleShutdown() {
-        guard vehicleAutomationEnabled else {
-            vehicleAutomationStatus = "Enable vehicle automation first"
-            return
-        }
-        performVehicleShutdownFade(trigger: "manual Fade Out Now")
-    }
-
-    private func performVehicleShutdownFade(trigger: String) {
-        guard vehicleAutomationEnabled else { return }
-        startupClassificationTask?.cancel()
-        startupClassificationTask = nil
-        headlightJoinTask?.cancel()
-        headlightJoinTask = nil
-        vehicleAnimationTask?.cancel()
-        doorBrightnessTask?.cancel()
-        doorBrightnessTask = nil
-
-        // Corrected physical shutdown sequence (v90.5): the Door controller is on
-        // the engine-switched circuit and loses electrical power immediately when
-        // the engine turns off. There is no opportunity to transmit a fade to it.
-        // Record runtime zero locally without overwriting its Day/Night targets.
-        if let doorID = deviceID(for: .door),
-           let index = pairedDevices.firstIndex(where: { $0.id == doorID }) {
-            pairedDevices[index].lastAppliedBrightness = 0
-            persistPairedDevices()
-            logger.log("AMBIENT AUTO", "Engine OFF: Door power is expected to disappear immediately; runtime recorded as 0 without sending a fade")
-        }
-
-        // Only the headlight-fed pair can still be electrically alive after engine
-        // OFF. At night they remain on; after a daylight lock they can turn on again
-        // for the courtesy-headlight interval. Verified protocols are faded now; any
-        // later verified reconnect is held at zero by vehicleControlBecameReady().
-        let poweredHeadlightDevices = pairedDevices.filter { device in
-            guard let role = device.role, role.isHeadlightFed else { return false }
-            return isLogicallyPowered(device.id)
-        }
-        let ids = poweredHeadlightDevices.filter { isControllable($0.id) }.map(\.id)
-        let pendingControl = poweredHeadlightDevices.filter { !isControllable($0.id) }
-        vehicleShutdownLatched = true
-        vehicleAutomationStatus = "\(trigger) • suppressing headlight-fed courtesy lights"
-        logger.log(
-            "AMBIENT AUTO",
-            "Shutdown trigger=\(trigger); Door expected power-off immediately; fading \(ids.count) powered controllable headlight-fed light(s) to 0; \(pendingControl.count) powered headlight-fed light(s) are waiting for BLE control readiness. Shutdown latch remains until next engine ON so later courtesy lights are held at zero."
+        transitionBrightness(
+            ids: [doorID],
+            targets: [doorID: target],
+            over: brightnessTransitionSeconds,
+            reason: reason
         )
-        for device in pendingControl {
-            logger.log("AMBIENT AUTO", "Courtesy suppression pending for \(device.displayName): waiting for writable control characteristic")
-        }
-
-        guard !ids.isEmpty else {
-            vehicleAutomationStatus = enginePowerPresent
-                ? "Manual shutdown preview • no controllable headlight-fed lights currently powered"
-                : "Engine power OFF • courtesy-light suppression armed"
-            return
-        }
-
-        vehicleAnimationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let starts = Dictionary(uniqueKeysWithValues: ids.compactMap { id in
-                self.pairedDevice(id).map { (id, $0.runtimeBrightness) }
-            })
-            let steps = 20
-            let delay = max(0.4, self.shutdownFadeSeconds) / Double(steps)
-            for step in 1...steps {
-                guard !Task.isCancelled else { return }
-                let remaining = 1.0 - (Double(step) / Double(steps))
-                for id in ids {
-                    let start = starts[id] ?? 0
-                    self.applyRuntimeBrightness(
-                        id,
-                        percent: Int((Double(start) * remaining).rounded()),
-                        reason: "vehicle shutdown headlight fade"
-                    )
-                }
-                try? await Task.sleep(for: .seconds(delay))
-            }
-            for id in ids {
-                self.applyRuntimeBrightness(id, percent: 0, reason: "vehicle shutdown headlight final", persist: true)
-            }
-            self.vehicleAnimationTask = nil
-            self.vehicleAutomationStatus = self.enginePowerPresent
-                ? "Manual shutdown preview complete • Door unchanged physically"
-                : "Engine power OFF • headlight-fed courtesy lights held at 0%"
-            self.logger.log("AMBIENT AUTO", "Headlight-fed shutdown fade complete trigger=\(trigger); preferred targets unchanged; shutdown latch remains armed")
-        }
     }
 
-    /// Convenient stationary test without power-cycling the car. It reclassifies
-    /// the currently powered set as day/night and runs the configured startup pulse.
-    func previewVehicleStartupNow() {
-        guard vehicleAutomationEnabled else { return }
-        vehicleShutdownLatched = false
-        vehicleSessionActive = true
-        vehicleStartupCompleted = true
-        finishVehicleStartupClassification()
-    }
-
-    func restorePreferredBrightnessNow() {
-        vehicleShutdownLatched = false
-        let nonDoorIDs = pairedDevices.compactMap { device -> UUID? in
-            guard device.role != nil,
-                  device.role != .door,
-                  isLogicallyPowered(device.id),
-                  isControllable(device.id) else { return nil }
-            return device.id
-        }
-        fade(ids: nonDoorIDs, toPreferredOver: headlightJoinFadeSeconds, reason: "restore preferred")
-        transitionDoorBrightness(
-            to: doorTargetBrightness(night: headlightPowerPresent()),
-            over: headlightJoinFadeSeconds,
-            reason: "restore current door day/night target"
+    private func transitionDoorBrightness(to targetPercent: Int, over seconds: Double, reason: String) {
+        guard let doorID = deviceID(for: .door), isLogicallyPowered(doorID), isControllable(doorID) else { return }
+        transitionBrightness(
+            ids: [doorID],
+            targets: [doorID: max(0, min(100, targetPercent))],
+            over: seconds,
+            reason: reason
         )
-        vehicleAutomationStatus = "Restoring current brightness targets"
     }
 
-    private func vehicleControlBecameReady(_ id: UUID) {
-        guard vehicleAutomationEnabled, let device = pairedDevice(id), device.role != nil else {
-            restoreDeviceState(id)
-            return
+    /// Preview the one supported power-up animation using every enabled, currently
+    /// controllable light. They are queued into the same synchronized breath session.
+    func previewEnabledBreathNow() {
+        for device in pairedDevices where device.startupAnimationEnabled && device.powerOn && isControllable(device.id) {
+            animatedConnectionSession.remove(device.id)
+            queuePowerUpBreath(device.id, force: true)
         }
-        if vehicleShutdownLatched {
-            if device.role == .door {
-                if let index = pairedDevices.firstIndex(where: { $0.id == id }) {
-                    pairedDevices[index].lastAppliedBrightness = 0
-                    persistPairedDevices()
-                }
-                logger.log("AMBIENT AUTO", "Door control appeared while shutdown latched; no command sent because Door should be engine-power OFF")
-                return
-            }
-            if let role = device.role, role.isHeadlightFed {
-                sendColor(id, color: device.color, reason: "post-lock courtesy suppression")
-                sendPower(id, on: true, reason: "post-lock courtesy suppression")
-                applyRuntimeBrightness(id, percent: 0, reason: "post-lock courtesy keep zero", persist: true)
-                logger.log("AMBIENT AUTO", "Headlight-fed light appeared while engine OFF; held at 0% for courtesy/headlight delay")
-            }
-            return
-        }
-        if startupClassificationTask != nil && !vehicleStartupCompleted {
-            prepareForVehicleStartup(id)
-            return
-        }
-        if vehicleSessionActive && vehicleStartupCompleted,
-           device.role == .door {
-            transitionDoorBrightness(
-                to: doorTargetBrightness(night: headlightPowerPresent()),
-                over: headlightJoinFadeSeconds,
-                reason: "door control ready"
-            )
-            return
-        }
-        if vehicleSessionActive && vehicleStartupCompleted,
-           let role = device.role, role.isHeadlightFed, headlightPowerPresent(),
-           !vehicleJoinedHeadlightIDs.contains(id) {
-            fadeInNewHeadlightDevices()
-            return
-        }
-        restoreDeviceState(id)
     }
 
     // MARK: - Connection management
@@ -2052,6 +1963,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.writeCharacteristicsByID[id] = nil
             self.animationTasks[id]?.cancel()
             self.animationTasks[id] = nil
+            self.cancelBrightnessTransition(for: id)
+            self.removeFromActiveBreath(id)
 
             if self.trackedPeripheral?.identifier == id {
                 self.connectionAttemptStartedAt = nil

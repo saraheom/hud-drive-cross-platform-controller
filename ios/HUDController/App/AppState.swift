@@ -93,6 +93,33 @@ final class AppState {
         bluetooth.initializeHUD()
     }
 
+    /// Persistent top-bar shortcut: arm HUD navigation and, in the normal iOS 27
+    /// build, present Apple's full-display capture picker immediately. The
+    /// temporary iOS 26 ambient-test flavor keeps navigation mode available but
+    /// intentionally has no ScreenCaptureKit picker.
+    func quickStartNavigation() {
+        logger.log("QUICK ACTION", "Navigation shortcut tapped")
+        navigation.navigationOn()
+        if #available(iOS 27.0, *),
+           let capture = externalCapture27 as? ExternalNavigationCapture {
+            capture.presentFullDisplayPicker()
+        } else {
+            logger.log("QUICK ACTION", "Screen capture picker unavailable in this build/OS")
+        }
+    }
+
+    /// Persistent top-bar shortcut: recover the Spotify App Remote connection in
+    /// one tap. If authorization is missing, start authorization; otherwise wake
+    /// Spotify and resume the connection without discarding the saved Keychain token.
+    func quickReconnectSpotify() {
+        logger.log("QUICK ACTION", "Music shortcut tapped")
+        if spotify.authorizationRequired || !spotify.authorized {
+            spotify.connectOrAuthorize()
+        } else {
+            spotify.openSpotifyAndResumeConnection()
+        }
+    }
+
     func applyBrightness() {
         bluetooth.enqueue(HudCommands.autoBrightness(settings.autoBrightness), label: "Auto brightness \(settings.autoBrightness)")
         if !settings.autoBrightness {

@@ -3,19 +3,43 @@ import SwiftUI
 struct RootView: View {
     @Bindable var state: AppState
     @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedTab: RootTab = .navigation
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             HudNavigationView(state: state)
+                .tag(RootTab.navigation)
                 .tabItem { Label("Navigation", systemImage: "location.north") }
             DashboardView(state: state)
+                .tag(RootTab.dashboard)
                 .tabItem { Label("Dashboard", systemImage: "rectangle.inset.filled") }
             MediaView(state: state)
+                .tag(RootTab.media)
                 .tabItem { Label("Media", systemImage: "music.note") }
             VehicleView(state: state)
+                .tag(RootTab.vehicle)
                 .tabItem { Label("Vehicle", systemImage: "car") }
             LogsView(state: state)
+                .tag(RootTab.logs)
                 .tabItem { Label("My trips", systemImage: "clock.arrow.circlepath") }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if selectedTab != .logs {
+                QuickShortcutBar(
+                    navigationAction: {
+                        selectedTab = .navigation
+                        state.quickStartNavigation()
+                    },
+                    musicAction: {
+                        selectedTab = .media
+                        state.quickReconnectSpotify()
+                    },
+                    ambientAction: {
+                        selectedTab = .vehicle
+                        state.ambientLight.requestPairedLightsFocus()
+                    }
+                )
+            }
         }
         .tint(HudTheme.accent)
         .preferredColorScheme(.dark)
@@ -65,5 +89,51 @@ struct RootView: View {
         case .connect:
             state.bluetooth.scan()
         }
+    }
+}
+
+private enum RootTab: Hashable {
+    case navigation
+    case dashboard
+    case media
+    case vehicle
+    case logs
+}
+
+private struct QuickShortcutBar: View {
+    let navigationAction: () -> Void
+    let musicAction: () -> Void
+    let ambientAction: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            shortcut("Navigation", icon: "location.north.fill", action: navigationAction)
+            shortcut("Music", icon: "music.note", action: musicAction)
+            shortcut("Ambient", icon: "lightbulb.2.fill", action: ambientAction)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Divider().opacity(0.6)
+        }
+    }
+
+    private func shortcut(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.caption.bold())
+                Text(title)
+                    .font(.caption.bold())
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .padding(.horizontal, 6)
+            .background(HudTheme.card, in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title) shortcut")
     }
 }

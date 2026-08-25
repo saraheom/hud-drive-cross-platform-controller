@@ -58,6 +58,13 @@ struct AmbientRGB: Codable, Equatable {
     var blue: Int
 
     static let white = AmbientRGB(red: 255, green: 255, blue: 255)
+    static let defaultPresets: [AmbientRGB] = [
+        AmbientRGB(red: 255, green: 0, blue: 0),
+        AmbientRGB(red: 0, green: 255, blue: 0),
+        AmbientRGB(red: 0, green: 80, blue: 255),
+        AmbientRGB(red: 160, green: 64, blue: 255),
+        AmbientRGB(red: 255, green: 255, blue: 255)
+    ]
 
     init(red: Int, green: Int, blue: Int) {
         self.red = max(0, min(255, red))
@@ -88,6 +95,10 @@ struct AmbientLightDevice: Identifiable, Codable, Equatable {
     var startupCycles: Int
     var startupDurationSeconds: Double
 
+    /// v90.8: five user-editable color shortcuts. Optional preserves decoding of
+    /// every previously persisted v89-v90.7 device record.
+    var presetColors: [AmbientRGB]?
+
     /// Wiring role used by v90 vehicle-aware automation. Optional so existing v89
     /// records decode cleanly; known car UUIDs are migrated automatically.
     var role: AmbientLightRole?
@@ -105,6 +116,7 @@ struct AmbientLightDevice: Identifiable, Codable, Equatable {
         startupAnimationEnabled: Bool = false,
         startupCycles: Int = 1,
         startupDurationSeconds: Double = 1.5,
+        presetColors: [AmbientRGB]? = nil,
         role: AmbientLightRole? = nil
     ) {
         self.id = id
@@ -117,8 +129,9 @@ struct AmbientLightDevice: Identifiable, Codable, Equatable {
         self.lastAppliedBrightness = lastAppliedBrightness.map { max(0, min(100, $0)) }
         self.powerOn = powerOn
         self.startupAnimationEnabled = startupAnimationEnabled
-        self.startupCycles = max(1, min(2, startupCycles))
-        self.startupDurationSeconds = max(0.4, min(5.0, startupDurationSeconds))
+        self.startupCycles = max(1, min(5, startupCycles))
+        self.startupDurationSeconds = max(1.0, min(15.0, startupDurationSeconds))
+        self.presetColors = presetColors
         self.role = role
     }
 
@@ -133,6 +146,18 @@ struct AmbientLightDevice: Identifiable, Codable, Equatable {
     var runtimeBrightness: Int {
         max(0, min(100, lastAppliedBrightness ?? brightness))
     }
+
+    var resolvedPresetColors: [AmbientRGB] {
+        Self.normalizedPresets(presetColors)
+    }
+
+    static func normalizedPresets(_ presets: [AmbientRGB]?) -> [AmbientRGB] {
+        var values = Array((presets ?? AmbientRGB.defaultPresets).prefix(5))
+        while values.count < 5 {
+            values.append(AmbientRGB.defaultPresets[values.count])
+        }
+        return values
+    }
 }
 
 struct AmbientLightGroup: Identifiable, Codable, Equatable {
@@ -140,10 +165,23 @@ struct AmbientLightGroup: Identifiable, Codable, Equatable {
     var name: String
     var memberIDs: [UUID]
 
-    init(id: UUID = UUID(), name: String, memberIDs: [UUID] = []) {
+    /// v90.8: group-specific five-color shortcuts. Optional keeps older saved
+    /// group JSON fully backward compatible.
+    var presetColors: [AmbientRGB]?
+
+    init(id: UUID = UUID(), name: String, memberIDs: [UUID] = [], presetColors: [AmbientRGB]? = nil) {
         self.id = id
         self.name = name
         self.memberIDs = memberIDs
+        self.presetColors = presetColors
+    }
+
+    var resolvedPresetColors: [AmbientRGB] {
+        var values = Array((presetColors ?? AmbientRGB.defaultPresets).prefix(5))
+        while values.count < 5 {
+            values.append(AmbientRGB.defaultPresets[values.count])
+        }
+        return values
     }
 }
 
