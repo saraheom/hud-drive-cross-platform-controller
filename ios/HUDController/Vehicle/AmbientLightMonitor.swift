@@ -223,6 +223,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// reconnect heuristic. This also lets a quick OFF -> ON start a fresh breath.
     private var headlightPowerSessionActive = false
     private var headlightPowerEpoch = 0
+    private var headlightStateGeneration = 0
     private var headlightAnimatedEpochByID: [UUID: Int] = [:]
     private var headlightOffDebounceTask: Task<Void, Never>?
     private let headlightOffDebounceSeconds: TimeInterval = 0.35
@@ -1407,12 +1408,21 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    private func validBreathParticipant(_ id: UUID) -> Bool {
+        guard let role = pairedDevice(id)?.role, role.isHeadlightFed else {
+            return true
+        }
+        return headlightPowerSessionActive &&
+            headlightAnimatedEpochByID[id] == headlightPowerEpoch
+    }
+
     private func startSynchronizedBreathSession() {
         guard synchronizedBreathTask == nil else { return }
 
         let ready = activeBreathIDs.filter { id in
             guard let device = pairedDevice(id) else { return false }
-            return device.startupAnimationEnabled && device.powerOn && isControllable(id)
+            return device.startupAnimationEnabled && device.powerOn &&
+                isControllable(id) && validBreathParticipant(id)
         }
         guard !ready.isEmpty else {
             activeBreathIDs.removeAll()
@@ -1447,6 +1457,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 let ids = Array(self.activeBreathIDs)
 
                 for id in ids {
+                    guard self.validBreathParticipant(id) else {
+                        self.removeFromActiveBreath(id)
+                        continue
+                    }
                     guard self.isControllable(id), let start = self.activeBreathStartBrightness[id] else { continue }
                     let interval = self.animationWriteInterval(for: id)
                     let due = progress >= 1.0 || lastWriteAt[id].map { now.timeIntervalSince($0) >= interval * 0.90 } ?? true
@@ -1482,6 +1496,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard !Task.isCancelled else { return }
             let finishedIDs = Array(self.activeBreathIDs)
             for id in finishedIDs {
+                guard self.validBreathParticipant(id) else {
+                    self.logger.log(
+                        "AMBIENT ANIM",
+                        "Skipped stale headlight Breath final for \(self.pairedDevice(id)?.displayName ?? id.uuidString)"
+                    )
+                    continue
+                }
                 guard let start = self.activeBreathStartBrightness[id] else { continue }
                 let returnTarget = self.activeBreathReturnBrightness[id] ?? start
                 _ = await self.applyRuntimeBrightnessWhenReady(
@@ -1605,67 +1626,117 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         pairedDevice(id)?.role != nil
     }
 
-    /// Record positive physical-power evidence for Dashboard/Center. A physical
-    /// headlight ON epoch is independent from BLE reconnect duration; this is what
-    /// re-arms the optional Breath animation while driving.
-    private func noteHeadlightPowerSeen(_ id: UUID, reason: String) {
-        guard isHeadlightFedDevice(id) else { return }
+    /// v90.11: Dashboard + Center are headlight-fed, but the Center/ELK-BLEDOM
+    /// presence signal is also the exact signal already used to change the HUD's
+    /// native auto-brightness state. Use that same event as the authoritative
+    /// headlight ON/OFF edge so Door day/night transitions start at the same time
+    /// as the HUD instead of waiting several more seconds for Dashboard BLE timeout.
+    private func setAuthoritativeHeadlightPower(_ on: Bool, reason: String) {
         headlightOffDebounceTask?.cancel()
         headlightOffDebounceTask = nil
 
-        if !headlightPowerSessionActive {
+        if on {
+            guard !headlightPowerSessionActive else { return }
+
             headlightPowerSessionActive = true
             headlightPowerEpoch &+= 1
             if headlightPowerEpoch <= 0 { headlightPowerEpoch = 1 }
-            for roleID in roleIDs([.dashboard, .centerConsole]) {
-                animatedConnectionSession.remove(roleID)
+            headlightStateGeneration &+= 1
+
+            let headlightIDs = roleIDs([.dashboard, .centerConsole])
+            for id in headlightIDs {
+                breathPrepareTasks[id]?.cancel()
+                breathPrepareTasks[id] = nil
+                restoreTasks[id]?.cancel()
+                restoreTasks[id] = nil
+                removeFromActiveBreath(id)
+                animatedConnectionSession.remove(id)
+                headlightAnimatedEpochByID[id] = nil
             }
-            logger.log("AMBIENT POWER", "Headlight-fed physical power ON epoch=\(headlightPowerEpoch) via \(pairedDevice(id)?.displayName ?? id.uuidString) (\(reason))")
+
+            logger.log(
+                "AMBIENT POWER",
+                "Authoritative headlight ON epoch=\(headlightPowerEpoch) generation=\(headlightStateGeneration) via HUD brightness signal (\(reason))"
+            )
 
             if vehicleAutomationEnabled, enginePowerPresent, vehicleStartupCompleted {
                 vehicleHeadlightsActive = true
                 previousHeadlightPowerPresent = true
-                applyCurrentDoorDayNightTarget(reason: "headlight-fed physical power ON → night Door brightness")
-                logger.log("AMBIENT AUTO", "Headlight physical ON while engine ON: night Door target=\(doorTargetBrightness(night: true))%")
+                applyCurrentDoorDayNightTarget(
+                    reason: "HUD brightness headlight ON → night Door brightness"
+                )
+                logger.log(
+                    "AMBIENT AUTO",
+                    "HUD brightness signal ON: night Door target=\(doorTargetBrightness(night: true))%"
+                )
+            }
+
+            // If a controller stayed logically connected across a very short
+            // physical OFF->ON pulse, don't wait for a new didConnect callback.
+            // Re-bootstrap every enabled headlight-fed light for this fresh epoch.
+            for id in headlightIDs where isControllable(id) {
+                queuePowerUpBreath(id)
+            }
+        } else {
+            guard headlightPowerSessionActive else { return }
+
+            headlightPowerSessionActive = false
+            headlightStateGeneration &+= 1
+
+            let headlightIDs = roleIDs([.dashboard, .centerConsole])
+            for id in headlightIDs {
+                breathPrepareTasks[id]?.cancel()
+                breathPrepareTasks[id] = nil
+                restoreTasks[id]?.cancel()
+                restoreTasks[id] = nil
+                removeFromActiveBreath(id)
+                headlightAnimatedEpochByID[id] = nil
+            }
+
+            logger.log(
+                "AMBIENT POWER",
+                "Authoritative headlight OFF generation=\(headlightStateGeneration) via HUD brightness signal (\(reason)); stale headlight Breath work invalidated"
+            )
+
+            if vehicleAutomationEnabled, enginePowerPresent, vehicleStartupCompleted {
+                vehicleHeadlightsActive = false
+                previousHeadlightPowerPresent = false
+                applyCurrentDoorDayNightTarget(
+                    reason: "HUD brightness headlight OFF → day Door brightness"
+                )
+                logger.log(
+                    "AMBIENT AUTO",
+                    "HUD brightness signal OFF: day Door target=\(doorTargetBrightness(night: false))%"
+                )
             }
         }
     }
 
-    /// A single BLE disconnect is not enough to call the headlight circuit OFF.
-    /// Both independent headlight-fed controllers must have no new positive power
-    /// evidence during a short debounce window. This is fast enough to interrupt a
-    /// Breath, but far less sensitive to one controller's transient radio dropout.
-    private func scheduleHeadlightPowerOffEvaluation(reason: String) {
-        guard headlightPowerSessionActive else { return }
-        let candidateAt = Date()
-        headlightOffDebounceTask?.cancel()
-        headlightOffDebounceTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: .seconds(self.headlightOffDebounceSeconds))
-            guard !Task.isCancelled else { return }
-            let stillPowered = self.roleIDs([.dashboard, .centerConsole]).contains { id in
-                if self.peripheralsByID[id]?.state == .connected { return true }
-                if let seen = self.lastSeenByID[id], seen > candidateAt { return true }
-                return false
-            }
-            guard !stillPowered else { return }
-            self.headlightOffDebounceTask = nil
-            self.headlightPowerSessionActive = false
-
-            for id in self.roleIDs([.dashboard, .centerConsole]) {
-                self.breathPrepareTasks[id]?.cancel()
-                self.breathPrepareTasks[id] = nil
-                self.removeFromActiveBreath(id)
-            }
-            self.logger.log("AMBIENT POWER", "Headlight-fed physical power OFF (\(reason)); active headlight Breath cancelled")
-
-            if self.vehicleAutomationEnabled, self.enginePowerPresent, self.vehicleStartupCompleted {
-                self.vehicleHeadlightsActive = false
-                self.previousHeadlightPowerPresent = false
-                self.applyCurrentDoorDayNightTarget(reason: "headlight-fed physical power OFF → day Door brightness")
-                self.logger.log("AMBIENT AUTO", "Headlight physical OFF while engine ON: day Door target=\(self.doorTargetBrightness(night: false))%")
-            }
+    /// Positive advertisements/connections from Dashboard are useful to prepare
+    /// its BLE transport, but they no longer own the vehicle headlight state.
+    /// The authoritative state edge comes from the same Center/ELK-BLEDOM signal
+    /// that controls HUD auto brightness.
+    private func noteHeadlightPowerSeen(_ id: UUID, reason: String) {
+        guard isHeadlightFedDevice(id) else { return }
+        if headlightPowerSessionActive,
+           isControllable(id),
+           headlightAnimatedEpochByID[id] != headlightPowerEpoch {
+            logger.log(
+                "AMBIENT POWER",
+                "Headlight-fed controller ready inside epoch=\(headlightPowerEpoch): \(pairedDevice(id)?.displayName ?? id.uuidString) (\(reason))"
+            )
+            queuePowerUpBreath(id)
         }
+    }
+
+    /// Retained as a compatibility helper for older call sites/tests. v90.11
+    /// intentionally does not use Dashboard disconnect timing to determine the
+    /// vehicle's headlight state; Center/HUD auto-brightness owns that edge.
+    private func scheduleHeadlightPowerOffEvaluation(reason: String) {
+        logger.log(
+            "AMBIENT POWER",
+            "Ignoring non-authoritative headlight OFF candidate: \(reason); waiting for HUD brightness signal"
+        )
     }
 
     private func headlightPowerPresent() -> Bool {
@@ -2185,6 +2256,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 "AMBIENT",
                 "\(name) became present via \(reason); enabling HUD auto brightness"
             )
+            setAuthoritativeHeadlightPower(true, reason: reason)
         }
 
         if bluetooth.state == .connected,
@@ -2207,6 +2279,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             "AMBIENT",
             "\(targetName) became absent via \(reason); disabling HUD auto brightness"
         )
+        setAuthoritativeHeadlightPower(false, reason: reason)
         if bluetooth.state == .connected {
             bluetooth.enqueue(
                 HudCommands.autoBrightness(false),
@@ -2447,7 +2520,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.restoreTasks[id] = nil
             self.removeFromActiveBreath(id)
             if self.isHeadlightFedDevice(id) {
-                self.scheduleHeadlightPowerOffEvaluation(reason: "BLE disconnect of \(self.pairedDevice(id)?.displayName ?? id.uuidString)")
+                // Physical disappearance cancels this controller's transient work,
+                // but v90.11 waits for the Center/HUD-brightness edge before changing
+                // the shared headlight state or Door day/night target.
+                self.logger.log(
+                    "AMBIENT POWER",
+                    "Headlight-fed BLE disconnect observed for \(self.pairedDevice(id)?.displayName ?? id.uuidString); shared state unchanged until HUD brightness signal"
+                )
             }
 
             if self.trackedPeripheral?.identifier == id {

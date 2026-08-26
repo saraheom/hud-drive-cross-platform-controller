@@ -354,3 +354,44 @@ v90.10 changes the ambient runtime around the actual vehicle power behavior:
   one RGB command.
 
 The v90.9 source-regression tests were updated to validate these v90.10 invariants.
+
+## v90.11 — authoritative headlight edges + automatic Spotify wake + selectable speed-limit sources
+
+Field testing of v90.10 showed one remaining rapid-headlight race: Center/HUD auto-brightness
+could already report OFF while Dashboard BLE was still connected or finishing a Breath. Door
+therefore waited for the slower Dashboard disconnect before beginning its day transition, and a
+stale Dashboard animation final could survive across a short OFF -> ON cycle.
+
+v90.11 makes the same Center/ELK-BLEDOM presence edge that drives the HUD's native auto-brightness
+the authoritative vehicle headlight state:
+
+- HUD auto-brightness ON and Door night transition now start from the same event.
+- HUD auto-brightness OFF and Door day transition now start from the same event; there is no wait
+  for Dashboard's later CoreBluetooth timeout.
+- Every headlight ON creates a fresh epoch. A physical OFF immediately invalidates Dashboard/Center
+  Breath preparation, active frames, and final writes from the old epoch.
+- A short OFF -> ON starts a clean new bootstrap even if a controller never fully left CoreBluetooth's
+  connected state.
+- Door transitions remain interruptible and always retarget from the latest successfully applied
+  runtime brightness.
+
+Spotify recovery is also changed from repeated blind `connect()` attempts to automatic wake:
+
+- the saved App Remote token remains in Keychain;
+- after two failed silent connection attempts, HUD Controller automatically invokes Spotify's wake
+  path without clearing authorization;
+- when iOS returns to HUD Controller (or the authorization callback arrives), a fresh App Remote
+  reconnects automatically;
+- the destructive Reset/Reauthorize action remains troubleshooting-only.
+
+For speed-limit testing, the Vehicle page now exposes three independently selectable sources:
+
+1. **Current** — unchanged decompiled HUDWAY/OSM matcher.
+2. **Enhanced OSM** — separate directional/continuity-aware OSM matcher for A/B testing.
+3. **HERE** — rolling GPS-trace route matching requesting `APPLICABLE_SPEED_LIMIT`; requires a HERE
+   API key entered in the app and stored only in iPhone Keychain.
+
+Switching sources clears the previous speed-limit sign until the selected source produces a fresh
+result. The ambient red overspeed warning remains intentionally unimplemented because the iOS app
+still does not receive the HUD/OBD vehicle-speed value directly; GPS speed is not used for that
+proposed warning.

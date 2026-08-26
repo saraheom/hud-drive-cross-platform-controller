@@ -26,6 +26,10 @@ final class SpotifyMediaController: NSObject {
     private var reconnectGeneration = 0
     private var connectionInFlight = false
     private var userRequestedDisconnect = false
+    private var automaticWakeInProgress = false
+    private var lastAutomaticWakeAt: Date?
+    private var automaticWakeFallbackTask: Task<Void, Never>?
+    private let automaticWakeCooldown: TimeInterval = 45
 
     var onTrackChanged: ((String, String) -> Void)?
 
@@ -175,6 +179,13 @@ final class SpotifyMediaController: NSObject {
     func appBecameActive() {
         userRequestedDisconnect = false
 
+        if automaticWakeInProgress {
+            automaticWakeInProgress = false
+            automaticWakeFallbackTask?.cancel()
+            automaticWakeFallbackTask = nil
+            logger.log("MEDIA WAKE", "HUD Controller became active after automatic Spotify wake; reconnecting")
+        }
+
         guard !connected else {
             ensurePlayerStateSubscription()
             return
@@ -209,6 +220,16 @@ final class SpotifyMediaController: NSObject {
               !authorizationRequired,
               authorized else { return }
         guard reconnectTask == nil else { return }
+
+        // A saved App Remote token is not enough to connect when the Spotify
+        // process itself is suspended/terminated. After two ordinary connect
+        // failures, automatically invoke Spotify's documented wake/authorization
+        // path once. Existing Keychain authorization is preserved; this replaces
+        // the former requirement for the user to tap Reauthorize almost every drive.
+        if consecutiveConnectionFailures >= 2,
+           attemptAutomaticSpotifyWake(reason: reason) {
+            return
+        }
 
         let delays: [Double] = [1, 2, 5, 10, 15]
         let delay = delays[min(reconnectAttempt, delays.count - 1)]
@@ -246,6 +267,61 @@ final class SpotifyMediaController: NSObject {
             self.reconnectTask = nil
             self.autoConnectIfPossible()
         }
+    }
+
+    @discardableResult
+    private func attemptAutomaticSpotifyWake(reason: String) -> Bool {
+        guard isConfigured, authorized, !authorizationRequired,
+              !userRequestedDisconnect, !connected, !automaticWakeInProgress else {
+            return false
+        }
+
+        let now = Date()
+        if let lastAutomaticWakeAt,
+           now.timeIntervalSince(lastAutomaticWakeAt) < automaticWakeCooldown {
+            return false
+        }
+
+        automaticWakeInProgress = true
+        lastAutomaticWakeAt = now
+        automaticRecoveryActive = true
+        connectionInFlight = false
+        status = "Waking Spotify automatically…"
+        _ = restoreTokenFromKeychain()
+
+        logger.log(
+            "MEDIA WAKE",
+            "Automatic Spotify wake after connect failures; preserving Keychain authorization reason=\(reason)"
+        )
+
+        appRemote.authorizeAndPlayURI("") { installed in
+            Task { @MainActor in
+                self.logger.log("MEDIA WAKE", "Automatic Spotify wake installed=\(installed)")
+                guard installed else {
+                    self.automaticWakeInProgress = false
+                    self.status = "Spotify app is not installed"
+                    return
+                }
+
+                // Usually iOS switches to Spotify and then back through our callback.
+                // Keep a bounded fallback in case Spotify wakes without delivering a
+                // callback; a fresh App Remote is then connected with the saved token.
+                self.automaticWakeFallbackTask?.cancel()
+                self.automaticWakeFallbackTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(4))
+                    guard let self, !Task.isCancelled, self.automaticWakeInProgress,
+                          !self.connected else { return }
+                    self.automaticWakeInProgress = false
+                    self.automaticWakeFallbackTask = nil
+                    self.rebuildAppRemote(reason: "automatic Spotify wake fallback")
+                    _ = self.restoreTokenFromKeychain()
+                    self.reconnectAttempt = 0
+                    self.consecutiveConnectionFailures = 0
+                    self.autoConnectIfPossible()
+                }
+            }
+        }
+        return true
     }
 
     private func ensurePlayerStateSubscription() {
@@ -373,6 +449,9 @@ final class SpotifyMediaController: NSObject {
         reconnectGeneration += 1
         reconnectAttempt = 0
         consecutiveConnectionFailures = 0
+        automaticWakeInProgress = false
+        automaticWakeFallbackTask?.cancel()
+        automaticWakeFallbackTask = nil
 
         if appRemote.isConnected {
             appRemote.disconnect()
@@ -418,6 +497,9 @@ final class SpotifyMediaController: NSObject {
         reconnectAttempt = 0
         consecutiveConnectionFailures = 0
         connectionInFlight = false
+        automaticWakeInProgress = false
+        automaticWakeFallbackTask?.cancel()
+        automaticWakeFallbackTask = nil
 
         if appRemote.isConnected {
             appRemote.disconnect()
@@ -442,6 +524,9 @@ final class SpotifyMediaController: NSObject {
             authorizationRequired = false
             reconnectAttempt = 0
             consecutiveConnectionFailures = 0
+            automaticWakeInProgress = false
+            automaticWakeFallbackTask?.cancel()
+            automaticWakeFallbackTask = nil
             reconnectGeneration += 1
             connectionInFlight = false
 
@@ -530,6 +615,9 @@ extension SpotifyMediaController: SPTAppRemoteDelegate {
             self.userRequestedDisconnect = false
             self.reconnectAttempt = 0
             self.consecutiveConnectionFailures = 0
+            self.automaticWakeInProgress = false
+            self.automaticWakeFallbackTask?.cancel()
+            self.automaticWakeFallbackTask = nil
             self.authorizationRequired = false
             self.authorized = true
             self.connected = true

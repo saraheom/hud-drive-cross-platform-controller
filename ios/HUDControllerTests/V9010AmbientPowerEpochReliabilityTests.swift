@@ -37,7 +37,7 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("headlightAnimatedEpochByID"))
         XCTAssertTrue(monitor.contains("noteHeadlightPowerSeen(id, reason: \"advertisement\")"))
         XCTAssertTrue(monitor.contains("scheduleHeadlightPowerOffEvaluation"))
-        XCTAssertTrue(monitor.contains("active headlight Breath cancelled"))
+        XCTAssertTrue(monitor.contains("stale headlight Breath work invalidated"))
         XCTAssertTrue(monitor.contains("if isHeadlightFedDevice(id)"))
         XCTAssertTrue(monitor.contains("quick OFF -> ON must be allowed to Breath again"))
     }
@@ -48,8 +48,8 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("Day/night automation changes brightness only"))
         XCTAssertTrue(monitor.contains("cancelBrightnessTransition(for: id)"))
         XCTAssertTrue(monitor.contains("pairedDevice(id).map { (id, $0.runtimeBrightness) }"))
-        XCTAssertTrue(monitor.contains("headlight-fed physical power ON → night Door brightness"))
-        XCTAssertTrue(monitor.contains("headlight-fed physical power OFF → day Door brightness"))
+        XCTAssertTrue(monitor.contains("HUD brightness headlight ON → night Door brightness"))
+        XCTAssertTrue(monitor.contains("HUD brightness headlight OFF → day Door brightness"))
         XCTAssertFalse(block.isEmpty)
     }
 

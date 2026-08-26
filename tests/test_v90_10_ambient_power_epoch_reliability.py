@@ -41,7 +41,8 @@ def test_headlight_power_epoch_rearms_every_real_on_and_off_cancels_animation():
     assert 'noteHeadlightPowerSeen(id, reason: "advertisement")' in MONITOR
     assert 'noteHeadlightPowerSeen(id, reason: "didConnect")' in MONITOR
     assert "scheduleHeadlightPowerOffEvaluation" in MONITOR
-    assert "active headlight Breath cancelled" in MONITOR
+    assert "setAuthoritativeHeadlightPower" in MONITOR
+    assert "stale headlight Breath work invalidated" in MONITOR
     assert "quick OFF -> ON must be allowed to Breath again" in MONITOR
 
 

@@ -84,7 +84,7 @@ struct VehicleView: View {
 
                     section("SPEED + SPEED LIMIT") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Original-style GPS / OSM speed engine", isOn: Binding(
+                            Toggle("Speed + speed-limit engine", isOn: Binding(
                                 get: { state.speedEngine.enabled },
                                 set: { state.speedEngine.enabled = $0 }
                             ))
@@ -94,7 +94,65 @@ struct VehicleView: View {
                                 set: { state.speedEngine.showSpeedLimit = $0 }
                             ))
 
-                            Text("Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Speed warning follows the posted speed limit automatically, matching the original app's default Automatic mode.")
+                            Text("Speed-limit source")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Picker("Speed-limit source", selection: Binding(
+                                get: { state.speedEngine.sourceMode },
+                                set: { state.speedEngine.sourceMode = $0 }
+                            )) {
+                                ForEach(SpeedLimitSourceMode.allCases) { source in
+                                    Text(source.rawValue).tag(source)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text(state.speedEngine.sourceMode.shortDescription)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            if state.speedEngine.sourceMode == .here {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    SecureField(
+                                        "HERE API key",
+                                        text: Binding(
+                                            get: { state.speedEngine.hereAPIKeyDraft },
+                                            set: { state.speedEngine.hereAPIKeyDraft = $0 }
+                                        )
+                                    )
+                                    .textFieldStyle(.roundedBorder)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+
+                                    HStack {
+                                        Button("Save HERE Key") {
+                                            state.speedEngine.saveHereAPIKey()
+                                        }
+                                        .buttonStyle(.borderedProminent)
+
+                                        Button("Clear") {
+                                            state.speedEngine.clearHereAPIKey()
+                                        }
+                                        .buttonStyle(.bordered)
+
+                                        Spacer()
+
+                                        Label(
+                                            state.speedEngine.hereAPIKeyConfigured ? "Key saved" : "Not configured",
+                                            systemImage: state.speedEngine.hereAPIKeyConfigured
+                                                ? "checkmark.shield.fill" : "key.fill"
+                                        )
+                                        .font(.caption)
+                                    }
+
+                                    Text("The HERE key is stored in iPhone Keychain, not in the repository. HERE mode sends a short rolling GPS trace to HERE Route Matching and requests the applicable speed limit for the matched road.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+
+                            Text("Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Switching sources clears the previous sign until the selected matcher produces a fresh result. The HUD's native warning threshold still follows the posted limit exactly.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
@@ -104,17 +162,18 @@ struct VehicleView: View {
                                 value: state.speedEngine.currentSpeedLimitMph > 0
                                     ? "\(state.speedEngine.currentSpeedLimitMph) mph" : "—"
                             )
+                            LabeledContent("Source", value: state.speedEngine.sourceMode.rawValue)
                             Text(state.speedEngine.status)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Button("Refresh road data now") {
+                            Button("Refresh selected source now") {
                                 state.speedEngine.refreshNow()
                             }
                             .buttonStyle(.bordered)
 
                             Text("""
-                            This follows the decompiled app's behavior: GPS supplies current speed; OpenStreetMap Overpass supplies nearby roads with maxspeed tags; the app chooses the closest heading-compatible segment and sends the firmware's native speed and speed-limit packets.
+                            Current keeps the decompiled HUDWAY matcher unchanged. Enhanced OSM is a separate test path with directional maxspeed tags, a wider candidate search, and continuity confirmation to resist parallel-road/ramp jumps. HERE is an independent route-matching test source and requires your own HERE API key. GPS is still used only for the iPhone-side speed engine and map matching; the proposed ambient overspeed warning remains disabled until we can obtain the HUD/OBD vehicle speed directly.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

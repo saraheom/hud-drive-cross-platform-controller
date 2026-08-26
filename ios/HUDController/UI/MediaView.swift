@@ -80,7 +80,7 @@ struct MediaView: View {
                             .buttonStyle(.bordered)
 
                             Text("""
-                            Once authorized, Spotify credentials stay in Keychain. HUD Controller reconnects automatically and never clears the token during normal recovery. If Spotify itself has been suspended/terminated, iOS requires an app switch to wake it; use “Open Spotify / Resume Connection.” “Reset Spotify Authorization” is only for troubleshooting a genuinely invalid authorization.
+                            Once authorized, Spotify credentials stay in Keychain. HUD Controller first reconnects silently; after repeated App Remote failures it now wakes Spotify automatically without clearing authorization, then reconnects when iOS returns to HUD Controller. Spotify may briefly appear if iOS had fully suspended it, but you should not need to keep Spotify open or press Reauthorize on normal drives. “Reset Spotify Authorization” is only for a genuinely revoked/invalid authorization.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)
