@@ -333,6 +333,11 @@ struct AmbientDeviceControlView: View {
     @State private var brightness = 100.0
     @State private var rawBLEDIMHex = ""
     @State private var rawBLEDIMStatus = "Advanced diagnostic only — normal BLEDIM2 controls use the recovered official protocol."
+    /// Prevent ColorPicker's programmatic onAppear synchronization from sending an
+    /// unintended RGB command. This previously made merely opening a light page
+    /// look like it "woke" a stranded controller and also consumed a BLEDIM
+    /// write-without-response credit.
+    @State private var colorPickerReady = false
 
     var body: some View {
         ScrollView {
@@ -398,14 +403,16 @@ struct AmbientDeviceControlView: View {
 
                             ColorPicker("Color", selection: $color, supportsOpacity: false)
                                 .onChange(of: color) { _, newColor in
+                                    guard colorPickerReady else { return }
                                     monitor.setColor(deviceID, color: newColor.ambientRGB)
                                 }
 
                             PresetColorRow(
                                 presets: device.resolvedPresetColors,
                                 onApply: { rgb in
+                                    // Let the ColorPicker's single onChange path issue
+                                    // the RGB command; do not double-send a preset tap.
                                     color = rgb.swiftUIColor
-                                    monitor.setColor(deviceID, color: rgb)
                                 },
                                 onSave: { slot in
                                     monitor.setDevicePresetColor(deviceID, slot: slot, color: color.ambientRGB)
@@ -540,11 +547,15 @@ struct AmbientDeviceControlView: View {
         .navigationTitle(monitor.pairedDevice(deviceID)?.displayName ?? "Ambient Light")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            colorPickerReady = false
             if let device = monitor.pairedDevice(deviceID) {
                 name = device.displayName
                 color = device.color.swiftUIColor
                 brightness = Double(device.brightness)
             }
+            // ColorPicker may publish the programmatic assignment on the next
+            // render pass, so arm user-driven writes one main-loop turn later.
+            DispatchQueue.main.async { colorPickerReady = true }
         }
     }
 
@@ -565,6 +576,7 @@ struct AmbientGroupControlView: View {
     @State private var name = ""
     @State private var color = Color.white
     @State private var brightness = 100.0
+    @State private var colorPickerReady = false
 
     var body: some View {
         ScrollView {
@@ -614,6 +626,7 @@ struct AmbientGroupControlView: View {
 
                             ColorPicker("Color", selection: $color, supportsOpacity: false)
                                 .onChange(of: color) { _, newColor in
+                                    guard colorPickerReady else { return }
                                     monitor.setGroupColor(groupID, color: newColor.ambientRGB)
                                 }
                                 .disabled(group.memberIDs.isEmpty)
@@ -622,7 +635,6 @@ struct AmbientGroupControlView: View {
                                 presets: group.resolvedPresetColors,
                                 onApply: { rgb in
                                     color = rgb.swiftUIColor
-                                    monitor.setGroupColor(groupID, color: rgb)
                                 },
                                 onSave: { slot in
                                     monitor.setGroupPresetColor(groupID, slot: slot, color: color.ambientRGB)
@@ -668,12 +680,14 @@ struct AmbientGroupControlView: View {
         .navigationTitle(monitor.group(groupID)?.name ?? "Light Group")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            colorPickerReady = false
             name = monitor.group(groupID)?.name ?? ""
             if let firstID = monitor.group(groupID)?.memberIDs.first,
                let first = monitor.pairedDevice(firstID) {
                 color = first.color.swiftUIColor
                 brightness = Double(first.brightness)
             }
+            DispatchQueue.main.async { colorPickerReady = true }
         }
     }
 

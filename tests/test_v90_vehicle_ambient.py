@@ -29,9 +29,10 @@ def test_smooth_brightness_transition_is_shared_and_does_not_rewrite_preference_
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "private func transitionBrightness(" in monitor
     assert "let timelineTick = 0.05" in monitor
-    assert "device.protocolKind == .bledim2 ? 0.10 : 0.05" in monitor
+    assert "private func sendBrightnessNormalized(" in monitor
+    assert "protocolPacing=20Hz/rawBLEDIM" in monitor
     assert "let starts = Dictionary" in monitor
-    assert "guard lastSent[id] != value else { continue }" in monitor
+    assert "guard lastSentLevel[id] != signature else { continue }" in monitor
     assert "if persist { persistPairedDevices() }" in monitor
     assert "group manual brightness" in monitor
 

@@ -253,9 +253,15 @@ enum BLEDIM2Protocol {
 
     static func brightness(_ percent: Int, sequence: UInt8) -> Data {
         let clamped = max(0, min(100, percent))
-        // Official app transmits the brightness channel on a 0...255 scale.
         let value = UInt8((Double(clamped) * 255.0 / 100.0).rounded())
-        return frame(
+        return brightnessRaw(value, sequence: sequence)
+    }
+
+    /// The official controller exposes 256 brightness steps even though our UI is
+    /// intentionally 0...100%. Animation code uses the raw byte so slow fades do
+    /// not collapse to only 101 rounded steps near the dark end.
+    static func brightnessRaw(_ value: UInt8, sequence: UInt8) -> Data {
+        frame(
             sequence: sequence,
             command: 0x88,
             payload: [0x02, value, 0x00, 0x00, 0x00, 0x00]

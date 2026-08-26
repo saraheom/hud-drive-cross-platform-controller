@@ -5,8 +5,10 @@ MONITOR = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_te
 VIEW = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
 
 
-def test_bledim_animation_uses_official_slider_cadence_and_per_device_sequence():
-    assert "device.protocolKind == .bledim2 ? 0.10 : 0.05" in MONITOR
+def test_bledim_animation_uses_native_raw_resolution_and_per_device_sequence():
+    assert "private func sendBrightnessNormalized(" in MONITOR
+    assert "let raw = UInt8((level * 255.0).rounded())" in MONITOR
+    assert "protocolPacing=20Hz/rawBLEDIM" in MONITOR
     assert "private var bledimSequenceByID: [UUID: UInt8]" in MONITOR
     assert "nextBLEDIMSequence(for id: UUID)" in MONITOR
     assert "bledimSequenceByID[id] = 0x08" in MONITOR
@@ -18,7 +20,8 @@ def test_animation_uses_wall_clock_and_backpressure_instead_of_blind_frame_queue
     assert "elapsed / totalDuration" in MONITOR
     assert "peripheral.canSendWriteWithoutResponse" in MONITOR
     assert "retries the newest frame later" in MONITOR
-    assert "final retry" in MONITOR
+    assert "applyRuntimeBrightnessWhenReady" in MONITOR
+    assert "Timed out waiting to send final brightness" in MONITOR
 
 
 def test_watchdog_does_not_rediscover_gatt_after_control_is_ready():
@@ -39,7 +42,7 @@ def test_repeated_breath_preview_cannot_replace_initial_brightness_with_mid_anim
 def test_repetitive_bledim_notifications_and_animation_packet_logs_are_reduced():
     assert "lastBLEDIMNotifyLogAtByID" in MONITOR
     assert "repetitive BLEDIM2 notification, rate-limited" in MONITOR
-    assert "let logPacket = value == 0 || value == 100" in MONITOR
+    assert "let logPacket = signature == 0 || signature == maxSignature" in MONITOR
 
 
 def test_five_presets_have_visible_edit_controls_for_device_and_group_rows():

@@ -47,9 +47,9 @@ def test_breath_and_group_fades_share_timeline_for_visual_sync():
     src = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "activeBreathIDs" in src
     assert "Joined active synchronized breath" in src
-    assert "try? await Task.sleep(for: .seconds(0.35))" in src
+    assert "try? await Task.sleep(for: .seconds(0.75))" in src
     assert "let timelineTick = 0.05" in src
-    assert "device.protocolKind == .bledim2 ? 0.10 : 0.05" in src
+    assert "protocolPacing=20Hz/rawBLEDIM" in src
     assert "targets: Dictionary(uniqueKeysWithValues: steady.map" in src
 
 

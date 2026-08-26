@@ -16,8 +16,8 @@ def test_door_has_persisted_day_and_night_brightness_targets():
 def test_night_detector_is_redundant_dashboard_or_center_console():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     block = monitor.split("private func headlightPowerPresent()", 1)[1].split("private func startupHeadlightPowerPresent", 1)[0]
-    assert "roleIDs([.dashboard, .centerConsole])" in block
-    assert "contains(where: { isLogicallyPowered($0) })" in block
+    assert "headlightPowerSessionActive" in block
+    assert "physical headlight-power epoch" in block
 
 
 def test_mid_drive_headlight_state_only_changes_door_target():

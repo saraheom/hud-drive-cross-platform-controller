@@ -212,6 +212,21 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var activeBreathReturnBrightness: [UUID: Int] = [:]
     private var activeBreathStartedAt: Date?
 
+    /// v90.10 transport reliability. Power/color/final-brightness writes are
+    /// semantically important and must never be dropped merely because a
+    /// write-without-response controller temporarily applies backpressure.
+    private var restoreTasks: [UUID: Task<Void, Never>] = [:]
+    private var breathPrepareTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// Dashboard + Center Console share the physical headlight circuit. Treat a
+    /// new physical ON epoch as the animation trigger, rather than a 15-second BLE
+    /// reconnect heuristic. This also lets a quick OFF -> ON start a fresh breath.
+    private var headlightPowerSessionActive = false
+    private var headlightPowerEpoch = 0
+    private var headlightAnimatedEpochByID: [UUID: Int] = [:]
+    private var headlightOffDebounceTask: Task<Void, Never>?
+    private let headlightOffDebounceSeconds: TimeInterval = 0.35
+
     /// UI deep-link token used by the persistent Ambient shortcut.
     private(set) var pairedLightsFocusRequest = 0
 
@@ -382,6 +397,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         activeBreathStartedAt = nil
         sessionResetTasks.values.forEach { $0.cancel() }
         sessionResetTasks.removeAll()
+        restoreTasks.values.forEach { $0.cancel() }
+        restoreTasks.removeAll()
+        breathPrepareTasks.values.forEach { $0.cancel() }
+        breathPrepareTasks.removeAll()
+        headlightOffDebounceTask?.cancel()
+        headlightOffDebounceTask = nil
         startupClassificationTask?.cancel()
         startupClassificationTask = nil
         engineOffConfirmationTask?.cancel()
@@ -712,22 +733,33 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     func setPower(_ id: UUID, on: Bool) {
         cancelBrightnessTransition(for: id)
+        breathPrepareTasks[id]?.cancel()
+        breathPrepareTasks[id] = nil
+        restoreTasks[id]?.cancel()
+        restoreTasks[id] = nil
         removeFromActiveBreath(id)
         updateDevice(id) { $0.powerOn = on }
-        sendPower(id, on: on, reason: "manual")
 
         // A user-requested OFF -> ON is also a real light power-up event. If this
-        // light has Animation enabled, use the same synchronized Breath path as a
-        // fresh BLE/power session rather than maintaining a second animation type.
+        // light has Animation enabled, the Breath preparation owns the reliable
+        // Power ON write. Otherwise send the power command with backpressure retry.
         if on, pairedDevice(id)?.startupAnimationEnabled == true, isControllable(id) {
             animatedConnectionSession.remove(id)
             queuePowerUpBreath(id, force: true)
+        } else {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                _ = await self.sendPowerWhenReady(id, on: on, reason: "manual")
+            }
         }
     }
 
     func setColor(_ id: UUID, color: AmbientRGB) {
         updateDevice(id) { $0.color = color }
-        sendColor(id, color: color, reason: "manual")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.sendColorWhenReady(id, color: color, reason: "manual")
+        }
     }
 
     /// Manual brightness changes always interpolate from the last applied runtime
@@ -860,12 +892,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func animationWriteInterval(for id: UUID) -> TimeInterval {
-        guard let device = pairedDevice(id) else { return 0.10 }
-        // The official BLEDIM2 iOS capture moved its brightness slider at about
-        // 100 ms/write (~10 Hz). Lotus Lantern tolerates the previous 20-Hz cadence.
-        // A shared 20-Hz timeline still computes both protocols from the same phase;
-        // only BLEDIM transmission is decimated to the controller's observed cadence.
-        return device.protocolKind == .bledim2 ? 0.10 : 0.05
+        // v90.10 uses the same 20-Hz visual clock for both protocols. BLEDIM2 has a
+        // 0...255 brightness channel, so retaining the full clock plus raw-byte
+        // interpolation is noticeably smoother near minimum brightness. CoreBluetooth
+        // backpressure still gates every actual write; stale animation frames are
+        // skipped instead of queued.
+        0.05
+    }
+
+    private func animationLevelSignature(for id: UUID, normalized: Double) -> Int {
+        let level = max(0.0, min(1.0, normalized))
+        if pairedDevice(id)?.protocolKind == .bledim2 {
+            return Int((level * 255.0).rounded())
+        }
+        return Int((level * 100.0).rounded())
     }
 
     private func transitionBrightness(
@@ -889,16 +929,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             pairedDevice(id).map { (id, $0.runtimeBrightness) }
         })
         let duration = max(1.0, min(15.0, seconds))
-        let timelineTick = 0.05 // 20-Hz shared phase clock; BLEDIM writes at <=10 Hz.
+        let timelineTick = 0.05
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            var lastSent = starts
+            var lastSentLevel: [UUID: Int] = [:]
             var lastWriteAt: [UUID: Date] = [:]
             let startedAt = Date()
             self.logger.log(
                 "AMBIENT FADE",
-                "Smooth brightness transition begin ids=\(ids.count) duration=\(String(format: "%.1f", duration))s reason=\(reason) protocolPacing=BLEDIM10Hz/Lotus20Hz"
+                "Smooth brightness transition begin ids=\(ids.count) duration=\(String(format: "%.1f", duration))s reason=\(reason) protocolPacing=20Hz/rawBLEDIM"
             )
 
             while true {
@@ -913,13 +953,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     let due = t >= 1.0 || lastWriteAt[id].map { now.timeIntervalSince($0) >= interval * 0.90 } ?? true
                     guard due else { continue }
 
-                    let start = starts[id] ?? 0
-                    let target = max(0, min(100, targets[id] ?? start))
-                    let value = Int((Double(start) + Double(target - start) * t).rounded())
-                    guard lastSent[id] != value else { continue }
+                    let startPercent = starts[id] ?? 0
+                    let targetPercent = max(0, min(100, targets[id] ?? startPercent))
+                    let normalized = (Double(startPercent) + Double(targetPercent - startPercent) * t) / 100.0
+                    let signature = self.animationLevelSignature(for: id, normalized: normalized)
+                    guard lastSentLevel[id] != signature else { continue }
 
-                    if self.applyRuntimeBrightness(id, percent: value, reason: reason, logPacket: false) {
-                        lastSent[id] = value
+                    if self.applyRuntimeBrightnessNormalized(id, normalized: normalized, reason: reason, logPacket: false) {
+                        lastSentLevel[id] = signature
                         lastWriteAt[id] = now
                     }
                 }
@@ -931,23 +972,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard !Task.isCancelled else { return }
             for id in ids {
                 let target = max(0, min(100, targets[id] ?? starts[id] ?? 0))
-                var sent = false
-                for attempt in 0..<6 {
-                    guard !Task.isCancelled else { return }
-                    if self.applyRuntimeBrightness(
-                        id,
-                        percent: target,
-                        reason: attempt == 0 ? "\(reason) final" : "\(reason) final retry \(attempt)",
-                        persist: true,
-                        logPacket: true
-                    ) {
-                        sent = true
-                        break
-                    }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
+                let sent = await self.applyRuntimeBrightnessWhenReady(
+                    id,
+                    percent: target,
+                    reason: "\(reason) final",
+                    persist: true
+                )
                 if !sent {
-                    self.logger.log("AMBIENT FLOW", "Final brightness \(target)% could not be accepted by \(self.pairedDevice(id)?.displayName ?? id.uuidString) after backpressure retries")
+                    self.logger.log("AMBIENT FLOW", "Final brightness \(target)% could not be delivered to \(self.pairedDevice(id)?.displayName ?? id.uuidString)")
                 }
                 self.brightnessTransitionTasks[id] = nil
             }
@@ -1046,6 +1078,40 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
     }
 
+    /// Animation-only normalized brightness path. BLEDIM2 receives its native
+    /// 0...255 value rather than a value first rounded to an integer percent.
+    /// Logical 0% remains a minimum-brightness command; it is never translated
+    /// into a power-OFF packet.
+    @discardableResult
+    private func sendBrightnessNormalized(
+        _ id: UUID,
+        normalized: Double,
+        reason: String,
+        logPacket: Bool = false
+    ) -> Bool {
+        guard let device = pairedDevice(id), ambientTransportCanAcceptWrite(id) else { return false }
+        let level = max(0.0, min(1.0, normalized))
+        let percent = Int((level * 100.0).rounded())
+        let packet: Data
+        let protocolLabel: String
+        switch device.protocolKind {
+        case .lotusLantern:
+            packet = LotusLanternProtocol.brightness(percent)
+            protocolLabel = "brightness"
+        case .bledim2:
+            let sequence = nextBLEDIMSequence(for: id)
+            let raw = UInt8((level * 255.0).rounded())
+            packet = BLEDIM2Protocol.brightnessRaw(raw, sequence: sequence)
+            protocolLabel = "BLEDIM2 seq=\(String(format: "%02X", sequence)) brightness raw=\(raw)"
+        }
+        return writeAmbient(
+            packet,
+            to: id,
+            label: "\(protocolLabel) \(percent)% \(reason)",
+            logPacket: logPacket
+        )
+    }
+
     private func nextBLEDIMSequence(for id: UUID) -> UInt8 {
         var sequence = bledimSequenceByID[id] ?? 0x08
         sequence &+= 1
@@ -1074,6 +1140,26 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             // Fade loops can emit many frames. Keep observable runtime state current,
             // but serialize to UserDefaults only for the confirmed final frame.
             pairedDevices[index].lastAppliedBrightness = clamped
+            if persist { persistPairedDevices() }
+        }
+        return true
+    }
+
+    @discardableResult
+    private func applyRuntimeBrightnessNormalized(
+        _ id: UUID,
+        normalized: Double,
+        reason: String,
+        persist: Bool = false,
+        logPacket: Bool = false
+    ) -> Bool {
+        let level = max(0.0, min(1.0, normalized))
+        let percent = Int((level * 100.0).rounded())
+        guard sendBrightnessNormalized(id, normalized: level, reason: reason, logPacket: logPacket) else {
+            return false
+        }
+        if let index = pairedDevices.firstIndex(where: { $0.id == id }) {
+            pairedDevices[index].lastAppliedBrightness = percent
             if persist { persistPairedDevices() }
         }
         return true
@@ -1110,6 +1196,66 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         return true
     }
 
+    private func waitForAmbientWriteReady(_ id: UUID, timeout: TimeInterval = 1.5) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            guard !Task.isCancelled else { return false }
+            if ambientTransportCanAcceptWrite(id) { return true }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return ambientTransportCanAcceptWrite(id)
+    }
+
+    private func sendPowerWhenReady(_ id: UUID, on: Bool, reason: String) async -> Bool {
+        let deadline = Date().addingTimeInterval(1.5)
+        repeat {
+            guard !Task.isCancelled else { return false }
+            if ambientTransportCanAcceptWrite(id), sendPower(id, on: on, reason: reason) {
+                // Do not burst the next semantic command into the same
+                // write-without-response credit. This tiny inter-command settle
+                // mirrors a human slider/control interaction and is negligible to UI.
+                try? await Task.sleep(for: .milliseconds(50))
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(25))
+        } while Date() < deadline
+        logger.log("AMBIENT FLOW", "Timed out waiting to send power \(on ? "ON" : "OFF") to \(pairedDevice(id)?.displayName ?? id.uuidString)")
+        return false
+    }
+
+    private func sendColorWhenReady(_ id: UUID, color: AmbientRGB, reason: String) async -> Bool {
+        let deadline = Date().addingTimeInterval(1.5)
+        repeat {
+            guard !Task.isCancelled else { return false }
+            if ambientTransportCanAcceptWrite(id), sendColor(id, color: color, reason: reason) {
+                try? await Task.sleep(for: .milliseconds(50))
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(25))
+        } while Date() < deadline
+        logger.log("AMBIENT FLOW", "Timed out waiting to send RGB to \(pairedDevice(id)?.displayName ?? id.uuidString)")
+        return false
+    }
+
+    private func applyRuntimeBrightnessWhenReady(
+        _ id: UUID,
+        percent: Int,
+        reason: String,
+        persist: Bool = true
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(1.5)
+        repeat {
+            guard !Task.isCancelled else { return false }
+            if ambientTransportCanAcceptWrite(id),
+               applyRuntimeBrightness(id, percent: percent, reason: reason, persist: persist, logPacket: true) {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(25))
+        } while Date() < deadline
+        logger.log("AMBIENT FLOW", "Timed out waiting to send final brightness \(percent)% to \(pairedDevice(id)?.displayName ?? id.uuidString)")
+        return false
+    }
+
     private func isEncryptedLotusName(_ name: String) -> Bool {
         // Lotus Lantern 6.5.08 only selects its encrypted branch when the
         // advertised name literally contains the marker \"ELK-*\". Ordinary
@@ -1125,19 +1271,38 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func restoreDeviceState(_ id: UUID) {
         guard let device = pairedDevice(id), isControllable(id) else { return }
-        sendColor(id, color: device.color, reason: "restore")
+        restoreTasks[id]?.cancel()
+        breathPrepareTasks[id]?.cancel()
+
         let runtimeTarget: Int
         if vehicleAutomationEnabled, device.role == .door, enginePowerPresent, vehicleStartupCompleted {
             runtimeTarget = doorTargetBrightness(night: vehicleHeadlightsActive)
         } else {
-            // v90.8 removed shutdown fades, so a reconnect should restore the
-            // user's steady-state target, never an intermediate animation frame.
-            // This prevents a controller that dropped near 0% from reconnecting
-            // and being deliberately written back to 0%.
             runtimeTarget = device.brightness
         }
-        applyRuntimeBrightness(id, percent: runtimeTarget, reason: "restore", persist: true)
-        sendPower(id, on: device.powerOn, reason: "restore")
+
+        restoreTasks[id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.restoreTasks[id] = nil }
+
+            if device.powerOn {
+                // Ordering matters on write-without-response controllers. v90.9
+                // could successfully send RGB and then silently drop Power ON and
+                // brightness because the BLE buffer was temporarily full.
+                guard await self.sendPowerWhenReady(id, on: true, reason: "restore") else { return }
+                guard !Task.isCancelled else { return }
+                _ = await self.sendColorWhenReady(id, color: device.color, reason: "restore")
+                guard !Task.isCancelled else { return }
+                _ = await self.applyRuntimeBrightnessWhenReady(
+                    id,
+                    percent: runtimeTarget,
+                    reason: "restore",
+                    persist: true
+                )
+            } else {
+                _ = await self.sendPowerWhenReady(id, on: false, reason: "restore")
+            }
+        }
     }
 
     private func runStartupAnimationIfNeeded(_ id: UUID, force: Bool = false) {
@@ -1147,65 +1312,98 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private func queuePowerUpBreath(_ id: UUID, force: Bool = false) {
         guard let device = pairedDevice(id), isControllable(id) else { return }
 
-        // A second Preview/ON tap while the same light is already breathing must
-        // never recapture an intermediate 0–100% animation frame as its new
-        // "initial" brightness. That was the direct cause of previews finishing at
-        // 0–5% in the v90.8.2 field log. Preserve the original baseline instead.
-        if activeBreathIDs.contains(id) {
-            logger.log("AMBIENT ANIM", "Breath request ignored while already active: \(device.displayName); initial/return brightness preserved")
+        if activeBreathIDs.contains(id) || breathPrepareTasks[id] != nil {
+            logger.log("AMBIENT ANIM", "Breath request ignored while already active/preparing: \(device.displayName); initial/return brightness preserved")
             return
         }
 
-        if !force && animatedConnectionSession.contains(id) {
+        if !force, let role = device.role, role.isHeadlightFed {
+            // Headlight-fed lights animate once per physical headlight ON epoch,
+            // even when OFF -> ON happens much faster than the old 15-second BLE
+            // reconnect heuristic.
+            guard headlightPowerSessionActive else {
+                restoreDeviceState(id)
+                return
+            }
+            if headlightAnimatedEpochByID[id] == headlightPowerEpoch {
+                restoreDeviceState(id)
+                return
+            }
+        } else if !force && animatedConnectionSession.contains(id) {
             restoreDeviceState(id)
             return
         }
 
         guard device.startupAnimationEnabled, device.powerOn else {
-            animatedConnectionSession.insert(id)
+            if let role = device.role, role.isHeadlightFed {
+                headlightAnimatedEpochByID[id] = headlightPowerEpoch
+            } else {
+                animatedConnectionSession.insert(id)
+            }
             restoreDeviceState(id)
             return
         }
 
         cancelBrightnessTransition(for: id)
-        animatedConnectionSession.insert(id)
-        activeBreathIDs.insert(id)
+        restoreTasks[id]?.cancel()
+        restoreTasks[id] = nil
 
         let initialBrightness: Int
         if force {
-            // Manual Preview / app Power OFF→ON starts from the latest brightness
-            // actually applied by this app.
             initialBrightness = device.runtimeBrightness
         } else if vehicleAutomationEnabled, device.role == .door, enginePowerPresent, vehicleStartupCompleted {
             initialBrightness = doorTargetBrightness(night: vehicleHeadlightsActive)
         } else {
-            // A real reconnect may follow a dropout in the middle of a fade. The
-            // hardware's exact intermediate state cannot be read back, so use the
-            // saved steady-state target rather than a stale 0–5% animation frame.
             initialBrightness = device.brightness
         }
-        activeBreathStartBrightness[id] = initialBrightness
-        activeBreathReturnBrightness[id] = initialBrightness
-        sendColor(id, color: device.color, reason: "power-up breath prepare")
-        sendPower(id, on: true, reason: "power-up breath prepare")
 
-        // If another light's breath is already running, this device joins the same
-        // phase on the next 20-Hz frame. That makes late GATT discovery visually
-        // synchronized instead of starting a second independent animation.
-        if synchronizedBreathTask != nil {
-            logger.log("AMBIENT ANIM", "Joined active synchronized breath: \(device.displayName)")
-            return
-        }
-
-        pendingBreathStartTask?.cancel()
-        pendingBreathStartTask = Task { @MainActor [weak self] in
+        breathPrepareTasks[id] = Task { @MainActor [weak self] in
             guard let self else { return }
-            // Small coalescing window catches controllers that become writable only
-            // a fraction of a second apart without adding a noticeable startup delay.
-            try? await Task.sleep(for: .seconds(0.35))
+            defer { self.breathPrepareTasks[id] = nil }
+
+            // Critical preparation is serialized and retried instead of being
+            // dropped under CoreBluetooth write-without-response backpressure.
+            guard await self.sendPowerWhenReady(id, on: true, reason: "power-up breath prepare") else { return }
             guard !Task.isCancelled else { return }
-            self.pendingBreathStartTask = nil
-            self.startSynchronizedBreathSession()
+            guard await self.sendColorWhenReady(id, color: device.color, reason: "power-up breath prepare") else { return }
+            guard !Task.isCancelled else { return }
+            guard await self.applyRuntimeBrightnessWhenReady(
+                id,
+                percent: initialBrightness,
+                reason: "power-up breath baseline",
+                persist: false
+            ) else { return }
+            guard !Task.isCancelled, self.isControllable(id) else { return }
+
+            if !force, let role = device.role, role.isHeadlightFed {
+                guard self.headlightPowerSessionActive else { return }
+                self.headlightAnimatedEpochByID[id] = self.headlightPowerEpoch
+            } else {
+                self.animatedConnectionSession.insert(id)
+            }
+
+            self.activeBreathIDs.insert(id)
+            self.activeBreathStartBrightness[id] = initialBrightness
+            self.activeBreathReturnBrightness[id] = initialBrightness
+
+            if self.synchronizedBreathTask != nil {
+                self.logger.log("AMBIENT ANIM", "Joined active synchronized breath: \(device.displayName)")
+                return
+            }
+
+            if self.pendingBreathStartTask == nil {
+                self.pendingBreathStartTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    // Give headlight-fed Dashboard + Center enough time to finish
+                    // GATT preparation and enter the same shared animation epoch.
+                    // 0.75 s is still short relative to a 1–15 s breath cycle but
+                    // materially improves visual synchronization over the old 0.35 s.
+                    try? await Task.sleep(for: .seconds(0.75))
+                    guard !Task.isCancelled else { return }
+                    self.pendingBreathStartTask = nil
+                    self.startSynchronizedBreathSession()
+                }
+            }
         }
     }
 
@@ -1227,20 +1425,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let startedAt = Date()
         activeBreathStartedAt = startedAt
         let cycles = max(2, min(5, breathCycles))
-        // User-selected duration is PER BREATH REPETITION, not for the whole set.
-        // Example: 3× at 9 s/cycle = 27 s from beginning to end.
         let perCycleDuration = max(1.0, min(15.0, breathDurationSeconds))
         let totalDuration = perCycleDuration * Double(cycles)
-        let timelineTick = 0.05 // common 20-Hz phase clock; BLEDIM writes at <=10 Hz
+        let timelineTick = 0.05
 
         logger.log(
             "AMBIENT ANIM",
-            "Synchronized breath begin lights=\(ready.count) cycles=\(cycles) perCycle=\(String(format: "%.1f", perCycleDuration))s total=\(String(format: "%.1f", totalDuration))s pacing=BLEDIM10Hz/Lotus20Hz"
+            "Synchronized breath begin lights=\(ready.count) cycles=\(cycles) perCycle=\(String(format: "%.1f", perCycleDuration))s total=\(String(format: "%.1f", totalDuration))s pacing=20Hz/rawBLEDIM"
         )
 
         synchronizedBreathTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            var lastSent: [UUID: Int] = [:]
+            var lastSentLevel: [UUID: Int] = [:]
             var lastWriteAt: [UUID: Date] = [:]
 
             while true {
@@ -1257,25 +1453,24 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     guard due else { continue }
 
                     let returnTarget = self.activeBreathReturnBrightness[id] ?? start
-                    let value = self.breathBrightness(
+                    let normalized = self.breathBrightnessFraction(
                         start: start,
                         returnTarget: returnTarget,
                         progress: progress,
                         cycles: cycles
                     )
-                    guard lastSent[id] != value else { continue }
+                    let signature = self.animationLevelSignature(for: id, normalized: normalized)
+                    guard lastSentLevel[id] != signature else { continue }
 
-                    // Turning points are enough for diagnostics. Suppressing every
-                    // intermediate TX log avoids synchronous file I/O becoming part
-                    // of the animation timing path.
-                    let logPacket = value == 0 || value == 100
-                    if self.applyRuntimeBrightness(
+                    let maxSignature = self.pairedDevice(id)?.protocolKind == .bledim2 ? 255 : 100
+                    let logPacket = signature == 0 || signature == maxSignature
+                    if self.applyRuntimeBrightnessNormalized(
                         id,
-                        percent: value,
+                        normalized: normalized,
                         reason: "synchronized power-up breath",
                         logPacket: logPacket
                     ) {
-                        lastSent[id] = value
+                        lastSentLevel[id] = signature
                         lastWriteAt[id] = now
                     }
                 }
@@ -1289,24 +1484,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             for id in finishedIDs {
                 guard let start = self.activeBreathStartBrightness[id] else { continue }
                 let returnTarget = self.activeBreathReturnBrightness[id] ?? start
-                var sent = false
-                for attempt in 0..<6 {
-                    guard !Task.isCancelled else { return }
-                    if self.applyRuntimeBrightness(
-                        id,
-                        percent: returnTarget,
-                        reason: attempt == 0 ? "power-up breath final" : "power-up breath final retry \(attempt)",
-                        persist: true,
-                        logPacket: true
-                    ) {
-                        sent = true
-                        break
-                    }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-                if !sent {
-                    self.logger.log("AMBIENT FLOW", "Breath final target \(returnTarget)% could not be accepted by \(self.pairedDevice(id)?.displayName ?? id.uuidString) after backpressure retries")
-                }
+                _ = await self.applyRuntimeBrightnessWhenReady(
+                    id,
+                    percent: returnTarget,
+                    reason: "power-up breath final",
+                    persist: true
+                )
             }
 
             self.synchronizedBreathTask = nil
@@ -1316,21 +1499,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.activeBreathReturnBrightness.removeAll()
             self.logger.log("AMBIENT ANIM", "Synchronized breath complete lights=\(finishedIDs.count) elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
 
-            // Door day/night automation is deliberately separate from the power-up
-            // breath. If the active engine/headlight state requires another steady
-            // target, the final repetition already returns to that target when it
-            // changed during the breath; this call is a no-op if already aligned.
             if self.vehicleAutomationEnabled, self.enginePowerPresent, self.vehicleStartupCompleted {
                 self.applyCurrentDoorDayNightTarget(reason: "post-breath door target")
             }
         }
     }
 
-    private func breathBrightness(start: Int, returnTarget: Int, progress: Double, cycles: Int) -> Int {
+    private func breathBrightnessFraction(start: Int, returnTarget: Int, progress: Double, cycles: Int) -> Double {
         let clampedStart = max(0, min(100, start))
         let clampedReturn = max(0, min(100, returnTarget))
         let p = max(0.0, min(1.0, progress))
-        if p >= 1.0 { return clampedReturn }
+        if p >= 1.0 { return Double(clampedReturn) / 100.0 }
 
         let safeCycles = max(1, cycles)
         let cyclePosition = p * Double(safeCycles)
@@ -1338,11 +1517,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let local = cyclePosition - floor(cyclePosition)
         let leg = min(2, Int(floor(local * 3.0)))
         let legProgress = min(1.0, (local * 3.0) - Double(leg))
-        // Half-cosine easing removes visible corners without changing the requested
-        // current -> 0 -> 100 -> return path. Earlier repetitions always return to
-        // the initial brightness. If the app target changes during the breath, only
-        // the FINAL repetition returns to that new target.
-        let eased = 0.5 - (0.5 * cos(Double.pi * legProgress))
+
+        // Match the physical feel of continuously moving the brightness slider:
+        // every leg advances linearly through the controller's available brightness
+        // levels. The previous half-cosine easing lingered near 0/100 and made the
+        // BLEDIM lamps visibly step/stall at the dark end.
+        let ramp = legProgress
 
         let from: Double
         let to: Double
@@ -1355,7 +1535,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             from = 100
             to = Double(cycleIndex == safeCycles - 1 ? clampedReturn : clampedStart)
         }
-        return max(0, min(100, Int((from + (to - from) * eased).rounded())))
+        return max(0.0, min(1.0, (from + (to - from) * ramp) / 100.0))
+    }
+
+    private func breathBrightness(start: Int, returnTarget: Int, progress: Double, cycles: Int) -> Int {
+        Int((breathBrightnessFraction(
+            start: start,
+            returnTarget: returnTarget,
+            progress: progress,
+            cycles: cycles
+        ) * 100.0).rounded())
     }
 
     private func removeFromActiveBreath(_ id: UUID) {
@@ -1375,6 +1564,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// remain disconnected for 15 seconds before the next connection is considered
     /// a genuinely fresh physical power session.
     private func scheduleStartupSessionReset(_ id: UUID) {
+        // Dashboard/Center are re-armed by a physical headlight-power epoch, not by
+        // elapsed disconnect time. A quick OFF -> ON must be allowed to Breath again.
+        if isHeadlightFedDevice(id) {
+            sessionResetTasks[id]?.cancel()
+            sessionResetTasks[id] = nil
+            return
+        }
         sessionResetTasks[id]?.cancel()
         sessionResetTasks[id] = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(15))
@@ -1401,11 +1597,82 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    private func isHeadlightFedDevice(_ id: UUID) -> Bool {
+        pairedDevice(id)?.role?.isHeadlightFed == true
+    }
+
+    private func isKnownVehicleAmbientDevice(_ id: UUID) -> Bool {
+        pairedDevice(id)?.role != nil
+    }
+
+    /// Record positive physical-power evidence for Dashboard/Center. A physical
+    /// headlight ON epoch is independent from BLE reconnect duration; this is what
+    /// re-arms the optional Breath animation while driving.
+    private func noteHeadlightPowerSeen(_ id: UUID, reason: String) {
+        guard isHeadlightFedDevice(id) else { return }
+        headlightOffDebounceTask?.cancel()
+        headlightOffDebounceTask = nil
+
+        if !headlightPowerSessionActive {
+            headlightPowerSessionActive = true
+            headlightPowerEpoch &+= 1
+            if headlightPowerEpoch <= 0 { headlightPowerEpoch = 1 }
+            for roleID in roleIDs([.dashboard, .centerConsole]) {
+                animatedConnectionSession.remove(roleID)
+            }
+            logger.log("AMBIENT POWER", "Headlight-fed physical power ON epoch=\(headlightPowerEpoch) via \(pairedDevice(id)?.displayName ?? id.uuidString) (\(reason))")
+
+            if vehicleAutomationEnabled, enginePowerPresent, vehicleStartupCompleted {
+                vehicleHeadlightsActive = true
+                previousHeadlightPowerPresent = true
+                applyCurrentDoorDayNightTarget(reason: "headlight-fed physical power ON → night Door brightness")
+                logger.log("AMBIENT AUTO", "Headlight physical ON while engine ON: night Door target=\(doorTargetBrightness(night: true))%")
+            }
+        }
+    }
+
+    /// A single BLE disconnect is not enough to call the headlight circuit OFF.
+    /// Both independent headlight-fed controllers must have no new positive power
+    /// evidence during a short debounce window. This is fast enough to interrupt a
+    /// Breath, but far less sensitive to one controller's transient radio dropout.
+    private func scheduleHeadlightPowerOffEvaluation(reason: String) {
+        guard headlightPowerSessionActive else { return }
+        let candidateAt = Date()
+        headlightOffDebounceTask?.cancel()
+        headlightOffDebounceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.headlightOffDebounceSeconds))
+            guard !Task.isCancelled else { return }
+            let stillPowered = self.roleIDs([.dashboard, .centerConsole]).contains { id in
+                if self.peripheralsByID[id]?.state == .connected { return true }
+                if let seen = self.lastSeenByID[id], seen > candidateAt { return true }
+                return false
+            }
+            guard !stillPowered else { return }
+            self.headlightOffDebounceTask = nil
+            self.headlightPowerSessionActive = false
+
+            for id in self.roleIDs([.dashboard, .centerConsole]) {
+                self.breathPrepareTasks[id]?.cancel()
+                self.breathPrepareTasks[id] = nil
+                self.removeFromActiveBreath(id)
+            }
+            self.logger.log("AMBIENT POWER", "Headlight-fed physical power OFF (\(reason)); active headlight Breath cancelled")
+
+            if self.vehicleAutomationEnabled, self.enginePowerPresent, self.vehicleStartupCompleted {
+                self.vehicleHeadlightsActive = false
+                self.previousHeadlightPowerPresent = false
+                self.applyCurrentDoorDayNightTarget(reason: "headlight-fed physical power OFF → day Door brightness")
+                self.logger.log("AMBIENT AUTO", "Headlight physical OFF while engine ON: day Door target=\(self.doorTargetBrightness(night: false))%")
+            }
+        }
+    }
+
     private func headlightPowerPresent() -> Bool {
-        // Steady-state driving detector. Either headlight-fed controller is
-        // sufficient, and the normal 8-second logical-presence hysteresis keeps
-        // brief BLE dropouts from changing the door brightness.
-        roleIDs([.dashboard, .centerConsole]).contains(where: { isLogicallyPowered($0) })
+        // v90.10 uses a physical headlight-power epoch rather than the old 8-second
+        // logical-presence window. Positive evidence is immediate; OFF requires the
+        // short dual-controller debounce in scheduleHeadlightPowerOffEvaluation.
+        headlightPowerSessionActive
     }
 
     /// Startup classification intentionally does NOT use the normal 8-second
@@ -1745,6 +2012,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func finishVehicleStartupClassification() {
         let night = startupHeadlightPowerPresent()
+        if night {
+            if !headlightPowerSessionActive {
+                headlightPowerSessionActive = true
+                headlightPowerEpoch &+= 1
+                if headlightPowerEpoch <= 0 { headlightPowerEpoch = 1 }
+            }
+        } else {
+            headlightPowerSessionActive = false
+            for id in roleIDs([.dashboard, .centerConsole]) {
+                breathPrepareTasks[id]?.cancel()
+                breathPrepareTasks[id] = nil
+                removeFromActiveBreath(id)
+            }
+        }
         vehicleHeadlightsActive = night
         previousHeadlightPowerPresent = night
         vehicleStartupCompleted = true
@@ -1774,8 +2055,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             applyRuntimeBrightness(doorID, percent: target, reason: "\(reason) already at target", persist: true)
             return
         }
-        sendPower(doorID, on: true, reason: reason)
-        sendColor(doorID, color: door.color, reason: reason)
+        // Day/night automation changes brightness only. Re-sending Power ON + RGB
+        // before every fade consumed BLEDIM's write-without-response credits and
+        // was the main reason v90.9 could start a fade with its critical follow-up
+        // writes deferred. Color and power are restored reliably on connection.
         transitionBrightness(
             ids: [doorID],
             targets: [doorID: target],
@@ -2024,6 +2307,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 serviceUUIDs: advertisedServices,
                 advertisementData: advertisementData
             )
+            self.noteHeadlightPowerSeen(id, reason: "advertisement")
 
             if self.matchesIndependentOBDWitness(id: id, name: name) {
                 self.recordIndependentOBDWitness(id: id, name: name, rssi: RSSI.intValue)
@@ -2091,6 +2375,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.connectionStartedByID[id] = nil
             self.sessionResetTasks[id]?.cancel()
             self.sessionResetTasks[id] = nil
+            self.noteHeadlightPowerSeen(id, reason: "didConnect")
 
             if self.trackedPeripheral?.identifier == id {
                 UserDefaults.standard.set(id.uuidString, forKey: self.peripheralIDKey)
@@ -2156,7 +2441,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.animationTasks[id]?.cancel()
             self.animationTasks[id] = nil
             self.cancelBrightnessTransition(for: id)
+            self.breathPrepareTasks[id]?.cancel()
+            self.breathPrepareTasks[id] = nil
+            self.restoreTasks[id]?.cancel()
+            self.restoreTasks[id] = nil
             self.removeFromActiveBreath(id)
+            if self.isHeadlightFedDevice(id) {
+                self.scheduleHeadlightPowerOffEvaluation(reason: "BLE disconnect of \(self.pairedDevice(id)?.displayName ?? id.uuidString)")
+            }
 
             if self.trackedPeripheral?.identifier == id {
                 self.connectionAttemptStartedAt = nil
@@ -2456,6 +2748,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 guard self.enabled else { continue }
 
                 if self.trackedPeripheral?.state == .connecting,
+                   let trackedID = self.trackedPeripheral?.identifier,
+                   !self.isKnownVehicleAmbientDevice(trackedID),
                    let started = self.connectionAttemptStartedAt,
                    Date().timeIntervalSince(started) > 6 {
                     self.logger.log(
@@ -2471,9 +2765,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     continue
                 }
 
-                // Apply the same six-second stall guard to every paired light.
+                // Never cancel a pending connection merely because one of the
+                // three known vehicle lights is physically unpowered. CoreBluetooth
+                // can leave that connect request pending and complete it immediately
+                // when vehicle power returns. The old six-second cancel/reconnect
+                // loop created hundreds of artificial disconnects in the field log.
+                // Keep the stall guard only for unassigned/diagnostic peripherals.
                 for (id, started) in self.connectionStartedByID {
-                    guard Date().timeIntervalSince(started) > 6,
+                    guard !self.isKnownVehicleAmbientDevice(id),
+                          Date().timeIntervalSince(started) > 6,
                           let peripheral = self.peripheralsByID[id],
                           peripheral.state == .connecting else { continue }
                     self.logger.log("AMBIENT BG", "Paired light connection stuck >6s \(id); retrying")

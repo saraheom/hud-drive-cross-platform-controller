@@ -317,3 +317,40 @@ The five device presets and five group presets are now visibly editable. Pick an
 with the normal picker, then tap the pencil under a preset slot to overwrite that slot.
 Tap the color block itself later to apply it. Long-press replacement remains available
 as a secondary interaction.
+
+## v90.10 — physical headlight epochs + reliable ambient command delivery
+
+Field logs from v90.9 showed that the remaining failures were primarily state-machine
+and CoreBluetooth delivery problems rather than an incorrect BLEDIM2 command format.
+Semantic writes such as Power ON, RGB restore, and final brightness could be skipped
+when `writeWithoutResponse` backpressure was active, while the animation state machine
+continued as if they had succeeded. The known vehicle lights were also being
+cancelled/reconnected by the old six-second watchdog, and Dashboard/Center Breath
+re-arming still depended on the older 15-second disconnect heuristic.
+
+v90.10 changes the ambient runtime around the actual vehicle power behavior:
+
+- Dashboard + Center Console use a **physical headlight-power epoch**. A new physical
+  OFF -> ON event can start a fresh Breath immediately, even if the previous OFF interval
+  was only a few seconds.
+- A short dual-controller OFF debounce cancels an in-progress headlight Breath and lets
+  a rapid ON/OFF/ON sequence start cleanly without stale animation ownership.
+- Door day/night automation is brightness-only. A headlight state change cancels the
+  old Door transition and smoothly retargets from the Door's current runtime brightness;
+  it no longer resends Power/RGB as part of every day/night transition.
+- Power, RGB, Breath baseline, restore brightness, and final brightness are serialized
+  through retry-aware `writeWithoutResponse` helpers instead of being silently dropped
+  under CoreBluetooth backpressure.
+- The three known vehicle ambient controllers are exempt from the old six-second
+  cancel/reconnect watchdog loop; pending connections are allowed to complete naturally
+  when physical power becomes available.
+- BLEDIM animation brightness uses the decoded protocol's native 0...255 resolution on
+  the shared 20 Hz wall-clock phase. Logical 0% is a brightness command and is never
+  converted into a BLEDIM Power OFF command.
+- Breath uses a linear slider-like ramp while preserving the per-cycle duration model
+  introduced in v90.8.1.
+- Opening an individual or group control page initializes its color picker silently;
+  simply visiting the page no longer emits an RGB command. Preset taps also issue only
+  one RGB command.
+
+The v90.9 source-regression tests were updated to validate these v90.10 invariants.
