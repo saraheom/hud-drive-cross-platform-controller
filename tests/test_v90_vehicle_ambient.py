@@ -28,9 +28,10 @@ def test_vehicle_roles_match_physical_test_devices():
 def test_smooth_brightness_transition_is_shared_and_does_not_rewrite_preference_per_frame():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "private func transitionBrightness(" in monitor
-    assert "let frameInterval = 0.05" in monitor
+    assert "let timelineTick = 0.05" in monitor
+    assert "device.protocolKind == .bledim2 ? 0.10 : 0.05" in monitor
     assert "let starts = Dictionary" in monitor
-    assert "if lastSent[id] != value" in monitor
+    assert "guard lastSent[id] != value else { continue }" in monitor
     assert "if persist { persistPairedDevices() }" in monitor
     assert "group manual brightness" in monitor
 

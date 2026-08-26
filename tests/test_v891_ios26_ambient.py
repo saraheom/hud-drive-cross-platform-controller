@@ -7,7 +7,8 @@ def test_smooth_animation_engine_is_main_actor_isolated():
     source = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "@MainActor\n@Observable\nfinal class AmbientLightMonitor" in source
     assert "private func transitionBrightness(" in source
-    assert "let frameInterval = 0.05" in source
+    assert "let timelineTick = 0.05" in source
+    assert "device.protocolKind == .bledim2 ? 0.10 : 0.05" in source
     assert "private func startSynchronizedBreathSession()" in source
 
 

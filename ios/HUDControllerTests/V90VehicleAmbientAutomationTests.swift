@@ -40,7 +40,8 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
     func testSmoothBrightnessAndSynchronizedBreathExist() throws {
         let source = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(source.contains("private func transitionBrightness("))
-        XCTAssertTrue(source.contains("let frameInterval = 0.05"))
+        XCTAssertTrue(source.contains("let timelineTick = 0.05"))
+        XCTAssertTrue(source.contains("device.protocolKind == .bledim2 ? 0.10 : 0.05"))
         XCTAssertTrue(source.contains("private func startSynchronizedBreathSession()"))
         XCTAssertTrue(source.contains("from = Double(clampedStart); to = 0"))
         XCTAssertTrue(source.contains("from = 0; to = 100"))

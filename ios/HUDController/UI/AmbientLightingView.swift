@@ -648,7 +648,7 @@ struct AmbientGroupControlView: View {
                             )
                             .disabled(group.memberIDs.isEmpty)
 
-                            Text("Tap a preset to apply it to the whole group. Long-press a preset to replace that slot with the current picker color.")
+                            Text("Tap a color block to apply it to the whole group. Tap the pencil under any slot to replace that preset with the current picker color.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -693,33 +693,47 @@ private struct PresetColorRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 9) {
+            HStack(spacing: 8) {
                 ForEach(0..<5, id: \.self) { index in
                     let rgb = index < presets.count ? presets[index] : AmbientRGB.defaultPresets[index]
-                    Button {
-                        onApply(rgb)
-                    } label: {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(rgb.swiftUIColor)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 40)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(.white.opacity(0.25), lineWidth: 1)
+                    VStack(spacing: 4) {
+                        Button {
+                            onApply(rgb)
+                        } label: {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(rgb.swiftUIColor)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 40)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(.white.opacity(0.25), lineWidth: 1)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                onSave(index)
+                            } label: {
+                                Label("Replace preset \(index + 1) with current color", systemImage: "square.and.arrow.down")
                             }
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
+                        }
+                        .accessibilityLabel("Apply color preset \(index + 1)")
+
                         Button {
                             onSave(index)
                         } label: {
-                            Label("Save current color to preset \(index + 1)", systemImage: "square.and.arrow.down")
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                                .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Replace color preset \(index + 1) with current picker color")
                     }
-                    .accessibilityLabel("Color preset \(index + 1)")
+                    .frame(maxWidth: .infinity)
                 }
             }
-            Text("Tap a preset to apply • long-press to save the current picker color")
+            Text("Tap a color block to apply • tap its pencil to save the current picker color into that slot")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

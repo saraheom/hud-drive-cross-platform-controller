@@ -13,7 +13,8 @@ def test_five_preset_slots_exist_for_devices_and_groups():
     assert "setDevicePresetColor" in monitor
     assert "setGroupPresetColor" in monitor
     assert "ForEach(0..<5" in view
-    assert "long-press to save" in view
+    assert "pencil.circle.fill" in view
+    assert "tap its pencil to save the current picker color" in view
 
 
 def test_manual_device_and_group_brightness_use_same_smooth_transition():
@@ -47,7 +48,8 @@ def test_breath_and_group_fades_share_timeline_for_visual_sync():
     assert "activeBreathIDs" in src
     assert "Joined active synchronized breath" in src
     assert "try? await Task.sleep(for: .seconds(0.35))" in src
-    assert "let frameInterval = 0.05" in src
+    assert "let timelineTick = 0.05" in src
+    assert "device.protocolKind == .bledim2 ? 0.10 : 0.05" in src
     assert "targets: Dictionary(uniqueKeysWithValues: steady.map" in src
 
 
@@ -97,8 +99,9 @@ def test_manual_power_on_uses_same_breath_path_when_animation_enabled():
 
 def test_breath_uses_actual_start_and_only_last_cycle_can_return_to_changed_target():
     src = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-    assert "activeBreathStartBrightness[id] = device.runtimeBrightness" in src
-    assert "activeBreathReturnBrightness[id] = device.runtimeBrightness" in src
+    assert "initialBrightness = device.runtimeBrightness" in src
+    assert "activeBreathStartBrightness[id] = initialBrightness" in src
+    assert "activeBreathReturnBrightness[id] = initialBrightness" in src
     assert "cycleIndex == safeCycles - 1 ? clampedReturn : clampedStart" in src
     assert "activeBreathReturnBrightness[id] = clamped" in src
     assert "Door breath final target updated" in src

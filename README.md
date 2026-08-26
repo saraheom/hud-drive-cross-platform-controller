@@ -280,3 +280,40 @@ not Door; later field testing confirmed the same protocol works on both controll
 - Fixes a stale Swift source-regression assertion that still expected the pre-v90.8.1 fixed return leg (`100% -> initial`) on every breath cycle.
 - CI now validates the intended v90.8.1 behavior: earlier cycles return to the captured initial brightness, while only the last return leg may end at a target changed during the running breath.
 - CI also verifies that the configured breath duration is per cycle and total duration is `per-cycle duration × cycle count`.
+
+## v90.9 — BLEDIM animation pacing + reliable Breath + editable presets
+
+Field logs from v90.8.2 showed that the animation problem was transport/timing related,
+not a different brightness opcode. The official BLEDIM2 iOS PacketLogger capture sends
+continuous brightness-slider updates at roughly 100 ms intervals (~10 Hz), whereas
+v90.8.2 drove both BLEDIM controllers at 20 Hz. During synchronized Breath this was
+combined with one interleaved sequence counter for both BLEDIM peripherals, repeated
+GATT rediscovery/read traffic, and synchronous per-frame logging on the MainActor.
+The field log also showed real BLE timeout disconnects and an important re-entry bug:
+a second Preview/power-up request could recapture a 1–5% in-progress animation frame
+as the new return brightness, causing the Breath to finish nearly dark.
+
+v90.9 therefore:
+
+- keeps one shared wall-clock animation phase, but paces BLEDIM brightness writes at
+  <=10 Hz and Lotus Lantern at <=20 Hz;
+- uses a separate BLEDIM sequence counter for each physical controller;
+- checks CoreBluetooth `canSendWriteWithoutResponse` and drops stale intermediate
+  frames under backpressure instead of building a write queue;
+- calculates progress from elapsed wall-clock time, so scheduler/BLE delays skip stale
+  frames rather than extending a requested animation indefinitely;
+- suppresses intermediate animation packet logging and rate-limits repetitive BLEDIM
+  all-`FF` notification logs;
+- stops rediscovering services on every watchdog pass once a control characteristic is
+  already ready;
+- ignores a repeated Preview/ON request for a light already participating in the active
+  Breath, preserving its original start/return brightness;
+- restores the saved steady-state target after a reconnect instead of an interrupted
+  animation frame;
+- keeps the common synchronized phase so Door, Dashboard, and Center remain visually
+  aligned as closely as their different BLE transports allow.
+
+The five device presets and five group presets are now visibly editable. Pick any color
+with the normal picker, then tap the pencil under a preset slot to overwrite that slot.
+Tap the color block itself later to apply it. Long-press replacement remains available
+as a secondary interaction.
