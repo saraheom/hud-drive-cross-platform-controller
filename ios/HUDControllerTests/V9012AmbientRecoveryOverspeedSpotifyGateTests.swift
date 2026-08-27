@@ -58,6 +58,12 @@ final class V9012AmbientRecoveryOverspeedSpotifyGateTests: XCTestCase {
         XCTAssertTrue(warning.contains("doorTargetBrightness(night: vehicleHeadlightsActive)"))
     }
 
+    func testAsyncValidityHelpersRemainMainActorIsolated() throws {
+        let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
+        XCTAssertTrue(monitor.contains("@MainActor func requestStillValid() -> Bool"))
+        XCTAssertTrue(monitor.contains("@MainActor func stillValid() -> Bool"))
+    }
+
     func testOverspeedConfigurationIsExposed() throws {
         let view = try source("HUDController/UI/VehicleView.swift")
         XCTAssertTrue(view.contains("AMBIENT OVERSPEED WARNING"))

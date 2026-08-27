@@ -1482,7 +1482,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard let self else { return }
             defer { self.breathPrepareTasks[id] = nil }
 
-            func requestStillValid() -> Bool {
+            @MainActor func requestStillValid() -> Bool {
                 guard let epoch = requestedHeadlightEpoch,
                       let generation = requestedHeadlightGeneration else { return true }
                 return self.headlightPowerSessionActive &&
@@ -2476,7 +2476,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         overspeedWarningTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            func stillValid() -> Bool {
+            @MainActor func stillValid() -> Bool {
                 guard !Task.isCancelled,
                       generation == self.overspeedWarningGeneration,
                       self.overspeedWarningActiveID == id,

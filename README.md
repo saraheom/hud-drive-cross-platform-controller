@@ -398,6 +398,11 @@ vehicle-speed value directly; GPS speed is not used for that proposed warning.
 
 ## v90.12 — rapid-headlight recovery + finite overspeed warning + Spotify vehicle gate
 
+### v90.12.1 — Xcode 26 actor-isolation compile fix
+
+The iOS 26 ambient CI build now explicitly marks the two task-local validity helpers in `AmbientLightMonitor` as `@MainActor`. This preserves the v90.12 behavior while satisfying Xcode 26/Swift concurrency isolation checks.
+
+
 The 2026-08-27 road test exposed one remaining failure mode: Dashboard could lose
 physical power during an active Breath, reconnect within the same overall headlight
 epoch, and be restored without fully invalidating the interrupted animation state.
