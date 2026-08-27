@@ -36,8 +36,17 @@ final class AppState {
             self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
         }
 
-        obd.onConnectionChanged = { [weak ambientLight] connected in
+        obd.onConnectionChanged = { [weak self, weak ambientLight] connected in
             ambientLight?.obdPowerSignal(connected)
+            self?.updateSpotifyVehicleWakeGate(reason: connected ? "OBD connected" : "OBD disconnected")
+        }
+
+        speedEngine.onSpeedStateChanged = { [weak ambientLight] speedMph, limitMph, available in
+            ambientLight?.updateOverspeedWarning(
+                gpsSpeedMph: speedMph,
+                speedLimitMph: limitMph,
+                limitAvailable: available
+            )
         }
 
         spotify.onTrackChanged = { [weak self] artist, track in
@@ -47,6 +56,7 @@ final class AppState {
         bluetooth.onTransportReady = { [weak self] in
             guard let self else { return }
             self.ambientLight.hudTransportPowerSignal(true)
+            self.updateSpotifyVehicleWakeGate(reason: "HUD connected")
             self.speedEngine.primeRectangularStyle()
 
             if #available(iOS 27.0, *),
@@ -75,6 +85,7 @@ final class AppState {
             self.hudReassertTask?.cancel()
             self.hudReassertTask = nil
             self.obd.transportDisconnected()
+            self.updateSpotifyVehicleWakeGate(reason: "HUD disconnected")
             if #available(iOS 27.0, *),
                let capture = self.externalCapture27 as? ExternalNavigationCapture {
                 capture.hudTransportDisconnected(
@@ -86,6 +97,11 @@ final class AppState {
                 "BLE transport disconnected; capture transport suspended while preserving explicit user intent"
             )
         }
+    }
+
+    func updateSpotifyVehicleWakeGate(reason: String) {
+        let allowed = bluetooth.state == .connected || obd.connected
+        spotify.setAutomaticVehicleWakeAllowed(allowed, reason: reason)
     }
 
     func initializeHUD() {

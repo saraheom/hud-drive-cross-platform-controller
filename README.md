@@ -395,3 +395,38 @@ No HERE code, API key, or commercial map-service dependency remains. Switching s
 previous speed-limit sign until the selected source produces a fresh result. The ambient red overspeed
 warning remains intentionally unimplemented because the iOS app still does not receive the HUD/OBD
 vehicle-speed value directly; GPS speed is not used for that proposed warning.
+
+## v90.12 — rapid-headlight recovery + finite overspeed warning + Spotify vehicle gate
+
+The 2026-08-27 road test exposed one remaining failure mode: Dashboard could lose
+physical power during an active Breath, reconnect within the same overall headlight
+epoch, and be restored without fully invalidating the interrupted animation state.
+v90.12 makes all headlight-fed asynchronous work generation-owned and self-healing:
+
+- every authoritative headlight ON/OFF edge invalidates the complete prior synchronized
+  Breath timeline so stale final writes cannot cross a physical-power boundary;
+- Dashboard/Center interruption during Breath is remembered and re-arms that light for
+  a fresh Breath after reconnect, even when the overall epoch did not change;
+- headlight-fed reconnect performs Power ON + preferred RGB + steady brightness followed
+  by a delayed Power ON + steady-brightness safety reassert;
+- Breath bootstrap itself is generation-protected and performs a second Power ON/baseline
+  reassert before animation begins;
+- Door day/night fades stay brightness-only, interruptible, and immediately retarget from
+  the latest applied runtime level;
+- engine OFF still never sends an automatic ambient Power OFF command.
+
+Spotify's automatic wake/app-switch is now vehicle-gated. Silent connection attempts can
+run anywhere, but automatic `authorizeAndPlayURI` wake is permitted only while the HUD BLE
+transport or OBD2 connection indicates an active vehicle session. Opening HUD Controller
+away from the car no longer automatically opens Spotify.
+
+An optional finite red ambient overspeed warning is now available under Vehicle -> Speed +
+Speed Limit. It uses the exact condition `GPS speed > posted speed limit + offset`, with a
+user offset of 0–20 mph. The user can select Door or Dashboard, warning brightness, 2x/3x
+finite pulses, and pulse duration. It only triggers on a below-to-above crossing and will
+not retrigger until speed falls back to/below the threshold and recrosses. If the selected
+speed-limit source has no fresh live sign, the warning is disabled. Dashboard warning is
+allowed only while its headlight-powered controller is available; physical power loss
+cancels the overlay without stale restore commands. The warning never sends Power OFF.
+
+See `docs/V90_12_AMBIENT_RECOVERY_OVERSPEED_SPOTIFY_GATE.md` for the state-machine details.

@@ -25,6 +25,20 @@ enum AmbientLightProtocolKind: String, Codable, CaseIterable, Identifiable {
 
 /// Physical role is deliberately independent of BLE protocol. The vehicle-state
 /// choreography is based on how each controller is powered in the car.
+enum AmbientOverspeedWarningLight: String, CaseIterable, Identifiable {
+    case door = "Door"
+    case dashboard = "Dashboard"
+
+    var id: String { rawValue }
+
+    var role: AmbientLightRole {
+        switch self {
+        case .door: return .door
+        case .dashboard: return .dashboard
+        }
+    }
+}
+
 enum AmbientLightRole: String, Codable, CaseIterable, Identifiable {
     case door
     case dashboard

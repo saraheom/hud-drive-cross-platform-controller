@@ -52,10 +52,11 @@ final class V9011HeadlightSpotifySpeedSourceTests: XCTestCase {
         XCTAssertFalse(speed.contains("HereAPIKeyStore"))
     }
 
-    func testAmbientOverspeedFeatureIntentionallyStillParked() throws {
+    func testV9012OptInOverspeedWarningStillUsesExistingCLLocationSpeed() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         let view = try source("HUDController/UI/VehicleView.swift")
         XCTAssertTrue(speed.contains("CLLocation.speed"))
-        XCTAssertTrue(view.contains("ambient overspeed warning remains disabled"))
+        XCTAssertTrue(view.contains("AMBIENT OVERSPEED WARNING"))
+        XCTAssertTrue(view.contains("Offset above limit"))
     }
 }

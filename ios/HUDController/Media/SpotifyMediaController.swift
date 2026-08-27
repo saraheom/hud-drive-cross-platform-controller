@@ -14,6 +14,7 @@ final class SpotifyMediaController: NSObject {
     private(set) var status = "Not connected"
     private(set) var authorizationRequired = false
     private(set) var automaticRecoveryActive = false
+    private(set) var automaticVehicleWakeAllowed = false
 
     private let logger: LogManager
     private var lastNotifiedTrackURI: String?
@@ -176,6 +177,27 @@ final class SpotifyMediaController: NSObject {
         appRemote.connect()
     }
 
+    /// Automatic Spotify app-switch/wake is vehicle-gated. Silent App Remote
+    /// connection attempts are still allowed anywhere, but `authorizeAndPlayURI`
+    /// is never invoked automatically unless HUD or OBD evidence says the user is
+    /// in the car. Manual Music/Reauthorize actions remain available at all times.
+    func setAutomaticVehicleWakeAllowed(_ allowed: Bool, reason: String) {
+        guard automaticVehicleWakeAllowed != allowed else { return }
+        automaticVehicleWakeAllowed = allowed
+        logger.log(
+            "MEDIA WAKE",
+            "Automatic Spotify wake vehicle gate = \(allowed) reason=\(reason)"
+        )
+
+        if allowed,
+           !connected,
+           authorized,
+           !authorizationRequired,
+           consecutiveConnectionFailures >= 2 {
+            _ = attemptAutomaticSpotifyWake(reason: "vehicle session became eligible")
+        }
+    }
+
     func appBecameActive() {
         userRequestedDisconnect = false
 
@@ -273,6 +295,14 @@ final class SpotifyMediaController: NSObject {
     private func attemptAutomaticSpotifyWake(reason: String) -> Bool {
         guard isConfigured, authorized, !authorizationRequired,
               !userRequestedDisconnect, !connected, !automaticWakeInProgress else {
+            return false
+        }
+
+        guard automaticVehicleWakeAllowed else {
+            logger.log(
+                "MEDIA WAKE",
+                "Automatic Spotify app wake suppressed outside vehicle session reason=\(reason)"
+            )
             return false
         }
 

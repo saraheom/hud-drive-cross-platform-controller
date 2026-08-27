@@ -128,9 +128,18 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     private(set) var currentSpeedMph = 0
     private(set) var currentSpeedLimitMph = 0
+    /// Warning eligibility is intentionally stricter than merely having a cached
+    /// integer limit. A previous-drive UserDefaults value must never arm a red-light
+    /// warning before the currently selected matcher has resolved a live road limit.
+    private(set) var speedLimitAvailableForWarning = false
+    private var lastResolvedLimitAt: Date?
+    private let warningLimitFreshnessSeconds: TimeInterval = 12.0
     private(set) var status = "Waiting for location"
     private(set) var sourceDetail = "Current • original matcher"
 
+    /// v90.12: publishes the same iPhone GPS speed and currently displayed
+    /// speed-limit availability to the ambient warning controller.
+    var onSpeedStateChanged: ((Int, Int, Bool) -> Void)?
 
     var sourceMode: SpeedLimitSourceMode {
         didSet {
@@ -156,6 +165,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             }
             lastSentLimit = -1
             resendCurrentLimitIfPossible()
+            refreshWarningLimitAvailability(now: Date())
+            onSpeedStateChanged?(
+                currentSpeedMph,
+                currentSpeedLimitMph,
+                speedLimitAvailableForWarning
+            )
         }
     }
 
@@ -193,6 +208,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
 
     func start() {
+        // A cached last-known sign may still be useful to the UI, but it is not
+        // fresh enough to drive an ambient safety warning until this session's
+        // matcher resolves it again.
+        lastResolvedLimitAt = nil
+        speedLimitAvailableForWarning = false
+        onSpeedStateChanged?(currentSpeedMph, currentSpeedLimitMph, false)
         logger.log("SPEED", "Starting original-style GPS + OSM speed engine")
         logger.log("SPEED LIMIT", "Selected source = \(sourceMode.rawValue)")
         locationManager.requestAlwaysAuthorization()
@@ -202,6 +223,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     func stop() {
         locationManager.stopUpdatingLocation()
         status = "Disabled"
+        lastResolvedLimitAt = nil
+        speedLimitAvailableForWarning = false
+        onSpeedStateChanged?(currentSpeedMph, currentSpeedLimitMph, false)
     }
 
     /// Immediately overwrite the firmware's circular boot-default style.
@@ -296,6 +320,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         lastQueryLocation = nil
         requestInFlight = false
         currentSpeedLimitMph = 0
+        lastResolvedLimitAt = nil
+        speedLimitAvailableForWarning = false
         lastSentLimit = -1
         sourceDetail = "\(sourceMode.rawValue) • waiting for data"
 
@@ -306,6 +332,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             )
         }
         logger.log("SPEED LIMIT", "Speed-limit source changed to \(sourceMode.rawValue)")
+        onSpeedStateChanged?(currentSpeedMph, 0, false)
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -389,11 +416,24 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
         }
 
+        // Warning requires a live/fresh resolution from the currently selected
+        // matcher. A cached prior-drive limit can remain visible elsewhere, but it
+        // cannot arm the red warning. If no road has matched for 12 seconds the
+        // warning becomes unavailable until a fresh limit resolves again.
+        refreshWarningLimitAvailability(now: Date())
+        onSpeedStateChanged?(
+            currentSpeedMph,
+            currentSpeedLimitMph,
+            speedLimitAvailableForWarning
+        )
+
         Task { await updateProviderDataIfNeeded(at: location, force: false) }
     }
 
     private func applyResolvedLimit(_ limit: Int) {
         currentSpeedLimitMph = limit
+        lastResolvedLimitAt = Date()
+        speedLimitAvailableForWarning = showSpeedLimit && limit > 0
         UserDefaults.standard.set(limit, forKey: "HUD.Speed.lastKnownLimitMph")
         if showSpeedLimit, limit != lastSentLimit, bluetooth.state == .connected {
             lastSentLimit = limit
@@ -405,6 +445,17 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 legalLimitMph: limit
             )
         }
+    }
+
+    private func refreshWarningLimitAvailability(now: Date) {
+        guard showSpeedLimit,
+              currentSpeedLimitMph > 0,
+              let lastResolvedLimitAt,
+              now.timeIntervalSince(lastResolvedLimitAt) <= warningLimitFreshnessSeconds else {
+            speedLimitAvailableForWarning = false
+            return
+        }
+        speedLimitAvailableForWarning = true
     }
 
     private func updateProviderDataIfNeeded(at location: CLLocation, force: Bool) async {

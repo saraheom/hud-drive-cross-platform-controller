@@ -113,6 +113,56 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         didSet { UserDefaults.standard.set(max(1.0, min(15.0, breathDurationSeconds)), forKey: "HUD.Ambient.v90_8.breathDuration") }
     }
 
+    // MARK: - v90.12 finite ambient overspeed warning
+
+    var overspeedWarningEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(overspeedWarningEnabled, forKey: "HUD.Ambient.v90_12.overspeed.enabled")
+            if !overspeedWarningEnabled {
+                cancelOverspeedWarning(restoreIfPossible: true, reason: "warning disabled")
+                overspeedCrossingBaselineValid = false
+            }
+        }
+    }
+
+    var overspeedWarningLight: AmbientOverspeedWarningLight {
+        didSet {
+            UserDefaults.standard.set(overspeedWarningLight.rawValue, forKey: "HUD.Ambient.v90_12.overspeed.light")
+            cancelOverspeedWarning(restoreIfPossible: true, reason: "warning light changed")
+            overspeedCrossingBaselineValid = false
+        }
+    }
+
+    /// Positive offset is an additional tolerance above the posted limit.
+    /// Trigger condition is strictly: GPS speed > posted limit + offset.
+    var overspeedWarningOffsetMph: Int {
+        didSet {
+            UserDefaults.standard.set(max(0, min(20, overspeedWarningOffsetMph)), forKey: "HUD.Ambient.v90_12.overspeed.offsetMph")
+            overspeedCrossingBaselineValid = false
+        }
+    }
+
+    var overspeedWarningBrightness: Int {
+        didSet {
+            UserDefaults.standard.set(max(10, min(100, overspeedWarningBrightness)), forKey: "HUD.Ambient.v90_12.overspeed.brightness")
+        }
+    }
+
+    var overspeedWarningPulseCount: Int {
+        didSet {
+            UserDefaults.standard.set(max(2, min(3, overspeedWarningPulseCount)), forKey: "HUD.Ambient.v90_12.overspeed.pulses")
+        }
+    }
+
+    /// Duration of one full red high -> low -> high pulse.
+    var overspeedWarningPulseDurationSeconds: Double {
+        didSet {
+            UserDefaults.standard.set(max(0.4, min(2.0, overspeedWarningPulseDurationSeconds)), forKey: "HUD.Ambient.v90_12.overspeed.pulseDuration")
+        }
+    }
+
+    private(set) var overspeedWarningStatus = "Armed — waiting for a valid speed limit"
+
     private(set) var vehicleAutomationStatus = "Idle — waiting for engine-switched HUD power"
     private(set) var enginePowerPresent = false
     private(set) var enginePowerStatus = "Engine power unknown — waiting for HUD / OBD"
@@ -228,6 +278,21 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var headlightOffDebounceTask: Task<Void, Never>?
     private let headlightOffDebounceSeconds: TimeInterval = 0.35
 
+    /// A Dashboard disconnect while its Breath is actually running is treated as
+    /// a local physical-power interruption. If it reconnects inside the same shared
+    /// Center/headlight epoch, it is allowed to perform a fresh bootstrap + Breath
+    /// instead of being stuck at the last transient animation brightness.
+    private var restartHeadlightBreathOnReconnectIDs: Set<UUID> = []
+
+    /// Finite red overspeed overlay. It never sends a Power OFF command.
+    private var overspeedWarningTask: Task<Void, Never>?
+    private var overspeedRestoreTask: Task<Void, Never>?
+    private var overspeedWarningGeneration = 0
+    private var overspeedWarningActiveID: UUID?
+    private var overspeedAboveThreshold = false
+    private var overspeedCrossingBaselineValid = false
+    private var overspeedLastLimitAvailable = false
+
     /// UI deep-link token used by the persistent Ambient shortcut.
     private(set) var pairedLightsFocusRequest = 0
 
@@ -264,6 +329,19 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ? 2 : max(2, min(5, d.integer(forKey: "HUD.Ambient.v90_8.breathCycles")))
         self.breathDurationSeconds = d.object(forKey: "HUD.Ambient.v90_8.breathDuration") == nil
             ? 6.0 : max(1.0, min(15.0, d.double(forKey: "HUD.Ambient.v90_8.breathDuration")))
+        self.overspeedWarningEnabled = d.object(forKey: "HUD.Ambient.v90_12.overspeed.enabled") == nil
+            ? false : d.bool(forKey: "HUD.Ambient.v90_12.overspeed.enabled")
+        self.overspeedWarningLight = AmbientOverspeedWarningLight(
+            rawValue: d.string(forKey: "HUD.Ambient.v90_12.overspeed.light") ?? ""
+        ) ?? .door
+        self.overspeedWarningOffsetMph = d.object(forKey: "HUD.Ambient.v90_12.overspeed.offsetMph") == nil
+            ? 5 : max(0, min(20, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.offsetMph")))
+        self.overspeedWarningBrightness = d.object(forKey: "HUD.Ambient.v90_12.overspeed.brightness") == nil
+            ? 100 : max(10, min(100, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.brightness")))
+        self.overspeedWarningPulseCount = d.object(forKey: "HUD.Ambient.v90_12.overspeed.pulses") == nil
+            ? 3 : max(2, min(3, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.pulses")))
+        self.overspeedWarningPulseDurationSeconds = d.object(forKey: "HUD.Ambient.v90_12.overspeed.pulseDuration") == nil
+            ? 0.9 : max(0.4, min(2.0, d.double(forKey: "HUD.Ambient.v90_12.overspeed.pulseDuration")))
         self.directOBDWitnessProven = d.bool(forKey: "HUD.Ambient.v90_2.directOBDWitnessProven")
         if let raw = d.string(forKey: "HUD.Ambient.v90_2.directOBDPeripheralUUID") {
             self.directOBDPeripheralID = UUID(uuidString: raw)
@@ -806,6 +884,22 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     func setBreathCycles(_ cycles: Int) { breathCycles = max(2, min(5, cycles)) }
     func setBreathDuration(_ seconds: Double) { breathDurationSeconds = max(1.0, min(15.0, seconds)) }
 
+    func setOverspeedWarningOffset(_ mph: Int) {
+        overspeedWarningOffsetMph = max(0, min(20, mph))
+    }
+
+    func setOverspeedWarningBrightness(_ percent: Int) {
+        overspeedWarningBrightness = max(10, min(100, percent))
+    }
+
+    func setOverspeedWarningPulseCount(_ count: Int) {
+        overspeedWarningPulseCount = max(2, min(3, count))
+    }
+
+    func setOverspeedWarningPulseDuration(_ seconds: Double) {
+        overspeedWarningPulseDurationSeconds = max(0.4, min(2.0, seconds))
+    }
+
     func setDoorDayBrightness(_ percent: Int) {
         doorDayBrightness = max(0, min(100, percent))
         applyDoorTargetAfterSettingChange(changedNightTarget: false)
@@ -1294,12 +1388,30 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 guard !Task.isCancelled else { return }
                 _ = await self.sendColorWhenReady(id, color: device.color, reason: "restore")
                 guard !Task.isCancelled else { return }
-                _ = await self.applyRuntimeBrightnessWhenReady(
+                guard await self.applyRuntimeBrightnessWhenReady(
                     id,
                     percent: runtimeTarget,
                     reason: "restore",
                     persist: true
-                )
+                ) else { return }
+
+                // v90.12: a BLEDIM controller that browns out during an animation can
+                // reconnect while retaining a transient near-zero brightness state.
+                // For headlight-fed lights, reassert Power ON + steady brightness
+                // after a short settle. This never sends Power OFF and makes a
+                // reconnect self-healing instead of waiting for the next headlight edge.
+                if device.role?.isHeadlightFed == true, self.headlightPowerSessionActive {
+                    try? await Task.sleep(for: .milliseconds(180))
+                    guard !Task.isCancelled, self.headlightPowerSessionActive, self.isControllable(id) else { return }
+                    guard await self.sendPowerWhenReady(id, on: true, reason: "headlight reconnect safety reassert") else { return }
+                    guard !Task.isCancelled else { return }
+                    _ = await self.applyRuntimeBrightnessWhenReady(
+                        id,
+                        percent: runtimeTarget,
+                        reason: "headlight reconnect safety reassert",
+                        persist: true
+                    )
+                }
             } else {
                 _ = await self.sendPowerWhenReady(id, on: false, reason: "restore")
             }
@@ -1358,27 +1470,62 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             initialBrightness = device.brightness
         }
 
+        // Capture the exact physical-headlight generation that owns this async
+        // bootstrap. A cancelled old task must never wake up after a rapid
+        // OFF -> ON and mark/send into the newer epoch.
+        let requestedHeadlightEpoch: Int? = (!force && device.role?.isHeadlightFed == true)
+            ? headlightPowerEpoch : nil
+        let requestedHeadlightGeneration: Int? = (!force && device.role?.isHeadlightFed == true)
+            ? headlightStateGeneration : nil
+
         breathPrepareTasks[id] = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.breathPrepareTasks[id] = nil }
 
+            func requestStillValid() -> Bool {
+                guard let epoch = requestedHeadlightEpoch,
+                      let generation = requestedHeadlightGeneration else { return true }
+                return self.headlightPowerSessionActive &&
+                    self.headlightPowerEpoch == epoch &&
+                    self.headlightStateGeneration == generation
+            }
+
+            guard requestStillValid() else { return }
+
             // Critical preparation is serialized and retried instead of being
             // dropped under CoreBluetooth write-without-response backpressure.
             guard await self.sendPowerWhenReady(id, on: true, reason: "power-up breath prepare") else { return }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, requestStillValid() else { return }
             guard await self.sendColorWhenReady(id, color: device.color, reason: "power-up breath prepare") else { return }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, requestStillValid() else { return }
             guard await self.applyRuntimeBrightnessWhenReady(
                 id,
                 percent: initialBrightness,
                 reason: "power-up breath baseline",
                 persist: false
             ) else { return }
-            guard !Task.isCancelled, self.isControllable(id) else { return }
+            guard !Task.isCancelled, self.isControllable(id), requestStillValid() else { return }
+
+            // A short brownout can leave BLEDIM at the last transient raw value
+            // even though GATT comes back quickly. Reassert the safe steady baseline
+            // before animation ownership is committed to this epoch.
+            if requestedHeadlightEpoch != nil {
+                try? await Task.sleep(for: .milliseconds(180))
+                guard !Task.isCancelled, requestStillValid(), self.isControllable(id) else { return }
+                guard await self.sendPowerWhenReady(id, on: true, reason: "power-up breath safety reassert") else { return }
+                guard !Task.isCancelled, requestStillValid() else { return }
+                guard await self.applyRuntimeBrightnessWhenReady(
+                    id,
+                    percent: initialBrightness,
+                    reason: "power-up breath safety baseline",
+                    persist: false
+                ) else { return }
+            }
 
             if !force, let role = device.role, role.isHeadlightFed {
-                guard self.headlightPowerSessionActive else { return }
-                self.headlightAnimatedEpochByID[id] = self.headlightPowerEpoch
+                guard requestStillValid(), let epoch = requestedHeadlightEpoch else { return }
+                self.headlightAnimatedEpochByID[id] = epoch
+                self.restartHeadlightBreathOnReconnectIDs.remove(id)
             } else {
                 self.animatedConnectionSession.insert(id)
             }
@@ -1581,6 +1728,36 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    /// A physical headlight edge invalidates the shared Breath timeline itself, not
+    /// only Dashboard/Center membership. Otherwise a retained-power Door Breath can
+    /// keep the old task alive and a freshly powered Dashboard can join that stale
+    /// phase after a rapid OFF -> ON. Cancel the whole visual transaction and let
+    /// Door immediately move to its current day/night target while the new headlight
+    /// epoch starts from a clean baseline.
+    private func cancelSynchronizedBreathForHeadlightEdge(reason: String) {
+        let participantCount = activeBreathIDs.count
+        pendingBreathStartTask?.cancel()
+        pendingBreathStartTask = nil
+        synchronizedBreathTask?.cancel()
+        synchronizedBreathTask = nil
+        activeBreathStartedAt = nil
+        activeBreathIDs.removeAll()
+        activeBreathStartBrightness.removeAll()
+        activeBreathReturnBrightness.removeAll()
+
+        if let doorID = deviceID(for: .door) {
+            breathPrepareTasks[doorID]?.cancel()
+            breathPrepareTasks[doorID] = nil
+        }
+
+        if participantCount > 0 {
+            logger.log(
+                "AMBIENT ANIM",
+                "Cancelled shared Breath at authoritative headlight edge participants=\(participantCount) reason=\(reason)"
+            )
+        }
+    }
+
     /// Do not replay the power-up breath for a momentary BLE dropout. A device must
     /// remain disconnected for 15 seconds before the next connection is considered
     /// a genuinely fresh physical power session.
@@ -1643,6 +1820,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             if headlightPowerEpoch <= 0 { headlightPowerEpoch = 1 }
             headlightStateGeneration &+= 1
 
+            cancelSynchronizedBreathForHeadlightEdge(reason: "authoritative headlight ON")
             let headlightIDs = roleIDs([.dashboard, .centerConsole])
             for id in headlightIDs {
                 breathPrepareTasks[id]?.cancel()
@@ -1652,6 +1830,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 removeFromActiveBreath(id)
                 animatedConnectionSession.remove(id)
                 headlightAnimatedEpochByID[id] = nil
+                restartHeadlightBreathOnReconnectIDs.remove(id)
             }
 
             logger.log(
@@ -1683,6 +1862,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             headlightPowerSessionActive = false
             headlightStateGeneration &+= 1
 
+            cancelSynchronizedBreathForHeadlightEdge(reason: "authoritative headlight OFF")
             let headlightIDs = roleIDs([.dashboard, .centerConsole])
             for id in headlightIDs {
                 breathPrepareTasks[id]?.cancel()
@@ -1691,6 +1871,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 restoreTasks[id] = nil
                 removeFromActiveBreath(id)
                 headlightAnimatedEpochByID[id] = nil
+                restartHeadlightBreathOnReconnectIDs.remove(id)
+            }
+
+            if let activeID = overspeedWarningActiveID,
+               pairedDevice(activeID)?.role == .dashboard {
+                cancelOverspeedWarning(
+                    restoreIfPossible: false,
+                    reason: "headlight power OFF during dashboard warning"
+                )
             }
 
             logger.log(
@@ -2117,6 +2306,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
               let door = pairedDevice(doorID) else { return }
 
         let target = doorTargetBrightness(night: vehicleHeadlightsActive)
+        if overspeedWarningActiveID == doorID {
+            // The red warning temporarily owns Door output. The authoritative
+            // day/night state still updates immediately, and warning cleanup will
+            // restore whichever target is current at that exact moment.
+            logger.log("AMBIENT WARN", "Door day/night target changed to \(target)% during warning; deferred until overlay restores")
+            return
+        }
         if activeBreathIDs.contains(doorID) {
             activeBreathReturnBrightness[doorID] = target
             logger.log("AMBIENT ANIM", "Door breath final target updated to \(target)% reason=\(reason)")
@@ -2155,6 +2351,316 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             animatedConnectionSession.remove(device.id)
             queuePowerUpBreath(device.id, force: true)
         }
+    }
+
+    // MARK: - v90.12 finite red overspeed warning
+
+    /// Called by the GPS/OSM speed engine. A warning is generated only on the
+    /// FALSE -> TRUE edge of `gpsSpeed > postedLimit + offset`. If the speed-limit
+    /// sign is unavailable, warning logic is disabled and no stale limit is used.
+    func updateOverspeedWarning(
+        gpsSpeedMph: Int,
+        speedLimitMph: Int,
+        limitAvailable: Bool
+    ) {
+        guard overspeedWarningEnabled else {
+            overspeedCrossingBaselineValid = false
+            overspeedAboveThreshold = false
+            overspeedLastLimitAvailable = false
+            overspeedWarningStatus = "Disabled"
+            return
+        }
+
+        let available = limitAvailable && speedLimitMph > 0
+        if !available {
+            overspeedLastLimitAvailable = false
+            overspeedCrossingBaselineValid = false
+            overspeedAboveThreshold = false
+            if overspeedWarningTask != nil {
+                cancelOverspeedWarning(
+                    restoreIfPossible: true,
+                    reason: "speed-limit sign unavailable"
+                )
+            }
+            overspeedWarningStatus = "Armed — waiting for a valid speed-limit sign"
+            return
+        }
+
+        let offset = max(0, min(20, overspeedWarningOffsetMph))
+        let threshold = speedLimitMph + offset
+        let above = gpsSpeedMph > threshold
+
+        // When a valid sign first appears, establish a baseline without warning.
+        // This prevents a stale/missing sign from suddenly producing a warning
+        // while the driver is already above the threshold. The driver must first
+        // be observed below and then recross the threshold.
+        if !overspeedCrossingBaselineValid || !overspeedLastLimitAvailable {
+            overspeedCrossingBaselineValid = true
+            overspeedLastLimitAvailable = true
+            overspeedAboveThreshold = above
+            overspeedWarningStatus = above
+                ? "Above \(threshold) mph — fall below and recross to warn"
+                : "Armed • trigger > \(threshold) mph"
+            return
+        }
+
+        overspeedLastLimitAvailable = true
+        let crossedUp = above && !overspeedAboveThreshold
+        overspeedAboveThreshold = above
+
+        if crossedUp {
+            triggerOverspeedWarning(
+                gpsSpeedMph: gpsSpeedMph,
+                speedLimitMph: speedLimitMph,
+                thresholdMph: threshold
+            )
+        } else if overspeedWarningTask == nil {
+            overspeedWarningStatus = above
+                ? "Above \(threshold) mph — waiting to fall below and recross"
+                : "Armed • trigger > \(threshold) mph"
+        }
+    }
+
+    private func triggerOverspeedWarning(
+        gpsSpeedMph: Int,
+        speedLimitMph: Int,
+        thresholdMph: Int
+    ) {
+        guard overspeedWarningTask == nil else {
+            logger.log("AMBIENT WARN", "Overspeed recross ignored while finite warning is already active")
+            return
+        }
+
+        let role = overspeedWarningLight.role
+        guard let id = deviceID(for: role),
+              let device = pairedDevice(id),
+              device.powerOn,
+              isControllable(id) else {
+            overspeedWarningStatus = "Crossed threshold, but selected warning light is unavailable"
+            logger.log("AMBIENT WARN", "Overspeed crossing skipped: selected \(overspeedWarningLight.rawValue) light unavailable")
+            return
+        }
+
+        if role == .dashboard, !headlightPowerSessionActive {
+            overspeedWarningStatus = "Crossed threshold in daylight — Dashboard warning skipped"
+            logger.log("AMBIENT WARN", "Overspeed crossing skipped: Dashboard has no headlight power")
+            return
+        }
+
+        overspeedRestoreTask?.cancel()
+        overspeedRestoreTask = nil
+        overspeedWarningGeneration &+= 1
+        let generation = overspeedWarningGeneration
+        let capturedHeadlightGeneration = role == .dashboard ? headlightStateGeneration : nil
+        overspeedWarningActiveID = id
+
+        // Warning overlay owns this light temporarily. Never send Power OFF.
+        cancelBrightnessTransition(for: id)
+        breathPrepareTasks[id]?.cancel()
+        breathPrepareTasks[id] = nil
+        restoreTasks[id]?.cancel()
+        restoreTasks[id] = nil
+        removeFromActiveBreath(id)
+
+        let highPercent = max(10, min(100, overspeedWarningBrightness))
+        let cycles = max(2, min(3, overspeedWarningPulseCount))
+        let cycleDuration = max(0.4, min(2.0, overspeedWarningPulseDurationSeconds))
+        let warningRed = AmbientRGB(red: 255, green: 0, blue: 0)
+
+        overspeedWarningStatus = "Warning • \(gpsSpeedMph) > \(speedLimitMph) + \(overspeedWarningOffsetMph) mph"
+        logger.log(
+            "AMBIENT WARN",
+            "Overspeed crossing GPS=\(gpsSpeedMph) limit=\(speedLimitMph) threshold=\(thresholdMph) light=\(overspeedWarningLight.rawValue) pulses=\(cycles) brightness=\(highPercent)%"
+        )
+
+        overspeedWarningTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            func stillValid() -> Bool {
+                guard !Task.isCancelled,
+                      generation == self.overspeedWarningGeneration,
+                      self.overspeedWarningActiveID == id,
+                      self.isControllable(id) else { return false }
+                if role == .dashboard {
+                    guard self.headlightPowerSessionActive,
+                          self.headlightStateGeneration == capturedHeadlightGeneration else { return false }
+                }
+                return true
+            }
+
+            guard stillValid() else {
+                self.abortOverspeedWarningTask(id, generation: generation, reason: "invalid before prepare")
+                return
+            }
+            guard await self.sendPowerWhenReady(id, on: true, reason: "overspeed warning prepare") else {
+                self.abortOverspeedWarningTask(id, generation: generation, reason: "Power ON prepare failed")
+                return
+            }
+            guard stillValid() else {
+                self.abortOverspeedWarningTask(id, generation: generation, reason: "invalid after Power ON")
+                return
+            }
+            guard await self.sendColorWhenReady(id, color: warningRed, reason: "overspeed warning red") else {
+                self.abortOverspeedWarningTask(id, generation: generation, reason: "red RGB prepare failed")
+                return
+            }
+            guard stillValid() else {
+                self.abortOverspeedWarningTask(id, generation: generation, reason: "invalid after red RGB")
+                return
+            }
+            guard await self.applyRuntimeBrightnessWhenReady(
+                id,
+                percent: highPercent,
+                reason: "overspeed warning high baseline",
+                persist: false
+            ) else {
+                self.abortOverspeedWarningTask(id, generation: generation, reason: "high baseline failed")
+                return
+            }
+
+            // Finite high -> low -> high red pulses. 0% is a brightness command,
+            // never a Power OFF packet. This keeps BLEDIM logically ON throughout.
+            for pulse in 0..<cycles {
+                let startedAt = Date()
+                while true {
+                    guard stillValid() else {
+                        self.abortOverspeedWarningTask(id, generation: generation, reason: "animation ownership lost")
+                        return
+                    }
+                    let local = min(1.0, Date().timeIntervalSince(startedAt) / cycleDuration)
+                    let normalizedHigh = Double(highPercent) / 100.0
+                    let normalized: Double
+                    if local < 0.5 {
+                        normalized = normalizedHigh * (1.0 - local / 0.5)
+                    } else {
+                        normalized = normalizedHigh * ((local - 0.5) / 0.5)
+                    }
+                    _ = self.applyRuntimeBrightnessNormalized(
+                        id,
+                        normalized: normalized,
+                        reason: "overspeed red pulse \(pulse + 1)/\(cycles)",
+                        logPacket: false
+                    )
+                    if local >= 1.0 { break }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+
+            guard stillValid() else {
+                self.abortOverspeedWarningTask(id, generation: generation, reason: "invalid before finite-warning restore")
+                return
+            }
+            self.overspeedWarningTask = nil
+            self.overspeedWarningActiveID = nil
+            await self.restoreAfterOverspeedWarning(id, generation: generation, reason: "finite warning complete")
+            guard generation == self.overspeedWarningGeneration else { return }
+            self.overspeedWarningStatus = self.overspeedAboveThreshold
+                ? "Warning complete — fall below and recross to warn again"
+                : "Armed • waiting for next recross"
+        }
+    }
+
+    /// Recover from an internal warning-preparation/write failure without leaving
+    /// the selected light red or near zero. Explicit cancellation paths (headlight
+    /// OFF, BLE disconnect, user disabling the feature) increment the generation
+    /// first, so this helper becomes a no-op for stale tasks.
+    private func abortOverspeedWarningTask(
+        _ id: UUID,
+        generation: Int,
+        reason: String
+    ) {
+        guard generation == overspeedWarningGeneration,
+              overspeedWarningActiveID == id else { return }
+        overspeedWarningTask = nil
+        overspeedWarningActiveID = nil
+        logger.log("AMBIENT WARN", "Overspeed warning aborted safely: \(reason)")
+
+        overspeedRestoreTask?.cancel()
+        overspeedRestoreTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.restoreAfterOverspeedWarning(id, generation: generation, reason: "aborted: \(reason)")
+            guard generation == self.overspeedWarningGeneration else { return }
+            self.overspeedRestoreTask = nil
+            self.overspeedWarningStatus = self.overspeedAboveThreshold
+                ? "Warning interrupted — fall below and recross to warn again"
+                : "Armed • waiting for next recross"
+        }
+    }
+
+    private func cancelOverspeedWarning(restoreIfPossible: Bool, reason: String) {
+        let id = overspeedWarningActiveID
+        overspeedWarningGeneration &+= 1
+        let generation = overspeedWarningGeneration
+        overspeedWarningTask?.cancel()
+        overspeedWarningTask = nil
+        overspeedWarningActiveID = nil
+        overspeedRestoreTask?.cancel()
+        overspeedRestoreTask = nil
+        logger.log("AMBIENT WARN", "Overspeed warning cancelled: \(reason)")
+
+        guard restoreIfPossible, let id else { return }
+        overspeedRestoreTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.restoreAfterOverspeedWarning(id, generation: generation, reason: reason)
+            if generation == self.overspeedWarningGeneration {
+                self.overspeedRestoreTask = nil
+            }
+        }
+    }
+
+    private func steadyBrightnessAfterWarning(for id: UUID) -> Int {
+        guard let device = pairedDevice(id) else { return 100 }
+        if device.role == .door,
+           vehicleAutomationEnabled,
+           enginePowerPresent,
+           vehicleStartupCompleted {
+            return doorTargetBrightness(night: vehicleHeadlightsActive)
+        }
+        return device.brightness
+    }
+
+    private func restoreAfterOverspeedWarning(_ id: UUID, generation: Int, reason: String) async {
+        guard generation == overspeedWarningGeneration,
+              overspeedWarningActiveID == nil,
+              let device = pairedDevice(id),
+              device.powerOn,
+              isControllable(id) else { return }
+
+        if device.role == .dashboard, !headlightPowerSessionActive {
+            logger.log("AMBIENT WARN", "Dashboard restore deferred because physical headlight power is OFF")
+            return
+        }
+
+        let target = steadyBrightnessAfterWarning(for: id)
+        guard await sendPowerWhenReady(id, on: true, reason: "overspeed restore \(reason)") else { return }
+        guard generation == overspeedWarningGeneration, !Task.isCancelled else { return }
+        guard await sendColorWhenReady(id, color: device.color, reason: "overspeed restore \(reason)") else { return }
+        guard generation == overspeedWarningGeneration, !Task.isCancelled else { return }
+        guard await applyRuntimeBrightnessWhenReady(
+            id,
+            percent: target,
+            reason: "overspeed restore \(reason)",
+            persist: true
+        ) else { return }
+
+        // As with headlight reconnect recovery, reassert the complete safe steady
+        // state once after the controller has had time to settle. A dropped final
+        // WWR packet must never strand a driving light red or near-zero.
+        try? await Task.sleep(for: .milliseconds(180))
+        guard generation == overspeedWarningGeneration,
+              !Task.isCancelled,
+              isControllable(id) else { return }
+        if device.role == .dashboard, !headlightPowerSessionActive { return }
+        guard await sendPowerWhenReady(id, on: true, reason: "overspeed restore safety reassert") else { return }
+        guard generation == overspeedWarningGeneration, !Task.isCancelled else { return }
+        guard await sendColorWhenReady(id, color: device.color, reason: "overspeed restore safety reassert") else { return }
+        guard generation == overspeedWarningGeneration, !Task.isCancelled else { return }
+        _ = await applyRuntimeBrightnessWhenReady(
+            id,
+            percent: steadyBrightnessAfterWarning(for: id),
+            reason: "overspeed restore safety reassert",
+            persist: true
+        )
     }
 
     // MARK: - Connection management
@@ -2507,6 +3013,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         Task { @MainActor in
             guard self.enabled else { return }
             let id = peripheral.identifier
+            let interruptedHeadlightAnimation = self.isHeadlightFedDevice(id) &&
+                (self.activeBreathIDs.contains(id) || self.breathPrepareTasks[id] != nil)
+
             self.connectionStartedByID[id] = nil
             self.writeCharacteristicsByID[id] = nil
             self.lastServiceDiscoveryRequestByID[id] = nil
@@ -2519,10 +3028,28 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.restoreTasks[id]?.cancel()
             self.restoreTasks[id] = nil
             self.removeFromActiveBreath(id)
+            if self.overspeedWarningActiveID == id {
+                self.cancelOverspeedWarning(
+                    restoreIfPossible: false,
+                    reason: "warning light BLE/physical power disconnected"
+                )
+            }
             if self.isHeadlightFedDevice(id) {
+                // If this controller disappeared while its Breath was actually
+                // running/preparing, allow a fresh Breath when the same physical
+                // controller comes back even if Center's authoritative headlight
+                // epoch never had time to toggle. This is the short-brownout case
+                // observed in the 2026-08-27 drive log.
+                if interruptedHeadlightAnimation {
+                    self.headlightAnimatedEpochByID[id] = nil
+                    self.restartHeadlightBreathOnReconnectIDs.insert(id)
+                    self.logger.log(
+                        "AMBIENT POWER",
+                        "Interrupted headlight Breath will restart on reconnect: \(self.pairedDevice(id)?.displayName ?? id.uuidString)"
+                    )
+                }
                 // Physical disappearance cancels this controller's transient work,
-                // but v90.11 waits for the Center/HUD-brightness edge before changing
-                // the shared headlight state or Door day/night target.
+                // but Center/HUD-brightness still owns the shared Door day/night edge.
                 self.logger.log(
                     "AMBIENT POWER",
                     "Headlight-fed BLE disconnect observed for \(self.pairedDevice(id)?.displayName ?? id.uuidString); shared state unchanged until HUD brightness signal"

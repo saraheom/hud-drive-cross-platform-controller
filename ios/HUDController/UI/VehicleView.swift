@@ -116,10 +116,96 @@ struct VehicleView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
+                            Divider()
+                            Text("AMBIENT OVERSPEED WARNING")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Toggle("Finite red-light warning", isOn: Binding(
+                                get: { state.ambientLight.overspeedWarningEnabled },
+                                set: { state.ambientLight.overspeedWarningEnabled = $0 }
+                            ))
+
+                            Picker("Warning light", selection: Binding(
+                                get: { state.ambientLight.overspeedWarningLight },
+                                set: { state.ambientLight.overspeedWarningLight = $0 }
+                            )) {
+                                ForEach(AmbientOverspeedWarningLight.allCases) { light in
+                                    Text(light.rawValue).tag(light)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(!state.ambientLight.overspeedWarningEnabled)
+
+                            Stepper(
+                                "Offset above limit: +\(state.ambientLight.overspeedWarningOffsetMph) mph",
+                                value: Binding(
+                                    get: { state.ambientLight.overspeedWarningOffsetMph },
+                                    set: { state.ambientLight.setOverspeedWarningOffset($0) }
+                                ),
+                                in: 0...20
+                            )
+                            .disabled(!state.ambientLight.overspeedWarningEnabled)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Warning brightness: \(state.ambientLight.overspeedWarningBrightness)%")
+                                    .font(.subheadline)
+                                Slider(
+                                    value: Binding(
+                                        get: { Double(state.ambientLight.overspeedWarningBrightness) },
+                                        set: { state.ambientLight.setOverspeedWarningBrightness(Int($0.rounded())) }
+                                    ),
+                                    in: 10...100,
+                                    step: 5
+                                )
+                            }
+                            .disabled(!state.ambientLight.overspeedWarningEnabled)
+
+                            Picker("Red pulse count", selection: Binding(
+                                get: { state.ambientLight.overspeedWarningPulseCount },
+                                set: { state.ambientLight.setOverspeedWarningPulseCount($0) }
+                            )) {
+                                Text("2×").tag(2)
+                                Text("3×").tag(3)
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(!state.ambientLight.overspeedWarningEnabled)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Pulse duration / cycle: \(state.ambientLight.overspeedWarningPulseDurationSeconds, specifier: "%.1f") s")
+                                    .font(.subheadline)
+                                Slider(
+                                    value: Binding(
+                                        get: { state.ambientLight.overspeedWarningPulseDurationSeconds },
+                                        set: { state.ambientLight.setOverspeedWarningPulseDuration($0) }
+                                    ),
+                                    in: 0.4...2.0,
+                                    step: 0.1
+                                )
+                            }
+                            .disabled(!state.ambientLight.overspeedWarningEnabled)
+
+                            if state.speedEngine.speedLimitAvailableForWarning {
+                                LabeledContent(
+                                    "Warning threshold",
+                                    value: "> \(state.speedEngine.currentSpeedLimitMph + state.ambientLight.overspeedWarningOffsetMph) mph"
+                                )
+                            } else {
+                                LabeledContent("Warning threshold", value: "No speed-limit sign — disabled")
+                            }
+
+                            Text(state.ambientLight.overspeedWarningStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Text("Triggers only when GPS speed crosses from at/below to strictly above posted speed limit + offset. It fires 2–3 finite red pulses, then restores the normal light state. It does not retrigger while speed remains above the threshold. If the speed-limit sign is unavailable, no warning is allowed. Dashboard warnings run only while the physical headlight circuit is on; headlight power loss cancels the warning without sending stale restore commands.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+
                             LabeledContent("GPS speed", value: "\(state.speedEngine.currentSpeedMph) mph")
                             LabeledContent(
                                 "Posted limit",
-                                value: state.speedEngine.currentSpeedLimitMph > 0
+                                value: state.speedEngine.speedLimitAvailableForWarning
                                     ? "\(state.speedEngine.currentSpeedLimitMph) mph" : "—"
                             )
                             LabeledContent("Source", value: state.speedEngine.sourceMode.rawValue)
@@ -133,7 +219,7 @@ struct VehicleView: View {
                             .buttonStyle(.bordered)
 
                             Text("""
-                            Current keeps the decompiled HUDWAY matcher unchanged. Enhanced OSM is a separate test path with directional/conditional maxspeed tags and continuity confirmation. OSM Trace uses the same free OpenStreetMap data but scores a rolling GPS trace against nearby road geometry, so it can resist parallel-road, frontage-road, divided-highway and ramp jumps without a commercial API. GPS is used only for iPhone-side speed display/map matching; the proposed ambient overspeed warning remains disabled until we can obtain the HUD/OBD vehicle speed directly.
+                            Current keeps the decompiled HUDWAY matcher unchanged. Enhanced OSM is a separate test path with directional/conditional maxspeed tags and continuity confirmation. OSM Trace uses the same free OpenStreetMap data but scores a rolling GPS trace against nearby road geometry, so it can resist parallel-road, frontage-road, divided-highway and ramp jumps without a commercial API. OSM source selection affects both the displayed sign and the optional ambient warning. The ambient warning currently uses iPhone GPS speed by explicit user choice; it is suppressed whenever no valid speed-limit sign is available.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

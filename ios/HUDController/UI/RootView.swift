@@ -45,6 +45,7 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             consumePendingShortcut()
+            state.updateSpotifyVehicleWakeGate(reason: "root view appeared")
             state.spotify.autoConnectIfPossible()
         }
         .onOpenURL { url in
@@ -57,6 +58,10 @@ struct RootView: View {
             switch phase {
             case .active:
                 consumePendingShortcut()
+                // Refresh the vehicle evidence immediately before Spotify recovery.
+                // Silent connect attempts may run anywhere, but app-switch/wake is
+                // allowed only while HUD or OBD is actually connected.
+                state.updateSpotifyVehicleWakeGate(reason: "app became active")
                 state.spotify.appBecameActive()
                 if #available(iOS 27.0, *),
                    let capture = state.externalCapture27 as? ExternalNavigationCapture {

@@ -74,8 +74,10 @@ def test_osm_trace_is_local_matcher_with_no_paid_api_or_key_ui():
     assert "SecureField(" not in VEHICLE
 
 
-def test_overspeed_ambient_warning_remains_unimplemented_until_obd_speed_is_available():
-    # v90.11 intentionally adds no red warning state machine. Current speed source is still CLLocation.
+def test_v9011_baseline_still_uses_cllocation_speed_and_v9012_can_consume_it_opt_in():
+    # v90.12 deliberately enables an opt-in finite ambient warning from the same
+    # CLLocation speed already used by the HUD. It must not imply OBD speed access.
     assert "CLLocation.speed" in SPEED
-    assert "ambient overspeed warning remains disabled" in VEHICLE
-    assert "OverspeedAmbient" not in MONITOR
+    assert "AMBIENT OVERSPEED WARNING" in VEHICLE
+    assert "updateOverspeedWarning" in MONITOR
+    assert "gpsSpeedMph > threshold" in MONITOR
