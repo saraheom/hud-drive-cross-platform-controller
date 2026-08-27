@@ -355,14 +355,14 @@ v90.10 changes the ambient runtime around the actual vehicle power behavior:
 
 The v90.9 source-regression tests were updated to validate these v90.10 invariants.
 
-## v90.11 — authoritative headlight edges + automatic Spotify wake + selectable speed-limit sources
+## v90.11.1 — authoritative headlight edges + Spotify recovery + no-billing speed-limit source testing
 
 Field testing of v90.10 showed one remaining rapid-headlight race: Center/HUD auto-brightness
 could already report OFF while Dashboard BLE was still connected or finishing a Breath. Door
 therefore waited for the slower Dashboard disconnect before beginning its day transition, and a
 stale Dashboard animation final could survive across a short OFF -> ON cycle.
 
-v90.11 makes the same Center/ELK-BLEDOM presence edge that drives the HUD's native auto-brightness
+v90.11/v90.11.1 makes the same Center/ELK-BLEDOM presence edge that drives the HUD's native auto-brightness
 the authoritative vehicle headlight state:
 
 - HUD auto-brightness ON and Door night transition now start from the same event.
@@ -384,14 +384,14 @@ Spotify recovery is also changed from repeated blind `connect()` attempts to aut
   reconnects automatically;
 - the destructive Reset/Reauthorize action remains troubleshooting-only.
 
-For speed-limit testing, the Vehicle page now exposes three independently selectable sources:
+For speed-limit testing, the Vehicle page now exposes three independently selectable no-billing sources:
 
 1. **Current** — unchanged decompiled HUDWAY/OSM matcher.
-2. **Enhanced OSM** — separate directional/continuity-aware OSM matcher for A/B testing.
-3. **HERE** — rolling GPS-trace route matching requesting `APPLICABLE_SPEED_LIMIT`; requires a HERE
-   API key entered in the app and stored only in iPhone Keychain.
+2. **Enhanced OSM** — separate directional/conditional + continuity-aware OSM matcher for A/B testing.
+3. **OSM Trace** — rolling GPS-trace map matching performed locally against the same nearby OSM road
+   geometry, with confidence-margin switching to resist parallel-road/frontage-road/ramp jumps.
 
-Switching sources clears the previous speed-limit sign until the selected source produces a fresh
-result. The ambient red overspeed warning remains intentionally unimplemented because the iOS app
-still does not receive the HUD/OBD vehicle-speed value directly; GPS speed is not used for that
-proposed warning.
+No HERE code, API key, or commercial map-service dependency remains. Switching sources clears the
+previous speed-limit sign until the selected source produces a fresh result. The ambient red overspeed
+warning remains intentionally unimplemented because the iOS app still does not receive the HUD/OBD
+vehicle-speed value directly; GPS speed is not used for that proposed warning.

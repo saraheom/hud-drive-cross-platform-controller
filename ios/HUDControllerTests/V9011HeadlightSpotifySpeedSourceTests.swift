@@ -31,22 +31,25 @@ final class V9011HeadlightSpotifySpeedSourceTests: XCTestCase {
         XCTAssertFalse(wake.contains("accessToken = nil"))
     }
 
-    func testThreeSpeedLimitSourcesRemainSelectable() throws {
+    func testThreeNoBillingSpeedLimitSourcesRemainSelectable() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         let view = try source("HUDController/UI/VehicleView.swift")
         XCTAssertTrue(speed.contains("case current = \"Current\""))
         XCTAssertTrue(speed.contains("case enhancedOSM = \"Enhanced OSM\""))
-        XCTAssertTrue(speed.contains("case here = \"HERE\""))
+        XCTAssertTrue(speed.contains("case traceOSM = \"OSM Trace\""))
+        XCTAssertFalse(speed.contains("case here = \"HERE\""))
         XCTAssertTrue(view.contains("SpeedLimitSourceMode.allCases"))
-        XCTAssertTrue(view.contains("Save HERE Key"))
+        XCTAssertFalse(view.contains("Save HERE Key"))
     }
 
-    func testHEREIsRouteMatchingAndKeychainBacked() throws {
+    func testOSMTraceUsesRollingTraceAndNoCommercialAPI() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
-        XCTAssertTrue(speed.contains("enum HereAPIKeyStore"))
-        XCTAssertTrue(speed.contains("routematching.hereapi.com/v8/match/routelinks"))
-        XCTAssertTrue(speed.contains("APPLICABLE_SPEED_LIMIT(*)"))
-        XCTAssertTrue(speed.contains("extractHereApplicableSpeedLimits"))
+        XCTAssertTrue(speed.contains("bestTraceSpeedLimit"))
+        XCTAssertTrue(speed.contains("traceLocations"))
+        XCTAssertTrue(speed.contains("parseSimpleConditionalMaxSpeed"))
+        XCTAssertTrue(speed.contains("OSM Trace accepted way="))
+        XCTAssertFalse(speed.contains("routematching.hereapi.com"))
+        XCTAssertFalse(speed.contains("HereAPIKeyStore"))
     }
 
     func testAmbientOverspeedFeatureIntentionallyStillParked() throws {

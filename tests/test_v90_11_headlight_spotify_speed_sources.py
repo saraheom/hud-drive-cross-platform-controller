@@ -39,13 +39,15 @@ def test_spotify_automatically_wakes_after_repeated_failures_without_clearing_to
     assert "you should not need to keep Spotify open" in MEDIA
 
 
-def test_speed_limit_source_selector_has_current_enhanced_osm_and_here():
+def test_speed_limit_source_selector_has_current_enhanced_and_trace_osm_only():
     assert 'case current = "Current"' in SPEED
     assert 'case enhancedOSM = "Enhanced OSM"' in SPEED
-    assert 'case here = "HERE"' in SPEED
+    assert 'case traceOSM = "OSM Trace"' in SPEED
+    assert 'case here = "HERE"' not in SPEED
     assert "SpeedLimitSourceMode.allCases" in VEHICLE
     assert "Picker(\"Speed-limit source\"" in VEHICLE
     assert "Current keeps the decompiled HUDWAY matcher unchanged" in VEHICLE
+    assert "commercial API" in VEHICLE
 
 
 def test_enhanced_osm_is_separate_from_original_matcher():
@@ -58,16 +60,18 @@ def test_enhanced_osm_is_separate_from_original_matcher():
     assert "Hold the previous accepted limit for one GPS sample" in SPEED
 
 
-def test_here_route_matching_is_opt_in_and_keychain_backed():
-    assert "enum HereAPIKeyStore" in SPEED
-    assert "kSecClassGenericPassword" in SPEED
-    assert "routematching.hereapi.com/v8/match/routelinks" in SPEED
-    assert 'URLQueryItem(name: "routeMatch", value: "1")' in SPEED
-    assert 'URLQueryItem(name: "attributes", value: "APPLICABLE_SPEED_LIMIT(*)")' in SPEED
-    assert "extractHereApplicableSpeedLimits" in SPEED
-    assert "SecureField(" in VEHICLE
-    assert "Save HERE Key" in VEHICLE
-    assert "HERE key is stored in iPhone Keychain" in VEHICLE
+def test_osm_trace_is_local_matcher_with_no_paid_api_or_key_ui():
+    assert "bestTraceSpeedLimit" in SPEED
+    assert "traceLocations" in SPEED
+    assert "traceCurrentSegmentID" in SPEED
+    assert "confidenceMargin" in SPEED
+    assert "OSM Trace accepted way=" in SPEED
+    assert "parseSimpleConditionalMaxSpeed" in SPEED
+    assert 'maxspeedConditional = "maxspeed:conditional"' in SPEED
+    assert "routematching.hereapi.com" not in SPEED
+    assert "HereAPIKeyStore" not in SPEED
+    assert "Save HERE Key" not in VEHICLE
+    assert "SecureField(" not in VEHICLE
 
 
 def test_overspeed_ambient_warning_remains_unimplemented_until_obd_speed_is_available():

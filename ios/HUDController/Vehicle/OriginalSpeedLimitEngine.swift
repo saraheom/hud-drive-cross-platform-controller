@@ -1,12 +1,11 @@
 import Foundation
 import CoreLocation
 import Observation
-import Security
 
 enum SpeedLimitSourceMode: String, CaseIterable, Identifiable {
     case current = "Current"
     case enhancedOSM = "Enhanced OSM"
-    case here = "HERE"
+    case traceOSM = "OSM Trace"
 
     var id: String { rawValue }
 
@@ -15,57 +14,10 @@ enum SpeedLimitSourceMode: String, CaseIterable, Identifiable {
         case .current:
             return "Original decompiled HUDWAY OSM matcher"
         case .enhancedOSM:
-            return "Enhanced OSM trace-aware matcher"
-        case .here:
-            return "HERE Route Matching + applicable speed limit"
+            return "Enhanced OSM directional + continuity matcher"
+        case .traceOSM:
+            return "Rolling GPS-trace map matcher using OSM only"
         }
-    }
-}
-
-enum HereAPIKeyStore {
-    private static let service = "com.jjunnyy.hudcontroller.here"
-    private static let account = "route-matching-api-key"
-
-    static func save(_ key: String) {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return }
-
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(base as CFDictionary)
-
-        var add = base
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
-    }
-
-    static func load() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let key = String(data: data, encoding: .utf8),
-              !key.isEmpty else { return nil }
-        return key
-    }
-
-    static func clear() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
     }
 }
 
@@ -82,6 +34,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let maxspeed: String?
         let maxspeedForward: String?
         let maxspeedBackward: String?
+        let maxspeedConditional: String?
+        let maxspeedForwardConditional: String?
+        let maxspeedBackwardConditional: String?
         let oneway: String?
         let name: String?
         let ref: String?
@@ -91,6 +46,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             case maxspeed
             case maxspeedForward = "maxspeed:forward"
             case maxspeedBackward = "maxspeed:backward"
+            case maxspeedConditional = "maxspeed:conditional"
+            case maxspeedForwardConditional = "maxspeed:forward:conditional"
+            case maxspeedBackwardConditional = "maxspeed:backward:conditional"
             case oneway
             case name
             case ref
@@ -131,6 +89,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let baseKmh: Int?
         let forwardKmh: Int?
         let backwardKmh: Int?
+        let baseConditional: String?
+        let forwardConditional: String?
+        let backwardConditional: String?
         let parts: [SegmentPart]
     }
 
@@ -138,6 +99,13 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let elementID: Int64
         let speedMph: Int
         let score: Double
+    }
+
+    struct TraceCandidate {
+        let elementID: Int64
+        let speedMph: Int
+        let score: Double
+        let confidenceMargin: Double
     }
 
     private let locationManager = CLLocationManager()
@@ -153,18 +121,16 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     private var enhancedCurrentSegmentID: Int64?
     private var enhancedPendingCandidate: (id: Int64, mph: Int, count: Int)?
-    private var hereTrace: [CLLocation] = []
-    private var hereLimitMph: Int?
-    private var hereLimitUpdatedAt: Date?
-    private var lastHereRequestAt: Date?
-    private var lastHereRequestLocation: CLLocation?
+    private var traceLocations: [CLLocation] = []
+    private var traceCurrentSegmentID: Int64?
+    private var tracePendingCandidate: (id: Int64, mph: Int, count: Int)?
+    private var traceLastConfidenceMargin: Double = 0
 
     private(set) var currentSpeedMph = 0
     private(set) var currentSpeedLimitMph = 0
     private(set) var status = "Waiting for location"
     private(set) var sourceDetail = "Current • original matcher"
 
-    var hereAPIKeyDraft: String = HereAPIKeyStore.load() ?? ""
 
     var sourceMode: SpeedLimitSourceMode {
         didSet {
@@ -174,9 +140,6 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    var hereAPIKeyConfigured: Bool {
-        !(HereAPIKeyStore.load()?.isEmpty ?? true)
-    }
 
     var enabled: Bool {
         didSet {
@@ -228,29 +191,6 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    func saveHereAPIKey() {
-        let trimmed = hereAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            status = "HERE API key is empty"
-            return
-        }
-        HereAPIKeyStore.save(trimmed)
-        hereAPIKeyDraft = trimmed
-        status = "HERE API key saved securely"
-        logger.log("SPEED LIMIT", "HERE API key saved to Keychain")
-        if sourceMode == .here {
-            refreshNow()
-        }
-    }
-
-    func clearHereAPIKey() {
-        HereAPIKeyStore.clear()
-        hereAPIKeyDraft = ""
-        hereLimitMph = nil
-        hereLimitUpdatedAt = nil
-        status = "HERE API key removed"
-        logger.log("SPEED LIMIT", "HERE API key removed from Keychain")
-    }
 
     func start() {
         logger.log("SPEED", "Starting original-style GPS + OSM speed engine")
@@ -340,8 +280,6 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     func refreshNow() {
         if let location = locationManager.location {
             lastQueryLocation = nil
-            lastHereRequestAt = nil
-            lastHereRequestLocation = nil
             Task { await updateProviderDataIfNeeded(at: location, force: true) }
         }
     }
@@ -351,12 +289,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         enhancedSegments.removeAll()
         enhancedCurrentSegmentID = nil
         enhancedPendingCandidate = nil
-        hereLimitMph = nil
-        hereLimitUpdatedAt = nil
-        hereTrace.removeAll()
+        traceLocations.removeAll()
+        traceCurrentSegmentID = nil
+        tracePendingCandidate = nil
+        traceLastConfidenceMargin = 0
         lastQueryLocation = nil
-        lastHereRequestAt = nil
-        lastHereRequestLocation = nil
         requestInFlight = false
         currentSpeedLimitMph = 0
         lastSentLimit = -1
@@ -427,7 +364,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             )
         }
 
-        appendHereTrace(location)
+        appendTraceLocation(location)
 
         let limit: Int?
         switch sourceMode {
@@ -436,26 +373,20 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             sourceDetail = "Current • original OSM"
         case .enhancedOSM:
             limit = bestEnhancedSpeedLimit(at: location)
-            sourceDetail = "Enhanced OSM • trace/continuity"
-        case .here:
-            if let updatedAt = hereLimitUpdatedAt,
-               Date().timeIntervalSince(updatedAt) <= 30 {
-                limit = hereLimitMph
-            } else {
-                limit = nil
-            }
-            sourceDetail = hereAPIKeyConfigured
-                ? "HERE • route matching"
-                : "HERE • API key required"
+            sourceDetail = "Enhanced OSM • directional/continuity"
+        case .traceOSM:
+            limit = bestTraceSpeedLimit(at: location)
+            sourceDetail = String(
+                format: "OSM Trace • rolling trace • margin %.2f",
+                traceLastConfidenceMargin
+            )
         }
 
         if let limit, limit > 0 {
             applyResolvedLimit(limit)
             status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • limit \(limit) mph"
         } else {
-            status = sourceMode == .here && !hereAPIKeyConfigured
-                ? "HERE selected • save an API key to begin testing"
-                : "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
+            status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
         }
 
         Task { await updateProviderDataIfNeeded(at: location, force: false) }
@@ -480,10 +411,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         switch sourceMode {
         case .current:
             await updateOriginalSegmentsIfNeeded(at: location, force: force)
-        case .enhancedOSM:
+        case .enhancedOSM, .traceOSM:
             await updateEnhancedSegmentsIfNeeded(at: location, force: force)
-        case .here:
-            await updateHereLimitIfNeeded(at: location, force: force)
         }
     }
 
@@ -606,6 +535,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
           way[highway][maxspeed](around:500,\(lat),\(lon));
           way[highway]["maxspeed:forward"](around:500,\(lat),\(lon));
           way[highway]["maxspeed:backward"](around:500,\(lat),\(lon));
+          way[highway]["maxspeed:conditional"](around:500,\(lat),\(lon));
+          way[highway]["maxspeed:forward:conditional"](around:500,\(lat),\(lon));
+          way[highway]["maxspeed:backward:conditional"](around:500,\(lat),\(lon));
         );
         out tags geom;
         """
@@ -624,7 +556,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             self.lastQueryLocation = location
             self.logger.log(
                 "SPEED LIMIT",
-                "Enhanced OSM matcher loaded \(newSegments.count) roads (500m query / directional maxspeed / continuity score)"
+                "OSM experimental matcher loaded \(newSegments.count) roads (500m query / directional+conditional maxspeed / continuity+trace scoring)"
             )
         } catch {
             self.logger.log("SPEED LIMIT ERROR", "Enhanced OSM: \(error.localizedDescription)")
@@ -654,6 +586,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             baseKmh: base,
             forwardKmh: forward,
             backwardKmh: backward,
+            baseConditional: tags.maxspeedConditional,
+            forwardConditional: tags.maxspeedForwardConditional,
+            backwardConditional: tags.maxspeedBackwardConditional,
             parts: makeParts(points)
         )
     }
@@ -681,13 +616,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 let angle = min(forwardAngle, reverseAngle)
                 guard angle <= 100 else { continue }
 
-                let kmh: Int?
-                if travelingForward {
-                    kmh = segment.forwardKmh ?? segment.baseKmh ?? segment.backwardKmh
-                } else {
-                    kmh = segment.backwardKmh ?? segment.baseKmh ?? segment.forwardKmh
-                }
-                guard let kmh, kmh > 0 else { continue }
+                guard let kmh = Self.resolvedKmh(
+                    for: segment,
+                    travelingForward: travelingForward,
+                    at: location.timestamp
+                ), kmh > 0 else { continue }
 
                 var score =
                     min(3.0, angle / 30.0) +
@@ -741,136 +674,251 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         return nil
     }
 
-    // MARK: - HERE route matching test source
+    // MARK: - OSM rolling-trace matcher (no commercial API)
 
-    private func appendHereTrace(_ location: CLLocation) {
-        if let last = hereTrace.last, last.distance(from: location) < 5 {
+    private func appendTraceLocation(_ location: CLLocation) {
+        if let last = traceLocations.last, last.distance(from: location) < 4 {
             return
         }
-        hereTrace.append(location)
-        if hereTrace.count > 12 {
-            hereTrace.removeFirst(hereTrace.count - 12)
+        traceLocations.append(location)
+        if traceLocations.count > 10 {
+            traceLocations.removeFirst(traceLocations.count - 10)
         }
     }
 
-    private func updateHereLimitIfNeeded(at location: CLLocation, force: Bool) async {
-        guard let apiKey = HereAPIKeyStore.load(), !apiKey.isEmpty else {
-            status = "HERE selected • save an API key to begin testing"
-            return
-        }
+    private func bestTraceSpeedLimit(at location: CLLocation) -> Int? {
+        guard !enhancedSegments.isEmpty else { return nil }
 
-        if !force {
-            if let lastHereRequestAt, Date().timeIntervalSince(lastHereRequestAt) < 8 {
-                return
-            }
-            if let lastHereRequestLocation,
-               lastHereRequestLocation.distance(from: location) < 35,
-               let updatedAt = hereLimitUpdatedAt,
-               Date().timeIntervalSince(updatedAt) < 15 {
-                return
-            }
-        }
+        let trace = Array(traceLocations.suffix(8))
+        guard !trace.isEmpty else { return nil }
 
-        guard hereTrace.count >= 2 else {
-            status = "HERE selected • collecting GPS trace…"
-            return
-        }
-        guard !requestInFlight else { return }
-        requestInFlight = true
-        defer { requestInFlight = false }
+        var scored: [(segment: EnhancedSegment, score: Double, speedMph: Int)] = []
 
-        guard var comps = URLComponents(
-            string: "https://routematching.hereapi.com/v8/match/routelinks"
-        ) else { return }
-        comps.queryItems = [
-            URLQueryItem(name: "routeMatch", value: "1"),
-            URLQueryItem(name: "mode", value: "fastest;car;traffic:disabled"),
-            URLQueryItem(name: "attributes", value: "APPLICABLE_SPEED_LIMIT(*)"),
-            URLQueryItem(name: "apiKey", value: apiKey)
-        ]
-        guard let url = comps.url else { return }
+        for segment in enhancedSegments {
+            guard !segment.parts.isEmpty else { continue }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-
-        var csv = "LATITUDE,LONGITUDE,TIMESTAMP\n"
-        let formatter = ISO8601DateFormatter()
-        for point in hereTrace {
-            csv += "\(point.coordinate.latitude),\(point.coordinate.longitude),\(formatter.string(from: point.timestamp))\n"
-        }
-        request.httpBody = csv.data(using: .utf8)
-
-        do {
-            lastHereRequestAt = Date()
-            lastHereRequestLocation = location
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                let body = String(data: data.prefix(300), encoding: .utf8) ?? ""
-                throw NSError(
-                    domain: "HERE",
-                    code: http.statusCode,
-                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode) \(body)"]
+            // The newest point must still be plausibly on this road. This prevents
+            // history from pinning us to a road after a real turn or ramp transition.
+            let currentCourse = location.course >= 0 ? location.course : 0
+            var currentBest: (distance: Double, angle: Double, forward: Bool)?
+            for part in segment.parts {
+                let distance = Self.distanceFrom(
+                    location.coordinate,
+                    toSegmentA: part.start,
+                    b: part.end
                 )
-            }
-
-            let object = try JSONSerialization.jsonObject(with: data)
-            let limits = Self.extractHereApplicableSpeedLimits(from: object)
-            guard let limit = limits.last, limit > 0 else {
-                throw NSError(
-                    domain: "HERE",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "No applicable speed limit in route-match response"]
-                )
-            }
-
-            guard sourceMode == .here else {
-                logger.log("SPEED LIMIT", "Discarded stale HERE response after source switch")
-                return
-            }
-            hereLimitMph = limit
-            hereLimitUpdatedAt = Date()
-            applyResolvedLimit(limit)
-            status = "HERE • GPS \(currentSpeedMph) mph • limit \(limit) mph"
-            logger.log(
-                "SPEED LIMIT",
-                "HERE route match resolved \(limit) mph from \(hereTrace.count)-point GPS trace"
-            )
-        } catch {
-            logger.log("SPEED LIMIT ERROR", "HERE: \(error.localizedDescription)")
-            status = "HERE lookup failed • \(error.localizedDescription)"
-        }
-    }
-
-    private static func extractHereApplicableSpeedLimits(from object: Any) -> [Int] {
-        var result: [Int] = []
-
-        func numericValue(_ value: Any?) -> Double? {
-            if let n = value as? NSNumber { return n.doubleValue }
-            if let s = value as? String { return Double(s) }
-            return nil
-        }
-
-        func walk(_ value: Any) {
-            if let dict = value as? [String: Any] {
-                if let raw = numericValue(dict["APPLICABLE_SPEED_LIMIT"]), raw > 0 {
-                    let unit = (dict["SPEED_LIMIT_UNIT"] as? String ?? "K").uppercased()
-                    let mph: Int
-                    if unit.hasPrefix("M") {
-                        mph = Int(raw.rounded())
-                    } else {
-                        mph = Int((raw / 1.609344).rounded())
-                    }
-                    if mph > 0 { result.append(mph) }
+                let forwardAngle = Self.angularDifference(part.direction, currentCourse)
+                let reverseAngle = Self.angularDifference(fmod(part.direction + 180, 360), currentCourse)
+                let forward = forwardAngle <= reverseAngle
+                let angle = min(forwardAngle, reverseAngle)
+                if currentBest == nil || distance + angle * 0.15 < currentBest!.distance + currentBest!.angle * 0.15 {
+                    currentBest = (distance, angle, forward)
                 }
-                for child in dict.values { walk(child) }
-            } else if let array = value as? [Any] {
-                for child in array { walk(child) }
+            }
+            guard let currentBest, currentBest.distance <= 55, currentBest.angle <= 105 else { continue }
+            guard let kmh = Self.resolvedKmh(
+                for: segment,
+                travelingForward: currentBest.forward,
+                at: location.timestamp
+            ), kmh > 0 else { continue }
+
+            var weightedScore = 0.0
+            var totalWeight = 0.0
+            var matchedPoints = 0
+
+            for (index, sample) in trace.enumerated() {
+                let weight = Double(index + 1)
+                let course = sample.course >= 0 ? sample.course : currentCourse
+                var pointBest = Double.greatestFiniteMagnitude
+
+                for part in segment.parts {
+                    let distance = Self.distanceFrom(
+                        sample.coordinate,
+                        toSegmentA: part.start,
+                        b: part.end
+                    )
+                    guard distance <= 80 else { continue }
+                    let forwardAngle = Self.angularDifference(part.direction, course)
+                    let reverseAngle = Self.angularDifference(fmod(part.direction + 180, 360), course)
+                    let angle = min(forwardAngle, reverseAngle)
+                    let local = min(4.0, distance / 18.0) + min(3.0, angle / 35.0)
+                    pointBest = min(pointBest, local)
+                }
+
+                if pointBest.isFinite {
+                    matchedPoints += 1
+                    weightedScore += pointBest * weight
+                } else {
+                    weightedScore += 7.0 * weight
+                }
+                totalWeight += weight
+            }
+
+            guard matchedPoints >= max(1, trace.count / 2) else { continue }
+            var score = weightedScore / max(1.0, totalWeight)
+
+            if segment.elementID == traceCurrentSegmentID {
+                score -= 0.75
+            }
+            if let pending = tracePendingCandidate, pending.id == segment.elementID {
+                score -= 0.20
+            }
+
+            let mph = Int((Double(kmh) / 1.609344).rounded())
+            scored.append((segment, score, mph))
+        }
+
+        scored.sort { $0.score < $1.score }
+        guard let best = scored.first else { return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil }
+        let secondScore = scored.dropFirst().first?.score ?? (best.score + 3.0)
+        let margin = max(0, secondScore - best.score)
+        traceLastConfidenceMargin = margin
+
+        if best.segment.elementID == traceCurrentSegmentID {
+            tracePendingCandidate = nil
+            return best.speedMph
+        }
+
+        // Require both a score advantage and repeated evidence before changing roads.
+        // This is intentionally conservative around frontage roads, divided highways,
+        // parking-lot aisles and ramps.
+        let strongEnough = margin >= 0.30 || traceCurrentSegmentID == nil
+        if strongEnough {
+            if let pending = tracePendingCandidate,
+               pending.id == best.segment.elementID,
+               pending.mph == best.speedMph {
+                let next = pending.count + 1
+                tracePendingCandidate = (best.segment.elementID, best.speedMph, next)
+                if next >= 2 {
+                    traceCurrentSegmentID = best.segment.elementID
+                    tracePendingCandidate = nil
+                    logger.log(
+                        "SPEED LIMIT",
+                        String(
+                            format: "OSM Trace accepted way=%lld limit=%d mph score=%.2f margin=%.2f trace=%d",
+                            best.segment.elementID,
+                            best.speedMph,
+                            best.score,
+                            margin,
+                            trace.count
+                        )
+                    )
+                    return best.speedMph
+                }
+            } else {
+                tracePendingCandidate = (best.segment.elementID, best.speedMph, 1)
             }
         }
 
-        walk(object)
-        return result
+        return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil
+    }
+
+    private static func resolvedKmh(
+        for segment: EnhancedSegment,
+        travelingForward: Bool,
+        at date: Date
+    ) -> Int? {
+        let directionalConditional = travelingForward
+            ? segment.forwardConditional
+            : segment.backwardConditional
+        if let raw = directionalConditional,
+           let conditional = parseSimpleConditionalMaxSpeed(raw, at: date) {
+            return conditional
+        }
+        if let raw = segment.baseConditional,
+           let conditional = parseSimpleConditionalMaxSpeed(raw, at: date) {
+            return conditional
+        }
+
+        if travelingForward {
+            return segment.forwardKmh ?? segment.baseKmh ?? segment.backwardKmh
+        }
+        return segment.backwardKmh ?? segment.baseKmh ?? segment.forwardKmh
+    }
+
+    /// Conservative evaluator for common OSM time/day conditional limits.
+    /// Unsupported conditions (wet, snow, flashing lights, children_present, PH,
+    /// vehicle-specific clauses, etc.) are ignored rather than guessed.
+    private static func parseSimpleConditionalMaxSpeed(_ raw: String, at date: Date) -> Int? {
+        let calendar = Calendar.current
+        let weekday = calendar.component(.weekday, from: date) // 1=Su ... 7=Sa
+        let minute = calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
+
+        func dayIndex(_ token: String) -> Int? {
+            switch token {
+            case "Su": return 1
+            case "Mo": return 2
+            case "Tu": return 3
+            case "We": return 4
+            case "Th": return 5
+            case "Fr": return 6
+            case "Sa": return 7
+            default: return nil
+            }
+        }
+
+        func dayMatches(_ spec: String) -> Bool {
+            let pieces = spec.split(separator: ",").map(String.init)
+            for piece in pieces {
+                if piece.contains("-") {
+                    let ends = piece.split(separator: "-").map(String.init)
+                    if ends.count == 2, let a = dayIndex(ends[0]), let b = dayIndex(ends[1]) {
+                        if a <= b, (a...b).contains(weekday) { return true }
+                        if a > b, weekday >= a || weekday <= b { return true }
+                    }
+                } else if dayIndex(piece) == weekday {
+                    return true
+                }
+            }
+            return false
+        }
+
+        func timeMatches(_ spec: String) -> Bool? {
+            let ends = spec.split(separator: "-").map(String.init)
+            guard ends.count == 2 else { return nil }
+            func parse(_ value: String) -> Int? {
+                let parts = value.split(separator: ":").compactMap { Int($0) }
+                guard parts.count == 2 else { return nil }
+                return parts[0] * 60 + parts[1]
+            }
+            guard let a = parse(ends[0]), let b = parse(ends[1]) else { return nil }
+            return a <= b ? (minute >= a && minute <= b) : (minute >= a || minute <= b)
+        }
+
+        for clause in raw.split(separator: ";") {
+            let pair = clause.split(separator: "@", maxSplits: 1).map {
+                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard pair.count == 2, let parsed = parseOriginalMaxSpeed(pair[0]) else { continue }
+            var condition = pair[1]
+                .replacingOccurrences(of: "(", with: "")
+                .replacingOccurrences(of: ")", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let unsupported = ["wet", "snow", "ice", "flashing", "children", "school", "PH", "weight", "hgv", "bus", "vehicle"]
+            if unsupported.contains(where: { condition.localizedCaseInsensitiveContains($0) }) {
+                continue
+            }
+
+            let tokens = condition.split(whereSeparator: { $0 == " " || $0 == "&" }).map(String.init)
+            var sawRecognized = false
+            var matches = true
+            for token in tokens where !token.isEmpty {
+                if token.contains(":") && token.contains("-") {
+                    guard let result = timeMatches(token) else { matches = false; break }
+                    sawRecognized = true
+                    matches = matches && result
+                } else if token.range(of: #"^(Mo|Tu|We|Th|Fr|Sa|Su)(-(Mo|Tu|We|Th|Fr|Sa|Su))?(,(Mo|Tu|We|Th|Fr|Sa|Su)(-(Mo|Tu|We|Th|Fr|Sa|Su))?)*$"#, options: .regularExpression) != nil {
+                    sawRecognized = true
+                    matches = matches && dayMatches(token)
+                } else {
+                    matches = false
+                    break
+                }
+            }
+            if sawRecognized && matches { return parsed.kmh }
+        }
+        return nil
     }
 
     private static func parseOriginalMaxSpeed(
