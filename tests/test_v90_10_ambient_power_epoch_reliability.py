@@ -6,11 +6,11 @@ MODEL = (ROOT / "ios/HUDController/Vehicle/AmbientLightModels.swift").read_text(
 VIEW = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
 
 
-def test_bledim_animation_uses_native_255_steps_at_shared_20hz():
+def test_bledim_animation_uses_native_255_steps_at_protocol_aware_rate():
     assert "static func brightnessRaw(_ value: UInt8" in MODEL
     assert "private func sendBrightnessNormalized(" in MONITOR
     assert "let raw = UInt8((level * 255.0).rounded())" in MONITOR
-    assert "protocolPacing=20Hz/rawBLEDIM" in MONITOR
+    assert "protocolPacing=Lotus20Hz/BLEDIM10Hz" in MONITOR
     assert "protocolPacing=BLEDIM10Hz/Lotus20Hz" not in MONITOR
 
 

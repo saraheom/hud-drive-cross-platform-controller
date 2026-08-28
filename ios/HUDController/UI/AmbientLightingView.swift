@@ -754,7 +754,7 @@ private struct PresetColorRow: View {
     }
 }
 
-private extension AmbientRGB {
+extension AmbientRGB {
     var swiftUIColor: Color {
         Color(
             red: Double(red) / 255.0,
@@ -764,7 +764,7 @@ private extension AmbientRGB {
     }
 }
 
-private extension Color {
+extension Color {
     var ambientRGB: AmbientRGB {
         let uiColor = UIColor(self)
         var red: CGFloat = 0

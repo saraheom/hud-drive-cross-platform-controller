@@ -425,7 +425,7 @@ run anywhere, but automatic `authorizeAndPlayURI` wake is permitted only while t
 transport or OBD2 connection indicates an active vehicle session. Opening HUD Controller
 away from the car no longer automatically opens Spotify.
 
-An optional finite red ambient overspeed warning is now available under Vehicle -> Speed +
+An optional finite ambient overspeed warning is now available under Vehicle -> Speed +
 Speed Limit. It uses the exact condition `GPS speed > posted speed limit + offset`, with a
 user offset of 0–20 mph. The user can select Door or Dashboard, warning brightness, 2x/3x
 finite pulses, and pulse duration. It only triggers on a below-to-above crossing and will
@@ -435,3 +435,26 @@ allowed only while its headlight-powered controller is available; physical power
 cancels the overlay without stale restore commands. The warning never sends Power OFF.
 
 See `docs/V90_12_AMBIENT_RECOVERY_OVERSPEED_SPOTIFY_GATE.md` for the state-machine details.
+
+
+## v90.13 — BLEDIM fail-safe recovery + configurable overspeed warning
+
+Road-test hardening for the Door/Dashboard BLEDIM2 controllers:
+
+- ELK-BLEDOM / Lotus Lantern keeps the 20 Hz animation path; BLEDIM2 animation traffic is limited to 10 Hz to reduce FFF1 write-without-response pressure while preserving the native 0...255 brightness interpolation.
+- A BLEDIM2 controller that disconnects during Breath/fade/warning no longer rejoins the transient animation when it reconnects. GATT readiness instead restores the semantic steady state: Power ON, normal color, and the current preferred (or Door day/night) brightness.
+- Every completed BLEDIM2 Breath/fade gets a spaced three-round steady-state reassertion so a dropped final write cannot strand a light at 0% or a transient level.
+- Overspeed warning color is user-selectable (red by default), pulse duration is 0–5 s, and a fixed 60 s cooldown suppresses rapid threshold chatter/re-cross warnings.
+
+## v90.13.1 — official BLEDIM2 slider fidelity
+
+Re-analysis of the August 24 official BLEDIM2 iOS PacketLogger trace shows continuous
+brightness slider traffic at approximately 100 ms intervals (~10 Hz), raw 0–255
+brightness values, and occasional repeated identical raw brightness bytes. The BLEDIM
+animation path now follows that observed cadence exactly, permits those same-value
+10-Hz reassertions, uses one rolling app-wide BLEDIM sequence stream, and no longer
+performs Device Information/Battery reads during paired BLEDIM reconnects. Paired
+BLEDIM reconnect discovery is restricted to FFF0 -> FFF1, reducing GATT traffic during
+the animation-critical window. Pending write-without-response recovery is also resumed
+from CoreBluetooth's ready callback. See
+`docs/V90_13_1_BLEDIM_OFFICIAL_SLIDER_FIDELITY.md`.

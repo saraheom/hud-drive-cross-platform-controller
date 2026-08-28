@@ -27,14 +27,17 @@ def test_spotify_automatic_app_wake_requires_hud_or_obd_vehicle_evidence():
     assert 'updateSpotifyVehicleWakeGate(reason: "app became active")' in ROOT_VIEW
 
 
-def test_dashboard_interrupted_breath_rearms_inside_same_headlight_epoch():
+def test_interrupted_bledim_transient_recovers_steady_state_instead_of_rejoining_animation():
     disconnect = block(MONITOR, "didDisconnectPeripheral peripheral: CBPeripheral", "// MARK: - CBPeripheralDelegate")
-    assert "interruptedHeadlightAnimation" in disconnect
-    assert "headlightAnimatedEpochByID[id] = nil" in disconnect
-    assert "restartHeadlightBreathOnReconnectIDs.insert(id)" in disconnect
-    assert "Interrupted headlight Breath will restart on reconnect" in disconnect
-    assert 'noteHeadlightPowerSeen(id, reason: "didConnect")' in MONITOR
-    assert "headlightAnimatedEpochByID[id] != headlightPowerEpoch" in MONITOR
+    assert "interruptedTransientState" in disconnect
+    assert "steadyStateRecoveryPendingIDs.insert(id)" in disconnect
+    assert "headlightAnimatedEpochByID[id] = self.headlightPowerEpoch" in disconnect
+    assert "Interrupted headlight Breath will restore steady state on reconnect" in disconnect
+    assert "restartHeadlightBreathOnReconnectIDs" not in MONITOR
+    ready = block(MONITOR, "if newlyReady, let device = self.pairedDevice(id)", "self.evaluateVehicleLightingAutomation()")
+    assert "GATT ready with pending steady-state recovery" in ready
+    assert "skipping animation rejoin" in ready
+    assert "scheduleRobustSteadyStateRecovery" in ready
 
 
 def test_headlight_edge_cancels_entire_old_shared_breath_timeline():
@@ -76,16 +79,19 @@ def test_finite_overspeed_warning_uses_exact_user_requested_formula_and_no_sign_
     assert "fall below and recross" in update
 
 
-def test_warning_ui_exposes_offset_light_brightness_pulse_count_and_duration():
+def test_warning_ui_exposes_color_offset_brightness_pulses_duration_and_cooldown():
     assert "AMBIENT OVERSPEED WARNING" in VEHICLE
-    assert "Finite red-light warning" in VEHICLE
+    assert "Finite color-light warning" in VEHICLE
     assert "Warning light" in VEHICLE
+    assert "Warning color" in VEHICLE
     assert "Offset above limit" in VEHICLE
     assert "in: 0...20" in VEHICLE
     assert "Warning brightness" in VEHICLE
     assert 'Text("2×").tag(2)' in VEHICLE
     assert 'Text("3×").tag(3)' in VEHICLE
     assert "Pulse duration / cycle" in VEHICLE
+    assert "in: 0.0...5.0" in VEHICLE
+    assert 'LabeledContent("Repeat cooldown", value: "60 s")' in VEHICLE
     assert "No speed-limit sign — disabled" in VEHICLE
 
 
@@ -127,3 +133,29 @@ def test_speed_engine_is_wired_to_ambient_warning_and_still_uses_gps_not_obd_spe
     assert "gpsSpeedMph: speedMph" in APP
     assert "speedLimitMph: limitMph" in APP
     assert "limitAvailable: available" in APP
+
+
+def test_bledim_animation_is_rate_limited_and_final_state_is_reasserted():
+    assert "pairedDevice(id)?.protocolKind == .bledim2 ? 0.10 : 0.05" in MONITOR
+    assert "semanticCommandSettle(for id: UUID)" in MONITOR
+    recovery = block(MONITOR, "private func scheduleRobustSteadyStateRecovery", "// MARK: - Power-up breath animation")
+    assert "let rounds = device.protocolKind == .bledim2 ? 3 : 1" in recovery
+    assert "sendPowerWhenReady(id, on: true" in recovery
+    assert "steady recovery normal color" in recovery
+    assert "steadyStateTargetBrightness(for: id)" in recovery
+    assert "milliseconds(300)" in recovery
+    assert "milliseconds(600)" in recovery
+    assert 'scheduleRobustSteadyStateRecovery(id, reason: "post-breath safety")' in MONITOR
+    assert 'scheduleRobustSteadyStateRecovery(id, reason: "post-fade safety")' in MONITOR
+
+
+def test_overspeed_color_defaults_red_duration_extends_to_five_seconds_and_cooldown_is_60s():
+    assert "var overspeedWarningColor: AmbientRGB" in MONITOR
+    assert "AmbientRGB(red: 255, green: 0, blue: 0)" in MONITOR
+    assert "max(0.0, min(5.0, overspeedWarningPulseDurationSeconds))" in MONITOR
+    assert "overspeedWarningCooldownSeconds: TimeInterval = 60.0" in MONITOR
+    trigger = block(MONITOR, "private func triggerOverspeedWarning", "private func abortOverspeedWarningTask")
+    assert "overspeedLastWarningTriggeredAt" in trigger
+    assert "Overspeed recross suppressed by 60s cooldown" in trigger
+    assert "let warningColor = overspeedWarningColor" in trigger
+    assert 'sendColorWhenReady(id, color: warningColor, reason: "overspeed warning color")' in trigger

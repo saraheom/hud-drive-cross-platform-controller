@@ -15,7 +15,7 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(model.contains("static func brightnessRaw(_ value: UInt8"))
         XCTAssertTrue(monitor.contains("private func sendBrightnessNormalized("))
         XCTAssertTrue(monitor.contains("let raw = UInt8((level * 255.0).rounded())"))
-        XCTAssertTrue(monitor.contains("protocolPacing=20Hz/rawBLEDIM"))
+        XCTAssertTrue(monitor.contains("protocolPacing=Lotus20Hz/BLEDIM10Hz"))
         XCTAssertTrue(monitor.contains("0.05"))
         XCTAssertFalse(monitor.contains("protocolPacing=BLEDIM10Hz/Lotus20Hz"))
     }

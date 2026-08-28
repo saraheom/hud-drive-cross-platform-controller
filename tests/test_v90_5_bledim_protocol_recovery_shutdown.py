@@ -26,7 +26,11 @@ def test_v905_reads_bledim_device_information_and_advertisement_metadata():
     assert "recordBLEDIMDiagnosticValue" in monitor
     for uuid in ["2A29", "2A24", "2A25", "2A27", "2A26", "2A28", "2A23", "2A2A", "2A50", "2A19"]:
         assert uuid in monitor
-    assert 'serviceValue == "180A" || serviceValue == "180F"' in monitor
+    # v90.13.1 keeps parsed diagnostic handlers/UUID knowledge, but normal paired
+    # BLEDIM reconnects deliberately avoid Device Information/Battery reads so
+    # GATT diagnostics cannot compete with 10-Hz control traffic.
+    assert 'serviceValue == "180A" || serviceValue == "180F"' not in monitor
+    assert "Targeted BLEDIM2 FFF0 service discovery requested" in monitor
 
 
 def test_v908_engine_off_leaves_all_lights_unchanged():

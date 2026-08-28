@@ -121,7 +121,7 @@ struct VehicleView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Toggle("Finite red-light warning", isOn: Binding(
+                            Toggle("Finite color-light warning", isOn: Binding(
                                 get: { state.ambientLight.overspeedWarningEnabled },
                                 set: { state.ambientLight.overspeedWarningEnabled = $0 }
                             ))
@@ -135,6 +135,16 @@ struct VehicleView: View {
                                 }
                             }
                             .pickerStyle(.segmented)
+                            .disabled(!state.ambientLight.overspeedWarningEnabled)
+
+                            ColorPicker(
+                                "Warning color",
+                                selection: Binding(
+                                    get: { state.ambientLight.overspeedWarningColor.swiftUIColor },
+                                    set: { state.ambientLight.setOverspeedWarningColor($0.ambientRGB) }
+                                ),
+                                supportsOpacity: false
+                            )
                             .disabled(!state.ambientLight.overspeedWarningEnabled)
 
                             Stepper(
@@ -161,7 +171,7 @@ struct VehicleView: View {
                             }
                             .disabled(!state.ambientLight.overspeedWarningEnabled)
 
-                            Picker("Red pulse count", selection: Binding(
+                            Picker("Pulse count", selection: Binding(
                                 get: { state.ambientLight.overspeedWarningPulseCount },
                                 set: { state.ambientLight.setOverspeedWarningPulseCount($0) }
                             )) {
@@ -179,11 +189,15 @@ struct VehicleView: View {
                                         get: { state.ambientLight.overspeedWarningPulseDurationSeconds },
                                         set: { state.ambientLight.setOverspeedWarningPulseDuration($0) }
                                     ),
-                                    in: 0.4...2.0,
+                                    in: 0.0...5.0,
                                     step: 0.1
                                 )
                             }
                             .disabled(!state.ambientLight.overspeedWarningEnabled)
+
+                            LabeledContent("Repeat cooldown", value: "60 s")
+                                .font(.subheadline)
+                                .disabled(!state.ambientLight.overspeedWarningEnabled)
 
                             if state.speedEngine.speedLimitAvailableForWarning {
                                 LabeledContent(
@@ -198,7 +212,7 @@ struct VehicleView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Text("Triggers only when GPS speed crosses from at/below to strictly above posted speed limit + offset. It fires 2–3 finite red pulses, then restores the normal light state. It does not retrigger while speed remains above the threshold. If the speed-limit sign is unavailable, no warning is allowed. Dashboard warnings run only while the physical headlight circuit is on; headlight power loss cancels the warning without sending stale restore commands.")
+                            Text("Triggers only when GPS speed crosses from at/below to strictly above posted speed limit + offset. It fires 2–3 finite pulses using your selected color, then restores the normal light state. After any warning starts, a 60-second cooldown suppresses threshold chatter even if speed repeatedly dips below and recrosses. If the speed-limit sign is unavailable, no warning is allowed. Dashboard warnings run only while the physical headlight circuit is on; headlight power loss cancels the warning without sending stale restore commands.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
 

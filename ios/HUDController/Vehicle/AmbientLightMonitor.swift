@@ -121,6 +121,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             if !overspeedWarningEnabled {
                 cancelOverspeedWarning(restoreIfPossible: true, reason: "warning disabled")
                 overspeedCrossingBaselineValid = false
+                overspeedLastWarningTriggeredAt = nil
             }
         }
     }
@@ -148,16 +149,26 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    /// User-selected warning overlay color. Red remains the default.
+    var overspeedWarningColor: AmbientRGB {
+        didSet {
+            if let data = try? JSONEncoder().encode(overspeedWarningColor) {
+                UserDefaults.standard.set(data, forKey: "HUD.Ambient.v90_13.overspeed.color")
+            }
+        }
+    }
+
     var overspeedWarningPulseCount: Int {
         didSet {
             UserDefaults.standard.set(max(2, min(3, overspeedWarningPulseCount)), forKey: "HUD.Ambient.v90_12.overspeed.pulses")
         }
     }
 
-    /// Duration of one full red high -> low -> high pulse.
+    /// Duration of one full warning-color high -> low -> high pulse.
+    /// Zero is allowed in the UI and is executed as the transport-safe minimum.
     var overspeedWarningPulseDurationSeconds: Double {
         didSet {
-            UserDefaults.standard.set(max(0.4, min(2.0, overspeedWarningPulseDurationSeconds)), forKey: "HUD.Ambient.v90_12.overspeed.pulseDuration")
+            UserDefaults.standard.set(max(0.0, min(5.0, overspeedWarningPulseDurationSeconds)), forKey: "HUD.Ambient.v90_12.overspeed.pulseDuration")
         }
     }
 
@@ -224,11 +235,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private(set) var bledimAdvertisementSummaryByID: [UUID: String] = [:]
     private var bledimLastAdvertisementSignatureByID: [UUID: String] = [:]
 
-    /// Official BLEDIM2 uses a monotonically increasing one-byte sequence field.
-    /// The packet capture only proved the counter for one peripheral, so v90.9
-    /// keeps a separate counter per BLEDIM connection. This avoids interleaving
-    /// Dashboard and Door into +2 sequence jumps during synchronized animation.
-    private var bledimSequenceByID: [UUID: UInt8] = [:]
+    /// Official BLEDIM2 uses one monotonically increasing one-byte sequence stream.
+    /// Re-analysis of the August 24 PacketLogger capture shows the same app-level
+    /// counter continuing across multiple simultaneous BLEDIM connections (for
+    /// example seq 0x05 on one ACL handle followed by 0x07 on another). Keep the
+    /// sequence global so Door/Dashboard interleaving matches the official app.
+    private var bledimSequence: UInt8 = 0x08
 
     /// Repeated service discovery was previously being triggered by the 2-second
     /// connection watchdog even after a controller was fully ready. During a fade
@@ -278,13 +290,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var headlightOffDebounceTask: Task<Void, Never>?
     private let headlightOffDebounceSeconds: TimeInterval = 0.35
 
-    /// A Dashboard disconnect while its Breath is actually running is treated as
-    /// a local physical-power interruption. If it reconnects inside the same shared
-    /// Center/headlight epoch, it is allowed to perform a fresh bootstrap + Breath
-    /// instead of being stuck at the last transient animation brightness.
-    private var restartHeadlightBreathOnReconnectIDs: Set<UUID> = []
+    /// v90.13 fail-safe recovery. If a controller loses BLE while a transient
+    /// animation/fade/warning owns its brightness, never let it rejoin that transient
+    /// timeline. Recover to the semantic steady state (Power ON + normal color +
+    /// preferred/day-night brightness) as soon as GATT control is ready again.
+    private var steadyStateRecoveryPendingIDs: Set<UUID> = []
+    private var steadyStateRecoveryTasks: [UUID: Task<Void, Never>] = [:]
 
-    /// Finite red overspeed overlay. It never sends a Power OFF command.
+    /// Finite overspeed overlay. It never sends a Power OFF command.
     private var overspeedWarningTask: Task<Void, Never>?
     private var overspeedRestoreTask: Task<Void, Never>?
     private var overspeedWarningGeneration = 0
@@ -292,6 +305,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var overspeedAboveThreshold = false
     private var overspeedCrossingBaselineValid = false
     private var overspeedLastLimitAvailable = false
+    private var overspeedLastWarningTriggeredAt: Date?
+    private let overspeedWarningCooldownSeconds: TimeInterval = 60.0
 
     /// UI deep-link token used by the persistent Ambient shortcut.
     private(set) var pairedLightsFocusRequest = 0
@@ -338,10 +353,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ? 5 : max(0, min(20, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.offsetMph")))
         self.overspeedWarningBrightness = d.object(forKey: "HUD.Ambient.v90_12.overspeed.brightness") == nil
             ? 100 : max(10, min(100, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.brightness")))
+        self.overspeedWarningColor = Self.decode(AmbientRGB.self, key: "HUD.Ambient.v90_13.overspeed.color")
+            ?? AmbientRGB(red: 255, green: 0, blue: 0)
         self.overspeedWarningPulseCount = d.object(forKey: "HUD.Ambient.v90_12.overspeed.pulses") == nil
             ? 3 : max(2, min(3, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.pulses")))
         self.overspeedWarningPulseDurationSeconds = d.object(forKey: "HUD.Ambient.v90_12.overspeed.pulseDuration") == nil
-            ? 0.9 : max(0.4, min(2.0, d.double(forKey: "HUD.Ambient.v90_12.overspeed.pulseDuration")))
+            ? 0.9 : max(0.0, min(5.0, d.double(forKey: "HUD.Ambient.v90_12.overspeed.pulseDuration")))
         self.directOBDWitnessProven = d.bool(forKey: "HUD.Ambient.v90_2.directOBDWitnessProven")
         if let raw = d.string(forKey: "HUD.Ambient.v90_2.directOBDPeripheralUUID") {
             self.directOBDPeripheralID = UUID(uuidString: raw)
@@ -478,6 +495,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         sessionResetTasks.removeAll()
         restoreTasks.values.forEach { $0.cancel() }
         restoreTasks.removeAll()
+        steadyStateRecoveryTasks.values.forEach { $0.cancel() }
+        steadyStateRecoveryTasks.removeAll()
+        steadyStateRecoveryPendingIDs.removeAll()
         breathPrepareTasks.values.forEach { $0.cancel() }
         breathPrepareTasks.removeAll()
         headlightOffDebounceTask?.cancel()
@@ -811,6 +831,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     func setPower(_ id: UUID, on: Bool) {
+        cancelSteadyStateRecovery(for: id)
         cancelBrightnessTransition(for: id)
         breathPrepareTasks[id]?.cancel()
         breathPrepareTasks[id] = nil
@@ -834,6 +855,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     func setColor(_ id: UUID, color: AmbientRGB) {
+        cancelSteadyStateRecovery(for: id)
         updateDevice(id) { $0.color = color }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -892,12 +914,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         overspeedWarningBrightness = max(10, min(100, percent))
     }
 
+    func setOverspeedWarningColor(_ color: AmbientRGB) {
+        overspeedWarningColor = color
+    }
+
     func setOverspeedWarningPulseCount(_ count: Int) {
         overspeedWarningPulseCount = max(2, min(3, count))
     }
 
     func setOverspeedWarningPulseDuration(_ seconds: Double) {
-        overspeedWarningPulseDurationSeconds = max(0.4, min(2.0, seconds))
+        overspeedWarningPulseDurationSeconds = max(0.0, min(5.0, seconds))
     }
 
     func setDoorDayBrightness(_ percent: Int) {
@@ -987,12 +1013,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func animationWriteInterval(for id: UUID) -> TimeInterval {
-        // v90.10 uses the same 20-Hz visual clock for both protocols. BLEDIM2 has a
-        // 0...255 brightness channel, so retaining the full clock plus raw-byte
-        // interpolation is noticeably smoother near minimum brightness. CoreBluetooth
-        // backpressure still gates every actual write; stale animation frames are
-        // skipped instead of queued.
-        0.05
+        // v90.13: ELK-BLEDOM remains smooth at 20 Hz, but the two BEKEN/BLEDIM2
+        // controllers in the car repeatedly timed out during 20-Hz raw-brightness
+        // Breath traffic. Their native 0...255 channel is still visually smooth at
+        // 10 Hz and the lower write pressure leaves substantially more BLE margin.
+        pairedDevice(id)?.protocolKind == .bledim2 ? 0.10 : 0.05
+    }
+
+    private func semanticCommandSettle(for id: UUID) -> Duration {
+        pairedDevice(id)?.protocolKind == .bledim2 ? .milliseconds(100) : .milliseconds(50)
     }
 
     private func animationLevelSignature(for id: UUID, normalized: Double) -> Int {
@@ -1016,6 +1045,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
 
         for id in ids {
+            cancelSteadyStateRecovery(for: id)
             cancelBrightnessTransition(for: id)
             removeFromActiveBreath(id)
         }
@@ -1033,7 +1063,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             let startedAt = Date()
             self.logger.log(
                 "AMBIENT FADE",
-                "Smooth brightness transition begin ids=\(ids.count) duration=\(String(format: "%.1f", duration))s reason=\(reason) protocolPacing=20Hz/rawBLEDIM"
+                "Smooth brightness transition begin ids=\(ids.count) duration=\(String(format: "%.1f", duration))s reason=\(reason) protocolPacing=Lotus20Hz/BLEDIM10Hz"
             )
 
             while true {
@@ -1052,7 +1082,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     let targetPercent = max(0, min(100, targets[id] ?? startPercent))
                     let normalized = (Double(startPercent) + Double(targetPercent - startPercent) * t) / 100.0
                     let signature = self.animationLevelSignature(for: id, normalized: normalized)
-                    guard lastSentLevel[id] != signature else { continue }
+                    let isBLEDIM2 = self.pairedDevice(id)?.protocolKind == .bledim2
+                    // The official iOS slider sends at ~100 ms cadence even when
+                    // adjacent floating-point slider positions quantize to the same
+                    // 0...255 brightness byte. Preserve that repeat behavior for
+                    // BLEDIM2; it provides harmless reassertion without exceeding
+                    // the controller's observed write rate.
+                    if !isBLEDIM2, lastSentLevel[id] == signature { continue }
 
                     if self.applyRuntimeBrightnessNormalized(id, normalized: normalized, reason: reason, logPacket: false) {
                         lastSentLevel[id] = signature
@@ -1075,8 +1111,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 )
                 if !sent {
                     self.logger.log("AMBIENT FLOW", "Final brightness \(target)% could not be delivered to \(self.pairedDevice(id)?.displayName ?? id.uuidString)")
+                    self.steadyStateRecoveryPendingIDs.insert(id)
                 }
                 self.brightnessTransitionTasks[id] = nil
+                if self.pairedDevice(id)?.protocolKind == .bledim2 {
+                    self.scheduleRobustSteadyStateRecovery(id, reason: "post-fade safety")
+                }
             }
             self.logger.log("AMBIENT FADE", "Smooth brightness transition complete reason=\(reason)")
         }
@@ -1110,7 +1150,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 label: "power \(on ? "ON" : "OFF") \(reason)"
             )
         case .bledim2:
-            let sequence = nextBLEDIMSequence(for: id)
+            let sequence = nextBLEDIMSequence()
             return writeAmbient(
                 BLEDIM2Protocol.power(on, sequence: sequence),
                 to: id,
@@ -1133,7 +1173,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             packet = LotusLanternProtocol.color(color)
             protocolLabel = "RGB"
         case .bledim2:
-            let sequence = nextBLEDIMSequence(for: id)
+            let sequence = nextBLEDIMSequence()
             packet = BLEDIM2Protocol.color(color, sequence: sequence)
             protocolLabel = "BLEDIM2 seq=\(String(format: "%02X", sequence)) RGB"
         }
@@ -1161,7 +1201,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             packet = LotusLanternProtocol.brightness(clamped)
             protocolLabel = "brightness"
         case .bledim2:
-            let sequence = nextBLEDIMSequence(for: id)
+            let sequence = nextBLEDIMSequence()
             packet = BLEDIM2Protocol.brightness(clamped, sequence: sequence)
             protocolLabel = "BLEDIM2 seq=\(String(format: "%02X", sequence)) brightness"
         }
@@ -1194,7 +1234,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             packet = LotusLanternProtocol.brightness(percent)
             protocolLabel = "brightness"
         case .bledim2:
-            let sequence = nextBLEDIMSequence(for: id)
+            let sequence = nextBLEDIMSequence()
             let raw = UInt8((level * 255.0).rounded())
             packet = BLEDIM2Protocol.brightnessRaw(raw, sequence: sequence)
             protocolLabel = "BLEDIM2 seq=\(String(format: "%02X", sequence)) brightness raw=\(raw)"
@@ -1207,12 +1247,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
     }
 
-    private func nextBLEDIMSequence(for id: UUID) -> UInt8 {
-        var sequence = bledimSequenceByID[id] ?? 0x08
-        sequence &+= 1
-        if sequence == 0 { sequence = 1 }
-        bledimSequenceByID[id] = sequence
-        return sequence
+    private func nextBLEDIMSequence() -> UInt8 {
+        bledimSequence &+= 1
+        if bledimSequence == 0 { bledimSequence = 1 }
+        return bledimSequence
     }
 
     /// Sends runtime brightness without changing the user's preferred steady-state
@@ -1309,7 +1347,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 // Do not burst the next semantic command into the same
                 // write-without-response credit. This tiny inter-command settle
                 // mirrors a human slider/control interaction and is negligible to UI.
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await Task.sleep(for: self.semanticCommandSettle(for: id))
                 return true
             }
             try? await Task.sleep(for: .milliseconds(25))
@@ -1323,7 +1361,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         repeat {
             guard !Task.isCancelled else { return false }
             if ambientTransportCanAcceptWrite(id), sendColor(id, color: color, reason: reason) {
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await Task.sleep(for: self.semanticCommandSettle(for: id))
                 return true
             }
             try? await Task.sleep(for: .milliseconds(25))
@@ -1360,6 +1398,114 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private static func hex(_ data: Data) -> String {
         data.map { String(format: "%02X", $0) }.joined(separator: " ")
+    }
+
+    // MARK: - v90.13 fail-safe steady-state recovery
+
+    private func steadyStateTargetBrightness(for id: UUID) -> Int {
+        guard let device = pairedDevice(id) else { return 100 }
+        if device.role == .door,
+           vehicleAutomationEnabled,
+           enginePowerPresent,
+           vehicleStartupCompleted {
+            return doorTargetBrightness(night: vehicleHeadlightsActive)
+        }
+        return device.brightness
+    }
+
+    private func cancelSteadyStateRecovery(for id: UUID) {
+        steadyStateRecoveryTasks[id]?.cancel()
+        steadyStateRecoveryTasks[id] = nil
+        steadyStateRecoveryPendingIDs.remove(id)
+    }
+
+    /// Reassert a controller's safe semantic state with deliberately spaced writes.
+    /// BLEDIM2 is write-without-response, so CoreBluetooth accepting a packet does
+    /// not prove the lamp firmware applied it. Multiple low-rate reassertions make a
+    /// lost final animation frame self-healing without ever issuing Power OFF.
+    private func scheduleRobustSteadyStateRecovery(_ id: UUID, reason: String) {
+        steadyStateRecoveryTasks[id]?.cancel()
+        steadyStateRecoveryTasks[id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.steadyStateRecoveryTasks[id] = nil }
+
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+
+            guard let device = self.pairedDevice(id), device.powerOn else {
+                self.steadyStateRecoveryPendingIDs.remove(id)
+                return
+            }
+
+            // Never compete with another intentional transient owner. Its completion
+            // path will schedule a fresh recovery if needed.
+            if self.activeBreathIDs.contains(id) ||
+                self.breathPrepareTasks[id] != nil ||
+                self.brightnessTransitionTasks[id] != nil ||
+                self.overspeedWarningActiveID == id {
+                self.steadyStateRecoveryPendingIDs.insert(id)
+                return
+            }
+
+            guard self.isControllable(id) else {
+                self.steadyStateRecoveryPendingIDs.insert(id)
+                return
+            }
+            if device.role == .dashboard, !self.headlightPowerSessionActive {
+                self.steadyStateRecoveryPendingIDs.insert(id)
+                return
+            }
+
+            self.steadyStateRecoveryPendingIDs.remove(id)
+            let target = self.steadyStateTargetBrightness(for: id)
+            let rounds = device.protocolKind == .bledim2 ? 3 : 1
+            self.logger.log(
+                "AMBIENT RECOVERY",
+                "Steady-state recovery begin \(device.displayName) target=\(target)% rounds=\(rounds) reason=\(reason)"
+            )
+
+            for round in 1...rounds {
+                guard !Task.isCancelled, self.isControllable(id) else {
+                    self.steadyStateRecoveryPendingIDs.insert(id)
+                    return
+                }
+                if device.role == .dashboard, !self.headlightPowerSessionActive {
+                    self.steadyStateRecoveryPendingIDs.insert(id)
+                    return
+                }
+
+                guard await self.sendPowerWhenReady(id, on: true, reason: "steady recovery \(round)/\(rounds) \(reason)") else {
+                    self.steadyStateRecoveryPendingIDs.insert(id)
+                    return
+                }
+                if round == 1 {
+                    guard await self.sendColorWhenReady(id, color: device.color, reason: "steady recovery normal color \(reason)") else {
+                        self.steadyStateRecoveryPendingIDs.insert(id)
+                        return
+                    }
+                }
+                guard await self.applyRuntimeBrightnessWhenReady(
+                    id,
+                    percent: self.steadyStateTargetBrightness(for: id),
+                    reason: "steady recovery \(round)/\(rounds) \(reason)",
+                    persist: true
+                ) else {
+                    self.steadyStateRecoveryPendingIDs.insert(id)
+                    return
+                }
+
+                if round < rounds {
+                    let settle: Duration = round == 1 ? .milliseconds(300) : .milliseconds(600)
+                    try? await Task.sleep(for: settle)
+                }
+            }
+
+            self.steadyStateRecoveryPendingIDs.remove(id)
+            self.logger.log(
+                "AMBIENT RECOVERY",
+                "Steady-state recovery complete \(device.displayName) target=\(self.steadyStateTargetBrightness(for: id))% reason=\(reason)"
+            )
+        }
     }
 
     // MARK: - Power-up breath animation
@@ -1412,6 +1558,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                         persist: true
                     )
                 }
+                if device.protocolKind == .bledim2 {
+                    self.scheduleRobustSteadyStateRecovery(id, reason: "restore completion")
+                }
             } else {
                 _ = await self.sendPowerWhenReady(id, on: false, reason: "restore")
             }
@@ -1424,6 +1573,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func queuePowerUpBreath(_ id: UUID, force: Bool = false) {
         guard let device = pairedDevice(id), isControllable(id) else { return }
+
+        if force { cancelSteadyStateRecovery(for: id) }
 
         if activeBreathIDs.contains(id) || breathPrepareTasks[id] != nil {
             logger.log("AMBIENT ANIM", "Breath request ignored while already active/preparing: \(device.displayName); initial/return brightness preserved")
@@ -1525,7 +1676,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             if !force, let role = device.role, role.isHeadlightFed {
                 guard requestStillValid(), let epoch = requestedHeadlightEpoch else { return }
                 self.headlightAnimatedEpochByID[id] = epoch
-                self.restartHeadlightBreathOnReconnectIDs.remove(id)
             } else {
                 self.animatedConnectionSession.insert(id)
             }
@@ -1586,9 +1736,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let totalDuration = perCycleDuration * Double(cycles)
         let timelineTick = 0.05
 
+        let bledimCount = ready.filter { pairedDevice($0)?.protocolKind == .bledim2 }.count
         logger.log(
             "AMBIENT ANIM",
-            "Synchronized breath begin lights=\(ready.count) cycles=\(cycles) perCycle=\(String(format: "%.1f", perCycleDuration))s total=\(String(format: "%.1f", totalDuration))s pacing=20Hz/rawBLEDIM"
+            "Synchronized breath begin lights=\(ready.count) cycles=\(cycles) perCycle=\(String(format: "%.1f", perCycleDuration))s total=\(String(format: "%.1f", totalDuration))s pacing=Lotus20Hz/BLEDIM10Hz bledim=\(bledimCount)"
         )
 
         synchronizedBreathTask = Task { @MainActor [weak self] in
@@ -1621,9 +1772,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                         cycles: cycles
                     )
                     let signature = self.animationLevelSignature(for: id, normalized: normalized)
-                    guard lastSentLevel[id] != signature else { continue }
+                    let isBLEDIM2 = self.pairedDevice(id)?.protocolKind == .bledim2
+                    if !isBLEDIM2, lastSentLevel[id] == signature { continue }
 
-                    let maxSignature = self.pairedDevice(id)?.protocolKind == .bledim2 ? 255 : 100
+                    let maxSignature = isBLEDIM2 ? 255 : 100
                     let logPacket = signature == 0 || signature == maxSignature
                     if self.applyRuntimeBrightnessNormalized(
                         id,
@@ -1652,20 +1804,28 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 }
                 guard let start = self.activeBreathStartBrightness[id] else { continue }
                 let returnTarget = self.activeBreathReturnBrightness[id] ?? start
-                _ = await self.applyRuntimeBrightnessWhenReady(
+                let finalSent = await self.applyRuntimeBrightnessWhenReady(
                     id,
                     percent: returnTarget,
                     reason: "power-up breath final",
                     persist: true
                 )
+                if !finalSent {
+                    self.steadyStateRecoveryPendingIDs.insert(id)
+                }
             }
 
+            let bledimFinishedIDs = finishedIDs.filter { self.pairedDevice($0)?.protocolKind == .bledim2 }
             self.synchronizedBreathTask = nil
             self.activeBreathStartedAt = nil
             self.activeBreathIDs.removeAll()
             self.activeBreathStartBrightness.removeAll()
             self.activeBreathReturnBrightness.removeAll()
             self.logger.log("AMBIENT ANIM", "Synchronized breath complete lights=\(finishedIDs.count) elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
+
+            for id in bledimFinishedIDs {
+                self.scheduleRobustSteadyStateRecovery(id, reason: "post-breath safety")
+            }
 
             if self.vehicleAutomationEnabled, self.enginePowerPresent, self.vehicleStartupCompleted {
                 self.applyCurrentDoorDayNightTarget(reason: "post-breath door target")
@@ -1830,7 +1990,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 removeFromActiveBreath(id)
                 animatedConnectionSession.remove(id)
                 headlightAnimatedEpochByID[id] = nil
-                restartHeadlightBreathOnReconnectIDs.remove(id)
+                steadyStateRecoveryPendingIDs.remove(id)
+                steadyStateRecoveryTasks[id]?.cancel()
+                steadyStateRecoveryTasks[id] = nil
             }
 
             logger.log(
@@ -1871,7 +2033,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 restoreTasks[id] = nil
                 removeFromActiveBreath(id)
                 headlightAnimatedEpochByID[id] = nil
-                restartHeadlightBreathOnReconnectIDs.remove(id)
+                steadyStateRecoveryPendingIDs.remove(id)
+                steadyStateRecoveryTasks[id]?.cancel()
+                steadyStateRecoveryTasks[id] = nil
             }
 
             if let activeID = overspeedWarningActiveID,
@@ -2307,7 +2471,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         let target = doorTargetBrightness(night: vehicleHeadlightsActive)
         if overspeedWarningActiveID == doorID {
-            // The red warning temporarily owns Door output. The authoritative
+            // The warning-color overlay temporarily owns Door output. The authoritative
             // day/night state still updates immediately, and warning cleanup will
             // restore whichever target is current at that exact moment.
             logger.log("AMBIENT WARN", "Door day/night target changed to \(target)% during warning; deferred until overlay restores")
@@ -2353,7 +2517,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    // MARK: - v90.12 finite red overspeed warning
+    // MARK: - v90.13 finite configurable-color overspeed warning
 
     /// Called by the GPS/OSM speed engine. A warning is generated only on the
     /// FALSE -> TRUE edge of `gpsSpeed > postedLimit + offset`. If the speed-limit
@@ -2447,6 +2611,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
+        if let last = overspeedLastWarningTriggeredAt {
+            let elapsed = Date().timeIntervalSince(last)
+            if elapsed < overspeedWarningCooldownSeconds {
+                let remaining = max(1, Int(ceil(overspeedWarningCooldownSeconds - elapsed)))
+                overspeedWarningStatus = "Cooldown • \(remaining)s until another warning is allowed"
+                logger.log("AMBIENT WARN", "Overspeed recross suppressed by 60s cooldown remaining=\(remaining)s")
+                return
+            }
+        }
+        overspeedLastWarningTriggeredAt = Date()
+
         overspeedRestoreTask?.cancel()
         overspeedRestoreTask = nil
         overspeedWarningGeneration &+= 1
@@ -2464,13 +2639,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         let highPercent = max(10, min(100, overspeedWarningBrightness))
         let cycles = max(2, min(3, overspeedWarningPulseCount))
-        let cycleDuration = max(0.4, min(2.0, overspeedWarningPulseDurationSeconds))
-        let warningRed = AmbientRGB(red: 255, green: 0, blue: 0)
+        let configuredCycleDuration = max(0.0, min(5.0, overspeedWarningPulseDurationSeconds))
+        let cycleDuration = max(0.05, configuredCycleDuration)
+        let warningColor = overspeedWarningColor
 
         overspeedWarningStatus = "Warning • \(gpsSpeedMph) > \(speedLimitMph) + \(overspeedWarningOffsetMph) mph"
         logger.log(
             "AMBIENT WARN",
-            "Overspeed crossing GPS=\(gpsSpeedMph) limit=\(speedLimitMph) threshold=\(thresholdMph) light=\(overspeedWarningLight.rawValue) pulses=\(cycles) brightness=\(highPercent)%"
+            "Overspeed crossing GPS=\(gpsSpeedMph) limit=\(speedLimitMph) threshold=\(thresholdMph) light=\(overspeedWarningLight.rawValue) pulses=\(cycles) brightness=\(highPercent)% color=\(warningColor.red),\(warningColor.green),\(warningColor.blue) cooldown=60s"
         )
 
         overspeedWarningTask = Task { @MainActor [weak self] in
@@ -2500,8 +2676,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 self.abortOverspeedWarningTask(id, generation: generation, reason: "invalid after Power ON")
                 return
             }
-            guard await self.sendColorWhenReady(id, color: warningRed, reason: "overspeed warning red") else {
-                self.abortOverspeedWarningTask(id, generation: generation, reason: "red RGB prepare failed")
+            guard await self.sendColorWhenReady(id, color: warningColor, reason: "overspeed warning color") else {
+                self.abortOverspeedWarningTask(id, generation: generation, reason: "warning RGB prepare failed")
                 return
             }
             guard stillValid() else {
@@ -2518,7 +2694,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 return
             }
 
-            // Finite high -> low -> high red pulses. 0% is a brightness command,
+            // Finite high -> low -> high warning-color pulses. 0% is a brightness command,
             // never a Power OFF packet. This keeps BLEDIM logically ON throughout.
             for pulse in 0..<cycles {
                 let startedAt = Date()
@@ -2538,7 +2714,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     _ = self.applyRuntimeBrightnessNormalized(
                         id,
                         normalized: normalized,
-                        reason: "overspeed red pulse \(pulse + 1)/\(cycles)",
+                        reason: "overspeed color pulse \(pulse + 1)/\(cycles)",
                         logPacket: false
                     )
                     if local >= 1.0 { break }
@@ -2684,8 +2860,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
 
         lastServiceDiscoveryRequestByID[id] = now
-        peripheral.discoverServices(nil)
-        logger.log("AMBIENT GATT", "Service discovery requested \(id) reason=\(reason)")
+        if pairedDevice(id)?.protocolKind == .bledim2 {
+            // The official BLEDIM2 app only needs FFF0/FFF1 for light control.
+            // Avoid enumerating Device Information / Battery / TI OAD services on
+            // every reconnect while an animation may be starting.
+            peripheral.discoverServices([CBUUID(string: BLEDIM2Protocol.serviceUUID)])
+            logger.log("AMBIENT GATT", "Targeted BLEDIM2 FFF0 service discovery requested \(id) reason=\(reason)")
+        } else {
+            peripheral.discoverServices(nil)
+            logger.log("AMBIENT GATT", "Service discovery requested \(id) reason=\(reason)")
+        }
     }
 
     private func maintainConnection(to peripheral: CBPeripheral, reason: String) {
@@ -2974,11 +3158,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             if let device = self.pairedDevice(id) {
                 self.controllerStatus = "Connected to ambient light; discovering GATT"
                 self.lastServiceDiscoveryRequestByID[id] = nil
-                if device.protocolKind == .bledim2 {
-                    // The official app restarts its one-byte sequence on a new BLE
-                    // connection. Keep each physical BLEDIM controller independent.
-                    self.bledimSequenceByID[id] = 0x08
-                }
+                // Do not reset the BLEDIM sequence on reconnect. The official app's
+                // capture keeps one rolling sequence across its active controllers.
                 self.discoverServicesIfNeeded(peripheral, force: true, reason: "didConnect")
             }
             self.evaluateVehicleLightingAutomation()
@@ -3013,6 +3194,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         Task { @MainActor in
             guard self.enabled else { return }
             let id = peripheral.identifier
+            let interruptedTransientState = self.activeBreathIDs.contains(id) ||
+                self.breathPrepareTasks[id] != nil ||
+                self.brightnessTransitionTasks[id] != nil ||
+                self.overspeedWarningActiveID == id
             let interruptedHeadlightAnimation = self.isHeadlightFedDevice(id) &&
                 (self.activeBreathIDs.contains(id) || self.breathPrepareTasks[id] != nil)
 
@@ -3027,6 +3212,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.breathPrepareTasks[id] = nil
             self.restoreTasks[id]?.cancel()
             self.restoreTasks[id] = nil
+            self.steadyStateRecoveryTasks[id]?.cancel()
+            self.steadyStateRecoveryTasks[id] = nil
             self.removeFromActiveBreath(id)
             if self.overspeedWarningActiveID == id {
                 self.cancelOverspeedWarning(
@@ -3034,18 +3221,23 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     reason: "warning light BLE/physical power disconnected"
                 )
             }
+            if interruptedTransientState || self.steadyStateRecoveryPendingIDs.contains(id) {
+                self.steadyStateRecoveryPendingIDs.insert(id)
+                self.logger.log(
+                    "AMBIENT RECOVERY",
+                    "Transient BLE interruption marked for steady-state recovery: \(self.pairedDevice(id)?.displayName ?? id.uuidString)"
+                )
+            }
+
             if self.isHeadlightFedDevice(id) {
-                // If this controller disappeared while its Breath was actually
-                // running/preparing, allow a fresh Breath when the same physical
-                // controller comes back even if Center's authoritative headlight
-                // epoch never had time to toggle. This is the short-brownout case
-                // observed in the 2026-08-27 drive log.
-                if interruptedHeadlightAnimation {
-                    self.headlightAnimatedEpochByID[id] = nil
-                    self.restartHeadlightBreathOnReconnectIDs.insert(id)
+                // A Dashboard brownout during Breath must NOT replay/rejoin the
+                // animation in the same headlight epoch. Mark that epoch consumed;
+                // GATT-ready recovery will restore normal brightness instead.
+                if interruptedHeadlightAnimation, self.headlightPowerSessionActive {
+                    self.headlightAnimatedEpochByID[id] = self.headlightPowerEpoch
                     self.logger.log(
                         "AMBIENT POWER",
-                        "Interrupted headlight Breath will restart on reconnect: \(self.pairedDevice(id)?.displayName ?? id.uuidString)"
+                        "Interrupted headlight Breath will restore steady state on reconnect: \(self.pairedDevice(id)?.displayName ?? id.uuidString)"
                     )
                 }
                 // Physical disappearance cancels this controller's transient work,
@@ -3096,8 +3288,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             let services = peripheral.services ?? []
             var set = self.serviceUUIDsByID[id] ?? []
             for service in services {
-                set.insert(service.uuid.uuidString.uppercased())
-                peripheral.discoverCharacteristics(nil, for: service)
+                let serviceValue = service.uuid.uuidString.uppercased()
+                set.insert(serviceValue)
+                if self.pairedDevice(id)?.protocolKind == .bledim2 {
+                    guard self.isBLEDIMService(service.uuid) else { continue }
+                    peripheral.discoverCharacteristics(
+                        [CBUUID(string: BLEDIM2Protocol.writeCharacteristicUUID)],
+                        for: service
+                    )
+                } else {
+                    peripheral.discoverCharacteristics(nil, for: service)
+                }
             }
             self.serviceUUIDsByID[id] = set
             self.logger.log("AMBIENT GATT", "\(id) services=\(set.sorted().joined(separator: ","))")
@@ -3126,16 +3327,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     "AMBIENT GATT",
                     "\(id) service=\(service.uuid.uuidString) char=\(uuid) props=\(properties)"
                 )
-
-                if let device = self.pairedDevice(id), device.protocolKind == .bledim2,
-                   characteristic.properties.contains(.read) {
-                    let serviceValue = service.uuid.uuidString.uppercased()
-                    // Read standard Device Information + Battery values. These are
-                    // diagnostics only; never read/write the TI OAD firmware service.
-                    if serviceValue == "180A" || serviceValue == "180F" {
-                        peripheral.readValue(for: characteristic)
-                    }
-                }
 
                 if let device = self.pairedDevice(id) {
                     let writable = characteristic.properties.contains(.write) || characteristic.properties.contains(.writeWithoutResponse)
@@ -3168,9 +3359,33 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     self.controllerStatus = "\(device.displayName) control ready"
                     self.logger.log("AMBIENT CTRL", "Lotus Lantern FFF0/FFF3 verified control ready for \(device.displayName)")
                 }
-                self.runStartupAnimationIfNeeded(id)
+                if self.steadyStateRecoveryPendingIDs.contains(id) {
+                    self.logger.log(
+                        "AMBIENT RECOVERY",
+                        "GATT ready with pending steady-state recovery for \(device.displayName); skipping animation rejoin"
+                    )
+                    self.scheduleRobustSteadyStateRecovery(id, reason: "GATT reconnected after transient interruption")
+                } else {
+                    self.runStartupAnimationIfNeeded(id)
+                }
                 self.evaluateVehicleLightingAutomation()
             }
+        }
+    }
+
+    nonisolated func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        Task { @MainActor in
+            let id = peripheral.identifier
+            guard self.steadyStateRecoveryPendingIDs.contains(id),
+                  self.pairedDevice(id)?.protocolKind == .bledim2,
+                  !self.activeBreathIDs.contains(id),
+                  self.breathPrepareTasks[id] == nil,
+                  self.brightnessTransitionTasks[id] == nil,
+                  self.overspeedWarningActiveID != id else { return }
+            self.scheduleRobustSteadyStateRecovery(
+                id,
+                reason: "CoreBluetooth write-without-response ready"
+            )
         }
     }
 
