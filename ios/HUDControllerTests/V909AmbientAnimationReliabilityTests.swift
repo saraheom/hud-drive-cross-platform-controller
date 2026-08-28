@@ -9,13 +9,16 @@ final class V909AmbientAnimationReliabilityTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testBLEDIMAnimationPacingAndSequenceArePerPeripheral() throws {
+    func testBLEDIMAnimationPacingAndSequenceMatchOfficialSliderCapture() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("private func sendBrightnessNormalized("))
         XCTAssertTrue(monitor.contains("let raw = UInt8((level * 255.0).rounded())"))
         XCTAssertTrue(monitor.contains("protocolPacing=Lotus20Hz/BLEDIM10Hz"))
-        XCTAssertTrue(monitor.contains("private var bledimSequenceByID: [UUID: UInt8]"))
-        XCTAssertTrue(monitor.contains("nextBLEDIMSequence(for id: UUID)"))
+        XCTAssertTrue(monitor.contains("private var bledimSequence: UInt8 = 0x08"))
+        XCTAssertTrue(monitor.contains("private func nextBLEDIMSequence() -> UInt8"))
+        XCTAssertTrue(monitor.contains("Do not reset the BLEDIM sequence on reconnect"))
+        XCTAssertFalse(monitor.contains("bledimSequenceByID"))
+        XCTAssertFalse(monitor.contains("nextBLEDIMSequence(for id:"))
         XCTAssertTrue(monitor.contains("peripheral.canSendWriteWithoutResponse"))
     }
 

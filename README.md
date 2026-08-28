@@ -458,3 +458,10 @@ BLEDIM reconnect discovery is restricted to FFF0 -> FFF1, reducing GATT traffic 
 the animation-critical window. Pending write-without-response recovery is also resumed
 from CoreBluetooth's ready callback. See
 `docs/V90_13_1_BLEDIM_OFFICIAL_SLIDER_FIDELITY.md`.
+
+
+## v90.13.2 — iOS CI regression-test alignment
+
+- No runtime ambient-light behavior changed from v90.13.1.
+- Updated `V909AmbientAnimationReliabilityTests` to assert the official-capture-aligned app-wide rolling BLEDIM2 sequence stream instead of the superseded per-peripheral counter model.
+- Added a Python regression guard that verifies the Swift XCTest source remains aligned with the BLEDIM2 implementation, preventing the same CI-only mismatch from recurring.

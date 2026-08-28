@@ -21,3 +21,13 @@ def test_bledim_reconnect_uses_minimal_control_gatt_path():
 def test_bledim_write_ready_callback_can_resume_pending_steady_state_recovery():
     assert "peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral)" in MONITOR
     assert 'reason: "CoreBluetooth write-without-response ready"' in MONITOR
+
+
+def test_swift_xctest_tracks_global_rolling_bledim_sequence_model():
+    swift_test = (ROOT / "ios/HUDControllerTests/V909AmbientAnimationReliabilityTests.swift").read_text()
+    assert "testBLEDIMAnimationPacingAndSequenceMatchOfficialSliderCapture" in swift_test
+    assert 'monitor.contains("private var bledimSequence: UInt8 = 0x08")' in swift_test
+    assert 'monitor.contains("private func nextBLEDIMSequence() -> UInt8")' in swift_test
+    assert 'XCTAssertFalse(monitor.contains("bledimSequenceByID"))' in swift_test
+    assert 'XCTAssertFalse(monitor.contains("nextBLEDIMSequence(for id:"))' in swift_test
+    assert "testBLEDIMAnimationPacingAndSequenceArePerPeripheral" not in swift_test
