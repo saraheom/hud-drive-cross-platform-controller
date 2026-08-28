@@ -364,3 +364,10 @@ Headlight power is now a stable two-controller consensus. Center + Dashboard bot
 HUD auto-brightness uses the same confirmed consensus edge, so a Center-only radio dropout cannot flip the HUD or Door day/night state while Dashboard still indicates headlight power.
 
 The independent later features remain: Spotify automatic wake is allowed only in a HUD/OBD vehicle session; speed-limit selection includes Current, Enhanced OSM, and OSM Trace; the finite ambient overspeed warning supports a user-selected color (red default), 0–5 s pulse duration, 2–3 pulses, brightness/offset controls, and a 60 s recross cooldown. No HERE code, API key, or commercial map-service dependency remains.
+
+## v90.14.1 — CI compatibility test alignment
+
+- No runtime ambient-light behavior changes from v90.14.
+- Replaces the legacy `V9012AmbientRecoveryOverspeedSpotifyGateTests.swift` file so overlay-style repository updates cannot retain v90.12/v90.13 assertions that contradict the v90.14 two-light consensus architecture.
+- The compatibility XCTest now validates stable Center+Dashboard consensus, both-GATT-ready Breath admission, same-epoch single steady restore, the v90.10 BLEDIM transport baseline, and the retained overspeed/Spotify behavior.
+

@@ -1,6 +1,12 @@
 import XCTest
 @testable import HUDController
 
+/// Compatibility regression coverage for the v90.14 lighting architecture.
+///
+/// This filename intentionally remains V9012... because older GitHub checkouts may
+/// still contain that test from the v90.12/v90.13 line. Keeping and replacing the
+/// file makes overlay-style repository updates converge on the current assertions
+/// instead of leaving stale tests behind.
 final class V9012AmbientRecoveryOverspeedSpotifyGateTests: XCTestCase {
     private func source(_ relative: String) throws -> String {
         let root = URL(fileURLWithPath: #filePath)
@@ -19,24 +25,32 @@ final class V9012AmbientRecoveryOverspeedSpotifyGateTests: XCTestCase {
         XCTAssertTrue(root.contains("updateSpotifyVehicleWakeGate(reason: \"app became active\")"))
     }
 
-    func testRapidHeadlightEdgesInvalidateEntireOldBreathTimeline() throws {
+    func testHeadlightStateRequiresStableTwoControllerConsensus() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("cancelSynchronizedBreathForHeadlightEdge"))
-        XCTAssertTrue(monitor.contains("authoritative headlight ON"))
-        XCTAssertTrue(monitor.contains("authoritative headlight OFF"))
-        XCTAssertTrue(monitor.contains("activeBreathIDs.removeAll()"))
-        XCTAssertTrue(monitor.contains("breathPrepareTasks[doorID]?.cancel()"))
+        XCTAssertTrue(monitor.contains("private enum HeadlightConsensusObservation"))
+        XCTAssertTrue(monitor.contains("headlightConsensusStabilitySeconds: TimeInterval = 0.75"))
+        XCTAssertTrue(monitor.contains("if dashboardOn && centerOn { return .bothOn }"))
+        XCTAssertTrue(monitor.contains("if !dashboardOn && !centerOn { return .bothOff }"))
+        XCTAssertTrue(monitor.contains("Headlight consensus mixed after stability window; preserving confirmed"))
+        XCTAssertFalse(monitor.contains("setAuthoritativeHeadlightPower"))
     }
 
-    func testInterruptedBLEDIMTransientRestoresSteadyStateInsteadOfRejoiningBreath() throws {
+    func testHeadlightBreathWaitsForBothWritableControllers() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("interruptedTransientState"))
-        XCTAssertTrue(monitor.contains("steadyStateRecoveryPendingIDs.insert(id)"))
-        XCTAssertTrue(monitor.contains("headlightAnimatedEpochByID[id] = self.headlightPowerEpoch"))
-        XCTAssertTrue(monitor.contains("Interrupted headlight Breath will restore steady state on reconnect"))
-        XCTAssertTrue(monitor.contains("GATT ready with pending steady-state recovery"))
-        XCTAssertTrue(monitor.contains("scheduleRobustSteadyStateRecovery"))
-        XCTAssertFalse(monitor.contains("restartHeadlightBreathOnReconnectIDs"))
+        XCTAssertTrue(monitor.contains("private func tryStartConfirmedHeadlightBreath"))
+        XCTAssertTrue(monitor.contains("isControllable(dashboardID)"))
+        XCTAssertTrue(monitor.contains("isControllable(centerID)"))
+        XCTAssertTrue(monitor.contains("Consensus headlight animation admitted"))
+        XCTAssertTrue(monitor.contains("ready=2"))
+    }
+
+    func testSameEpochReconnectUsesSingleSteadyRestoreInsteadOfBreathReplay() throws {
+        let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
+        XCTAssertTrue(monitor.contains("Same-epoch headlight reconnect → steady restore"))
+        XCTAssertTrue(monitor.contains("headlightAnimatedEpochByID[id] == headlightPowerEpoch"))
+        XCTAssertTrue(monitor.contains("restoreDeviceState(id)"))
+        XCTAssertFalse(monitor.contains("scheduleRobustSteadyStateRecovery"))
+        XCTAssertFalse(monitor.contains("Steady-state recovery begin"))
     }
 
     func testOverspeedWarningIsFiniteCrossingOnlyAndRequiresFreshLimit() throws {
@@ -56,13 +70,12 @@ final class V9012AmbientRecoveryOverspeedSpotifyGateTests: XCTestCase {
             .components(separatedBy: "// MARK: - Connection management")[0]
         XCTAssertTrue(warning.contains("sendPowerWhenReady(id, on: true"))
         XCTAssertFalse(warning.contains("sendPowerWhenReady(id, on: false"))
-        XCTAssertTrue(warning.contains("overspeed restore safety reassert"))
+        XCTAssertTrue(warning.contains("restoreAfterOverspeedWarning"))
         XCTAssertTrue(warning.contains("doorTargetBrightness(night: vehicleHeadlightsActive)"))
     }
 
-    func testAsyncValidityHelpersRemainMainActorIsolated() throws {
+    func testAsyncValidityHelperRemainsMainActorIsolated() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("@MainActor func requestStillValid() -> Bool"))
         XCTAssertTrue(monitor.contains("@MainActor func stillValid() -> Bool"))
     }
 
@@ -78,13 +91,15 @@ final class V9012AmbientRecoveryOverspeedSpotifyGateTests: XCTestCase {
         XCTAssertTrue(view.contains("No speed-limit sign — disabled"))
     }
 
-    func testBLEDIMAnimationRateAndFailSafeRecovery() throws {
+    func testV9010BLEDIMTransportBaselineIsRetained() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("pairedDevice(id)?.protocolKind == .bledim2 ? 0.10 : 0.05"))
-        XCTAssertTrue(monitor.contains("let rounds = device.protocolKind == .bledim2 ? 3 : 1"))
-        XCTAssertTrue(monitor.contains("post-breath safety"))
-        XCTAssertTrue(monitor.contains("post-fade safety"))
-        XCTAssertTrue(monitor.contains("Steady-state recovery complete"))
+        XCTAssertTrue(monitor.contains("private var bledimSequenceByID: [UUID: UInt8]"))
+        XCTAssertTrue(monitor.contains("private func nextBLEDIMSequence(for id: UUID)"))
+        XCTAssertTrue(monitor.contains("private func animationWriteInterval(for id: UUID) -> TimeInterval"))
+        XCTAssertTrue(monitor.contains("0.05"))
+        XCTAssertTrue(monitor.contains("protocolPacing=20Hz/rawBLEDIM"))
+        XCTAssertFalse(monitor.contains("BLEDIM10Hz"))
+        XCTAssertFalse(monitor.contains("let rounds = device.protocolKind == .bledim2 ? 3 : 1"))
     }
 
     func testOverspeedColorAndCooldown() throws {

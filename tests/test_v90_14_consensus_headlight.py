@@ -54,3 +54,14 @@ def test_newer_independent_features_are_kept():
     assert 'overspeedWarningColor' in MONITOR
     assert 'overspeedWarningCooldownSeconds: TimeInterval = 60.0' in MONITOR
     assert 'max(0.0, min(5.0, overspeedWarningPulseDurationSeconds))' in MONITOR
+
+
+def test_legacy_v9012_xctest_is_overwritten_for_overlay_updates():
+    compatibility_test = ROOT / 'ios/HUDControllerTests/V9012AmbientRecoveryOverspeedSpotifyGateTests.swift'
+    assert compatibility_test.exists()
+    text = compatibility_test.read_text()
+    assert 'testHeadlightStateRequiresStableTwoControllerConsensus' in text
+    assert 'testSameEpochReconnectUsesSingleSteadyRestoreInsteadOfBreathReplay' in text
+    assert 'scheduleRobustSteadyStateRecovery' in text  # asserted absent by XCTest
+    assert 'testBLEDIMAnimationRateAndFailSafeRecovery' not in text
+    assert 'testRapidHeadlightEdgesInvalidateEntireOldBreathTimeline' not in text
