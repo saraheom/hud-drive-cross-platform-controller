@@ -15,7 +15,7 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(model.contains("static func brightnessRaw(_ value: UInt8"))
         XCTAssertTrue(monitor.contains("private func sendBrightnessNormalized("))
         XCTAssertTrue(monitor.contains("let raw = UInt8((level * 255.0).rounded())"))
-        XCTAssertTrue(monitor.contains("protocolPacing=Lotus20Hz/BLEDIM10Hz"))
+        XCTAssertTrue(monitor.contains("protocolPacing=20Hz/rawBLEDIM"))
         XCTAssertTrue(monitor.contains("0.05"))
         XCTAssertFalse(monitor.contains("protocolPacing=BLEDIM10Hz/Lotus20Hz"))
     }
@@ -37,9 +37,9 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("headlightAnimatedEpochByID"))
         XCTAssertTrue(monitor.contains("noteHeadlightPowerSeen(id, reason: \"advertisement\")"))
         XCTAssertTrue(monitor.contains("scheduleHeadlightPowerOffEvaluation"))
-        XCTAssertTrue(monitor.contains("stale headlight Breath work invalidated"))
+        XCTAssertTrue(monitor.contains("Consensus headlight OFF"))
         XCTAssertTrue(monitor.contains("if isHeadlightFedDevice(id)"))
-        XCTAssertTrue(monitor.contains("quick OFF -> ON must be allowed to Breath again"))
+        XCTAssertTrue(monitor.contains("both Center + Dashboard stable ON"))
     }
 
     func testDoorDayNightChangeIsBrightnessOnlyAndInterruptible() throws {
@@ -48,8 +48,8 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("Day/night automation changes brightness only"))
         XCTAssertTrue(monitor.contains("cancelBrightnessTransition(for: id)"))
         XCTAssertTrue(monitor.contains("pairedDevice(id).map { (id, $0.runtimeBrightness) }"))
-        XCTAssertTrue(monitor.contains("HUD brightness headlight ON → night Door brightness"))
-        XCTAssertTrue(monitor.contains("HUD brightness headlight OFF → day Door brightness"))
+        XCTAssertTrue(monitor.contains("consensus headlight ON → night Door brightness"))
+        XCTAssertTrue(monitor.contains("consensus headlight OFF → day Door brightness"))
         XCTAssertFalse(block.isEmpty)
     }
 

@@ -6,11 +6,11 @@ MODEL = (ROOT / "ios/HUDController/Vehicle/AmbientLightModels.swift").read_text(
 VIEW = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
 
 
-def test_bledim_animation_uses_native_255_steps_at_protocol_aware_rate():
+def test_bledim_animation_uses_native_255_steps_at_shared_20hz():
     assert "static func brightnessRaw(_ value: UInt8" in MODEL
     assert "private func sendBrightnessNormalized(" in MONITOR
     assert "let raw = UInt8((level * 255.0).rounded())" in MONITOR
-    assert "protocolPacing=Lotus20Hz/BLEDIM10Hz" in MONITOR
+    assert "protocolPacing=20Hz/rawBLEDIM" in MONITOR
     assert "protocolPacing=BLEDIM10Hz/Lotus20Hz" not in MONITOR
 
 
@@ -41,9 +41,8 @@ def test_headlight_power_epoch_rearms_every_real_on_and_off_cancels_animation():
     assert 'noteHeadlightPowerSeen(id, reason: "advertisement")' in MONITOR
     assert 'noteHeadlightPowerSeen(id, reason: "didConnect")' in MONITOR
     assert "scheduleHeadlightPowerOffEvaluation" in MONITOR
-    assert "setAuthoritativeHeadlightPower" in MONITOR
-    assert "stale headlight Breath work invalidated" in MONITOR
-    assert "quick OFF -> ON must be allowed to Breath again" in MONITOR
+    assert "Consensus headlight OFF" in MONITOR
+    assert "both Center + Dashboard stable ON" in MONITOR
 
 
 def test_door_day_night_transition_does_not_resend_power_or_rgb():

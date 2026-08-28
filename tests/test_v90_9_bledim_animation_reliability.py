@@ -5,14 +5,14 @@ MONITOR = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_te
 VIEW = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
 
 
-def test_bledim_animation_uses_native_raw_resolution_and_official_global_sequence():
+def test_bledim_animation_uses_native_raw_resolution_and_per_device_sequence():
     assert "private func sendBrightnessNormalized(" in MONITOR
     assert "let raw = UInt8((level * 255.0).rounded())" in MONITOR
-    assert "protocolPacing=Lotus20Hz/BLEDIM10Hz" in MONITOR
-    assert "private var bledimSequence: UInt8 = 0x08" in MONITOR
-    assert "private func nextBLEDIMSequence() -> UInt8" in MONITOR
-    assert "bledimSequenceByID" not in MONITOR
-    assert "Do not reset the BLEDIM sequence on reconnect" in MONITOR
+    assert "protocolPacing=20Hz/rawBLEDIM" in MONITOR
+    assert "private var bledimSequenceByID: [UUID: UInt8]" in MONITOR
+    assert "nextBLEDIMSequence(for id: UUID)" in MONITOR
+    assert "bledimSequenceByID[id] = 0x08" in MONITOR
+    assert "private var bledimSequence: UInt8" not in MONITOR
 
 
 def test_animation_uses_wall_clock_and_backpressure_instead_of_blind_frame_queueing():

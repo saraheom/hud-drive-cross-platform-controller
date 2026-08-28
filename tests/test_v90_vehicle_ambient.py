@@ -30,9 +30,9 @@ def test_smooth_brightness_transition_is_shared_and_does_not_rewrite_preference_
     assert "private func transitionBrightness(" in monitor
     assert "let timelineTick = 0.05" in monitor
     assert "private func sendBrightnessNormalized(" in monitor
-    assert "protocolPacing=Lotus20Hz/BLEDIM10Hz" in monitor
+    assert "protocolPacing=20Hz/rawBLEDIM" in monitor
     assert "let starts = Dictionary" in monitor
-    assert "if !isBLEDIM2, lastSentLevel[id] == signature { continue }" in monitor
+    assert "guard lastSentLevel[id] != signature else { continue }" in monitor
     assert "if persist { persistPairedDevices() }" in monitor
     assert "group manual brightness" in monitor
 

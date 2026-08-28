@@ -9,14 +9,14 @@ final class V9011HeadlightSpotifySpeedSourceTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testHUDAndDoorUseSameAuthoritativeHeadlightEdge() throws {
+    func testHUDAndDoorUseStableTwoLightConsensus() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("private func setAuthoritativeHeadlightPower"))
-        XCTAssertTrue(monitor.contains("setAuthoritativeHeadlightPower(true, reason: reason)"))
-        XCTAssertTrue(monitor.contains("setAuthoritativeHeadlightPower(false, reason: reason)"))
-        XCTAssertTrue(monitor.contains("HUD brightness headlight ON → night Door brightness"))
-        XCTAssertTrue(monitor.contains("HUD brightness headlight OFF → day Door brightness"))
-        XCTAssertTrue(monitor.contains("Skipped stale headlight Breath final"))
+        XCTAssertTrue(monitor.contains("private enum HeadlightConsensusObservation"))
+        XCTAssertTrue(monitor.contains("both Center + Dashboard stable ON"))
+        XCTAssertTrue(monitor.contains("both Center + Dashboard stable OFF"))
+        XCTAssertTrue(monitor.contains("Headlight consensus → Auto brightness ON"))
+        XCTAssertTrue(monitor.contains("Headlight consensus → Auto brightness OFF"))
+        XCTAssertFalse(monitor.contains("setAuthoritativeHeadlightPower"))
     }
 
     func testSpotifyWakeIsAutomaticAndPreservesAuthorization() throws {

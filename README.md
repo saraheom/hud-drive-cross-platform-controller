@@ -355,113 +355,12 @@ v90.10 changes the ambient runtime around the actual vehicle power behavior:
 
 The v90.9 source-regression tests were updated to validate these v90.10 invariants.
 
-## v90.11.1 — authoritative headlight edges + Spotify recovery + no-billing speed-limit source testing
+## v90.14 — v90.10 lighting baseline + two-light headlight consensus
 
-Field testing of v90.10 showed one remaining rapid-headlight race: Center/HUD auto-brightness
-could already report OFF while Dashboard BLE was still connected or finishing a Breath. Door
-therefore waited for the slower Dashboard disconnect before beginning its day transition, and a
-stale Dashboard animation final could survive across a short OFF -> ON cycle.
+v90.14 deliberately returns the ambient-light transport/choreography to the v90.10 baseline, which produced the best in-car behavior. BLEDIM2 keeps the v90.10 20 Hz/raw-255 animation path, per-peripheral sequence handling, reliable Power/RGB/final-brightness writes, and normal GATT discovery. The later v90.13 repeated steady-state recovery rounds, BLEDIM 10 Hz experiment, and Center-authoritative headlight state are not used.
 
-v90.11/v90.11.1 makes the same Center/ELK-BLEDOM presence edge that drives the HUD's native auto-brightness
-the authoritative vehicle headlight state:
+Headlight power is now a stable two-controller consensus. Center + Dashboard both ON for 0.75 s confirms headlight ON; Center + Dashboard both OFF for 0.75 s confirms headlight OFF. A mixed state preserves the last confirmed state. A new headlight Breath is admitted only after both controllers are GATT-controllable, preventing one controller from joining halfway through. A same-epoch reconnect therefore restores the normal v90.10 device state instead of creating another physical headlight epoch.
 
-- HUD auto-brightness ON and Door night transition now start from the same event.
-- HUD auto-brightness OFF and Door day transition now start from the same event; there is no wait
-  for Dashboard's later CoreBluetooth timeout.
-- Every headlight ON creates a fresh epoch. A physical OFF immediately invalidates Dashboard/Center
-  Breath preparation, active frames, and final writes from the old epoch.
-- A short OFF -> ON starts a clean new bootstrap even if a controller never fully left CoreBluetooth's
-  connected state.
-- Door transitions remain interruptible and always retarget from the latest successfully applied
-  runtime brightness.
+HUD auto-brightness uses the same confirmed consensus edge, so a Center-only radio dropout cannot flip the HUD or Door day/night state while Dashboard still indicates headlight power.
 
-Spotify recovery is also changed from repeated blind `connect()` attempts to automatic wake:
-
-- the saved App Remote token remains in Keychain;
-- after two failed silent connection attempts, HUD Controller automatically invokes Spotify's wake
-  path without clearing authorization;
-- when iOS returns to HUD Controller (or the authorization callback arrives), a fresh App Remote
-  reconnects automatically;
-- the destructive Reset/Reauthorize action remains troubleshooting-only.
-
-For speed-limit testing, the Vehicle page now exposes three independently selectable no-billing sources:
-
-1. **Current** — unchanged decompiled HUDWAY/OSM matcher.
-2. **Enhanced OSM** — separate directional/conditional + continuity-aware OSM matcher for A/B testing.
-3. **OSM Trace** — rolling GPS-trace map matching performed locally against the same nearby OSM road
-   geometry, with confidence-margin switching to resist parallel-road/frontage-road/ramp jumps.
-
-No HERE code, API key, or commercial map-service dependency remains. Switching sources clears the
-previous speed-limit sign until the selected source produces a fresh result. The ambient red overspeed
-warning remains intentionally unimplemented because the iOS app still does not receive the HUD/OBD
-vehicle-speed value directly; GPS speed is not used for that proposed warning.
-
-## v90.12 — rapid-headlight recovery + finite overspeed warning + Spotify vehicle gate
-
-### v90.12.1 — Xcode 26 actor-isolation compile fix
-
-The iOS 26 ambient CI build now explicitly marks the two task-local validity helpers in `AmbientLightMonitor` as `@MainActor`. This preserves the v90.12 behavior while satisfying Xcode 26/Swift concurrency isolation checks.
-
-
-The 2026-08-27 road test exposed one remaining failure mode: Dashboard could lose
-physical power during an active Breath, reconnect within the same overall headlight
-epoch, and be restored without fully invalidating the interrupted animation state.
-v90.12 makes all headlight-fed asynchronous work generation-owned and self-healing:
-
-- every authoritative headlight ON/OFF edge invalidates the complete prior synchronized
-  Breath timeline so stale final writes cannot cross a physical-power boundary;
-- Dashboard/Center interruption during Breath is remembered and re-arms that light for
-  a fresh Breath after reconnect, even when the overall epoch did not change;
-- headlight-fed reconnect performs Power ON + preferred RGB + steady brightness followed
-  by a delayed Power ON + steady-brightness safety reassert;
-- Breath bootstrap itself is generation-protected and performs a second Power ON/baseline
-  reassert before animation begins;
-- Door day/night fades stay brightness-only, interruptible, and immediately retarget from
-  the latest applied runtime level;
-- engine OFF still never sends an automatic ambient Power OFF command.
-
-Spotify's automatic wake/app-switch is now vehicle-gated. Silent connection attempts can
-run anywhere, but automatic `authorizeAndPlayURI` wake is permitted only while the HUD BLE
-transport or OBD2 connection indicates an active vehicle session. Opening HUD Controller
-away from the car no longer automatically opens Spotify.
-
-An optional finite ambient overspeed warning is now available under Vehicle -> Speed +
-Speed Limit. It uses the exact condition `GPS speed > posted speed limit + offset`, with a
-user offset of 0–20 mph. The user can select Door or Dashboard, warning brightness, 2x/3x
-finite pulses, and pulse duration. It only triggers on a below-to-above crossing and will
-not retrigger until speed falls back to/below the threshold and recrosses. If the selected
-speed-limit source has no fresh live sign, the warning is disabled. Dashboard warning is
-allowed only while its headlight-powered controller is available; physical power loss
-cancels the overlay without stale restore commands. The warning never sends Power OFF.
-
-See `docs/V90_12_AMBIENT_RECOVERY_OVERSPEED_SPOTIFY_GATE.md` for the state-machine details.
-
-
-## v90.13 — BLEDIM fail-safe recovery + configurable overspeed warning
-
-Road-test hardening for the Door/Dashboard BLEDIM2 controllers:
-
-- ELK-BLEDOM / Lotus Lantern keeps the 20 Hz animation path; BLEDIM2 animation traffic is limited to 10 Hz to reduce FFF1 write-without-response pressure while preserving the native 0...255 brightness interpolation.
-- A BLEDIM2 controller that disconnects during Breath/fade/warning no longer rejoins the transient animation when it reconnects. GATT readiness instead restores the semantic steady state: Power ON, normal color, and the current preferred (or Door day/night) brightness.
-- Every completed BLEDIM2 Breath/fade gets a spaced three-round steady-state reassertion so a dropped final write cannot strand a light at 0% or a transient level.
-- Overspeed warning color is user-selectable (red by default), pulse duration is 0–5 s, and a fixed 60 s cooldown suppresses rapid threshold chatter/re-cross warnings.
-
-## v90.13.1 — official BLEDIM2 slider fidelity
-
-Re-analysis of the August 24 official BLEDIM2 iOS PacketLogger trace shows continuous
-brightness slider traffic at approximately 100 ms intervals (~10 Hz), raw 0–255
-brightness values, and occasional repeated identical raw brightness bytes. The BLEDIM
-animation path now follows that observed cadence exactly, permits those same-value
-10-Hz reassertions, uses one rolling app-wide BLEDIM sequence stream, and no longer
-performs Device Information/Battery reads during paired BLEDIM reconnects. Paired
-BLEDIM reconnect discovery is restricted to FFF0 -> FFF1, reducing GATT traffic during
-the animation-critical window. Pending write-without-response recovery is also resumed
-from CoreBluetooth's ready callback. See
-`docs/V90_13_1_BLEDIM_OFFICIAL_SLIDER_FIDELITY.md`.
-
-
-## v90.13.2 — iOS CI regression-test alignment
-
-- No runtime ambient-light behavior changed from v90.13.1.
-- Updated `V909AmbientAnimationReliabilityTests` to assert the official-capture-aligned app-wide rolling BLEDIM2 sequence stream instead of the superseded per-peripheral counter model.
-- Added a Python regression guard that verifies the Swift XCTest source remains aligned with the BLEDIM2 implementation, preventing the same CI-only mismatch from recurring.
+The independent later features remain: Spotify automatic wake is allowed only in a HUD/OBD vehicle session; speed-limit selection includes Current, Enhanced OSM, and OSM Trace; the finite ambient overspeed warning supports a user-selected color (red default), 0–5 s pulse duration, 2–3 pulses, brightness/offset controls, and a 60 s recross cooldown. No HERE code, API key, or commercial map-service dependency remains.

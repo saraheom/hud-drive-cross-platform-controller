@@ -8,23 +8,21 @@ VEHICLE = (ROOT / "ios/HUDController/UI/VehicleView.swift").read_text()
 MEDIA = (ROOT / "ios/HUDController/UI/MediaView.swift").read_text()
 
 
-def test_headlight_state_uses_same_center_signal_as_hud_auto_brightness():
-    assert "private func setAuthoritativeHeadlightPower" in MONITOR
-    present = MONITOR.split("private func markPresent", 1)[1].split("private func markAbsent", 1)[0]
-    absent = MONITOR.split("private func markAbsent", 1)[1].split("func rehydrateHUDState", 1)[0]
-    assert "setAuthoritativeHeadlightPower(true" in present
-    assert "HudCommands.autoBrightness(true)" in present
-    assert "setAuthoritativeHeadlightPower(false" in absent
-    assert "HudCommands.autoBrightness(false)" in absent
-    assert "HUD brightness headlight OFF → day Door brightness" in MONITOR
-    assert "HUD brightness headlight ON → night Door brightness" in MONITOR
+def test_headlight_state_uses_two_light_consensus_instead_of_center_authority():
+    assert "private enum HeadlightConsensusObservation" in MONITOR
+    assert "both Center + Dashboard stable ON" in MONITOR
+    assert "both Center + Dashboard stable OFF" in MONITOR
+    assert "setAuthoritativeHeadlightPower" not in MONITOR
+    assert "Headlight consensus → Auto brightness ON" in MONITOR
+    assert "Headlight consensus → Auto brightness OFF" in MONITOR
 
 
-def test_stale_headlight_breath_final_is_generation_safe():
+def test_headlight_breath_waits_for_both_gatt_ready_and_epoch_is_generation_safe():
     assert "headlightStateGeneration" in MONITOR
-    assert "private func validBreathParticipant" in MONITOR
-    assert "Skipped stale headlight Breath final" in MONITOR
-    assert "headlightAnimatedEpochByID[id] == headlightPowerEpoch" in MONITOR
+    assert "private func tryStartConfirmedHeadlightBreath" in MONITOR
+    assert "isControllable(dashboardID)" in MONITOR
+    assert "isControllable(centerID)" in MONITOR
+    assert "headlightAnimatedEpochByID" in MONITOR
 
 
 def test_spotify_automatically_wakes_after_repeated_failures_without_clearing_token():

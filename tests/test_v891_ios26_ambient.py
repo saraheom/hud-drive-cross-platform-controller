@@ -9,7 +9,7 @@ def test_smooth_animation_engine_is_main_actor_isolated():
     assert "private func transitionBrightness(" in source
     assert "let timelineTick = 0.05" in source
     assert "private func sendBrightnessNormalized(" in source
-    assert "protocolPacing=Lotus20Hz/BLEDIM10Hz" in source
+    assert "protocolPacing=20Hz/rawBLEDIM" in source
     assert "private func startSynchronizedBreathSession()" in source
 
 

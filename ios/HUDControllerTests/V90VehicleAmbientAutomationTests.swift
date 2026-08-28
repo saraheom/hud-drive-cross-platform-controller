@@ -42,7 +42,7 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
         XCTAssertTrue(source.contains("private func transitionBrightness("))
         XCTAssertTrue(source.contains("let timelineTick = 0.05"))
         XCTAssertTrue(source.contains("private func sendBrightnessNormalized("))
-        XCTAssertTrue(source.contains("protocolPacing=Lotus20Hz/BLEDIM10Hz"))
+        XCTAssertTrue(source.contains("protocolPacing=20Hz/rawBLEDIM"))
         XCTAssertTrue(source.contains("private func startSynchronizedBreathSession()"))
         XCTAssertTrue(source.contains("from = Double(clampedStart); to = 0"))
         XCTAssertTrue(source.contains("from = 0; to = 100"))
