@@ -245,11 +245,13 @@ final class HudOBDController {
         connected = false
         supportedPIDs = ""
         status = "HUD disconnected — physical OBD power unknown"
-        // Do NOT emit a physical-power-negative signal here. The HUD itself can
-        // reboot/overheat while the independently powered OBD2 adapter remains
-        // alive. AmbientLightMonitor decides engine OFF from its independent OBD
-        // BLE witness instead of conflating HUD transport loss with OBD power loss.
-        logger.log("OBD SESSION", "HUD BLE transport disconnected; cleared HUD-side OBD link state only; physical OBD power remains unknown")
+        // v90.15 engine consensus is explicitly based on the app-visible HUD and
+        // OBD2 connection states. Losing HUD transport necessarily makes the
+        // through-HUD OBD connection unavailable too, so publish that state. The
+        // AmbientLightMonitor still has an independent direct-OBD BLE witness that
+        // can veto a false engine-OFF decision during a HUD-only reboot.
+        onConnectionChanged?(false)
+        logger.log("OBD SESSION", "HUD BLE transport disconnected; published OBD connection=false while physical OBD power remains independently witnessable")
     }
 
     private func startAutoConnectLoop(reason: String) {

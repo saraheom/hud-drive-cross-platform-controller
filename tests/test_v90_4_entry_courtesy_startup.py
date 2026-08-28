@@ -24,18 +24,18 @@ def test_startup_night_detector_rejects_pre_engine_advertisements():
     assert "isLogicallyPowered" not in block
 
 
-def test_finish_startup_only_classifies_door_day_night():
+def test_finish_startup_classifies_then_admits_one_vehicle_breath():
     src = monitor_source()
     block = src.split("private func finishVehicleStartupClassification()", 1)[1].split("private func applyCurrentDoorDayNightTarget", 1)[0]
     assert "startupHeadlightPowerPresent()" in block
-    assert "applyCurrentDoorDayNightTarget" in block
-    assert "Vehicle startup pulse" not in block
-    assert "fadeIn" not in block
+    assert "tryStartVehicleStartupBreath" in block
+    assert "applyCurrentDoorDayNightTarget(" not in block
+    assert "Do not begin a separate Door fade here" in block
 
 
 def test_ui_keeps_courtesy_logic_concise_and_hides_old_tuning_controls():
     view = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
-    assert "Pre-engine courtesy headlights are ignored by a short internal settle window" in view
+    assert "Dashboard + Center courtesy power before that may connect normally but cannot consume the automatic Breath" in view
     assert "Post-engine headlight settle window" not in view
     assert "Headlight join fade" not in view
     assert "Shutdown fade" not in view

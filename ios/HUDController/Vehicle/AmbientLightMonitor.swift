@@ -180,6 +180,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var previousHeadlightPowerPresent = false
     private var hudEnginePowerSignalPresent = false
     private var obdEnginePowerSignalPresent = false
+    /// v90.15: engine state uses the same conservative consensus model as the
+    /// headlight circuit. HUD + OBD2 must BOTH be present to establish a new
+    /// engine-ON session. If only one witness is present, preserve the last
+    /// confirmed engine state instead of creating a new edge.
+    private var engineSignalConsensusTask: Task<Void, Never>?
+    private let engineSignalConsensusStabilitySeconds: TimeInterval = 0.75
     private var engineOffConfirmationTask: Task<Void, Never>?
     private var hudOutageBeganAt: Date?
     /// v90.4: engine-start timestamp anchors the courtesy-headlight settling
@@ -190,8 +196,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var directOBDPeripheralID: UUID?
     private var directOBDWitnessProven: Bool
     private let directOBDRecentSeconds: TimeInterval = 3.0
-    private let directOBDAcquireWindowSeconds: TimeInterval = 3.0
+    // v90.15: allow enough time for the OBD adapter to resume direct advertising
+    // during a HUD-only reboot before BOTH app-visible links are interpreted as an
+    // engine-off candidate. Engine OFF is not latency-sensitive; false OFF is.
+    private let directOBDAcquireWindowSeconds: TimeInterval = 5.0
     private(set) var independentOBDWitnessStatus = "Independent OBD witness not calibrated"
+
+    /// Courtesy-powered Dashboard + Center connections are allowed before engine
+    /// start, but they must never consume the automatic startup Breath. Each new
+    /// confirmed engine session arms exactly one vehicle startup animation after
+    /// the courtesy/headlight classification finishes.
+    private var vehicleStartupAnimationPending = false
 
     // MARK: - v90 controller state
 
@@ -492,6 +507,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         breathPrepareTasks.removeAll()
         headlightConsensusTask?.cancel()
         headlightConsensusTask = nil
+        engineSignalConsensusTask?.cancel()
+        engineSignalConsensusTask = nil
         overspeedWarningTask?.cancel()
         overspeedWarningTask = nil
         overspeedRestoreTask?.cancel()
@@ -1423,6 +1440,27 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             queuePowerUpBreath(id, force: true)
             return
         }
+
+        // v90.15 courtesy gate: automatic vehicle animations are not admitted
+        // until HUD + OBD2 have jointly confirmed engine ON and the post-start
+        // courtesy/headlight classification has finished. A courtesy-powered
+        // Dashboard/Center may still connect and be restored to steady state.
+        if vehicleAutomationEnabled,
+           let role = pairedDevice(id)?.role,
+           role == .door || role.isHeadlightFed,
+           (!enginePowerPresent || !vehicleStartupCompleted || vehicleStartupAnimationPending) {
+            if role.isHeadlightFed, enginePowerPresent {
+                scheduleHeadlightConsensusEvaluation(
+                    reason: "\(pairedDevice(id)?.displayName ?? id.uuidString) GATT ready during startup gate"
+                )
+            }
+            restoreDeviceState(id)
+            if enginePowerPresent, vehicleStartupCompleted, vehicleStartupAnimationPending {
+                tryStartVehicleStartupBreath(reason: "vehicle light GATT ready")
+            }
+            return
+        }
+
         if isHeadlightFedDevice(id) {
             scheduleHeadlightConsensusEvaluation(
                 reason: "\(pairedDevice(id)?.displayName ?? id.uuidString) GATT ready"
@@ -1794,6 +1832,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard !Task.isCancelled else { return }
             self.headlightConsensusTask = nil
 
+            // Before engine confirmation, Dashboard + Center are courtesy-light
+            // evidence only. During the post-engine settle window, wait for the
+            // explicit startup classifier instead of allowing advertisements or
+            // GATT callbacks to create/cancel a headlight epoch.
+            guard self.enginePowerPresent, self.vehicleStartupCompleted else {
+                self.logger.log(
+                    "AMBIENT POWER",
+                    "Headlight consensus deferred during courtesy/startup gate engine=\(self.enginePowerPresent) startupComplete=\(self.vehicleStartupCompleted) (\(reason))"
+                )
+                return
+            }
+
             let observation = self.currentHeadlightConsensus()
             switch observation {
             case .bothOn:
@@ -1848,7 +1898,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 )
             }
 
-            tryStartConfirmedHeadlightBreath(reason: reason)
+            if vehicleStartupAnimationPending {
+                logger.log(
+                    "AMBIENT ANIM",
+                    "Headlight Breath deferred to pending vehicle-start animation epoch=\(headlightPowerEpoch)"
+                )
+            } else {
+                tryStartConfirmedHeadlightBreath(reason: reason)
+            }
         } else {
             for id in headlightIDs {
                 breathPrepareTasks[id]?.cancel()
@@ -1894,7 +1951,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// until both Center and Dashboard are controllable. Then queue both against
     /// the same v90.10 shared Breath timeline.
     private func tryStartConfirmedHeadlightBreath(reason: String) {
-        guard headlightPowerSessionActive,
+        guard !vehicleStartupAnimationPending,
+              headlightPowerSessionActive,
               let dashboardID = deviceID(for: .dashboard),
               let centerID = deviceID(for: .centerConsole),
               isControllable(dashboardID),
@@ -1912,6 +1970,44 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             "Consensus headlight animation admitted epoch=\(headlightPowerEpoch) ready=2 reason=\(reason)"
         )
         for id in pending {
+            queuePowerUpBreath(id)
+        }
+    }
+
+    /// v90.15 vehicle-start admission. The engine session is first confirmed by
+    /// stable HUD + OBD2 consensus, then the existing courtesy settle determines
+    /// day/night. Only after that do we admit one automatic startup Breath:
+    /// Door-only in daylight, or Door + Dashboard + Center together at night.
+    /// All expected controllers must be GATT-controllable before the animation is
+    /// admitted so a late controller cannot join halfway through.
+    private func tryStartVehicleStartupBreath(reason: String) {
+        guard vehicleAutomationEnabled,
+              enginePowerPresent,
+              vehicleStartupCompleted,
+              vehicleStartupAnimationPending,
+              let doorID = deviceID(for: .door),
+              isLogicallyPowered(doorID),
+              isControllable(doorID) else { return }
+
+        var ids: [UUID] = [doorID]
+        if vehicleHeadlightsActive {
+            guard headlightPowerSessionActive,
+                  let dashboardID = deviceID(for: .dashboard),
+                  let centerID = deviceID(for: .centerConsole),
+                  isLogicallyPowered(dashboardID),
+                  isLogicallyPowered(centerID),
+                  isControllable(dashboardID),
+                  isControllable(centerID) else { return }
+            ids.append(contentsOf: [dashboardID, centerID])
+        }
+
+        vehicleStartupAnimationPending = false
+        animatedConnectionSession.remove(doorID)
+        logger.log(
+            "AMBIENT ANIM",
+            "Vehicle-start Breath admitted mode=\(vehicleHeadlightsActive ? "night" : "day") lights=\(ids.count) reason=\(reason)"
+        )
+        for id in ids {
             queuePowerUpBreath(id)
         }
     }
@@ -2010,12 +2106,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private func resetVehicleAutomationRuntime(reason: String) {
         startupClassificationTask?.cancel()
         startupClassificationTask = nil
+        engineSignalConsensusTask?.cancel()
+        engineSignalConsensusTask = nil
         engineOffConfirmationTask?.cancel()
         engineOffConfirmationTask = nil
         hudOutageBeganAt = nil
         if !enginePowerPresent { enginePowerBecamePresentAt = nil }
         vehicleSessionActive = false
         vehicleStartupCompleted = false
+        vehicleStartupAnimationPending = false
         vehicleHeadlightsActive = false
         previousHeadlightPowerPresent = false
         vehicleAutomationStatus = vehicleAutomationEnabled
@@ -2024,45 +2123,86 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         logger.log("AMBIENT AUTO", "Vehicle automation runtime reset: \(reason)")
     }
 
-    /// The HUD and OBD2 adapter share the engine-switched power domain, but the
-    /// HUD can thermally reboot while the engine remains on. A HUD disconnect by
-    /// itself therefore NEVER means engine OFF. While the HUD is absent, the app
-    /// looks for the OBD2 adapter directly in the ambient CoreBluetooth scan.
-    /// Once that independent witness has been observed/calibrated, its continued
-    /// BLE presence vetoes shutdown during HUD-only outages. If the witness has
-    /// never been calibrated, automatic shutdown is inhibited rather than risking
-    /// a false fade while driving.
-    func hudTransportPowerSignal(_ present: Bool) {
-        hudEnginePowerSignalPresent = present
-        if present {
-            hudOutageBeganAt = nil
-            confirmEnginePowerOn(source: "HUD transport")
-        } else {
-            hudOutageBeganAt = Date()
-            engineOffConfirmationTask?.cancel()
-            engineOffConfirmationTask = nil
-            if isDirectOBDRecentlyPresent() {
-                confirmEnginePowerOn(source: "independent OBD BLE witness")
-            } else if directOBDWitnessProven {
-                enginePowerStatus = "HUD unavailable • waiting for independent OBD witness"
-                logger.log("AMBIENT ENGINE", "HUD transport lost; waiting for calibrated independent OBD witness before considering engine OFF")
-            } else {
-                enginePowerStatus = "HUD unavailable • OBD witness not calibrated • auto-shutdown inhibited"
-                logger.log("AMBIENT ENGINE", "HUD transport lost, but independent OBD witness is not calibrated; refusing automatic engine-OFF decision")
+    private enum EnginePowerConsensusObservation: String {
+        case bothOn
+        case bothOff
+        case mixed
+    }
+
+    private func currentEnginePowerConsensus() -> EnginePowerConsensusObservation {
+        if hudEnginePowerSignalPresent && obdEnginePowerSignalPresent { return .bothOn }
+        if !hudEnginePowerSignalPresent && !obdEnginePowerSignalPresent { return .bothOff }
+        return .mixed
+    }
+
+    /// v90.15: both HUD transport and OBD2 connection must agree before a new
+    /// engine-ON session is created. A mixed state never flips the confirmed
+    /// engine state. For OFF, both primary signals must be absent and the existing
+    /// independent OBD BLE witness may still veto shutdown during a HUD reboot.
+    private func scheduleEngineSignalConsensusEvaluation(reason: String) {
+        engineSignalConsensusTask?.cancel()
+        engineSignalConsensusTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.engineSignalConsensusStabilitySeconds))
+            guard !Task.isCancelled else { return }
+            self.engineSignalConsensusTask = nil
+
+            switch self.currentEnginePowerConsensus() {
+            case .bothOn:
+                self.confirmEnginePowerOn(source: "stable HUD + OBD2 consensus")
+            case .bothOff:
+                if self.enginePowerPresent {
+                    if self.isDirectOBDRecentlyPresent() {
+                        self.engineOffConfirmationTask?.cancel()
+                        self.engineOffConfirmationTask = nil
+                        self.enginePowerStatus = "Engine ON preserved • HUD + OBD2 absent but direct OBD witness still present"
+                        self.logger.log(
+                            "AMBIENT ENGINE",
+                            "HUD + OBD2 both absent, but independent OBD witness vetoes engine OFF (\(reason))"
+                        )
+                    } else if let began = self.hudOutageBeganAt,
+                              Date().timeIntervalSince(began) < self.directOBDAcquireWindowSeconds {
+                        self.enginePowerStatus = "HUD + OBD2 absent • checking direct OBD witness…"
+                        self.logger.log(
+                            "AMBIENT ENGINE",
+                            "HUD + OBD2 both absent; holding OFF decision during direct-OBD acquisition window (\(reason))"
+                        )
+                    } else {
+                        self.scheduleEnginePowerOffConfirmation(source: "HUD + OBD2 both stably absent; \(reason)")
+                    }
+                } else {
+                    self.enginePowerStatus = "Engine power OFF • HUD + OBD2 absent"
+                }
+            case .mixed:
+                self.engineOffConfirmationTask?.cancel()
+                self.engineOffConfirmationTask = nil
+                self.enginePowerStatus = self.enginePowerPresent
+                    ? "Engine ON preserved • HUD/OBD2 mixed"
+                    : "Engine not confirmed • waiting for HUD + OBD2"
+                self.logger.log(
+                    "AMBIENT ENGINE",
+                    "Engine consensus mixed; preserving confirmed \(self.enginePowerPresent ? "ON" : "OFF") state (\(reason))"
+                )
             }
         }
     }
 
+    /// The HUD and OBD2 adapter share the engine-switched power domain. v90.15
+    /// requires both app-visible connection states to establish engine ON; a
+    /// single witness is treated as transitional evidence only.
+    func hudTransportPowerSignal(_ present: Bool) {
+        hudEnginePowerSignalPresent = present
+        if present {
+            hudOutageBeganAt = nil
+        } else {
+            hudOutageBeganAt = Date()
+        }
+        scheduleEngineSignalConsensusEvaluation(reason: present ? "HUD connected" : "HUD disconnected")
+    }
+
     func obdPowerSignal(_ present: Bool) {
         obdEnginePowerSignalPresent = present
-        if present {
-            confirmEnginePowerOn(source: "OBD2 connected through HUD")
-        } else if hudEnginePowerSignalPresent {
-            // The HUD itself still proves that the engine-switched power domain is ON.
-            confirmEnginePowerOn(source: "HUD transport")
-        } else {
-            evaluateIndependentOBDWitnessForEngineState()
-        }
+        scheduleEngineSignalConsensusEvaluation(reason: present ? "OBD2 connected" : "OBD2 disconnected")
     }
 
     private func currentOBDTargetName() -> String {
@@ -2088,8 +2228,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             logger.log("AMBIENT ENGINE", "Calibrated independent OBD BLE witness name=\(name.isEmpty ? currentOBDTargetName() : name) id=\(id)")
         }
         independentOBDWitnessStatus = "OBD witness present • \(name.isEmpty ? currentOBDTargetName() : name) • \(rssi) dBm"
-        if !hudEnginePowerSignalPresent {
-            confirmEnginePowerOn(source: "independent OBD BLE witness")
+        if enginePowerPresent,
+           !hudEnginePowerSignalPresent,
+           !obdEnginePowerSignalPresent {
+            engineOffConfirmationTask?.cancel()
+            engineOffConfirmationTask = nil
+            enginePowerStatus = "Engine ON preserved • direct OBD witness present during HUD/OBD outage"
         }
     }
 
@@ -2098,34 +2242,33 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func evaluateIndependentOBDWitnessForEngineState(now: Date = Date()) {
-        if hudEnginePowerSignalPresent || obdEnginePowerSignalPresent {
-            confirmEnginePowerOn(source: hudEnginePowerSignalPresent ? "HUD transport" : "OBD2 connected through HUD")
+        switch currentEnginePowerConsensus() {
+        case .bothOn:
+            // The event-driven consensus timer owns new ON edges.
             return
-        }
-
-        if isDirectOBDRecentlyPresent(now: now) {
+        case .mixed:
             engineOffConfirmationTask?.cancel()
             engineOffConfirmationTask = nil
-            confirmEnginePowerOn(source: "independent OBD BLE witness")
             return
+        case .bothOff:
+            guard enginePowerPresent else { return }
+            if isDirectOBDRecentlyPresent(now: now) {
+                engineOffConfirmationTask?.cancel()
+                engineOffConfirmationTask = nil
+                enginePowerStatus = "Engine ON preserved • direct OBD witness present"
+                return
+            }
+            // Give a previously visible direct OBD witness a short acquisition
+            // window after HUD loss before beginning the OFF confirmation.
+            if let began = hudOutageBeganAt,
+               now.timeIntervalSince(began) < directOBDAcquireWindowSeconds {
+                enginePowerStatus = "HUD + OBD2 absent • checking direct OBD witness…"
+                return
+            }
+            if engineSignalConsensusTask == nil, engineOffConfirmationTask == nil {
+                scheduleEngineSignalConsensusEvaluation(reason: "watchdog both-off reevaluation")
+            }
         }
-
-        guard directOBDWitnessProven else {
-            engineOffConfirmationTask?.cancel()
-            engineOffConfirmationTask = nil
-            enginePowerStatus = "HUD unavailable • OBD witness not calibrated • auto-shutdown inhibited"
-            return
-        }
-
-        // Give a powered OBD adapter a few seconds to resume advertising after
-        // its HUD-side Bluetooth link disappears. This is the discriminator
-        // between a HUD-only reboot and the whole engine-switched domain losing power.
-        if let began = hudOutageBeganAt, now.timeIntervalSince(began) < directOBDAcquireWindowSeconds {
-            enginePowerStatus = "HUD unavailable • checking OBD power witness…"
-            return
-        }
-
-        scheduleEnginePowerOffConfirmation(source: "HUD absent and calibrated OBD witness absent")
     }
 
     private func confirmEnginePowerOn(source: String) {
@@ -2141,10 +2284,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             startupClassificationTask = nil
             vehicleSessionActive = false
             vehicleStartupCompleted = false
+            vehicleStartupAnimationPending = true
             vehicleHeadlightsActive = false
             previousHeadlightPowerPresent = false
-                        vehicleAutomationStatus = "Engine power ON • waiting briefly for courtesy headlights to settle"
-            logger.log("AMBIENT ENGINE", "Engine-switched power ON via \(source); starting simplified Door day/night settle window")
+            if let doorID = deviceID(for: .door) {
+                animatedConnectionSession.remove(doorID)
+            }
+            for id in roleIDs([.dashboard, .centerConsole]) {
+                headlightAnimatedEpochByID[id] = nil
+            }
+            vehicleAutomationStatus = "Engine power ON • waiting briefly for courtesy headlights to settle"
+            logger.log(
+                "AMBIENT ENGINE",
+                "Engine-switched power ON via \(source); vehicle-start Breath armed after courtesy settle"
+            )
         }
 
         evaluateVehicleLightingAutomation()
@@ -2156,17 +2309,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
         guard !hudEnginePowerSignalPresent, !obdEnginePowerSignalPresent else {
-            enginePowerStatus = hudEnginePowerSignalPresent
-                ? "Engine power ON • HUD transport"
-                : "Engine power ON • OBD2 connected through HUD"
-            return
-        }
-        guard directOBDWitnessProven else {
-            enginePowerStatus = "HUD unavailable • OBD witness not calibrated • auto-shutdown inhibited"
+            enginePowerStatus = "Engine ON preserved • HUD/OBD2 not both absent"
             return
         }
         guard !isDirectOBDRecentlyPresent() else {
-            confirmEnginePowerOn(source: "independent OBD BLE witness")
+            enginePowerStatus = "Engine ON preserved • direct OBD witness present"
             return
         }
         guard engineOffConfirmationTask == nil else { return }
@@ -2189,7 +2336,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private func confirmEnginePowerOff() {
         guard enginePowerPresent else { return }
         enginePowerPresent = false
-        enginePowerStatus = "Engine power OFF • HUD + calibrated OBD witness absent"
+        enginePowerStatus = "Engine power OFF • HUD + OBD2 absent"
         independentOBDWitnessStatus = directOBDWitnessProven
             ? "Calibrated OBD witness absent"
             : "Independent OBD witness not calibrated"
@@ -2197,22 +2344,40 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         startupClassificationTask = nil
         vehicleSessionActive = false
         vehicleStartupCompleted = false
+        vehicleStartupAnimationPending = false
         vehicleHeadlightsActive = false
         previousHeadlightPowerPresent = false
         enginePowerBecamePresentAt = nil
+        headlightConsensusTask?.cancel()
+        headlightConsensusTask = nil
+
+        // Courtesy power may keep Dashboard/Center alive after engine shutdown.
+        // End the driving headlight epoch now and suppress any in-flight automatic
+        // vehicle Breath so courtesy lights return to their steady preference.
+        if headlightPowerSessionActive {
+            commitConfirmedHeadlightPower(false, reason: "engine OFF consensus")
+        }
+        for id in roleIDs([.door, .dashboard, .centerConsole]) {
+            breathPrepareTasks[id]?.cancel()
+            breathPrepareTasks[id] = nil
+            removeFromActiveBreath(id)
+        }
+        for id in roleIDs([.dashboard, .centerConsole]) where isControllable(id) {
+            restoreDeviceState(id)
+        }
         logger.log(
             "AMBIENT ENGINE",
-            "Engine power OFF confirmed; v90.8 leaves all ambient lights at their current brightness and waits for the vehicle to remove physical power"
+            "Engine power OFF confirmed by HUD + OBD2 absence; courtesy lights remain steady and automatic Breath is suppressed"
         )
         if vehicleAutomationEnabled {
             vehicleAutomationStatus = "Engine OFF • lights unchanged until vehicle power changes"
         }
     }
 
-    /// Simplified v90.8 vehicle-aware behavior. Engine state only gates Door
-    /// day/night brightness; it no longer owns startup/shutdown animations or
-    /// suppresses courtesy lights. Power-up animation is handled independently by
-    /// each light's Animation toggle and the shared synchronized breath timeline.
+    /// v90.15 vehicle-aware behavior. Engine state is confirmed only after stable
+    /// HUD + OBD2 agreement. Courtesy-powered Dashboard/Center lights may connect
+    /// before then, but automatic startup animation remains gated until the engine
+    /// session is confirmed and the post-start day/night settle completes.
     private func evaluateVehicleLightingAutomation() {
         guard vehicleAutomationEnabled, enabled else { return }
 
@@ -2297,9 +2462,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             : "Engine ON • day • Door target \(doorDayBrightness)%"
         logger.log(
             "AMBIENT AUTO",
-            "Simplified startup classification complete: \(night ? "night" : "day"); applying Door target only"
+            "Startup classification complete: \(night ? "night" : "day"); admitting one vehicle-start Breath when required controllers are ready"
         )
-        applyCurrentDoorDayNightTarget(reason: night ? "startup night Door target" : "startup day Door target")
+        // Do not begin a separate Door fade here. The vehicle-start Breath owns
+        // the Door baseline/return target so startup cannot become fade -> Breath
+        // or two competing brightness timelines. If animation is disabled for a
+        // required light, queuePowerUpBreath() falls back to steady restoration.
+        tryStartVehicleStartupBreath(reason: "startup day/night classification complete")
     }
 
     private func applyCurrentDoorDayNightTarget(reason: String) {

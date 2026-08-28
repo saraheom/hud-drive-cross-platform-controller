@@ -45,5 +45,5 @@ def test_ui_exposes_two_door_brightness_settings_and_simple_rule():
     assert 'title: "Door night brightness"' in view
     assert "monitor.setDoorDayBrightness" in view
     assert "monitor.setDoorNightBrightness" in view
-    assert "Dashboard/Center Console headlight power means Night" in view
-    assert "Engine OFF sends no ambient-light brightness command" in view
+    assert "Dashboard + Center courtesy power before that may connect normally but cannot consume the automatic Breath" in view
+    assert "HUD + OBD2 must both confirm the engine session" in view

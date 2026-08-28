@@ -37,17 +37,18 @@ def test_smooth_brightness_transition_is_shared_and_does_not_rewrite_preference_
     assert "group manual brightness" in monitor
 
 
-def test_vehicle_automation_only_classifies_day_night_for_door():
+def test_vehicle_automation_classifies_day_night_then_admits_one_startup_breath():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "beginVehicleStartupClassification" in monitor
     assert "finishVehicleStartupClassification" in monitor
-    assert "Simplified startup classification complete" in monitor
+    assert "Startup classification complete" in monitor
+    assert "tryStartVehicleStartupBreath" in monitor
     assert "applyCurrentDoorDayNightTarget" in monitor
     assert "fadeInNewHeadlightDevices" not in monitor
     assert "performVehicleShutdownFade" not in monitor
 
 
-def test_engine_power_uses_hud_and_obd_but_engine_off_does_not_drive_lights():
+def test_engine_power_uses_hud_and_obd_consensus_with_direct_obd_off_veto():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     appstate = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
     obd = (ROOT / "ios/HUDController/Vehicle/HudOBDController.swift").read_text()
@@ -55,7 +56,9 @@ def test_engine_power_uses_hud_and_obd_but_engine_off_does_not_drive_lights():
     assert "func obdPowerSignal(_ present: Bool)" in monitor
     assert "scheduleEnginePowerOffConfirmation" in monitor
     assert "directOBDWitnessProven" in monitor
-    assert "Engine power OFF confirmed; v90.8 leaves all ambient lights" in monitor
+    assert "private enum EnginePowerConsensusObservation" in monitor
+    assert "stable HUD + OBD2 consensus" in monitor
+    assert "direct OBD witness" in monitor
     assert "self.ambientLight.hudTransportPowerSignal(true)" in appstate
     assert "self.ambientLight.hudTransportPowerSignal(false)" in appstate
     assert "!self.bluetooth.userDisconnectRequested" in appstate

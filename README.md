@@ -371,3 +371,21 @@ The independent later features remain: Spotify automatic wake is allowed only in
 - Replaces the legacy `V9012AmbientRecoveryOverspeedSpotifyGateTests.swift` file so overlay-style repository updates cannot retain v90.12/v90.13 assertions that contradict the v90.14 two-light consensus architecture.
 - The compatibility XCTest now validates stable Center+Dashboard consensus, both-GATT-ready Breath admission, same-epoch single steady restore, the v90.10 BLEDIM transport baseline, and the retained overspeed/Spotify behavior.
 
+
+## v90.15 — courtesy-safe startup + HUD/OBD engine consensus
+
+v90.15 keeps the v90.10 ambient BLE transport and the v90.14 two-light headlight consensus, but separates pre-engine courtesy lighting from the actual driving startup sequence.
+
+- Engine ON is a stable two-signal consensus: HUD transport + OBD2 connection must both be present for 0.75 s before a new vehicle session is created.
+- Engine OFF is considered only when both HUD and OBD2 are absent. A mixed state preserves the last confirmed engine state.
+- The independent direct-OBD BLE witness can veto a false engine-OFF decision during a HUD reboot, but it cannot create a new engine-ON session by itself.
+- HUD transport loss now also publishes the through-HUD OBD connection as disconnected, allowing the two app-visible states to remain internally consistent. Direct OBD remains the physical-power fallback witness.
+- Dashboard + Center courtesy power while the engine is unconfirmed may connect and restore normally, but cannot create a headlight epoch or consume the automatic startup Breath.
+- Once HUD + OBD2 confirm engine ON, the existing courtesy settle classifies the real post-start lighting state.
+- Day startup waits for Door control and runs one Door Breath.
+- Night startup waits for Door + Dashboard + Center writable GATT control and then admits one synchronized three-light Breath.
+- Startup classification no longer launches a separate Door day/night fade before the Breath; the Breath owns the Door baseline/return target, eliminating competing startup brightness timelines.
+- After startup, v90.14's Center+Dashboard headlight consensus remains in charge: mixed state preserves the last confirmed state, both ON creates one headlight epoch, and both OFF ends it.
+- A 5-second direct-OBD acquisition window plus the existing engine-OFF confirmation delay protects against short HUD-only reboots before declaring a new engine session.
+
+All later independent overspeed, Spotify vehicle-gating, and OSM speed-limit features remain unchanged.

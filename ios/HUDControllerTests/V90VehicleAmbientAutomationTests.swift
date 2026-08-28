@@ -19,10 +19,11 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
         XCTAssertTrue(source.contains(".centerConsole"))
     }
 
-    func testEngineOffLeavesAmbientLightsAtCurrentLevel() throws {
+    func testEngineOffSuppressesAutomaticBreathWithoutShutdownFade() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("Engine power OFF confirmed; v90.8 leaves all ambient lights at their current brightness"))
-        XCTAssertTrue(monitor.contains("waits for the vehicle to remove physical power"))
+        XCTAssertTrue(monitor.contains("Engine power OFF confirmed by HUD + OBD2 absence"))
+        XCTAssertTrue(monitor.contains("automatic Breath is suppressed"))
+        XCTAssertTrue(monitor.contains("vehicleStartupAnimationPending = false"))
         XCTAssertFalse(monitor.contains("performVehicleShutdownFade(trigger: \"engine power OFF\")"))
         XCTAssertFalse(monitor.contains("vehicleShutdownLatched"))
     }
@@ -62,12 +63,15 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
 
         XCTAssertTrue(monitor.contains("func hudTransportPowerSignal(_ present: Bool)"))
         XCTAssertTrue(monitor.contains("func obdPowerSignal(_ present: Bool)"))
+        XCTAssertTrue(monitor.contains("private enum EnginePowerConsensusObservation"))
+        XCTAssertTrue(monitor.contains("stable HUD + OBD2 consensus"))
         XCTAssertTrue(monitor.contains("scheduleEnginePowerOffConfirmation"))
         XCTAssertTrue(monitor.contains("directOBDWitnessProven"))
         XCTAssertTrue(appState.contains("self.ambientLight.hudTransportPowerSignal(true)"))
         XCTAssertTrue(appState.contains("self.ambientLight.hudTransportPowerSignal(false)"))
         XCTAssertTrue(appState.contains("!self.bluetooth.userDisconnectRequested"))
         XCTAssertTrue(obd.contains("var onConnectionChanged: ((Bool) -> Void)?"))
+        XCTAssertTrue(obd.contains("onConnectionChanged?(false)"))
         XCTAssertFalse(monitor.contains("engineRPM >"))
     }
 

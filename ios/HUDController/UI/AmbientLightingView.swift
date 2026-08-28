@@ -125,7 +125,7 @@ struct AmbientLightingView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Text("Simple rule: while the HUD/OBD engine-power session is ON, Dashboard/Center Console headlight power means Night; when those headlight-fed lights are off, the Door uses its Day target. Pre-engine courtesy headlights are ignored by a short internal settle window. Engine OFF sends no ambient-light brightness command — all lights are left at their current level until the vehicle changes their physical power.")
+                            Text("Startup rule: HUD + OBD2 must both confirm the engine session. Dashboard + Center courtesy power before that may connect normally but cannot consume the automatic Breath. After the courtesy settle, Day runs one Door startup Breath; Night waits for Door + Dashboard + Center to be ready and runs one synchronized startup Breath. During driving, mixed Dashboard/Center power preserves the last confirmed headlight state.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
