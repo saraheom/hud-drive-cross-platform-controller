@@ -52,8 +52,8 @@ final class V9015CourtesyEngineConsensusTests: XCTestCase {
             .components(separatedBy: "/// Record positive physical-power evidence")[0]
         XCTAssertTrue(block.contains("let doorID = deviceID(for: .door)"))
         XCTAssertTrue(block.contains("if vehicleHeadlightsActive"))
-        XCTAssertTrue(block.contains("isControllable(dashboardID)"))
-        XCTAssertTrue(block.contains("isControllable(centerID)"))
+        XCTAssertTrue(block.contains("dashboardGATTNotReady"))
+        XCTAssertTrue(block.contains("centerGATTNotReady"))
         XCTAssertTrue(block.contains("Vehicle-start Breath admitted mode="))
     }
 

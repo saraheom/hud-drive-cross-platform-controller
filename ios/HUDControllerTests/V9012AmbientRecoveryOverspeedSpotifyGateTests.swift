@@ -31,15 +31,15 @@ final class V9012AmbientRecoveryOverspeedSpotifyGateTests: XCTestCase {
         XCTAssertTrue(monitor.contains("headlightConsensusStabilitySeconds: TimeInterval = 0.75"))
         XCTAssertTrue(monitor.contains("if dashboardOn && centerOn { return .bothOn }"))
         XCTAssertTrue(monitor.contains("if !dashboardOn && !centerOn { return .bothOff }"))
-        XCTAssertTrue(monitor.contains("Headlight consensus mixed after stability window; preserving confirmed"))
+        XCTAssertTrue(monitor.contains("Headlight consensus candidate=mixed; preserving confirmed"))
         XCTAssertFalse(monitor.contains("setAuthoritativeHeadlightPower"))
     }
 
     func testHeadlightBreathWaitsForBothWritableControllers() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("private func tryStartConfirmedHeadlightBreath"))
-        XCTAssertTrue(monitor.contains("isControllable(dashboardID)"))
-        XCTAssertTrue(monitor.contains("isControllable(centerID)"))
+        XCTAssertTrue(monitor.contains("dashboardGATTNotReady"))
+        XCTAssertTrue(monitor.contains("centerGATTNotReady"))
         XCTAssertTrue(monitor.contains("Consensus headlight animation admitted"))
         XCTAssertTrue(monitor.contains("ready=2"))
     }

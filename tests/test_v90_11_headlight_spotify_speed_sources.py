@@ -20,8 +20,8 @@ def test_headlight_state_uses_two_light_consensus_instead_of_center_authority():
 def test_headlight_breath_waits_for_both_gatt_ready_and_epoch_is_generation_safe():
     assert "headlightStateGeneration" in MONITOR
     assert "private func tryStartConfirmedHeadlightBreath" in MONITOR
-    assert "isControllable(dashboardID)" in MONITOR
-    assert "isControllable(centerID)" in MONITOR
+    assert "dashboardGATTNotReady" in MONITOR
+    assert "centerGATTNotReady" in MONITOR
     assert "headlightAnimatedEpochByID" in MONITOR
 
 

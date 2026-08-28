@@ -32,7 +32,7 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
         let source = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(source.contains("beginVehicleStartupClassification"))
         XCTAssertTrue(source.contains("finishVehicleStartupClassification"))
-        XCTAssertTrue(source.contains("startupHeadlightPowerPresent()"))
+        XCTAssertTrue(source.contains("startupHeadlightConsensus()"))
         XCTAssertTrue(source.contains("applyCurrentDoorDayNightTarget"))
         XCTAssertFalse(source.contains("fadeInNewHeadlightDevices"))
         XCTAssertFalse(source.contains("vehicleJoinedHeadlightIDs"))

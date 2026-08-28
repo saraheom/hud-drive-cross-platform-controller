@@ -20,8 +20,8 @@ def test_headlight_requires_stable_two_controller_consensus():
 
 def test_headlight_animation_waits_for_both_gatt_controllers():
     assert 'private func tryStartConfirmedHeadlightBreath' in MONITOR
-    assert 'isControllable(dashboardID)' in MONITOR
-    assert 'isControllable(centerID)' in MONITOR
+    assert 'dashboardGATTNotReady' in MONITOR
+    assert 'centerGATTNotReady' in MONITOR
     assert 'Consensus headlight animation admitted' in MONITOR
     assert 'queuePowerUpBreath(id)' in MONITOR
     assert 'Same-epoch headlight reconnect → steady restore' in MONITOR

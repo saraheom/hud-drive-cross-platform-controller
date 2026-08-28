@@ -38,7 +38,7 @@ def test_courtesy_power_cannot_consume_startup_breath():
     assert "!enginePowerPresent || !vehicleStartupCompleted || vehicleStartupAnimationPending" in run
     assert "restoreDeviceState(id)" in run
     consensus = MONITOR.split("private func scheduleHeadlightConsensusEvaluation", 1)[1].split("private func commitConfirmedHeadlightPower", 1)[0]
-    assert "guard self.enginePowerPresent, self.vehicleStartupCompleted" in consensus
+    assert "guard enginePowerPresent, vehicleStartupCompleted" in consensus
     assert "Headlight consensus deferred during courtesy/startup gate" in consensus
 
 
@@ -47,8 +47,8 @@ def test_vehicle_start_breath_is_one_coherent_day_or_night_admission():
     assert "vehicleStartupAnimationPending" in block
     assert "let doorID = deviceID(for: .door)" in block
     assert "if vehicleHeadlightsActive" in block
-    assert "isControllable(dashboardID)" in block
-    assert "isControllable(centerID)" in block
+    assert "dashboardGATTNotReady" in block
+    assert "centerGATTNotReady" in block
     assert '"Vehicle-start Breath admitted mode=' in block
     assert "queuePowerUpBreath(id)" in block
 

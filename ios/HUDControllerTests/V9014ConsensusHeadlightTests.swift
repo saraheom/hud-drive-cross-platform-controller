@@ -24,8 +24,8 @@ final class V9014ConsensusHeadlightTests: XCTestCase {
     func testHeadlightBreathWaitsForBothGATTControllers() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("private func tryStartConfirmedHeadlightBreath"))
-        XCTAssertTrue(monitor.contains("isControllable(dashboardID)"))
-        XCTAssertTrue(monitor.contains("isControllable(centerID)"))
+        XCTAssertTrue(monitor.contains("dashboardGATTNotReady"))
+        XCTAssertTrue(monitor.contains("centerGATTNotReady"))
         XCTAssertTrue(monitor.contains("Consensus headlight animation admitted"))
         XCTAssertTrue(monitor.contains("Same-epoch headlight reconnect → steady restore"))
         XCTAssertTrue(monitor.contains("restoreDeviceState(id)"))

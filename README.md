@@ -389,3 +389,14 @@ v90.15 keeps the v90.10 ambient BLE transport and the v90.14 two-light headlight
 - A 5-second direct-OBD acquisition window plus the existing engine-OFF confirmation delay protects against short HUD-only reboots before declaring a new engine session.
 
 All later independent overspeed, Spotify vehicle-gating, and OSM speed-limit features remain unchanged.
+
+### v90.15.1 — narrow animation-abort brightness fail-safe
+
+- Keeps the v90.10-derived ambient BLE transport, 20 Hz/raw-BLEDIM Breath, courtesy-safe startup, HUD+OBD engine consensus, and two-light headlight consensus unchanged.
+- If an active Breath or smooth brightness transition is cancelled and no newer light operation takes ownership, a deferred one-shot fail-safe restores Power ON, the normal color, and the current steady preferred brightness through the existing `restoreDeviceState` path.
+- The fail-safe yields to a new Breath/fade, overspeed warning, manual power state, or an already-running restore so it cannot fight intentional commands.
+- No v90.13 repeated three-round recovery loop is reintroduced.
+
+## v90.15.2 — Ambient diagnostic flight recorder + consensus hardening
+
+v90.15.2 keeps the v90.10-derived BLEDIM/Lotus transport and animation pacing while making the ambient state machine observable enough for one-drive diagnosis. `AMBIENT TRACE` snapshots record engine consensus, startup state, headlight consensus, per-light connection/GATT/power/brightness, and active operation ownership at meaningful events. It also prevents duplicate BLE advertisements from perpetually restarting the 0.75-second headlight consensus window, and startup day/night classification now treats mixed Dashboard/Center evidence as unresolved and requires the final BOTH-ON/BOTH-OFF candidate to remain stable before consuming the startup Breath. See `docs/V90_15_2_AMBIENT_FLIGHT_RECORDER_AND_CONSENSUS_HARDENING.md`.
