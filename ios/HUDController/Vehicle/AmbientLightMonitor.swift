@@ -75,13 +75,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             if vehicleAutomationEnabled {
                 evaluateVehicleLightingAutomation()
             } else {
-                resetVehicleAutomationRuntime(reason: "automation disabled")
+                vehicleAutomationStatus = "Door day/night automation disabled"
+                logger.log("AMBIENT AUTO", "Door day/night automation disabled; headlight consensus and per-light power-on animation remain active")
             }
         }
-    }
-
-    var startupClassificationSeconds: Double {
-        didSet { UserDefaults.standard.set(max(1.0, min(8.0, startupClassificationSeconds)), forKey: "HUD.Ambient.v90.classification") }
     }
 
     /// v90.3: the door controller is powered for the entire engine session, so its
@@ -111,6 +108,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
     var breathDurationSeconds: Double {
         didSet { UserDefaults.standard.set(max(1.0, min(15.0, breathDurationSeconds)), forKey: "HUD.Ambient.v90_8.breathDuration") }
+    }
+
+    /// v90.17: synchronization is optional. OFF is the robust default: every
+    /// controller owns a complete power-on Breath. ON groups controllers that
+    /// finish boot/GATT preparation within the short shared-start window; a late
+    /// controller still runs its own complete Breath instead of joining halfway.
+    var synchronizePowerOnBreathEnabled: Bool {
+        didSet { UserDefaults.standard.set(synchronizePowerOnBreathEnabled, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath") }
     }
 
     // MARK: - Finite ambient overspeed warning
@@ -169,33 +174,23 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private(set) var overspeedWarningStatus = "Armed — waiting for a valid speed limit"
 
-    private(set) var vehicleAutomationStatus = "Idle — waiting for engine-switched HUD power"
+    private(set) var vehicleAutomationStatus = "Door day/night idle — waiting for Dashboard + Center consensus"
     private(set) var enginePowerPresent = false
     private(set) var enginePowerStatus = "Engine power unknown — waiting for HUD / OBD"
-    private(set) var vehicleSessionActive = false
     private(set) var vehicleHeadlightsActive = false
 
-    private var startupClassificationTask: Task<Void, Never>?
-    private var startupClassificationMixedSince: Date?
-    private var startupClassificationLastMixedLogAt = Date.distantPast
-    private var startupClassificationCandidate: HeadlightConsensusObservation?
-    private var startupClassificationCandidateSince: Date?
-    private var vehicleStartupCompleted = false
-    private var previousHeadlightPowerPresent = false
     private var hudEnginePowerSignalPresent = false
     private var obdEnginePowerSignalPresent = false
-    /// v90.15: engine state uses the same conservative consensus model as the
-    /// headlight circuit. HUD + OBD2 must BOTH be present to establish a new
-    /// engine-ON session. If only one witness is present, preserve the last
-    /// confirmed engine state instead of creating a new edge.
+    /// v90.16: HUD transport remains the primary engine-switched ON witness,
+    /// matching the field-proven v90.10 behavior. OBD2 state is still evaluated:
+    /// a positive OBD2/direct witness corroborates or preserves an existing ON
+    /// session, while HUD + OBD2 absence must also survive the independent Door
+    /// power witness before OFF can be confirmed. A missing HUD-side OBD event
+    /// therefore cannot deadlock the entire ambient-light pipeline.
     private var engineSignalConsensusTask: Task<Void, Never>?
     private let engineSignalConsensusStabilitySeconds: TimeInterval = 0.75
     private var engineOffConfirmationTask: Task<Void, Never>?
     private var hudOutageBeganAt: Date?
-    /// v90.4: engine-start timestamp anchors the courtesy-headlight settling
-    /// window. Headlight advertisements from before this instant are explicitly
-    /// ignored when classifying the startup as day or night.
-    private var enginePowerBecamePresentAt: Date?
     private var directOBDLastSeen = Date.distantPast
     private var directOBDPeripheralID: UUID?
     private var directOBDWitnessProven: Bool
@@ -205,12 +200,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     // engine-off candidate. Engine OFF is not latency-sensitive; false OFF is.
     private let directOBDAcquireWindowSeconds: TimeInterval = 5.0
     private(set) var independentOBDWitnessStatus = "Independent OBD witness not calibrated"
-
-    /// Courtesy-powered Dashboard + Center connections are allowed before engine
-    /// start, but they must never consume the automatic startup Breath. Each new
-    /// confirmed engine session arms exactly one vehicle startup animation after
-    /// the courtesy/headlight classification finishes.
-    private var vehicleStartupAnimationPending = false
 
     // MARK: - v90 controller state
 
@@ -223,8 +212,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private let bluetooth: HudBluetoothManager
     private let logger: LogManager
 
-    /// The single peripheral whose presence controls the physical HUD's Auto
-    /// Brightness setting. Other paired ambient lights do not affect it.
+    /// Legacy tracked Center peripheral used for persistent CoreBluetooth
+    /// presence/reconnection and UI status. It contributes one half of the
+    /// Dashboard+Center day/night signal but never owns HUD brightness alone.
     private var trackedPeripheral: CBPeripheral?
     private var lastSeen = Date.distantPast
     private var watchdogTask: Task<Void, Never>?
@@ -270,6 +260,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private var animationTasks: [UUID: Task<Void, Never>] = [:]
     private var brightnessTransitionTasks: [UUID: Task<Void, Never>] = [:]
+    /// Target associated with the currently active fade. This prevents periodic
+    /// or duplicate day/night events from cancelling and restarting the same
+    /// transition before it can finish.
+    private var brightnessTransitionTargetByID: [UUID: Int] = [:]
     private var animatedConnectionSession: Set<UUID> = []
     private var sessionResetTasks: [UUID: Task<Void, Never>] = [:]
 
@@ -278,6 +272,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// independent animation several seconds out of phase.
     private var synchronizedBreathTask: Task<Void, Never>?
     private var pendingBreathStartTask: Task<Void, Never>?
+    private var synchronizedBreathIDs: Set<UUID> = []
+    private let powerOnSyncWindowSeconds: TimeInterval = 2.5
     private var activeBreathIDs: Set<UUID> = []
     private var activeBreathStartBrightness: [UUID: Int] = [:]
     /// Final steady-state target for the last leg of the breath. Normally this is
@@ -299,21 +295,25 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// recovery loop or alter the v90.10 animation transport.
     private var animationAbortFailsafeTasks: [UUID: Task<Void, Never>] = [:]
 
+    /// v90.16 BLEDIM boot-settle safety. A newly powered BK-BLE controller may
+    /// accept writeWithoutResponse packets before its firmware has finished
+    /// settling, then revert to an internal/default state. Reassert the steady
+    /// state once after GATT readiness, unless a newer animation/fade/warning
+    /// has taken ownership. This is intentionally one-shot, not a periodic or
+    /// multi-round recovery loop.
+    private var bledimBootSettleTasks: [UUID: Task<Void, Never>] = [:]
+    private let bledimBootSettleDelaySeconds: TimeInterval = 1.50
+
     /// v90.15.2 diagnostic flight recorder. These counters/signatures add
     /// event-driven state snapshots without changing BLE timing or animation
     /// behavior. The snapshots are intentionally emitted only on meaningful
     /// state-machine edges, never on the 20-Hz animation clock.
     private var ambientTraceSequence = 0
-    private var lastStartupBreathBlockSignature = ""
-    private var lastHeadlightBreathBlockSignature = ""
-
-    /// Dashboard + Center Console share the physical headlight circuit. Treat a
-    /// new physical ON epoch as the animation trigger, rather than a 15-second BLE
-    /// reconnect heuristic. This also lets a quick OFF -> ON start a fresh breath.
+    /// Dashboard + Center Console form the independent day/night signal.
+    /// This state affects Door steady brightness and HUD auto-brightness only;
+    /// it never gates or triggers a light's power-on Breath.
     private var headlightPowerSessionActive = false
-    private var headlightPowerEpoch = 0
     private var headlightStateGeneration = 0
-    private var headlightAnimatedEpochByID: [UUID: Int] = [:]
 
     /// v90.14: Center + Dashboard are a two-sensor physical-power consensus.
     /// Mixed evidence is intentionally "unknown" and never flips the confirmed
@@ -357,8 +357,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ? 5 : Self.clampedTimeout(d.integer(forKey: "HUD.Ambient.timeout"))
         self.vehicleAutomationEnabled = d.object(forKey: "HUD.Ambient.v90.vehicleAutomation") == nil
             ? false : d.bool(forKey: "HUD.Ambient.v90.vehicleAutomation")
-        self.startupClassificationSeconds = d.object(forKey: "HUD.Ambient.v90.classification") == nil
-            ? 4.0 : max(1.0, min(8.0, d.double(forKey: "HUD.Ambient.v90.classification")))
         self.doorDayBrightness = d.object(forKey: "HUD.Ambient.v90_3.doorDayBrightness") == nil
             ? 100 : max(0, min(100, d.integer(forKey: "HUD.Ambient.v90_3.doorDayBrightness")))
         self.doorNightBrightness = d.object(forKey: "HUD.Ambient.v90_3.doorNightBrightness") == nil
@@ -371,6 +369,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ? 2 : max(2, min(5, d.integer(forKey: "HUD.Ambient.v90_8.breathCycles")))
         self.breathDurationSeconds = d.object(forKey: "HUD.Ambient.v90_8.breathDuration") == nil
             ? 6.0 : max(1.0, min(15.0, d.double(forKey: "HUD.Ambient.v90_8.breathDuration")))
+        self.synchronizePowerOnBreathEnabled = d.object(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath") == nil
+            ? false : d.bool(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")
         self.overspeedWarningEnabled = d.object(forKey: "HUD.Ambient.v90_12.overspeed.enabled") == nil
             ? false : d.bool(forKey: "HUD.Ambient.v90_12.overspeed.enabled")
         self.overspeedWarningLight = AmbientOverspeedWarningLight(
@@ -498,7 +498,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.15.2 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,fade=\(String(format: "%.1f", brightnessTransitionSeconds))s,engineStable=\(String(format: "%.2f", engineSignalConsensusStabilitySeconds))s,headlightStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,startupSettle=\(String(format: "%.1f", startupClassificationSeconds))s}"
+            "Flight recorder v90.17 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,fade=\(String(format: "%.1f", brightnessTransitionSeconds))s,headlightStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -515,11 +515,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         animationTasks.removeAll()
         brightnessTransitionTasks.values.forEach { $0.cancel() }
         brightnessTransitionTasks.removeAll()
+        brightnessTransitionTargetByID.removeAll()
         synchronizedBreathTask?.cancel()
         synchronizedBreathTask = nil
         pendingBreathStartTask?.cancel()
         pendingBreathStartTask = nil
         activeBreathIDs.removeAll()
+        synchronizedBreathIDs.removeAll()
         activeBreathStartBrightness.removeAll()
         activeBreathReturnBrightness.removeAll()
         activeBreathStartedAt = nil
@@ -531,6 +533,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         breathPrepareTasks.removeAll()
         animationAbortFailsafeTasks.values.forEach { $0.cancel() }
         animationAbortFailsafeTasks.removeAll()
+        bledimBootSettleTasks.values.forEach { $0.cancel() }
+        bledimBootSettleTasks.removeAll()
         headlightConsensusTask?.cancel()
         headlightConsensusTask = nil
         engineSignalConsensusTask?.cancel()
@@ -539,8 +543,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         overspeedWarningTask = nil
         overspeedRestoreTask?.cancel()
         overspeedRestoreTask = nil
-        startupClassificationTask?.cancel()
-        startupClassificationTask = nil
         engineOffConfirmationTask?.cancel()
         engineOffConfirmationTask = nil
 
@@ -665,6 +667,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         persistGroups()
         animationTasks[id]?.cancel()
         animationTasks[id] = nil
+        removeFromActiveBreath(id)
+        bledimBootSettleTasks[id]?.cancel()
+        bledimBootSettleTasks[id] = nil
         writeCharacteristicsByID[id] = nil
 
         // Do not disconnect the legacy BLEDOM if it is still the HUD brightness
@@ -936,7 +941,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         updateDevice(id) { $0.startupDurationSeconds = max(1.0, min(15.0, seconds)) }
     }
 
-    func setStartupClassificationDuration(_ seconds: Double) { startupClassificationSeconds = max(1.0, min(8.0, seconds)) }
     func setBrightnessTransitionDuration(_ seconds: Double) { brightnessTransitionSeconds = max(1.0, min(15.0, seconds)) }
     func setBreathCycles(_ cycles: Int) { breathCycles = max(2, min(5, cycles)) }
     func setBreathDuration(_ seconds: Double) { breathDurationSeconds = max(1.0, min(15.0, seconds)) }
@@ -1059,6 +1063,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         if brightnessTransitionTasks[id] != nil { ops.append("fade") }
         if restoreTasks[id] != nil { ops.append("restore") }
         if animationAbortFailsafeTasks[id] != nil { ops.append("failsafe") }
+        if bledimBootSettleTasks[id] != nil { ops.append("bootSettle") }
         if overspeedWarningActiveID == id { ops.append("warning") }
         let opText = ops.isEmpty ? "idle" : ops.joined(separator: "+")
         let recentAge: String
@@ -1070,19 +1075,19 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         return "\(role.rawValue){conn=\(connected ? 1 : 0),gatt=\(gatt ? 1 : 0),logical=\(logical ? 1 : 0),seenAge=\(recentAge)s,cfgOn=\(device.powerOn ? 1 : 0),run=\(device.runtimeBrightness),pref=\(device.brightness),ops=\(opText)}"
     }
 
-    /// Event-driven ambient state snapshot. This is the primary post-drive
-    /// diagnostic record for deciding whether a bad visual result came from
-    /// physical-power inference, engine/headlight consensus, GATT readiness,
-    /// animation admission, or a transient operation that failed to settle.
+    /// v90.17 event-driven ambient state snapshot. Engine witnesses remain
+    /// diagnostic only; power-on Breath admission is per-light. Dashboard +
+    /// Center consensus owns only day/night state, Door target brightness, and
+    /// HUD auto-brightness. This keeps post-drive logs aligned with the runtime.
     private func ambientTrace(_ reason: String) {
         ambientTraceSequence &+= 1
         if ambientTraceSequence <= 0 { ambientTraceSequence = 1 }
-        let engineConsensus = currentEnginePowerConsensus().rawValue
-        let headlightConsensus = currentHeadlightConsensus().rawValue
+        let dayNightObservation = currentHeadlightConsensus().rawValue
         let directOBDRecent = isDirectOBDRecentlyPresent()
+        let dayNight = headlightPowerSessionActive ? "night" : "day"
         logger.log(
             "AMBIENT TRACE",
-            "#\(ambientTraceSequence) \(reason) | engine{hud=\(hudEnginePowerSignalPresent ? 1 : 0),obd=\(obdEnginePowerSignalPresent ? 1 : 0),consensus=\(engineConsensus),confirmed=\(enginePowerPresent ? 1 : 0),directOBD=\(directOBDRecent ? 1 : 0)} startup{complete=\(vehicleStartupCompleted ? 1 : 0),pending=\(vehicleStartupAnimationPending ? 1 : 0)} headlight{raw=\(headlightConsensus),confirmed=\(headlightPowerSessionActive ? 1 : 0),epoch=\(headlightPowerEpoch),gen=\(headlightStateGeneration)} | \(ambientRoleTraceState(.door)) \(ambientRoleTraceState(.dashboard)) \(ambientRoleTraceState(.centerConsole))"
+            "#\(ambientTraceSequence) \(reason) | engineDiag{hud=\(hudEnginePowerSignalPresent ? 1 : 0),obd=\(obdEnginePowerSignalPresent ? 1 : 0),confirmed=\(enginePowerPresent ? 1 : 0),directOBD=\(directOBDRecent ? 1 : 0)} dayNight{raw=\(dayNightObservation),confirmed=\(dayNight),gen=\(headlightStateGeneration)} breath{sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),active=\(activeBreathIDs.count),queued=\(synchronizedBreathIDs.count)} | \(ambientRoleTraceState(.door)) \(ambientRoleTraceState(.dashboard)) \(ambientRoleTraceState(.centerConsole))"
         )
     }
 
@@ -1090,6 +1095,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let hadActiveTransition = brightnessTransitionTasks[id] != nil
         brightnessTransitionTasks[id]?.cancel()
         brightnessTransitionTasks[id] = nil
+        brightnessTransitionTargetByID[id] = nil
         if hadActiveTransition {
             logger.log(
                 "AMBIENT FADE",
@@ -1125,11 +1131,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             if self.brightnessTransitionTasks[id] != nil { blockers.append("newFade") }
             if self.restoreTasks[id] != nil { blockers.append("restoreAlreadyOwnsLight") }
             if self.overspeedWarningActiveID == id { blockers.append("overspeedOwnsLight") }
-            if device.role?.isHeadlightFed == true,
-               self.enginePowerPresent, self.vehicleStartupCompleted,
-               !self.headlightPowerSessionActive {
-                blockers.append("confirmedHeadlightOff")
-            }
 
             if !blockers.isEmpty {
                 self.logger.log(
@@ -1146,6 +1147,37 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             )
             self.ambientTrace("Fail-safe restoring \(device.displayName)")
             self.restoreDeviceState(id)
+        }
+    }
+
+    /// v90.17: a newly powered BLEDIM controller gets a quiet firmware-settle
+    /// interval before the semantic Power ON → RGB → baseline → Breath sequence.
+    /// This replaces the v90.16 mid-animation delayed reassert. The controller
+    /// therefore receives one clean post-boot sequence rather than two owners
+    /// competing over brightness.
+    private func scheduleBLEDIMBootSettleReassert(for id: UUID, reason: String) {
+        guard let device = pairedDevice(id), device.protocolKind == .bledim2 else { return }
+
+        bledimBootSettleTasks[id]?.cancel()
+        logger.log(
+            "AMBIENT BLEDIM",
+            "Fresh power-on boot settle scheduled: \(device.displayName) delay=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s reason=\(reason)"
+        )
+        ambientTrace("BLEDIM fresh power-on boot settle \(device.displayName)")
+
+        bledimBootSettleTasks[id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.bledimBootSettleDelaySeconds))
+            guard !Task.isCancelled else { return }
+            self.bledimBootSettleTasks[id] = nil
+            guard self.enabled, self.isControllable(id),
+                  let current = self.pairedDevice(id), current.protocolKind == .bledim2 else { return }
+            self.logger.log(
+                "AMBIENT BLEDIM",
+                "Fresh power-on boot settle complete: \(current.displayName); starting one complete power-on sequence"
+            )
+            self.ambientTrace("BLEDIM boot settled; power-on Breath admitted \(current.displayName)")
+            self.queuePowerUpBreath(id)
         }
     }
 
@@ -1181,6 +1213,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         for id in ids {
             cancelBrightnessTransition(for: id)
             removeFromActiveBreath(id)
+            brightnessTransitionTargetByID[id] = max(0, min(100, targets[id] ?? 0))
         }
 
         let starts = Dictionary(uniqueKeysWithValues: ids.compactMap { id in
@@ -1241,6 +1274,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     self.logger.log("AMBIENT FLOW", "Final brightness \(target)% could not be delivered to \(self.pairedDevice(id)?.displayName ?? id.uuidString)")
                 }
                 self.brightnessTransitionTasks[id] = nil
+                self.brightnessTransitionTargetByID[id] = nil
             }
             self.logger.log("AMBIENT FADE", "Smooth brightness transition complete reason=\(reason)")
             self.ambientTrace("Brightness fade complete reason=\(reason)")
@@ -1529,6 +1563,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     // MARK: - Power-up breath animation
 
+    /// v90.17 keeps Door day/night independent from engine/startup animation state.
+    /// The current confirmed two-light headlight signal is the only automatic
+    /// selector for the Door steady target.
+    private func steadyBrightnessTarget(for device: AmbientLightDevice) -> Int {
+        if vehicleAutomationEnabled, device.role == .door {
+            return doorTargetBrightness(night: headlightPowerSessionActive)
+        }
+        return device.brightness
+    }
+
     private func restoreDeviceState(_ id: UUID) {
         guard let device = pairedDevice(id), isControllable(id) else {
             if let device = pairedDevice(id) {
@@ -1542,12 +1586,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         restoreTasks[id]?.cancel()
         breathPrepareTasks[id]?.cancel()
 
-        let runtimeTarget: Int
-        if vehicleAutomationEnabled, device.role == .door, enginePowerPresent, vehicleStartupCompleted {
-            runtimeTarget = doorTargetBrightness(night: vehicleHeadlightsActive)
-        } else {
-            runtimeTarget = device.brightness
-        }
+        let runtimeTarget = steadyBrightnessTarget(for: device)
 
         logger.log(
             "AMBIENT RESTORE",
@@ -1598,65 +1637,42 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    /// Terminal commit for every successful Breath. Brightness alone is not
+    /// sufficient on a BLEDIM controller that may have internally fallen back to
+    /// OFF during a disrupted power-up. Finish with one semantic Power ON → RGB
+    /// → steady brightness sequence; this is a single commit, not a recovery loop.
+    private func finalizeBreathSteadyState(_ id: UUID, target: Int) async -> Bool {
+        guard let device = pairedDevice(id), device.powerOn, isControllable(id) else { return false }
+        let powerSent = await sendPowerWhenReady(id, on: true, reason: "power-up breath terminal Power ON")
+        guard powerSent, !Task.isCancelled else { return false }
+        let colorSent = await sendColorWhenReady(id, color: device.color, reason: "power-up breath terminal RGB")
+        guard !Task.isCancelled else { return false }
+        let brightnessSent = await applyRuntimeBrightnessWhenReady(
+            id, percent: target, reason: "power-up breath final", persist: true
+        )
+        logger.log(
+            "AMBIENT ANIM",
+            "Breath terminal steady commit \(device.displayName) power=\(powerSent ? 1 : 0) color=\(colorSent ? 1 : 0) brightness=\(brightnessSent ? 1 : 0) target=\(target)%"
+        )
+        ambientTrace("Breath terminal steady commit \(device.displayName) target=\(target)%")
+        return powerSent && colorSent && brightnessSent
+    }
+
     private func runStartupAnimationIfNeeded(_ id: UUID, force: Bool = false) {
+        guard let device = pairedDevice(id) else { return }
         if force {
             queuePowerUpBreath(id, force: true)
             return
         }
 
-        // v90.15 courtesy gate: automatic vehicle animations are not admitted
-        // until HUD + OBD2 have jointly confirmed engine ON and the post-start
-        // courtesy/headlight classification has finished. A courtesy-powered
-        // Dashboard/Center may still connect and be restored to steady state.
-        if vehicleAutomationEnabled,
-           let role = pairedDevice(id)?.role,
-           role == .door || role.isHeadlightFed,
-           (!enginePowerPresent || !vehicleStartupCompleted || vehicleStartupAnimationPending) {
-            logger.log(
-                "AMBIENT ANIM",
-                "Automatic Breath gated for \(pairedDevice(id)?.displayName ?? id.uuidString): engine=\(enginePowerPresent ? 1 : 0) startupComplete=\(vehicleStartupCompleted ? 1 : 0) startupPending=\(vehicleStartupAnimationPending ? 1 : 0); steady restore only"
-            )
-            if role.isHeadlightFed, enginePowerPresent {
-                scheduleHeadlightConsensusEvaluation(
-                    reason: "\(pairedDevice(id)?.displayName ?? id.uuidString) GATT ready during startup gate"
-                )
-            }
-            restoreDeviceState(id)
-            if enginePowerPresent, vehicleStartupCompleted, vehicleStartupAnimationPending {
-                tryStartVehicleStartupBreath(reason: "vehicle light GATT ready")
-            }
-            return
+        // v90.17: animation is strictly per physical/controller return. Engine,
+        // courtesy, and headlight state never gate a light's own power-on Breath.
+        // BLEDIM gets one boot-settle delay; Lotus can begin immediately.
+        if device.protocolKind == .bledim2 {
+            scheduleBLEDIMBootSettleReassert(for: id, reason: "new GATT control ready")
+        } else {
+            queuePowerUpBreath(id)
         }
-
-        if isHeadlightFedDevice(id) {
-            scheduleHeadlightConsensusEvaluation(
-                reason: "\(pairedDevice(id)?.displayName ?? id.uuidString) GATT ready"
-            )
-
-            // v90.10 same-epoch behavior: once this controller already consumed the
-            // current physical headlight epoch, a BLE reconnect must restore its
-            // normal steady state rather than rejoin/replay the Breath.
-            if headlightPowerSessionActive,
-               headlightAnimatedEpochByID[id] == headlightPowerEpoch {
-                logger.log(
-                    "AMBIENT POWER",
-                    "Same-epoch headlight reconnect → steady restore: \(pairedDevice(id)?.displayName ?? id.uuidString) epoch=\(headlightPowerEpoch)"
-                )
-                restoreDeviceState(id)
-                return
-            }
-
-            if headlightPowerSessionActive {
-                tryStartConfirmedHeadlightBreath(reason: "headlight GATT ready")
-            } else {
-                // During the mixed/settling interval, keep a newly controllable
-                // controller at its preferred steady state. The shared Breath is
-                // still withheld until BOTH controllers confirm ON and are ready.
-                restoreDeviceState(id)
-            }
-            return
-        }
-        queuePowerUpBreath(id)
     }
 
     private func queuePowerUpBreath(_ id: UUID, force: Bool = false) {
@@ -1671,21 +1687,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
-        if !force, let role = device.role, role.isHeadlightFed {
-            // Headlight-fed lights animate once per physical headlight ON epoch,
-            // even when OFF -> ON happens much faster than the old 15-second BLE
-            // reconnect heuristic.
-            guard headlightPowerSessionActive else {
-                logger.log("AMBIENT ANIM", "Breath withheld: \(device.displayName) headlight consensus is not ON")
-                restoreDeviceState(id)
-                return
-            }
-            if headlightAnimatedEpochByID[id] == headlightPowerEpoch {
-                logger.log("AMBIENT ANIM", "Breath withheld: \(device.displayName) already animated in headlight epoch=\(headlightPowerEpoch); restoring steady state")
-                restoreDeviceState(id)
-                return
-            }
-        } else if !force && animatedConnectionSession.contains(id) {
+        if !force && animatedConnectionSession.contains(id) {
             logger.log("AMBIENT ANIM", "Breath withheld: \(device.displayName) already animated in current connection session; restoring steady state")
             restoreDeviceState(id)
             return
@@ -1696,11 +1698,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 "AMBIENT ANIM",
                 "Breath skipped by device setting: \(device.displayName) startupEnabled=\(device.startupAnimationEnabled ? 1 : 0) configuredPower=\(device.powerOn ? 1 : 0); restoring steady state"
             )
-            if let role = device.role, role.isHeadlightFed {
-                headlightAnimatedEpochByID[id] = headlightPowerEpoch
-            } else {
-                animatedConnectionSession.insert(id)
-            }
+            animatedConnectionSession.insert(id)
             restoreDeviceState(id)
             return
         }
@@ -1709,14 +1707,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         restoreTasks[id]?.cancel()
         restoreTasks[id] = nil
 
-        let initialBrightness: Int
-        if force {
-            initialBrightness = device.runtimeBrightness
-        } else if vehicleAutomationEnabled, device.role == .door, enginePowerPresent, vehicleStartupCompleted {
-            initialBrightness = doorTargetBrightness(night: vehicleHeadlightsActive)
-        } else {
-            initialBrightness = device.brightness
-        }
+        let initialBrightness = force ? device.runtimeBrightness : steadyBrightnessTarget(for: device)
 
         logger.log(
             "AMBIENT ANIM",
@@ -1733,6 +1724,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard await self.sendPowerWhenReady(id, on: true, reason: "power-up breath prepare") else {
                 self.logger.log("AMBIENT ANIM", "Breath prepare failed at Power ON: \(device.displayName)")
                 self.ambientTrace("Breath prepare failed power \(device.displayName)")
+                self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare Power ON failed")
                 return
             }
             guard !Task.isCancelled else {
@@ -1742,6 +1734,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard await self.sendColorWhenReady(id, color: device.color, reason: "power-up breath prepare") else {
                 self.logger.log("AMBIENT ANIM", "Breath prepare failed at RGB: \(device.displayName)")
                 self.ambientTrace("Breath prepare failed RGB \(device.displayName)")
+                self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare RGB failed")
                 return
             }
             guard !Task.isCancelled else {
@@ -1756,6 +1749,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ) else {
                 self.logger.log("AMBIENT ANIM", "Breath prepare failed at baseline brightness: \(device.displayName) target=\(initialBrightness)%")
                 self.ambientTrace("Breath prepare failed baseline \(device.displayName)")
+                self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare baseline failed")
                 return
             }
             guard !Task.isCancelled, self.isControllable(id) else {
@@ -1763,32 +1757,48 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 return
             }
 
-            if !force, let role = device.role, role.isHeadlightFed {
-                guard self.headlightPowerSessionActive else { return }
-                self.headlightAnimatedEpochByID[id] = self.headlightPowerEpoch
+            self.animatedConnectionSession.insert(id)
+
+            // Day/night may change during the serialized Power/RGB/baseline
+            // preparation. Re-read the automatic steady target now so the Breath
+            // always returns to the newest Door mode even if that edge arrived in
+            // the short preparation window. Manual Preview intentionally returns
+            // to the runtime brightness captured at preview start.
+            let returnBrightness: Int
+            if force {
+                returnBrightness = initialBrightness
+            } else if let latestDevice = self.pairedDevice(id) {
+                returnBrightness = self.steadyBrightnessTarget(for: latestDevice)
             } else {
-                self.animatedConnectionSession.insert(id)
+                returnBrightness = initialBrightness
             }
 
             self.activeBreathIDs.insert(id)
             self.activeBreathStartBrightness[id] = initialBrightness
-            self.activeBreathReturnBrightness[id] = initialBrightness
-            self.ambientTrace("Breath participant ready \(device.displayName) initial=\(initialBrightness)%")
+            self.activeBreathReturnBrightness[id] = returnBrightness
+            self.ambientTrace("Breath participant ready \(device.displayName) initial=\(initialBrightness)% return=\(returnBrightness)% sync=\(self.synchronizePowerOnBreathEnabled ? 1 : 0)")
 
-            if self.synchronizedBreathTask != nil {
-                self.logger.log("AMBIENT ANIM", "Joined active synchronized breath: \(device.displayName)")
+            if !self.synchronizePowerOnBreathEnabled {
+                self.startIndividualBreathSession(id)
                 return
             }
 
+            // Optional synchronization is opportunistic, never a dependency.
+            // Devices prepared inside the optional grouping window share one timeline. A
+            // controller that arrives after that session has started gets its own
+            // complete Breath rather than joining halfway through.
+            if self.synchronizedBreathTask != nil {
+                self.logger.log("AMBIENT ANIM", "Sync window already closed; starting complete independent Breath for \(device.displayName)")
+                self.startIndividualBreathSession(id)
+                return
+            }
+
+            self.synchronizedBreathIDs.insert(id)
             if self.pendingBreathStartTask == nil {
-                self.logger.log("AMBIENT ANIM", "Shared Breath start window armed for 0.75s")
+                self.logger.log("AMBIENT ANIM", "Optional sync window armed for \(String(format: "%.1f", self.powerOnSyncWindowSeconds))s")
                 self.pendingBreathStartTask = Task { @MainActor [weak self] in
                     guard let self else { return }
-                    // Give headlight-fed Dashboard + Center enough time to finish
-                    // GATT preparation and enter the same shared animation epoch.
-                    // 0.75 s is still short relative to a 1–15 s breath cycle but
-                    // materially improves visual synchronization over the old 0.35 s.
-                    try? await Task.sleep(for: .seconds(0.75))
+                    try? await Task.sleep(for: .seconds(self.powerOnSyncWindowSeconds))
                     guard !Task.isCancelled else { return }
                     self.pendingBreathStartTask = nil
                     self.startSynchronizedBreathSession()
@@ -1797,23 +1807,99 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    private func startIndividualBreathSession(_ id: UUID) {
+        guard animationTasks[id] == nil, activeBreathIDs.contains(id),
+              let device = pairedDevice(id), isControllable(id),
+              let start = activeBreathStartBrightness[id] else { return }
+
+        let startedAt = Date()
+        let cycles = max(2, min(5, breathCycles))
+        let perCycleDuration = max(1.0, min(15.0, breathDurationSeconds))
+        let totalDuration = perCycleDuration * Double(cycles)
+        let timelineTick = 0.05
+        logger.log(
+            "AMBIENT ANIM",
+            "Independent breath begin light=\(device.displayName) cycles=\(cycles) perCycle=\(String(format: "%.1f", perCycleDuration))s total=\(String(format: "%.1f", totalDuration))s pacing=20Hz/rawBLEDIM"
+        )
+        ambientTrace("Independent Breath begin \(device.displayName)")
+
+        animationTasks[id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var lastSentLevel: Int?
+            var lastWriteAt = Date.distantPast
+
+            while true {
+                guard !Task.isCancelled, self.activeBreathIDs.contains(id), self.isControllable(id) else {
+                    self.animationTasks[id] = nil
+                    return
+                }
+                let now = Date()
+                let elapsed = now.timeIntervalSince(startedAt)
+                let progress = min(1.0, max(0.0, elapsed / totalDuration))
+                let interval = self.animationWriteInterval(for: id)
+                let due = progress >= 1.0 || now.timeIntervalSince(lastWriteAt) >= interval * 0.90
+                if due {
+                    let returnTarget = self.activeBreathReturnBrightness[id] ?? start
+                    let normalized = self.breathBrightnessFraction(
+                        start: start, returnTarget: returnTarget, progress: progress, cycles: cycles
+                    )
+                    let signature = self.animationLevelSignature(for: id, normalized: normalized)
+                    if lastSentLevel != signature {
+                        let maxSignature = device.protocolKind == .bledim2 ? 255 : 100
+                        let logPacket = signature == 0 || signature == maxSignature
+                        if self.applyRuntimeBrightnessNormalized(
+                            id, normalized: normalized, reason: "independent power-up breath", logPacket: logPacket
+                        ) {
+                            lastSentLevel = signature
+                            lastWriteAt = now
+                        }
+                    }
+                }
+                if progress >= 1.0 { break }
+                try? await Task.sleep(for: .seconds(timelineTick))
+            }
+
+            guard !Task.isCancelled, self.isControllable(id) else {
+                self.animationTasks[id] = nil
+                return
+            }
+            let returnTarget = self.activeBreathReturnBrightness[id] ?? start
+            let sent = await self.finalizeBreathSteadyState(id, target: returnTarget)
+            self.animationTasks[id] = nil
+            self.activeBreathIDs.remove(id)
+            self.activeBreathStartBrightness[id] = nil
+            self.activeBreathReturnBrightness[id] = nil
+            self.logger.log(
+                "AMBIENT ANIM",
+                "Independent breath complete light=\(device.displayName) final=\(returnTarget)% sent=\(sent ? 1 : 0) elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s"
+            )
+            self.ambientTrace("Independent Breath complete \(device.displayName) final=\(returnTarget)%")
+            if self.vehicleAutomationEnabled, device.role == .door {
+                self.applyCurrentDoorDayNightTarget(reason: "post-breath door target")
+            }
+        }
+    }
+
     private func startSynchronizedBreathSession() {
         guard synchronizedBreathTask == nil else { return }
 
-        let ready = activeBreathIDs.filter { id in
+        let ready = synchronizedBreathIDs.filter { id in
             guard let device = pairedDevice(id) else { return false }
             return device.startupAnimationEnabled && device.powerOn && isControllable(id)
         }
         guard !ready.isEmpty else {
             logger.log("AMBIENT ANIM", "Shared Breath start cancelled: no prepared participant remained controllable")
             ambientTrace("Shared Breath cancelled before start no-ready-participants")
-            activeBreathIDs.removeAll()
-            activeBreathStartBrightness.removeAll()
-            activeBreathReturnBrightness.removeAll()
+            for id in synchronizedBreathIDs {
+                activeBreathIDs.remove(id)
+                activeBreathStartBrightness[id] = nil
+                activeBreathReturnBrightness[id] = nil
+            }
+            synchronizedBreathIDs.removeAll()
             return
         }
 
-        activeBreathIDs = Set(ready)
+        synchronizedBreathIDs = Set(ready)
         let startedAt = Date()
         activeBreathStartedAt = startedAt
         let cycles = max(2, min(5, breathCycles))
@@ -1837,7 +1923,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 let now = Date()
                 let elapsed = now.timeIntervalSince(startedAt)
                 let progress = min(1.0, max(0.0, elapsed / totalDuration))
-                let ids = Array(self.activeBreathIDs)
+                let ids = Array(self.synchronizedBreathIDs)
 
                 for id in ids {
                     guard self.isControllable(id), let start = self.activeBreathStartBrightness[id] else { continue }
@@ -1873,27 +1959,25 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             }
 
             guard !Task.isCancelled else { return }
-            let finishedIDs = Array(self.activeBreathIDs)
+            let finishedIDs = Array(self.synchronizedBreathIDs)
             for id in finishedIDs {
                 guard let start = self.activeBreathStartBrightness[id] else { continue }
                 let returnTarget = self.activeBreathReturnBrightness[id] ?? start
-                _ = await self.applyRuntimeBrightnessWhenReady(
-                    id,
-                    percent: returnTarget,
-                    reason: "power-up breath final",
-                    persist: true
-                )
+                _ = await self.finalizeBreathSteadyState(id, target: returnTarget)
             }
 
             self.synchronizedBreathTask = nil
             self.activeBreathStartedAt = nil
-            self.activeBreathIDs.removeAll()
-            self.activeBreathStartBrightness.removeAll()
-            self.activeBreathReturnBrightness.removeAll()
+            for id in finishedIDs {
+                self.activeBreathIDs.remove(id)
+                self.activeBreathStartBrightness[id] = nil
+                self.activeBreathReturnBrightness[id] = nil
+            }
+            self.synchronizedBreathIDs.removeAll()
             self.logger.log("AMBIENT ANIM", "Synchronized breath complete lights=\(finishedIDs.count) elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
             self.ambientTrace("Synchronized Breath complete lights=\(finishedIDs.count)")
 
-            if self.vehicleAutomationEnabled, self.enginePowerPresent, self.vehicleStartupCompleted {
+            if self.vehicleAutomationEnabled {
                 self.applyCurrentDoorDayNightTarget(reason: "post-breath door target")
             }
         }
@@ -1943,7 +2027,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func removeFromActiveBreath(_ id: UUID) {
         let wasActive = activeBreathIDs.contains(id)
+        animationTasks[id]?.cancel()
+        animationTasks[id] = nil
         activeBreathIDs.remove(id)
+        synchronizedBreathIDs.remove(id)
         activeBreathStartBrightness[id] = nil
         activeBreathReturnBrightness[id] = nil
         if wasActive {
@@ -1954,10 +2041,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ambientTrace("Breath participant cancelled \(pairedDevice(id)?.displayName ?? id.uuidString)")
             scheduleAnimationAbortFailsafe(for: id, reason: "Breath participation cancelled")
         }
-        if activeBreathIDs.isEmpty {
-            if synchronizedBreathTask != nil || pendingBreathStartTask != nil {
-                logger.log("AMBIENT ANIM", "Shared Breath task cancelled because no active participants remain")
-            }
+        if synchronizedBreathIDs.isEmpty {
             pendingBreathStartTask?.cancel()
             pendingBreathStartTask = nil
             synchronizedBreathTask?.cancel()
@@ -1966,31 +2050,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    /// Do not replay the power-up breath for a momentary BLE dropout. A device must
-    /// remain disconnected for 15 seconds before the next connection is considered
-    /// a genuinely fresh physical power session.
+    /// v90.17: every disconnect/reconnect is treated as a fresh power-on event.
+    /// There is no 15-second replay suppression and no headlight animation epoch.
     private func scheduleStartupSessionReset(_ id: UUID) {
-        // Dashboard/Center are re-armed by a physical headlight-power epoch, not by
-        // elapsed disconnect time. A quick OFF -> ON must be allowed to Breath again.
-        if isHeadlightFedDevice(id) {
-            sessionResetTasks[id]?.cancel()
-            sessionResetTasks[id] = nil
-            return
-        }
         sessionResetTasks[id]?.cancel()
-        sessionResetTasks[id] = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(15))
-            guard let self, !Task.isCancelled else { return }
-            if self.peripheralsByID[id]?.state != .connected {
-                self.animatedConnectionSession.remove(id)
-                self.removeFromActiveBreath(id)
-                self.logger.log("AMBIENT ANIM", "Power-up animation re-armed after 15s disconnect for \(id)")
-            }
-            self.sessionResetTasks[id] = nil
-        }
+        sessionResetTasks[id] = nil
+        animatedConnectionSession.remove(id)
+        logger.log("AMBIENT ANIM", "Power-on animation re-armed immediately after disconnect for \(pairedDevice(id)?.displayName ?? id.uuidString)")
     }
 
-    // MARK: - Vehicle-aware choreography
+    // MARK: - Independent day/night consensus
 
     private func deviceID(for role: AmbientLightRole) -> UUID? {
         pairedDevices.first(where: { $0.role == role })?.id
@@ -2043,24 +2112,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         return .mixed
     }
 
-    /// v90.14 consensus gate. Every Dashboard/Center presence or disconnect event
-    /// restarts one short stability timer. Only BOTH ON or BOTH OFF can commit a
-    /// vehicle headlight edge. A mixed state is explicitly transitional/unknown and
-    /// preserves the previously confirmed state.
+    /// v90.17 day/night consensus. Only BOTH ON or BOTH OFF can commit a
+    /// stable day/night edge. A mixed state is transitional/unknown and preserves
+    /// the previous mode. This signal never owns power-on animation.
     private func scheduleHeadlightConsensusEvaluation(reason: String) {
-        // Courtesy/startup classification owns the state until the engine session
-        // is established. Do not let high-rate duplicate BLE advertisements keep
-        // creating/restarting a runtime headlight stability timer in this phase.
-        guard enginePowerPresent, vehicleStartupCompleted else {
-            if reason != "advertisement" && !reason.contains("positive evidence via advertisement") {
-                logger.log(
-                    "AMBIENT POWER",
-                    "Headlight consensus deferred during courtesy/startup gate engine=\(enginePowerPresent) startupComplete=\(vehicleStartupCompleted) (\(reason))"
-                )
-            }
-            return
-        }
-
         let candidate = currentHeadlightConsensus()
         if candidate == .mixed {
             headlightConsensusTask?.cancel()
@@ -2114,10 +2169,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.ambientTrace("Headlight consensus stable observation=\(observation.rawValue) reason=\(reason)")
             switch observation {
             case .bothOn:
-                guard !self.headlightPowerSessionActive else {
-                    self.tryStartConfirmedHeadlightBreath(reason: "both controllers stable ON; \(reason)")
-                    return
-                }
+                guard !self.headlightPowerSessionActive else { return }
                 self.commitConfirmedHeadlightPower(true, reason: "both Center + Dashboard stable ON; \(reason)")
             case .bothOff:
                 guard self.headlightPowerSessionActive else { return }
@@ -2133,208 +2185,31 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         guard headlightPowerSessionActive != on else { return }
         headlightPowerSessionActive = on
         headlightStateGeneration &+= 1
-
-        let headlightIDs = roleIDs([.dashboard, .centerConsole])
-        if on {
-            headlightConsensusCandidate = .bothOn
-            headlightPowerEpoch &+= 1
-            if headlightPowerEpoch <= 0 { headlightPowerEpoch = 1 }
-            ambientTrace("Confirmed headlight ON reason=\(reason)")
-            for id in headlightIDs {
-                animatedConnectionSession.remove(id)
-            }
-            logger.log(
-                "AMBIENT POWER",
-                "Consensus headlight ON epoch=\(headlightPowerEpoch) generation=\(headlightStateGeneration) (\(reason))"
-            )
-            if hudBrightnessTriggerEnabled, bluetooth.state == .connected {
-                bluetooth.enqueue(
-                    HudCommands.autoBrightness(true),
-                    label: "Headlight consensus → Auto brightness ON"
-                )
-                lastHUDReassertAt = Date()
-            }
-
-            if vehicleAutomationEnabled, enginePowerPresent, vehicleStartupCompleted {
-                vehicleHeadlightsActive = true
-                previousHeadlightPowerPresent = true
-                applyCurrentDoorDayNightTarget(reason: "consensus headlight ON → night Door brightness")
-                logger.log(
-                    "AMBIENT AUTO",
-                    "Consensus headlight ON while engine ON: night Door target=\(doorTargetBrightness(night: true))%"
-                )
-            }
-
-            if vehicleStartupAnimationPending {
-                logger.log(
-                    "AMBIENT ANIM",
-                    "Headlight Breath deferred to pending vehicle-start animation epoch=\(headlightPowerEpoch)"
-                )
-            } else {
-                tryStartConfirmedHeadlightBreath(reason: reason)
-            }
-        } else {
-            headlightConsensusCandidate = .bothOff
-            ambientTrace("Confirmed headlight OFF reason=\(reason)")
-            for id in headlightIDs {
-                breathPrepareTasks[id]?.cancel()
-                breathPrepareTasks[id] = nil
-                restoreTasks[id]?.cancel()
-                restoreTasks[id] = nil
-                removeFromActiveBreath(id)
-            }
-
-            if let activeID = overspeedWarningActiveID,
-               pairedDevice(activeID)?.role == .dashboard {
-                cancelOverspeedWarning(
-                    restoreIfPossible: false,
-                    reason: "confirmed headlight OFF during Dashboard warning"
-                )
-            }
-
-            logger.log(
-                "AMBIENT POWER",
-                "Consensus headlight OFF generation=\(headlightStateGeneration) (\(reason)); headlight animation work cancelled"
-            )
-            if hudBrightnessTriggerEnabled, bluetooth.state == .connected {
-                bluetooth.enqueue(
-                    HudCommands.autoBrightness(false),
-                    label: "Headlight consensus → Auto brightness OFF"
-                )
-            }
-
-            if vehicleAutomationEnabled, enginePowerPresent, vehicleStartupCompleted {
-                vehicleHeadlightsActive = false
-                previousHeadlightPowerPresent = false
-                applyCurrentDoorDayNightTarget(reason: "consensus headlight OFF → day Door brightness")
-                logger.log(
-                    "AMBIENT AUTO",
-                    "Consensus headlight OFF while engine ON: day Door target=\(doorTargetBrightness(night: false))%"
-                )
-            }
-        }
-    }
-
-    /// Do not let the first controller that becomes GATT-ready start a partial
-    /// headlight animation. Once physical headlight power is confirmed ON, wait
-    /// until both Center and Dashboard are controllable. Then queue both against
-    /// the same v90.10 shared Breath timeline.
-    private func tryStartConfirmedHeadlightBreath(reason: String) {
-        var blockers: [String] = []
-        if vehicleStartupAnimationPending { blockers.append("vehicleStartupPending") }
-        if !headlightPowerSessionActive { blockers.append("headlightNotConfirmedON") }
-
-        let dashboardID = deviceID(for: .dashboard)
-        let centerID = deviceID(for: .centerConsole)
-        if dashboardID == nil { blockers.append("dashboardUnpaired") }
-        if centerID == nil { blockers.append("centerUnpaired") }
-        if let id = dashboardID, !isControllable(id) { blockers.append("dashboardGATTNotReady") }
-        if let id = centerID, !isControllable(id) { blockers.append("centerGATTNotReady") }
-
-        if !blockers.isEmpty {
-            let signature = blockers.joined(separator: ",")
-            if signature != lastHeadlightBreathBlockSignature {
-                lastHeadlightBreathBlockSignature = signature
-                logger.log(
-                    "AMBIENT ANIM",
-                    "Consensus headlight Breath waiting blockers=\(signature) reason=\(reason)"
-                )
-                ambientTrace("Headlight Breath blocked: \(signature)")
-            }
-            return
-        }
-        lastHeadlightBreathBlockSignature = ""
-
-        guard let dashboardID, let centerID else { return }
-        let ids = [dashboardID, centerID]
-        let pending = ids.filter { id in
-            guard let device = pairedDevice(id), device.powerOn else { return false }
-            return headlightAnimatedEpochByID[id] != headlightPowerEpoch
-        }
-        guard !pending.isEmpty else {
-            let signature = "alreadyConsumedEpoch=\(headlightPowerEpoch)"
-            if signature != lastHeadlightBreathBlockSignature {
-                lastHeadlightBreathBlockSignature = signature
-                logger.log(
-                    "AMBIENT ANIM",
-                    "Consensus headlight Breath not needed; both controllers already consumed epoch=\(headlightPowerEpoch) reason=\(reason)"
-                )
-            }
-            return
-        }
+        headlightConsensusCandidate = on ? .bothOn : .bothOff
+        vehicleHeadlightsActive = on
 
         logger.log(
-            "AMBIENT ANIM",
-            "Consensus headlight animation admitted epoch=\(headlightPowerEpoch) ready=2 pending=\(pending.count) reason=\(reason)"
+            "AMBIENT POWER",
+            "Two-light day/night consensus → \(on ? "NIGHT/ON" : "DAY/OFF") generation=\(headlightStateGeneration) (\(reason)); animation remains per-light power-on"
         )
-        ambientTrace("Headlight Breath admitted epoch=\(headlightPowerEpoch) pending=\(pending.count)")
-        for id in pending {
-            queuePowerUpBreath(id)
-        }
-    }
+        ambientTrace("Confirmed day/night \(on ? "night" : "day") reason=\(reason)")
 
-    /// v90.15 vehicle-start admission. The engine session is first confirmed by
-    /// stable HUD + OBD2 consensus, then the existing courtesy settle determines
-    /// day/night. Only after that do we admit one automatic startup Breath:
-    /// Door-only in daylight, or Door + Dashboard + Center together at night.
-    /// All expected controllers must be GATT-controllable before the animation is
-    /// admitted so a late controller cannot join halfway through.
-    private func tryStartVehicleStartupBreath(reason: String) {
-        var blockers: [String] = []
-        if !vehicleAutomationEnabled { blockers.append("automationDisabled") }
-        if !enginePowerPresent { blockers.append("engineNotConfirmedON") }
-        if !vehicleStartupCompleted { blockers.append("startupClassificationIncomplete") }
-        if !vehicleStartupAnimationPending { blockers.append("startupBreathAlreadyConsumed") }
-
-        let doorID = deviceID(for: .door)
-        if doorID == nil { blockers.append("doorUnpaired") }
-        if let id = doorID, !isLogicallyPowered(id) { blockers.append("doorNotPowered") }
-        if let id = doorID, !isControllable(id) { blockers.append("doorGATTNotReady") }
-
-        var dashboardID: UUID?
-        var centerID: UUID?
-        if vehicleHeadlightsActive {
-            if !headlightPowerSessionActive { blockers.append("headlightConsensusNotON") }
-            dashboardID = deviceID(for: .dashboard)
-            centerID = deviceID(for: .centerConsole)
-            if dashboardID == nil { blockers.append("dashboardUnpaired") }
-            if centerID == nil { blockers.append("centerUnpaired") }
-            if let id = dashboardID, !isLogicallyPowered(id) { blockers.append("dashboardNotPowered") }
-            if let id = centerID, !isLogicallyPowered(id) { blockers.append("centerNotPowered") }
-            if let id = dashboardID, !isControllable(id) { blockers.append("dashboardGATTNotReady") }
-            if let id = centerID, !isControllable(id) { blockers.append("centerGATTNotReady") }
+        if hudBrightnessTriggerEnabled, bluetooth.state == .connected {
+            bluetooth.enqueue(
+                HudCommands.autoBrightness(on),
+                label: on
+                    ? "Headlight consensus → Auto brightness ON"
+                    : "Headlight consensus → Auto brightness OFF"
+            )
+            lastHUDReassertAt = Date()
         }
 
-        if !blockers.isEmpty {
-            let signature = "\(vehicleHeadlightsActive ? "night" : "day")|" + blockers.joined(separator: ",")
-            if signature != lastStartupBreathBlockSignature {
-                lastStartupBreathBlockSignature = signature
-                logger.log(
-                    "AMBIENT ANIM",
-                    "Vehicle-start Breath waiting mode=\(vehicleHeadlightsActive ? "night" : "day") blockers=\(blockers.joined(separator: ",")) reason=\(reason)"
-                )
-                ambientTrace("Vehicle-start Breath blocked: \(blockers.joined(separator: ","))")
-            }
-            return
-        }
-        lastStartupBreathBlockSignature = ""
-
-        guard let doorID else { return }
-        var ids: [UUID] = [doorID]
-        if vehicleHeadlightsActive {
-            guard let dashboardID, let centerID else { return }
-            ids.append(contentsOf: [dashboardID, centerID])
-        }
-
-        vehicleStartupAnimationPending = false
-        animatedConnectionSession.remove(doorID)
-        logger.log(
-            "AMBIENT ANIM",
-            "Vehicle-start Breath admitted mode=\(vehicleHeadlightsActive ? "night" : "day") lights=\(ids.count) reason=\(reason)"
-        )
-        ambientTrace("Vehicle-start Breath admitted mode=\(vehicleHeadlightsActive ? "night" : "day") lights=\(ids.count)")
-        for id in ids {
-            queuePowerUpBreath(id)
+        if vehicleAutomationEnabled {
+            applyCurrentDoorDayNightTarget(
+                reason: on
+                    ? "two-light consensus ON → night Door brightness"
+                    : "two-light consensus OFF → day Door brightness"
+            )
         }
     }
 
@@ -2346,9 +2221,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         scheduleHeadlightConsensusEvaluation(
             reason: "\(pairedDevice(id)?.displayName ?? id.uuidString) positive evidence via \(reason)"
         )
-        if headlightPowerSessionActive {
-            tryStartConfirmedHeadlightBreath(reason: reason)
-        }
     }
 
     /// Compatibility call used by disconnect paths. OFF is no longer inferred from
@@ -2358,37 +2230,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func headlightPowerPresent() -> Bool {
-        // v90.10 uses a physical headlight-power epoch rather than the old 8-second
-        // logical-presence window. Positive evidence is immediate; OFF requires the
-        // short dual-controller debounce in scheduleHeadlightPowerOffEvaluation.
+        // Stable Dashboard + Center consensus is the Door/HUD day-night signal only.
         headlightPowerSessionActive
-    }
-
-    /// Startup classification intentionally does NOT use the normal 8-second
-    /// logical-presence hysteresis. On this vehicle, entering the car powers the
-    /// Dashboard and Center Console lights before the engine starts regardless of
-    /// daylight. A daylight engine start then removes that headlight power.
-    ///
-    /// Therefore, a startup counts as night only when at least one headlight-fed
-    /// controller is still actively connected after engine power appears, or it
-    /// produced a fresh advertisement AFTER engine power appeared. Pre-engine
-    /// courtesy-light advertisements cannot make a daylight start look like night.
-    private func startupHeadlightConsensus(now: Date = Date()) -> HeadlightConsensusObservation {
-        let engineOnAt = enginePowerBecamePresentAt ?? now
-        guard let dashboardID = deviceID(for: .dashboard),
-              let centerID = deviceID(for: .centerConsole) else { return .mixed }
-
-        func poweredAfterEngineOn(_ id: UUID) -> Bool {
-            if peripheralsByID[id]?.state == .connected { return true }
-            guard let seen = lastSeenByID[id], seen >= engineOnAt else { return false }
-            return now.timeIntervalSince(seen) <= 2.0
-        }
-
-        let dashboardOn = poweredAfterEngineOn(dashboardID)
-        let centerOn = poweredAfterEngineOn(centerID)
-        if dashboardOn && centerOn { return .bothOn }
-        if !dashboardOn && !centerOn { return .bothOff }
-        return .mixed
     }
 
     private func doorTargetBrightness(night: Bool) -> Int {
@@ -2399,22 +2242,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         if !vehicleAutomationEnabled {
             return "Door day/night automation off • day \(doorDayBrightness)% • night \(doorNightBrightness)%"
         }
-        guard enginePowerPresent else {
-            return "Engine off • Door brightness is not changed"
-        }
-        guard vehicleStartupCompleted else {
-            return "Engine on • waiting briefly for courtesy headlights to settle"
-        }
-        let target = doorTargetBrightness(night: vehicleHeadlightsActive)
-        return "\(vehicleHeadlightsActive ? "Night" : "Day") • Door target \(target)%"
+        let target = doorTargetBrightness(night: headlightPowerSessionActive)
+        return "\(headlightPowerSessionActive ? "Night/headlight ON" : "Day/headlight OFF") • Door target \(target)%"
     }
 
     private func applyDoorTargetAfterSettingChange(changedNightTarget: Bool) {
-        guard vehicleAutomationEnabled,
-              enabled,
-              enginePowerPresent,
-              vehicleSessionActive,
-              vehicleStartupCompleted else { return }
+        guard vehicleAutomationEnabled, enabled else { return }
 
         let night = headlightPowerPresent()
         guard night == changedNightTarget else { return }
@@ -2431,33 +2264,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
     }
 
-    private func resetVehicleAutomationRuntime(reason: String) {
-        startupClassificationTask?.cancel()
-        startupClassificationTask = nil
-        startupClassificationMixedSince = nil
-        startupClassificationLastMixedLogAt = Date.distantPast
-        startupClassificationCandidate = nil
-        startupClassificationCandidateSince = nil
-        engineSignalConsensusTask?.cancel()
-        engineSignalConsensusTask = nil
-        headlightConsensusTask?.cancel()
-        headlightConsensusTask = nil
-        headlightConsensusCandidate = nil
-        engineOffConfirmationTask?.cancel()
-        engineOffConfirmationTask = nil
-        hudOutageBeganAt = nil
-        if !enginePowerPresent { enginePowerBecamePresentAt = nil }
-        vehicleSessionActive = false
-        vehicleStartupCompleted = false
-        vehicleStartupAnimationPending = false
-        vehicleHeadlightsActive = false
-        previousHeadlightPowerPresent = false
-        vehicleAutomationStatus = vehicleAutomationEnabled
-            ? (enginePowerPresent ? "Engine power ON — waiting for door-light power" : "Idle — waiting for engine-switched HUD power")
-            : "Vehicle automation disabled"
-        logger.log("AMBIENT AUTO", "Vehicle automation runtime reset: \(reason)")
-    }
-
     private enum EnginePowerConsensusObservation: String {
         case bothOn
         case bothOff
@@ -2470,10 +2276,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         return .mixed
     }
 
-    /// v90.15: both HUD transport and OBD2 connection must agree before a new
-    /// engine-ON session is created. A mixed state never flips the confirmed
-    /// engine state. For OFF, both primary signals must be absent and the existing
-    /// independent OBD BLE witness may still veto shutdown during a HUD reboot.
+    /// v90.16: evaluate HUD + OBD2 together, but asymmetrically. Stable HUD
+    /// transport is sufficient to create engine ON; OBD2 may corroborate it.
+    /// For OFF, HUD + OBD2 must both be absent and Door/direct-OBD witnesses
+    /// must also be absent so a HUD-only reboot cannot create a false shutdown.
     private func scheduleEngineSignalConsensusEvaluation(reason: String) {
         engineSignalConsensusTask?.cancel()
         engineSignalConsensusTask = Task { @MainActor [weak self] in
@@ -2483,50 +2289,92 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.engineSignalConsensusTask = nil
 
             let observation = self.currentEnginePowerConsensus()
-            self.ambientTrace("Engine consensus evaluation observation=\(observation.rawValue) reason=\(reason)")
-            switch observation {
-            case .bothOn:
-                self.confirmEnginePowerOn(source: "stable HUD + OBD2 consensus")
-            case .bothOff:
-                if self.enginePowerPresent {
-                    if self.isDirectOBDRecentlyPresent() {
-                        self.engineOffConfirmationTask?.cancel()
-                        self.engineOffConfirmationTask = nil
-                        self.enginePowerStatus = "Engine ON preserved • HUD + OBD2 absent but direct OBD witness still present"
-                        self.logger.log(
-                            "AMBIENT ENGINE",
-                            "HUD + OBD2 both absent, but independent OBD witness vetoes engine OFF (\(reason))"
-                        )
-                    } else if let began = self.hudOutageBeganAt,
-                              Date().timeIntervalSince(began) < self.directOBDAcquireWindowSeconds {
-                        self.enginePowerStatus = "HUD + OBD2 absent • checking direct OBD witness…"
-                        self.logger.log(
-                            "AMBIENT ENGINE",
-                            "HUD + OBD2 both absent; holding OFF decision during direct-OBD acquisition window (\(reason))"
-                        )
-                    } else {
-                        self.scheduleEnginePowerOffConfirmation(source: "HUD + OBD2 both stably absent; \(reason)")
-                    }
-                } else {
-                    self.enginePowerStatus = "Engine power OFF • HUD + OBD2 absent"
+            self.ambientTrace("Engine witness evaluation observation=\(observation.rawValue) reason=\(reason)")
+
+            // Field evidence from v90.15.2 showed that HUDWAY can remain fully
+            // operational while its OBDConnectionEventPacket never reports
+            // connected=true. Do not allow that optional through-HUD status to
+            // block vehicle startup. A stable HUD transport is sufficient ON
+            // evidence, as it was in v90.10.
+            if self.hudEnginePowerSignalPresent {
+                let source = self.obdEnginePowerSignalPresent
+                    ? "stable HUD transport + OBD2 corroboration"
+                    : "stable HUD transport (OBD2 not yet confirmed)"
+                if !self.obdEnginePowerSignalPresent {
+                    self.logger.log(
+                        "AMBIENT ENGINE",
+                        "HUD confirms engine ON; OBD2 app-visible state is not connected, using it as secondary corroboration rather than an ON gate (\(reason))"
+                    )
                 }
-            case .mixed:
+                self.confirmEnginePowerOn(source: source)
+                return
+            }
+
+            // OBD-through-HUD can briefly outlive a HUD state callback ordering
+            // edge. It may preserve a confirmed ON session, but does not create a
+            // brand-new engine session without the primary HUD witness.
+            if self.obdEnginePowerSignalPresent {
                 self.engineOffConfirmationTask?.cancel()
                 self.engineOffConfirmationTask = nil
                 self.enginePowerStatus = self.enginePowerPresent
-                    ? "Engine ON preserved • HUD/OBD2 mixed"
-                    : "Engine not confirmed • waiting for HUD + OBD2"
+                    ? "Engine ON preserved • OBD2 witness present while HUD unavailable"
+                    : "Engine not confirmed • OBD2 present, waiting for HUD transport"
                 self.logger.log(
                     "AMBIENT ENGINE",
-                    "Engine consensus mixed; preserving confirmed \(self.enginePowerPresent ? "ON" : "OFF") state (\(reason))"
+                    "OBD2-only engine evidence; preserving confirmed \(self.enginePowerPresent ? "ON" : "OFF") state (\(reason))"
                 )
+                return
             }
+
+            // Both app-visible transport witnesses are absent. Before OFF is
+            // allowed, give the direct OBD scan and the independently powered
+            // Door controller a chance to prove that only the HUD rebooted.
+            guard self.enginePowerPresent else {
+                self.enginePowerStatus = "Engine power OFF • HUD + OBD2 absent"
+                return
+            }
+
+            if self.isDirectOBDRecentlyPresent() {
+                self.engineOffConfirmationTask?.cancel()
+                self.engineOffConfirmationTask = nil
+                self.enginePowerStatus = "Engine ON preserved • direct OBD witness present"
+                self.logger.log(
+                    "AMBIENT ENGINE",
+                    "HUD + OBD2 absent, but independent OBD witness vetoes engine OFF (\(reason))"
+                )
+                return
+            }
+
+            if self.doorEnginePowerEvidence() {
+                self.engineOffConfirmationTask?.cancel()
+                self.engineOffConfirmationTask = nil
+                self.enginePowerStatus = "Engine ON preserved • Door engine-power witness still present"
+                self.logger.log(
+                    "AMBIENT ENGINE",
+                    "HUD + OBD2 absent, but Door controller still shows engine-domain power; vetoing engine OFF (\(reason))"
+                )
+                return
+            }
+
+            if let began = self.hudOutageBeganAt,
+               Date().timeIntervalSince(began) < self.directOBDAcquireWindowSeconds {
+                self.enginePowerStatus = "HUD + OBD2 absent • checking OBD / Door power witnesses…"
+                self.logger.log(
+                    "AMBIENT ENGINE",
+                    "HUD + OBD2 both absent; holding OFF decision during witness acquisition window (\(reason))"
+                )
+                return
+            }
+
+            self.scheduleEnginePowerOffConfirmation(
+                source: "HUD + OBD2 absent and Door/direct-OBD witnesses absent; \(reason)"
+            )
         }
     }
 
-    /// The HUD and OBD2 adapter share the engine-switched power domain. v90.15
-    /// requires both app-visible connection states to establish engine ON; a
-    /// single witness is treated as transitional evidence only.
+    /// HUD is the primary field-proven engine-ON witness. OBD2 remains a second
+    /// safety signal: it can corroborate ON and veto OFF, but a missing through-HUD
+    /// OBD connection event cannot prevent a valid vehicle session from starting.
     func hudTransportPowerSignal(_ present: Bool) {
         let changed = hudEnginePowerSignalPresent != present
         hudEnginePowerSignalPresent = present
@@ -2550,6 +2398,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ambientTrace("OBD2 engine witness changed")
             scheduleEngineSignalConsensusEvaluation(reason: present ? "OBD2 connected" : "OBD2 disconnected")
         }
+    }
+
+    private func doorEnginePowerEvidence(now: Date = Date()) -> Bool {
+        guard let doorID = deviceID(for: .door) else { return false }
+        if peripheralsByID[doorID]?.state == .connected { return true }
+        if let seen = lastSeenByID[doorID], now.timeIntervalSince(seen) <= 8.0 { return true }
+        return false
     }
 
     private func currentOBDTargetName() -> String {
@@ -2589,33 +2444,57 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func evaluateIndependentOBDWitnessForEngineState(now: Date = Date()) {
-        switch currentEnginePowerConsensus() {
-        case .bothOn:
-            // The event-driven consensus timer owns new ON edges.
+        if hudEnginePowerSignalPresent {
+            if enginePowerPresent {
+                engineOffConfirmationTask?.cancel()
+                engineOffConfirmationTask = nil
+                enginePowerStatus = obdEnginePowerSignalPresent
+                    ? "Engine power ON • HUD transport + OBD2 corroboration"
+                    : "Engine power ON • HUD transport"
+            } else if engineSignalConsensusTask == nil {
+                scheduleEngineSignalConsensusEvaluation(reason: "watchdog stable-HUD evaluation")
+            }
             return
-        case .mixed:
-            engineOffConfirmationTask?.cancel()
-            engineOffConfirmationTask = nil
+        }
+
+        if obdEnginePowerSignalPresent {
+            if enginePowerPresent {
+                engineOffConfirmationTask?.cancel()
+                engineOffConfirmationTask = nil
+                enginePowerStatus = "Engine ON preserved • OBD2 connected while HUD unavailable"
+            }
             return
-        case .bothOff:
-            guard enginePowerPresent else { return }
-            if isDirectOBDRecentlyPresent(now: now) {
+        }
+
+        if isDirectOBDRecentlyPresent(now: now) {
+            if enginePowerPresent {
                 engineOffConfirmationTask?.cancel()
                 engineOffConfirmationTask = nil
                 enginePowerStatus = "Engine ON preserved • direct OBD witness present"
-                return
             }
-            // Give a previously visible direct OBD witness a short acquisition
-            // window after HUD loss before beginning the OFF confirmation.
-            if let began = hudOutageBeganAt,
-               now.timeIntervalSince(began) < directOBDAcquireWindowSeconds {
-                enginePowerStatus = "HUD + OBD2 absent • checking direct OBD witness…"
-                return
-            }
-            if engineSignalConsensusTask == nil, engineOffConfirmationTask == nil {
-                scheduleEngineSignalConsensusEvaluation(reason: "watchdog both-off reevaluation")
-            }
+            return
         }
+
+        if doorEnginePowerEvidence(now: now) {
+            if enginePowerPresent {
+                engineOffConfirmationTask?.cancel()
+                engineOffConfirmationTask = nil
+                enginePowerStatus = "Engine ON preserved • Door engine-power witness present"
+            }
+            return
+        }
+
+        guard enginePowerPresent else { return }
+
+        if let began = hudOutageBeganAt,
+           now.timeIntervalSince(began) < directOBDAcquireWindowSeconds {
+            enginePowerStatus = "HUD + OBD2 absent • checking OBD / Door power witnesses…"
+            return
+        }
+
+        scheduleEnginePowerOffConfirmation(
+            source: "HUD absent and OBD / Door power witnesses absent"
+        )
     }
 
     private func confirmEnginePowerOn(source: String) {
@@ -2624,31 +2503,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let wasOff = !enginePowerPresent
         enginePowerPresent = true
         enginePowerStatus = "Engine power ON • \(source)"
-
         if wasOff {
-            enginePowerBecamePresentAt = Date()
-            startupClassificationTask?.cancel()
-            startupClassificationTask = nil
-            vehicleSessionActive = false
-            vehicleStartupCompleted = false
-            vehicleStartupAnimationPending = true
-            vehicleHeadlightsActive = false
-            previousHeadlightPowerPresent = false
-            if let doorID = deviceID(for: .door) {
-                animatedConnectionSession.remove(doorID)
-            }
-            for id in roleIDs([.dashboard, .centerConsole]) {
-                headlightAnimatedEpochByID[id] = nil
-            }
-            vehicleAutomationStatus = "Engine power ON • waiting briefly for courtesy headlights to settle"
             logger.log(
                 "AMBIENT ENGINE",
-                "Engine-switched power ON via \(source); vehicle-start Breath armed after courtesy settle"
+                "Engine diagnostic ON via \(source); v90.17 does not gate or re-arm ambient animations from engine state"
             )
-            ambientTrace("Confirmed engine ON source=\(source)")
+            ambientTrace("Engine diagnostic ON source=\(source)")
         }
-
-        evaluateVehicleLightingAutomation()
     }
 
     private func scheduleEnginePowerOffConfirmation(source: String) {
@@ -2664,18 +2525,23 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             enginePowerStatus = "Engine ON preserved • direct OBD witness present"
             return
         }
+        guard !doorEnginePowerEvidence() else {
+            enginePowerStatus = "Engine ON preserved • Door engine-power witness present"
+            return
+        }
         guard engineOffConfirmationTask == nil else { return }
 
         let delay = max(0.5, engineOffConfirmationSeconds)
-        enginePowerStatus = "Engine power OFF candidate • OBD witness absent • confirming \(String(format: "%.1f", delay))s"
-        logger.log("AMBIENT ENGINE", "\(source); calibrated OBD witness absent; confirming engine OFF for \(String(format: "%.1f", delay))s")
+        enginePowerStatus = "Engine power OFF candidate • all engine witnesses absent • confirming \(String(format: "%.1f", delay))s"
+        logger.log("AMBIENT ENGINE", "\(source); all engine witnesses absent; confirming engine OFF for \(String(format: "%.1f", delay))s")
         engineOffConfirmationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled,
                   !self.hudEnginePowerSignalPresent,
                   !self.obdEnginePowerSignalPresent,
-                  !self.isDirectOBDRecentlyPresent() else { return }
+                  !self.isDirectOBDRecentlyPresent(),
+                  !self.doorEnginePowerEvidence() else { return }
             self.engineOffConfirmationTask = nil
             self.confirmEnginePowerOff()
         }
@@ -2684,233 +2550,51 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private func confirmEnginePowerOff() {
         guard enginePowerPresent else { return }
         enginePowerPresent = false
-        enginePowerStatus = "Engine power OFF • HUD + OBD2 absent"
+        enginePowerStatus = "Engine power OFF • diagnostic witnesses absent"
         independentOBDWitnessStatus = directOBDWitnessProven
             ? "Calibrated OBD witness absent"
             : "Independent OBD witness not calibrated"
-        startupClassificationTask?.cancel()
-        startupClassificationTask = nil
-        startupClassificationMixedSince = nil
-        startupClassificationLastMixedLogAt = Date.distantPast
-        startupClassificationCandidate = nil
-        startupClassificationCandidateSince = nil
-        vehicleSessionActive = false
-        vehicleStartupCompleted = false
-        vehicleStartupAnimationPending = false
-        vehicleHeadlightsActive = false
-        previousHeadlightPowerPresent = false
-        enginePowerBecamePresentAt = nil
-        headlightConsensusTask?.cancel()
-        headlightConsensusTask = nil
-        headlightConsensusCandidate = nil
-
-        // Courtesy power may keep Dashboard/Center alive after engine shutdown.
-        // End the driving headlight epoch now and suppress any in-flight automatic
-        // vehicle Breath so courtesy lights return to their steady preference.
-        if headlightPowerSessionActive {
-            commitConfirmedHeadlightPower(false, reason: "engine OFF consensus")
-        }
-        for id in roleIDs([.door, .dashboard, .centerConsole]) {
-            breathPrepareTasks[id]?.cancel()
-            breathPrepareTasks[id] = nil
-            removeFromActiveBreath(id)
-        }
-        for id in roleIDs([.dashboard, .centerConsole]) where isControllable(id) {
-            restoreDeviceState(id)
-        }
         logger.log(
             "AMBIENT ENGINE",
-            "Engine power OFF confirmed by HUD + OBD2 absence; courtesy lights remain steady and automatic Breath is suppressed"
+            "Engine diagnostic OFF confirmed; v90.17 leaves all light animations and Dashboard+Center day/night consensus untouched"
         )
-        ambientTrace("Confirmed engine OFF")
-        if vehicleAutomationEnabled {
-            vehicleAutomationStatus = "Engine OFF • lights unchanged until vehicle power changes"
-        }
+        ambientTrace("Engine diagnostic OFF")
     }
 
-    /// v90.15 vehicle-aware behavior. Engine state is confirmed only after stable
-    /// HUD + OBD2 agreement. Courtesy-powered Dashboard/Center lights may connect
-    /// before then, but automatic startup animation remains gated until the engine
-    /// session is confirmed and the post-start day/night settle completes.
+    /// v90.17: vehicle automation only means Door day/night brightness. It is
+    /// intentionally independent from engine/courtesy/startup state. The stable
+    /// Dashboard+Center two-light consensus is the sole automatic day/night input.
     private func evaluateVehicleLightingAutomation() {
         guard vehicleAutomationEnabled, enabled else { return }
-
-        guard enginePowerPresent else {
-            vehicleSessionActive = false
-            vehicleStartupCompleted = false
-            vehicleHeadlightsActive = false
-            previousHeadlightPowerPresent = false
-            vehicleAutomationStatus = "Engine OFF • ambient lights left unchanged until vehicle power changes"
-            return
-        }
-
-        if !vehicleSessionActive {
-            vehicleSessionActive = true
-        }
-
-        // Keep the existing hidden post-engine settling delay so entry courtesy
-        // headlights do not briefly force the Door to the night target in daylight.
-        if !vehicleStartupCompleted {
-            if startupClassificationTask == nil {
-                beginVehicleStartupClassification()
-            }
-            return
-        }
-
-        let headlightsPresent = headlightPowerPresent()
-        if headlightsPresent != previousHeadlightPowerPresent {
-            vehicleHeadlightsActive = headlightsPresent
-            applyCurrentDoorDayNightTarget(
-                reason: headlightsPresent
-                    ? "headlight-fed lights on → night Door brightness"
-                    : "headlight-fed lights off → day Door brightness"
-            )
-            logger.log(
-                "AMBIENT AUTO",
-                "Headlight state changed while engine ON: \(headlightsPresent ? "night" : "day") Door target=\(doorTargetBrightness(night: headlightsPresent))%"
-            )
-        }
-        previousHeadlightPowerPresent = headlightsPresent
-        vehicleAutomationStatus = headlightsPresent
-            ? "Engine ON • night • Door target \(doorNightBrightness)%"
-            : "Engine ON • day • Door target \(doorDayBrightness)%"
-    }
-
-    private func beginVehicleStartupClassification() {
-        vehicleSessionActive = true
-        vehicleStartupCompleted = false
-        startupClassificationMixedSince = nil
-        startupClassificationLastMixedLogAt = Date.distantPast
-        startupClassificationCandidate = nil
-        startupClassificationCandidateSince = nil
-
-        let now = Date()
-        let engineOnAt = enginePowerBecamePresentAt ?? now
-        let elapsedSinceEngineOn = max(0, now.timeIntervalSince(engineOnAt))
-        let remainingSettle = max(0.5, startupClassificationSeconds - elapsedSinceEngineOn)
-
-        vehicleAutomationStatus = "Engine ON • waiting briefly for courtesy headlights to settle"
-        logger.log(
-            "AMBIENT AUTO",
-            "Simplified day/night settle begin remaining=\(String(format: "%.1f", remainingSettle))s; no light brightness is changed during the settle window"
-        )
-        ambientTrace("Courtesy/headlight startup settle begin remaining=\(String(format: "%.1f", remainingSettle))s")
-
-        startupClassificationTask?.cancel()
-        startupClassificationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: .seconds(remainingSettle))
-            guard !Task.isCancelled, self.vehicleAutomationEnabled, self.enginePowerPresent else { return }
-            self.startupClassificationTask = nil
-            self.finishVehicleStartupClassification()
-        }
-    }
-
-    private func finishVehicleStartupClassification() {
-        let observation = startupHeadlightConsensus()
-        let now = Date()
-
-        if observation == .mixed {
-            startupClassificationCandidate = nil
-            startupClassificationCandidateSince = nil
-            if startupClassificationMixedSince == nil {
-                startupClassificationMixedSince = now
-            }
-            let mixedFor = now.timeIntervalSince(startupClassificationMixedSince ?? now)
-            if startupClassificationLastMixedLogAt == .distantPast ||
-                now.timeIntervalSince(startupClassificationLastMixedLogAt) >= 5.0 {
-                startupClassificationLastMixedLogAt = now
-                logger.log(
-                    "AMBIENT AUTO",
-                    "Startup classification mixed for \(String(format: "%.1f", mixedFor))s; waiting for BOTH Dashboard + Center to agree before consuming vehicle-start Breath"
-                )
-                ambientTrace("Startup classification mixed; waiting for both headlight witnesses")
-            }
-            vehicleAutomationStatus = "Engine ON • waiting for Dashboard + Center headlight consensus"
-            scheduleStartupClassificationRecheck(after: headlightConsensusStabilitySeconds)
-            return
-        }
-
-        // Require the resolved BOTH-ON/BOTH-OFF startup observation itself to be
-        // stable. This prevents a brief simultaneous BLE dropout exactly at the
-        // end of the courtesy settle from being misclassified as a daytime start.
-        if startupClassificationCandidate != observation {
-            startupClassificationCandidate = observation
-            startupClassificationCandidateSince = now
-            logger.log(
-                "AMBIENT AUTO",
-                "Startup classification candidate=\(observation.rawValue); confirming for \(String(format: "%.2f", headlightConsensusStabilitySeconds))s"
-            )
-            ambientTrace("Startup classification candidate \(observation.rawValue)")
-            scheduleStartupClassificationRecheck(after: headlightConsensusStabilitySeconds)
-            return
-        }
-
-        let stableFor = now.timeIntervalSince(startupClassificationCandidateSince ?? now)
-        if stableFor < headlightConsensusStabilitySeconds {
-            scheduleStartupClassificationRecheck(after: headlightConsensusStabilitySeconds - stableFor)
-            return
-        }
-
-        startupClassificationMixedSince = nil
-        startupClassificationLastMixedLogAt = Date.distantPast
-        startupClassificationCandidate = nil
-        startupClassificationCandidateSince = nil
-        let night = observation == .bothOn
-        if night && !headlightPowerSessionActive {
-            commitConfirmedHeadlightPower(true, reason: "startup settle confirmed both headlight controllers ON")
-        } else if !night && headlightPowerSessionActive {
-            commitConfirmedHeadlightPower(false, reason: "startup settle confirmed both headlight controllers OFF")
-        }
-        vehicleHeadlightsActive = night
-        previousHeadlightPowerPresent = night
-        vehicleStartupCompleted = true
-        vehicleAutomationStatus = night
-            ? "Engine ON • night • Door target \(doorNightBrightness)%"
-            : "Engine ON • day • Door target \(doorDayBrightness)%"
-        logger.log(
-            "AMBIENT AUTO",
-            "Startup classification complete after stable two-light consensus: \(night ? "night" : "day"); admitting one vehicle-start Breath when required controllers are ready"
-        )
-        ambientTrace("Startup classification committed mode=\(night ? "night" : "day")")
-        // Do not begin a separate Door fade here. The vehicle-start Breath owns
-        // the Door baseline/return target so startup cannot become fade -> Breath
-        // or two competing brightness timelines. If animation is disabled for a
-        // required light, queuePowerUpBreath() falls back to steady restoration.
-        tryStartVehicleStartupBreath(reason: "startup day/night classification complete")
-    }
-
-    private func scheduleStartupClassificationRecheck(after delay: TimeInterval) {
-        startupClassificationTask?.cancel()
-        startupClassificationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: .seconds(max(0.05, delay)))
-            guard !Task.isCancelled, self.vehicleAutomationEnabled, self.enginePowerPresent else { return }
-            self.startupClassificationTask = nil
-            self.finishVehicleStartupClassification()
-        }
+        vehicleHeadlightsActive = headlightPowerSessionActive
+        vehicleAutomationStatus = headlightPowerSessionActive
+            ? "Night/headlight ON • Door target \(doorNightBrightness)%"
+            : "Day/headlight OFF • Door target \(doorDayBrightness)%"
+        applyCurrentDoorDayNightTarget(reason: "day/night consensus evaluation")
     }
 
     private func applyCurrentDoorDayNightTarget(reason: String) {
-        guard vehicleAutomationEnabled, enginePowerPresent, vehicleStartupCompleted,
+        guard vehicleAutomationEnabled,
               let doorID = deviceID(for: .door),
               isLogicallyPowered(doorID), isControllable(doorID),
               let door = pairedDevice(doorID) else { return }
 
-        let target = doorTargetBrightness(night: vehicleHeadlightsActive)
+        let target = doorTargetBrightness(night: headlightPowerSessionActive)
+        if bledimBootSettleTasks[doorID] != nil || breathPrepareTasks[doorID] != nil {
+            logger.log("AMBIENT AUTO", "Door target updated to \(target)% while power-on sequence is preparing; animation will use the latest target (\(reason))")
+            return
+        }
         if activeBreathIDs.contains(doorID) {
-            activeBreathReturnBrightness[doorID] = target
-            logger.log("AMBIENT ANIM", "Door breath final target updated to \(target)% reason=\(reason)")
+            if activeBreathReturnBrightness[doorID] != target {
+                activeBreathReturnBrightness[doorID] = target
+                logger.log("AMBIENT ANIM", "Door breath final target updated to \(target)% reason=\(reason)")
+            }
             return
         }
-        if door.runtimeBrightness == target {
-            applyRuntimeBrightness(doorID, percent: target, reason: "\(reason) already at target", persist: true)
+        if brightnessTransitionTasks[doorID] != nil, brightnessTransitionTargetByID[doorID] == target {
             return
         }
-        // Day/night automation changes brightness only. Re-sending Power ON + RGB
-        // before every fade consumed BLEDIM's write-without-response credits and
-        // was the main reason v90.9 could start a fade with its critical follow-up
-        // writes deferred. Color and power are restored reliably on connection.
+        if door.runtimeBrightness == target { return }
         transitionBrightness(
             ids: [doorID],
             targets: [doorID: target],
@@ -3199,13 +2883,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func steadyBrightnessAfterWarning(for id: UUID) -> Int {
         guard let device = pairedDevice(id) else { return 100 }
-        if device.role == .door,
-           vehicleAutomationEnabled,
-           enginePowerPresent,
-           vehicleStartupCompleted {
-            return doorTargetBrightness(night: vehicleHeadlightsActive)
-        }
-        return device.brightness
+        return steadyBrightnessTarget(for: device)
     }
 
     /// Restore exactly one v90.10 reliable steady-state sequence after a warning.
@@ -3217,11 +2895,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
               let device = pairedDevice(id),
               device.powerOn,
               isControllable(id) else { return }
-
-        if device.role == .dashboard, !headlightPowerSessionActive {
-            logger.log("AMBIENT WARN", "Dashboard restore deferred because confirmed headlight power is OFF")
-            return
-        }
 
         let target = steadyBrightnessAfterWarning(for: id)
         guard await sendPowerWhenReady(id, on: true, reason: "overspeed restore \(reason)") else { return }
@@ -3312,7 +2985,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    // MARK: - Legacy HUD brightness presence behavior
+    // MARK: - Tracked Center presence / persistent connection
 
     private func markPresent(
         name: String,
@@ -3333,7 +3006,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         if becamePresent {
             logger.log(
                 "AMBIENT",
-                "\(name) became present via \(reason); enabling HUD auto brightness"
+                "\(name) became present via \(reason); contributing Center evidence to two-light headlight consensus"
             )
         }
 
@@ -3372,6 +3045,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             HudCommands.autoBrightness(shouldEnable),
             label: "HUD rehydrate → consensus auto brightness \(shouldEnable ? "ON" : "OFF")"
         )
+        lastHUDReassertAt = Date()
 
         logger.log(
             "AMBIENT SESSION",
@@ -3475,7 +3149,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             if let device = self.pairedDevice(id), device.autoConnect {
                 self.maintainConnection(to: peripheral, reason: "paired advertisement")
             }
-            self.evaluateVehicleLightingAutomation()
         }
     }
 
@@ -3518,6 +3191,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.connectionStartedByID[id] = nil
             self.sessionResetTasks[id]?.cancel()
             self.sessionResetTasks[id] = nil
+            // v90.17: every controller return is a brand-new power-on event.
+            self.animatedConnectionSession.remove(id)
             self.noteHeadlightPowerSeen(id, reason: "didConnect")
             if let device = self.pairedDevice(id) {
                 self.ambientTrace("BLE connected role=\(device.role?.rawValue ?? "unassigned") name=\(device.displayName)")
@@ -3548,7 +3223,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 }
                 self.discoverServicesIfNeeded(peripheral, force: true, reason: "didConnect")
             }
-            self.evaluateVehicleLightingAutomation()
         }
     }
 
@@ -3586,6 +3260,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.lastBLEDIMNotifyLogAtByID[id] = nil
             self.animationTasks[id]?.cancel()
             self.animationTasks[id] = nil
+            self.bledimBootSettleTasks[id]?.cancel()
+            self.bledimBootSettleTasks[id] = nil
             self.cancelBrightnessTransition(for: id)
             self.breathPrepareTasks[id]?.cancel()
             self.breathPrepareTasks[id] = nil
@@ -3629,7 +3305,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.startScanning()
             self.scheduleConnectionRetry()
             self.scheduleStartupSessionReset(id)
-            self.evaluateVehicleLightingAutomation()
         }
     }
 
@@ -3959,19 +3634,22 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     )
                 }
 
-                if self.hudBrightnessTriggerEnabled && self.lightPresent,
-                   connected || elapsed <= timeout * Double(self.absenceConfirmationWindows),
+                if self.hudBrightnessTriggerEnabled,
                    self.bluetooth.state == .connected,
                    Date().timeIntervalSince(self.lastHUDReassertAt) >= 10 {
+                    let shouldEnable = self.headlightPowerSessionActive
                     self.bluetooth.enqueue(
-                        HudCommands.autoBrightness(true),
-                        label: "Ambient watchdog reassert → Auto brightness ON"
+                        HudCommands.autoBrightness(shouldEnable),
+                        label: "Ambient watchdog reassert → consensus Auto brightness \(shouldEnable ? "ON" : "OFF")"
                     )
                     self.lastHUDReassertAt = Date()
+                    self.logger.log(
+                        "AMBIENT HUD",
+                        "Consensus watchdog reasserted HUD auto brightness=\(shouldEnable ? "ON" : "OFF")"
+                    )
                 }
 
                 self.evaluateIndependentOBDWitnessForEngineState()
-                self.evaluateVehicleLightingAutomation()
             }
         }
     }

@@ -72,12 +72,17 @@ struct AmbientLightingView: View {
                                 suffix: "s"
                             )
 
+                            Toggle("Synchronize nearby power-on Breaths", isOn: Binding(
+                                get: { monitor.synchronizePowerOnBreathEnabled },
+                                set: { monitor.synchronizePowerOnBreathEnabled = $0 }
+                            ))
+
                             Button("Preview Enabled Lights") {
                                 monitor.previewEnabledBreathNow()
                             }
                             .buttonStyle(.borderedProminent)
 
-                            Text("Each breath repetition is: the light’s actual current brightness → 0% → 100% → that initial brightness. If its target changes while breathing, the final repetition ends smoothly at the new target. The duration above applies to EACH repetition: for example, 3× at 9 s takes 27 s total. Enabled lights share one 20 Hz timeline for close synchronization.")
+                            Text("Every controller return is treated as a fresh power-on event. BLEDIM Door/Dashboard wait briefly for firmware boot, then run Power ON → RGB → a complete Breath → preferred brightness. With synchronization OFF, each light owns its full animation independently. With it ON, lights that finish preparation within a 2.5 s grouping window share a timeline; late lights still get their own complete Breath.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -89,19 +94,6 @@ struct AmbientLightingView: View {
                                 get: { monitor.vehicleAutomationEnabled },
                                 set: { monitor.vehicleAutomationEnabled = $0 }
                             ))
-
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(monitor.enginePowerPresent ? Color.green : Color.secondary)
-                                    .frame(width: 9, height: 9)
-                                Text(monitor.enginePowerStatus)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Text(monitor.independentOBDWitnessStatus)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
 
                             percentSlider(
                                 title: "Door daytime brightness",
@@ -125,7 +117,7 @@ struct AmbientLightingView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Text("Startup rule: HUD + OBD2 must both confirm the engine session. Dashboard + Center courtesy power before that may connect normally but cannot consume the automatic Breath. After the courtesy settle, Day runs one Door startup Breath; Night waits for Door + Dashboard + Center to be ready and runs one synchronized startup Breath. During driving, mixed Dashboard/Center power preserves the last confirmed headlight state.")
+                            Text("Door brightness is independent from animation and engine-session detection. Dashboard + Center both ON = night; both OFF = day; a mixed state preserves the last confirmed mode. That same stable two-light signal controls HUD Auto Brightness. Courtesy or reconnect events may still animate the individual lights, but they do not block Door day/night behavior.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }

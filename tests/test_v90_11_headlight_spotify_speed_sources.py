@@ -17,12 +17,15 @@ def test_headlight_state_uses_two_light_consensus_instead_of_center_authority():
     assert "Headlight consensus → Auto brightness OFF" in MONITOR
 
 
-def test_headlight_breath_waits_for_both_gatt_ready_and_epoch_is_generation_safe():
+def test_headlight_consensus_is_day_night_only_and_power_on_breath_is_per_light():
     assert "headlightStateGeneration" in MONITOR
-    assert "private func tryStartConfirmedHeadlightBreath" in MONITOR
-    assert "dashboardGATTNotReady" in MONITOR
-    assert "centerGATTNotReady" in MONITOR
-    assert "headlightAnimatedEpochByID" in MONITOR
+    assert "private func tryStartConfirmedHeadlightBreath" not in MONITOR
+    assert "headlightAnimatedEpochByID" not in MONITOR
+    commit = MONITOR.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
+    assert "queuePowerUpBreath" not in commit
+    assert "applyCurrentDoorDayNightTarget" in commit
+    assert "private func runStartupAnimationIfNeeded" in MONITOR
+    assert "private func scheduleBLEDIMBootSettleReassert" in MONITOR
 
 
 def test_spotify_automatically_wakes_after_repeated_failures_without_clearing_token():

@@ -37,18 +37,19 @@ def test_smooth_brightness_transition_is_shared_and_does_not_rewrite_preference_
     assert "group manual brightness" in monitor
 
 
-def test_vehicle_automation_classifies_day_night_then_admits_one_startup_breath():
+def test_vehicle_automation_is_only_door_day_night_and_never_owns_power_on_breath():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-    assert "beginVehicleStartupClassification" in monitor
-    assert "finishVehicleStartupClassification" in monitor
-    assert "Startup classification complete" in monitor
-    assert "tryStartVehicleStartupBreath" in monitor
+    assert "beginVehicleStartupClassification" not in monitor
+    assert "finishVehicleStartupClassification" not in monitor
+    assert "tryStartVehicleStartupBreath" not in monitor
     assert "applyCurrentDoorDayNightTarget" in monitor
+    commit = monitor.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
+    assert "queuePowerUpBreath" not in commit
     assert "fadeInNewHeadlightDevices" not in monitor
     assert "performVehicleShutdownFade" not in monitor
 
 
-def test_engine_power_uses_hud_and_obd_consensus_with_direct_obd_off_veto():
+def test_engine_power_uses_hud_primary_with_obd_and_door_off_veto():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     appstate = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
     obd = (ROOT / "ios/HUDController/Vehicle/HudOBDController.swift").read_text()
@@ -57,8 +58,9 @@ def test_engine_power_uses_hud_and_obd_consensus_with_direct_obd_off_veto():
     assert "scheduleEnginePowerOffConfirmation" in monitor
     assert "directOBDWitnessProven" in monitor
     assert "private enum EnginePowerConsensusObservation" in monitor
-    assert "stable HUD + OBD2 consensus" in monitor
+    assert "stable HUD transport (OBD2 not yet confirmed)" in monitor
     assert "direct OBD witness" in monitor
+    assert "doorEnginePowerEvidence" in monitor
     assert "self.ambientLight.hudTransportPowerSignal(true)" in appstate
     assert "self.ambientLight.hudTransportPowerSignal(false)" in appstate
     assert "!self.bluetooth.userDisconnectRequested" in appstate

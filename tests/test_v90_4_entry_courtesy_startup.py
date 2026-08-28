@@ -1,42 +1,14 @@
 from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+MONITOR=(ROOT/'ios/HUDController/Vehicle/AmbientLightMonitor.swift').read_text()
+VIEW=(ROOT/'ios/HUDController/UI/AmbientLightingView.swift').read_text()
 
-ROOT = Path(__file__).resolve().parents[1]
+def test_courtesy_power_is_just_an_individual_power_on_event_now():
+    run=MONITOR.split('private func runStartupAnimationIfNeeded',1)[1].split('private func queuePowerUpBreath',1)[0]
+    assert 'enginePowerPresent' not in run
+    assert 'queuePowerUpBreath(id)' in run
+    assert 'every controller return is a brand-new power-on event' in MONITOR
 
-
-def monitor_source():
-    return (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-
-
-def test_engine_start_timestamp_anchors_hidden_courtesy_settle_window():
-    src = monitor_source()
-    assert "enginePowerBecamePresentAt" in src
-    assert "enginePowerBecamePresentAt = Date()" in src
-    assert "startupClassificationSeconds - elapsedSinceEngineOn" in src
-    assert "no light brightness is changed during the settle window" in src
-
-
-def test_startup_night_detector_rejects_pre_engine_advertisements():
-    src = monitor_source()
-    block = src.split("private func startupHeadlightConsensus", 1)[1].split("private func doorTargetBrightness", 1)[0]
-    assert "seen >= engineOnAt" in block
-    assert "peripheralsByID[id]?.state == .connected" in block
-    assert "now.timeIntervalSince(seen) <= 2.0" in block
-    assert "isLogicallyPowered" not in block
-    assert "return .mixed" in block
-
-
-def test_finish_startup_classifies_then_admits_one_vehicle_breath():
-    src = monitor_source()
-    block = src.split("private func finishVehicleStartupClassification()", 1)[1].split("private func applyCurrentDoorDayNightTarget", 1)[0]
-    assert "startupHeadlightConsensus()" in block
-    assert "tryStartVehicleStartupBreath" in block
-    assert "applyCurrentDoorDayNightTarget(" not in block
-    assert "Do not begin a separate Door fade here" in block
-
-
-def test_ui_keeps_courtesy_logic_concise_and_hides_old_tuning_controls():
-    view = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
-    assert "Dashboard + Center courtesy power before that may connect normally but cannot consume the automatic Breath" in view
-    assert "Post-engine headlight settle window" not in view
-    assert "Headlight join fade" not in view
-    assert "Shutdown fade" not in view
+def test_ui_documents_simple_independent_behavior():
+    assert 'Every controller return is treated as a fresh power-on event' in VIEW
+    assert 'Door brightness is independent from animation and engine-session detection' in VIEW

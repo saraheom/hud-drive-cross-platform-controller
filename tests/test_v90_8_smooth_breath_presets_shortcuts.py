@@ -46,8 +46,9 @@ def test_breath_is_only_powerup_animation_and_uses_requested_path():
 def test_breath_and_group_fades_share_timeline_for_visual_sync():
     src = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "activeBreathIDs" in src
-    assert "Joined active synchronized breath" in src
-    assert "try? await Task.sleep(for: .seconds(0.75))" in src
+    assert "Optional sync window armed for" in src
+    assert "startIndividualBreathSession" in src
+    assert "try? await Task.sleep(for: .seconds(self.powerOnSyncWindowSeconds))" in src
     assert "let timelineTick = 0.05" in src
     assert "protocolPacing=20Hz/rawBLEDIM" in src
     assert "targets: Dictionary(uniqueKeysWithValues: steady.map" in src
@@ -99,9 +100,10 @@ def test_manual_power_on_uses_same_breath_path_when_animation_enabled():
 
 def test_breath_uses_actual_start_and_only_last_cycle_can_return_to_changed_target():
     src = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-    assert "initialBrightness = device.runtimeBrightness" in src
+    assert "let initialBrightness = force ? device.runtimeBrightness : steadyBrightnessTarget(for: device)" in src
     assert "activeBreathStartBrightness[id] = initialBrightness" in src
-    assert "activeBreathReturnBrightness[id] = initialBrightness" in src
+    assert "activeBreathReturnBrightness[id] = returnBrightness" in src
+    assert "self.steadyBrightnessTarget(for: latestDevice)" in src
     assert "cycleIndex == safeCycles - 1 ? clampedReturn : clampedStart" in src
     assert "activeBreathReturnBrightness[id] = clamped" in src
     assert "Door breath final target updated" in src

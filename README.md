@@ -32,6 +32,24 @@ Note: after signing/archive is restored, App Store Connect may still return
 90534 if Apple's server continues rejecting the Xcode 27 beta 4 toolchain.
 That is a separate external toolchain issue.
 
+
+## v90.17 — simple power-on ambient lifecycle + optional sync + OSM Trace flight recorder
+
+v90.17 deliberately removes engine/courtesy/startup state from ambient animation admission.
+Every controller return is a fresh power-on event: GATT readiness (plus a 1.5 s BLEDIM
+firmware settle) leads to Power ON → RGB → complete Breath → a semantic Power ON/RGB/final
+brightness commit. A disconnect immediately re-arms that light for the next return.
+
+Power-on synchronization is now optional and defaults OFF. With sync enabled, prepared
+lights have a 2.5 s grouping window; a late controller always receives its own complete
+Breath rather than joining mid-cycle. Dashboard + Center consensus is independent and only
+controls Door day/night brightness plus HUD Auto Brightness.
+
+The ambient flight recorder remains enabled, and OSM Trace diagnostics now log the exact
+GPS trace, top candidate roads, nearest OSM geometry, scoring/margins, speed tags, decision,
+and final resolved/held speed limit. See
+`docs/V90_17_SIMPLE_POWER_ON_AND_OSM_TRACE_DIAGNOSTICS.md`.
+
 ## v89 — direct ambient-light control foundation
 
 v89 expands the existing ELK-BLEDOM presence monitor into a single multi-device
@@ -400,3 +418,43 @@ All later independent overspeed, Spotify vehicle-gating, and OSM speed-limit fea
 ## v90.15.2 — Ambient diagnostic flight recorder + consensus hardening
 
 v90.15.2 keeps the v90.10-derived BLEDIM/Lotus transport and animation pacing while making the ambient state machine observable enough for one-drive diagnosis. `AMBIENT TRACE` snapshots record engine consensus, startup state, headlight consensus, per-light connection/GATT/power/brightness, and active operation ownership at meaningful events. It also prevents duplicate BLE advertisements from perpetually restarting the 0.75-second headlight consensus window, and startup day/night classification now treats mixed Dashboard/Center evidence as unresolved and requires the final BOTH-ON/BOTH-OFF candidate to remain stable before consuming the startup Breath. See `docs/V90_15_2_AMBIENT_FLIGHT_RECORDER_AND_CONSENSUS_HARDENING.md`.
+
+
+## v90.16 — field-hardened engine/headlight pipeline + one-shot BLEDIM boot settle
+
+The v90.15.2 flight-recorder drive showed that the app-visible HUD-side OBD connection
+event can remain false for an entire otherwise healthy drive. Requiring HUD + OBD2 to
+both report connected therefore deadlocked ambient automation in `engine=false`,
+prevented startup classification/headlight consensus, and left HUD brightness ownership
+split between consensus rehydration and an older Center-only watchdog.
+
+v90.16 keeps the field-proven v90.10 ambient packet/animation transport and corrects
+those higher-level assumptions:
+
+- **Engine ON returns to the v90.10 HUD-primary model, with a 0.75 s stability gate.**
+  A stable HUD transport starts the vehicle session even if the optional HUD-side OBD
+  connection event is still missing. OBD2 remains active as secondary evidence and is
+  logged/corroborated when available.
+- **Engine OFF is intentionally harder than engine ON.** HUD + OBD2 must both be absent,
+  the direct OBD BLE witness must be absent, and the engine-powered Door controller must
+  also stop providing recent power evidence before the existing OFF-confirmation timer
+  may complete. A HUD-only reboot therefore does not create a false shutdown.
+- **HUD auto-brightness has one owner.** After startup, only the confirmed
+  Center+Dashboard two-light headlight consensus controls Auto Brightness. The watchdog
+  periodically reasserts the current confirmed ON *or* OFF state; it no longer sends ON
+  merely because Center is present.
+- **Fresh BLEDIM controllers get one delayed boot-settle reassert.** 1.5 s after new FFF1
+  GATT readiness, Door/Dashboard receive one semantic safety reassert. If no animation
+  owns brightness, it is one normal `Power ON -> RGB -> preferred brightness` restore.
+  If a Breath/fade is already active, only Power ON + normal RGB are reasserted so the
+  animation retains brightness ownership and performs its normal final return.
+- The boot-settle safeguard is event-driven and one-shot. It is not the v90.13 repeated
+  recovery loop and does not add periodic ambient-light writes during normal driving.
+- HUD-side OBD auto-connect remains self-healing but now backs off from 4 s retries to a
+  maximum 30 s interval when no positive OBD event arrives, avoiding hundreds of
+  redundant HUD UART commands in one drive.
+- Courtesy suppression, stable startup day/night classification, the two-light
+  Center+Dashboard consensus, animation-abort steady-state fail-safe, overspeed controls,
+  Spotify vehicle wake gate, and OSM speed-limit sources remain intact.
+
+See `docs/V90_16_FIELD_HARDENING.md`.

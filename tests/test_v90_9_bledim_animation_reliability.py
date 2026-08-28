@@ -34,9 +34,9 @@ def test_watchdog_does_not_rediscover_gatt_after_control_is_ready():
 def test_repeated_breath_preview_cannot_replace_initial_brightness_with_mid_animation_value():
     assert "if activeBreathIDs.contains(id)" in MONITOR
     assert "initial/return brightness preserved" in MONITOR
-    assert "initialBrightness = device.runtimeBrightness" in MONITOR
+    assert "let initialBrightness = force ? device.runtimeBrightness : steadyBrightnessTarget(for: device)" in MONITOR
     assert "activeBreathStartBrightness[id] = initialBrightness" in MONITOR
-    assert "runtimeTarget = device.brightness" in MONITOR
+    assert "let runtimeTarget = steadyBrightnessTarget(for: device)" in MONITOR
 
 
 def test_repetitive_bledim_notifications_and_animation_packet_logs_are_reduced():

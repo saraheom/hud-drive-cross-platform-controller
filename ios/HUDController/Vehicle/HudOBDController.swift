@@ -279,9 +279,26 @@ final class HudOBDController {
                 self.logger.log("OBD AUTO", "Connect attempt \(self.autoConnectAttempt)")
                 self.connect(force: true)
 
-                // The physical HUD can take several seconds to connect to ELM327.
-                // Retry until its OBD event explicitly reports connected=true.
-                try? await Task.sleep(for: .seconds(4))
+                // v90.16: field logs showed some HUD firmware sessions never emit
+                // OBDConnectionEventPacket connected=true even while the vehicle
+                // and HUD remain fully operational. Do not hammer the HUD every
+                // four seconds indefinitely. Keep retrying, but back off to a
+                // 30-second ceiling so OBD recovery remains self-healing without
+                // adding hundreds of redundant UART commands during one drive.
+                let retryDelay: Double
+                switch self.autoConnectAttempt {
+                case 1: retryDelay = 4.0
+                case 2: retryDelay = 6.0
+                case 3: retryDelay = 9.0
+                case 4: retryDelay = 14.0
+                case 5: retryDelay = 20.0
+                default: retryDelay = 30.0
+                }
+                self.logger.log(
+                    "OBD AUTO",
+                    "No positive OBD connection event yet; next retry in \(String(format: "%.1f", retryDelay))s"
+                )
+                try? await Task.sleep(for: .seconds(retryDelay))
             }
 
             if self.connected {

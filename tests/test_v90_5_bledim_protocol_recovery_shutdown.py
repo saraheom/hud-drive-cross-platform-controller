@@ -29,14 +29,14 @@ def test_v905_reads_bledim_device_information_and_advertisement_metadata():
     assert 'serviceValue == "180A" || serviceValue == "180F"' in monitor
 
 
-def test_v9015_engine_off_suppresses_automatic_breath_and_uses_no_shutdown_fade():
+def test_engine_off_is_diagnostic_only_and_cannot_cancel_light_animation():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     block = monitor.split("private func confirmEnginePowerOff()", 1)[1].split("private func evaluateVehicleLightingAutomation", 1)[0]
-    assert "vehicleStartupAnimationPending = false" in block
-    assert "engine OFF consensus" in block
-    assert "automatic Breath is suppressed" in block
+    assert "Engine diagnostic OFF confirmed" in block
+    assert "leaves all light animations" in block
+    assert "removeFromActiveBreath" not in block
+    assert "commitConfirmedHeadlightPower" not in block
     assert "transitionBrightness(" not in block
-    assert "sendBrightness(" not in block
     assert "performVehicleShutdownFade" not in block
 
 

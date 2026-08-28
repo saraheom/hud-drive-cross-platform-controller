@@ -24,8 +24,7 @@ def test_failsafe_yields_to_newer_light_operations():
     assert "self.brightnessTransitionTasks[id] != nil" in block
     assert "self.restoreTasks[id] != nil" in block
     assert "self.overspeedWarningActiveID == id" in block
-    assert "device.role?.isHeadlightFed == true" in block
-    assert "!self.headlightPowerSessionActive" in block
+    assert "confirmedHeadlightOff" not in block
     assert '"AMBIENT FAILSAFE"' in block
     assert "self.restoreDeviceState(id)" in block
 

@@ -137,6 +137,18 @@ final class AppState {
     }
 
     func applyBrightness() {
+        // v90.16: when ambient headlight automation owns HUD Auto Brightness,
+        // do not let the generic persisted HUD setting fight that consensus during
+        // rehydration or a settings refresh. rehydrateHUDState()/headlight edges
+        // are the single owner until the ambient trigger is disabled.
+        if ambientLight.enabled && ambientLight.hudBrightnessTriggerEnabled {
+            logger.log(
+                "HUD BRIGHTNESS",
+                "Generic brightness apply deferred — ambient headlight consensus owns HUD Auto Brightness"
+            )
+            return
+        }
+
         bluetooth.enqueue(HudCommands.autoBrightness(settings.autoBrightness), label: "Auto brightness \(settings.autoBrightness)")
         if !settings.autoBrightness {
             bluetooth.enqueue(HudCommands.manualBrightness(settings.brightness), label: "Brightness \(settings.brightness)")

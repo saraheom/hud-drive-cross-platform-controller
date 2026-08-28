@@ -402,7 +402,32 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             limit = bestEnhancedSpeedLimit(at: location)
             sourceDetail = "Enhanced OSM • directional/continuity"
         case .traceOSM:
+            logger.log(
+                "OSM TRACE GPS",
+                String(
+                    format: "lat=%.6f lon=%.6f acc=%.1fm course=%.1f speed=%.1fmps(%dmph) traceStored=%d",
+                    location.coordinate.latitude,
+                    location.coordinate.longitude,
+                    location.horizontalAccuracy,
+                    location.course,
+                    location.speed,
+                    currentSpeedMph,
+                    traceLocations.count
+                )
+            )
             limit = bestTraceSpeedLimit(at: location)
+            logger.log(
+                "OSM TRACE OUTPUT",
+                String(
+                    format: "gps=%.6f,%.6f resolved=%@ currentWay=%@ pending=%@ margin=%.2f",
+                    location.coordinate.latitude,
+                    location.coordinate.longitude,
+                    limit.map { "\($0)mph" } ?? "none",
+                    traceCurrentSegmentID.map { String($0) } ?? "none",
+                    tracePendingCandidate.map { "\($0.id):\($0.mph)mph#\($0.count)" } ?? "none",
+                    traceLastConfidenceMargin
+                )
+            )
             sourceDetail = String(
                 format: "OSM Trace • rolling trace • margin %.2f",
                 traceLastConfidenceMargin
@@ -609,6 +634,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 "SPEED LIMIT",
                 "OSM experimental matcher loaded \(newSegments.count) roads (500m query / directional+conditional maxspeed / continuity+trace scoring)"
             )
+            if self.sourceMode == .traceOSM {
+                self.logger.log(
+                    "OSM TRACE QUERY",
+                    String(format: "center=%.6f,%.6f radius=500m roads=%d", lat, lon, newSegments.count)
+                )
+            }
         } catch {
             self.logger.log("SPEED LIMIT ERROR", "Enhanced OSM: \(error.localizedDescription)")
             self.status = "Enhanced OSM lookup failed; GPS speed still active"
@@ -738,12 +769,28 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     private func bestTraceSpeedLimit(at location: CLLocation) -> Int? {
-        guard !enhancedSegments.isEmpty else { return nil }
+        guard !enhancedSegments.isEmpty else {
+            logger.log("OSM TRACE MATCH", "no OSM road dataset loaded yet; waiting for 500m query")
+            return nil
+        }
 
         let trace = Array(traceLocations.suffix(8))
-        guard !trace.isEmpty else { return nil }
+        guard !trace.isEmpty else {
+            logger.log("OSM TRACE MATCH", "no accepted GPS trace points yet")
+            return nil
+        }
 
-        var scored: [(segment: EnhancedSegment, score: Double, speedMph: Int)] = []
+        var scored: [(
+            segment: EnhancedSegment,
+            score: Double,
+            speedMph: Int,
+            currentDistance: Double,
+            currentAngle: Double,
+            matchedPoints: Int,
+            forward: Bool,
+            nearestStart: CLLocationCoordinate2D,
+            nearestEnd: CLLocationCoordinate2D
+        )] = []
 
         for segment in enhancedSegments {
             guard !segment.parts.isEmpty else { continue }
@@ -751,7 +798,13 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             // The newest point must still be plausibly on this road. This prevents
             // history from pinning us to a road after a real turn or ramp transition.
             let currentCourse = location.course >= 0 ? location.course : 0
-            var currentBest: (distance: Double, angle: Double, forward: Bool)?
+            var currentBest: (
+                distance: Double,
+                angle: Double,
+                forward: Bool,
+                start: CLLocationCoordinate2D,
+                end: CLLocationCoordinate2D
+            )?
             for part in segment.parts {
                 let distance = Self.distanceFrom(
                     location.coordinate,
@@ -763,7 +816,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 let forward = forwardAngle <= reverseAngle
                 let angle = min(forwardAngle, reverseAngle)
                 if currentBest == nil || distance + angle * 0.15 < currentBest!.distance + currentBest!.angle * 0.15 {
-                    currentBest = (distance, angle, forward)
+                    currentBest = (distance, angle, forward, part.start, part.end)
                 }
             }
             guard let currentBest, currentBest.distance <= 55, currentBest.angle <= 105 else { continue }
@@ -816,17 +869,82 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             }
 
             let mph = Int((Double(kmh) / 1.609344).rounded())
-            scored.append((segment, score, mph))
+            scored.append((
+                segment,
+                score,
+                mph,
+                currentBest.distance,
+                currentBest.angle,
+                matchedPoints,
+                currentBest.forward,
+                currentBest.start,
+                currentBest.end
+            ))
         }
 
         scored.sort { $0.score < $1.score }
-        guard let best = scored.first else { return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil }
+
+        let tracePoints = trace.map { sample in
+            String(
+                format: "%.6f,%.6f,c=%.0f,a=%.0f",
+                sample.coordinate.latitude,
+                sample.coordinate.longitude,
+                sample.course,
+                sample.horizontalAccuracy
+            )
+        }.joined(separator: ";")
+        logger.log("OSM TRACE PATH", "points=[\(tracePoints)]")
+
+        guard let best = scored.first else {
+            logger.log(
+                "OSM TRACE MATCH",
+                "no eligible road candidate; holding=\(currentSpeedLimitMph > 0 ? "\(currentSpeedLimitMph)mph" : "none")"
+            )
+            return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil
+        }
+
+        let topSummary = scored.prefix(4).map { candidate in
+            let name = (candidate.segment.name ?? "-").replacingOccurrences(of: "|", with: "/")
+            let ref = (candidate.segment.reference ?? "-").replacingOccurrences(of: "|", with: "/")
+            let base = candidate.segment.baseKmh.map { String($0) } ?? "-"
+            let forward = candidate.segment.forwardKmh.map { String($0) } ?? "-"
+            let backward = candidate.segment.backwardKmh.map { String($0) } ?? "-"
+            return String(
+                format: "way=%lld name=%@ ref=%@ highway=%@ limit=%d score=%.2f dist=%.1fm angle=%.1f matched=%d/%d dir=%@ seg=%.6f,%.6f>%.6f,%.6f speedTags=%@/%@/%@",
+                candidate.segment.elementID,
+                name,
+                ref,
+                candidate.segment.highway,
+                candidate.speedMph,
+                candidate.score,
+                candidate.currentDistance,
+                candidate.currentAngle,
+                candidate.matchedPoints,
+                trace.count,
+                candidate.forward ? "F" : "R",
+                candidate.nearestStart.latitude,
+                candidate.nearestStart.longitude,
+                candidate.nearestEnd.latitude,
+                candidate.nearestEnd.longitude,
+                base,
+                forward,
+                backward
+            )
+        }.joined(separator: " | ")
+        logger.log(
+            "OSM TRACE MATCH",
+            "currentWay=\(traceCurrentSegmentID.map { String($0) } ?? "none") pending=\(tracePendingCandidate.map { "\($0.id):\($0.mph)mph#\($0.count)" } ?? "none") top=[\(topSummary)]"
+        )
         let secondScore = scored.dropFirst().first?.score ?? (best.score + 3.0)
         let margin = max(0, secondScore - best.score)
         traceLastConfidenceMargin = margin
 
         if best.segment.elementID == traceCurrentSegmentID {
             tracePendingCandidate = nil
+            logger.log(
+                "OSM TRACE DECISION",
+                String(format: "retain current way=%lld limit=%d score=%.2f margin=%.2f", best.segment.elementID, best.speedMph, best.score, margin)
+            )
             return best.speedMph
         }
 
@@ -840,6 +958,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                pending.mph == best.speedMph {
                 let next = pending.count + 1
                 tracePendingCandidate = (best.segment.elementID, best.speedMph, next)
+                logger.log(
+                    "OSM TRACE DECISION",
+                    String(format: "confirm pending way=%lld limit=%d score=%.2f margin=%.2f confirmation=%d/2", best.segment.elementID, best.speedMph, best.score, margin, next)
+                )
                 if next >= 2 {
                     traceCurrentSegmentID = best.segment.elementID
                     tracePendingCandidate = nil
@@ -858,7 +980,16 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 }
             } else {
                 tracePendingCandidate = (best.segment.elementID, best.speedMph, 1)
+                logger.log(
+                    "OSM TRACE DECISION",
+                    String(format: "new pending way=%lld limit=%d score=%.2f margin=%.2f confirmation=1/2", best.segment.elementID, best.speedMph, best.score, margin)
+                )
             }
+        } else {
+            logger.log(
+                "OSM TRACE DECISION",
+                String(format: "reject switch way=%lld limit=%d score=%.2f margin=%.2f(<0.30); holding=%d", best.segment.elementID, best.speedMph, best.score, margin, currentSpeedLimitMph)
+            )
         }
 
         return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil

@@ -35,14 +35,14 @@ def test_critical_restore_and_breath_prepare_writes_are_retried_in_order():
     assert prep.index("sendPowerWhenReady") < prep.index("sendColorWhenReady") < prep.index("applyRuntimeBrightnessWhenReady")
 
 
-def test_headlight_power_epoch_rearms_every_real_on_and_off_cancels_animation():
-    assert "private var headlightPowerEpoch" in MONITOR
-    assert "headlightAnimatedEpochByID" in MONITOR
+def test_headlight_signal_is_stable_two_light_consensus_but_does_not_own_animation():
     assert 'noteHeadlightPowerSeen(id, reason: "advertisement")' in MONITOR
     assert 'noteHeadlightPowerSeen(id, reason: "didConnect")' in MONITOR
     assert "scheduleHeadlightPowerOffEvaluation" in MONITOR
-    assert "Consensus headlight OFF" in MONITOR
     assert "both Center + Dashboard stable ON" in MONITOR
+    assert "both Center + Dashboard stable OFF" in MONITOR
+    commit = MONITOR.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
+    assert "queuePowerUpBreath" not in commit
 
 
 def test_door_day_night_transition_does_not_resend_power_or_rgb():

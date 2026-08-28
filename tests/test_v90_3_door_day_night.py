@@ -15,20 +15,16 @@ def test_door_has_persisted_day_and_night_brightness_targets():
 
 def test_night_detector_is_redundant_dashboard_or_center_console():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-    block = monitor.split("private func headlightPowerPresent()", 1)[1].split("private func startupHeadlightPowerPresent", 1)[0]
+    block = monitor.split("private func headlightPowerPresent()", 1)[1].split("private func doorTargetBrightness", 1)[0]
     assert "headlightPowerSessionActive" in block
-    assert "physical headlight-power epoch" in block
+    assert "startup" not in block.lower()
 
 
 def test_mid_drive_headlight_state_only_changes_door_target():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-    block = monitor.split("private func evaluateVehicleLightingAutomation()", 1)[1].split("private func beginVehicleStartupClassification", 1)[0]
-    assert "headlightsPresent" in block
-    assert "applyCurrentDoorDayNightTarget" in block
-    assert "headlight-fed lights on → night Door brightness" in block
-    assert "headlight-fed lights off → day Door brightness" in block
-    assert "fadeInNewHeadlightDevices" not in block
-    assert "performVehicleShutdownFade" not in block
+    commit = monitor.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
+    assert "applyCurrentDoorDayNightTarget" in commit
+    assert "queuePowerUpBreath" not in commit
 
 
 def test_door_transition_preserves_generic_preferred_brightness():
@@ -45,5 +41,4 @@ def test_ui_exposes_two_door_brightness_settings_and_simple_rule():
     assert 'title: "Door night brightness"' in view
     assert "monitor.setDoorDayBrightness" in view
     assert "monitor.setDoorNightBrightness" in view
-    assert "Dashboard + Center courtesy power before that may connect normally but cannot consume the automatic Breath" in view
-    assert "HUD + OBD2 must both confirm the engine session" in view
+    assert "Door brightness is independent from animation and engine-session detection" in view
