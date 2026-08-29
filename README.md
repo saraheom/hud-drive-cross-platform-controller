@@ -73,6 +73,17 @@ transport:
   HUD Auto Brightness.
 - Packaging excludes `.pytest_cache`, `__pycache__`, and `.pyc` artifacts.
 
+### v90.17.2 — Xcode 26 XCTest alignment + Preview steady-target hardening
+
+Xcode 26.6 CI confirmed the application target builds successfully. The CI failure was
+limited to three stale XCTest assertions left over from the pre-v90.17 architecture.
+v90.17.2 aligns those tests with the per-light model and also strengthens manual Preview:
+it now seeds its Breath from the resolved steady target (Door day/night target or the
+device preferred brightness) instead of a potentially transient `runtimeBrightness` left
+by an interrupted animation. This does not change the automatic power-on Breath waveform,
+BLEDIM packet format, 20 Hz pacing, optional synchronization behavior, or day/night
+consensus.
+
 ## v89 — direct ambient-light control foundation
 
 v89 expands the existing ELK-BLEDOM presence monitor into a single multi-device

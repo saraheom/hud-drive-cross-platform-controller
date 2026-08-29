@@ -31,8 +31,11 @@ final class V90151AnimationAbortFailsafeTests: XCTestCase {
         XCTAssertTrue(block.contains("self.brightnessTransitionTasks[id] != nil"))
         XCTAssertTrue(block.contains("self.restoreTasks[id] != nil"))
         XCTAssertTrue(block.contains("self.overspeedWarningActiveID == id"))
-        XCTAssertTrue(block.contains("device.role?.isHeadlightFed == true"))
-        XCTAssertTrue(block.contains("!self.headlightPowerSessionActive"))
+        // v90.17+: fail-safe ownership is per light. Courtesy/headlight-fed lights
+        // may recover whenever they are physically controllable; no confirmed
+        // headlight/engine session is allowed to gate the one-shot restore.
+        XCTAssertFalse(block.contains("device.role?.isHeadlightFed == true"))
+        XCTAssertFalse(block.contains("!self.headlightPowerSessionActive"))
     }
 
     func testV9010AnimationTransportRemainsBaseline() throws {

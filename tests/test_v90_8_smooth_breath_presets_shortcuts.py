@@ -98,9 +98,10 @@ def test_manual_power_on_uses_same_breath_path_when_animation_enabled():
     assert "queuePowerUpBreath(id, force: true)" in block
 
 
-def test_breath_uses_actual_start_and_only_last_cycle_can_return_to_changed_target():
+def test_breath_uses_resolved_steady_start_and_only_last_cycle_can_return_to_changed_target():
     src = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
-    assert "let initialBrightness = force ? device.runtimeBrightness : steadyBrightnessTarget(for: device)" in src
+    assert "let initialBrightness = steadyBrightnessTarget(for: device)" in src
+    assert "let initialBrightness = force ? device.runtimeBrightness" not in src
     assert "activeBreathStartBrightness[id] = initialBrightness" in src
     assert "activeBreathReturnBrightness[id] = returnBrightness" in src
     assert "self.steadyBrightnessTarget(for: latestDevice)" in src

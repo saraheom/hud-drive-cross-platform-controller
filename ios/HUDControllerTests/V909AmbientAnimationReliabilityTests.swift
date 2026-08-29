@@ -23,7 +23,11 @@ final class V909AmbientAnimationReliabilityTests: XCTestCase {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("Breath request ignored while already active"))
         XCTAssertTrue(monitor.contains("initial/return brightness preserved"))
-        XCTAssertTrue(monitor.contains("runtimeTarget = device.brightness"))
+        // Preview must seed from the resolved steady target rather than a possibly
+        // transient runtimeBrightness value left by an interrupted animation.
+        XCTAssertTrue(monitor.contains("let initialBrightness = steadyBrightnessTarget(for: device)"))
+        XCTAssertTrue(monitor.contains("returnBrightness = initialBrightness"))
+        XCTAssertFalse(monitor.contains("let initialBrightness = force ? device.runtimeBrightness"))
     }
 
     func testPresetSlotsExposeVisiblePencilControls() throws {

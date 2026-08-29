@@ -1735,7 +1735,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         restoreTasks[id]?.cancel()
         restoreTasks[id] = nil
 
-        let initialBrightness = force ? device.runtimeBrightness : steadyBrightnessTarget(for: device)
+        let initialBrightness = steadyBrightnessTarget(for: device)
 
         logger.log(
             "AMBIENT ANIM",
@@ -1791,7 +1791,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             // preparation. Re-read the automatic steady target now so the Breath
             // always returns to the newest Door mode even if that edge arrived in
             // the short preparation window. Manual Preview intentionally returns
-            // to the runtime brightness captured at preview start.
+            // to the current steady target captured at preview start. This deliberately
+            // avoids recapturing a transient runtime brightness if Preview is used
+            // as a recovery action immediately after an interrupted animation.
             let returnBrightness: Int
             if force {
                 returnBrightness = initialBrightness

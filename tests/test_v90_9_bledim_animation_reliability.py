@@ -34,7 +34,8 @@ def test_watchdog_does_not_rediscover_gatt_after_control_is_ready():
 def test_repeated_breath_preview_cannot_replace_initial_brightness_with_mid_animation_value():
     assert "if activeBreathIDs.contains(id)" in MONITOR
     assert "initial/return brightness preserved" in MONITOR
-    assert "let initialBrightness = force ? device.runtimeBrightness : steadyBrightnessTarget(for: device)" in MONITOR
+    assert "let initialBrightness = steadyBrightnessTarget(for: device)" in MONITOR
+    assert "let initialBrightness = force ? device.runtimeBrightness" not in MONITOR
     assert "activeBreathStartBrightness[id] = initialBrightness" in MONITOR
     assert "let runtimeTarget = steadyBrightnessTarget(for: device)" in MONITOR
 
