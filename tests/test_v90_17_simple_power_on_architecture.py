@@ -48,7 +48,8 @@ def test_independent_breath_has_complete_final_restore():
     assert 'Independent breath begin' in block
     assert 'independent power-up breath' in block
     assert 'finalizeBreathSteadyState(id, target: returnTarget)' in block
-    assert 'Independent breath complete' in block
+    assert 'ended with failed terminal commit' in block
+    assert 'Breath terminal steady commit failed' in block
 
 
 def test_day_night_consensus_is_separate_from_animation_and_engine():
@@ -115,3 +116,40 @@ def test_door_breath_rereads_day_night_target_after_prepare_window():
     assert 'let returnBrightness: Int' in prep
     assert 'self.steadyBrightnessTarget(for: latestDevice)' in prep
     assert 'self.activeBreathReturnBrightness[id] = returnBrightness' in prep
+
+
+def test_failed_terminal_commit_cannot_be_silently_treated_as_success():
+    independent = MONITOR.split('private func startIndividualBreathSession', 1)[1].split('private func startSynchronizedBreathSession', 1)[0]
+    assert 'if !sent {' in independent
+    assert 'scheduleAnimationAbortFailsafe(for: id, reason: "Breath terminal steady commit failed")' in independent
+    sync = MONITOR.split('private func startSynchronizedBreathSession', 1)[1].split('private func breathBrightnessFraction', 1)[0]
+    assert 'failedTerminalCommits' in sync
+    assert 'Synchronized Breath terminal steady commit failed' in sync
+
+
+def test_group_fade_cancellation_cleans_every_shared_owner():
+    assert 'private var brightnessTransitionTokenByID: [UUID: UUID]' in MONITOR
+    cancel = MONITOR.split('private func cancelBrightnessTransition', 1)[1].split('private func scheduleAnimationAbortFailsafe', 1)[0]
+    assert 'affectedIDs' in cancel
+    assert 'brightnessTransitionTokenByID.compactMap' in cancel
+    assert 'brightnessTransitionTasks[affectedID] = nil' in cancel
+    transition = MONITOR.split('private func transitionBrightness', 1)[1].split('// MARK: - Packet adapters', 1)[0]
+    assert 'let transitionToken = UUID()' in transition
+    assert 'defer {' in transition
+
+
+def test_osm_trace_held_sign_does_not_refresh_fresh_resolution_clock():
+    assert 'private var traceLastResolutionFresh = false' in SPEED
+    assert 'let resolutionIsFresh = sourceMode != .traceOSM || traceLastResolutionFresh' in SPEED
+    assert 'if resolutionIsFresh {' in SPEED
+    assert 'fresh=%d' in SPEED
+    trace = SPEED.split('private func bestTraceSpeedLimit', 1)[1].split('private static func resolvedKmh', 1)[0]
+    assert 'traceLastResolutionFresh = false' in trace
+    assert trace.count('traceLastResolutionFresh = true') >= 2
+
+
+def test_vehicle_help_text_matches_two_light_hud_brightness_owner():
+    vehicle = (ROOT / 'ios/HUDController/UI/VehicleView.swift').read_text()
+    assert 'Use ambient day/night consensus for HUD Auto Brightness' in vehicle
+    assert 'Dashboard + Center both ON = night/Auto Brightness ON' in vehicle
+    assert 'Center presence by itself does not control HUD brightness' in vehicle

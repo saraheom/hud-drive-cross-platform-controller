@@ -125,6 +125,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var traceCurrentSegmentID: Int64?
     private var tracePendingCandidate: (id: Int64, mph: Int, count: Int)?
     private var traceLastConfidenceMargin: Double = 0
+    /// True only when the current GPS sample is genuinely resolved against an
+    /// eligible OSM Trace candidate. Holding the prior displayed sign for visual
+    /// continuity must not refresh overspeed-warning freshness.
+    private var traceLastResolutionFresh = false
 
     private(set) var currentSpeedMph = 0
     private(set) var currentSpeedLimitMph = 0
@@ -317,6 +321,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         traceCurrentSegmentID = nil
         tracePendingCandidate = nil
         traceLastConfidenceMargin = 0
+        traceLastResolutionFresh = false
         lastQueryLocation = nil
         requestInFlight = false
         currentSpeedLimitMph = 0
@@ -419,10 +424,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             logger.log(
                 "OSM TRACE OUTPUT",
                 String(
-                    format: "gps=%.6f,%.6f resolved=%@ currentWay=%@ pending=%@ margin=%.2f",
+                    format: "gps=%.6f,%.6f resolved=%@ fresh=%d currentWay=%@ pending=%@ margin=%.2f",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
                     limit.map { "\($0)mph" } ?? "none",
+                    traceLastResolutionFresh ? 1 : 0,
                     traceCurrentSegmentID.map { String($0) } ?? "none",
                     tracePendingCandidate.map { "\($0.id):\($0.mph)mph#\($0.count)" } ?? "none",
                     traceLastConfidenceMargin
@@ -435,8 +441,13 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
 
         if let limit, limit > 0 {
-            applyResolvedLimit(limit)
-            status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • limit \(limit) mph"
+            let resolutionIsFresh = sourceMode != .traceOSM || traceLastResolutionFresh
+            if resolutionIsFresh {
+                applyResolvedLimit(limit)
+            }
+            status = resolutionIsFresh
+                ? "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • limit \(limit) mph"
+                : "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • holding prior limit \(limit) mph"
         } else {
             status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
         }
@@ -769,13 +780,16 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     private func bestTraceSpeedLimit(at location: CLLocation) -> Int? {
+        traceLastResolutionFresh = false
         guard !enhancedSegments.isEmpty else {
+            traceLastConfidenceMargin = 0
             logger.log("OSM TRACE MATCH", "no OSM road dataset loaded yet; waiting for 500m query")
             return nil
         }
 
         let trace = Array(traceLocations.suffix(8))
         guard !trace.isEmpty else {
+            traceLastConfidenceMargin = 0
             logger.log("OSM TRACE MATCH", "no accepted GPS trace points yet")
             return nil
         }
@@ -896,6 +910,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         logger.log("OSM TRACE PATH", "points=[\(tracePoints)]")
 
         guard let best = scored.first else {
+            traceLastConfidenceMargin = 0
             logger.log(
                 "OSM TRACE MATCH",
                 "no eligible road candidate; holding=\(currentSpeedLimitMph > 0 ? "\(currentSpeedLimitMph)mph" : "none")"
@@ -941,6 +956,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         if best.segment.elementID == traceCurrentSegmentID {
             tracePendingCandidate = nil
+            traceLastResolutionFresh = true
             logger.log(
                 "OSM TRACE DECISION",
                 String(format: "retain current way=%lld limit=%d score=%.2f margin=%.2f", best.segment.elementID, best.speedMph, best.score, margin)
@@ -965,6 +981,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 if next >= 2 {
                     traceCurrentSegmentID = best.segment.elementID
                     tracePendingCandidate = nil
+                    traceLastResolutionFresh = true
                     logger.log(
                         "SPEED LIMIT",
                         String(

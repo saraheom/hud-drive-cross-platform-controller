@@ -6,8 +6,9 @@ MONITOR = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_te
 
 def test_cancelled_fade_schedules_one_shot_steady_failsafe():
     block = MONITOR.split("private func cancelBrightnessTransition", 1)[1].split("private func scheduleAnimationAbortFailsafe", 1)[0]
-    assert "hadActiveTransition" in block
-    assert 'scheduleAnimationAbortFailsafe(for: id, reason: "brightness transition cancelled")' in block
+    assert "affectedIDs" in block
+    assert "task.cancel()" in block
+    assert 'scheduleAnimationAbortFailsafe(for: affectedID, reason: "brightness transition cancelled")' in block
 
 
 def test_cancelled_breath_participation_schedules_one_shot_steady_failsafe():

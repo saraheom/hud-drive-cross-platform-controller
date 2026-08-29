@@ -265,7 +265,7 @@ struct VehicleView: View {
                             Text("HUD AUTO-BRIGHTNESS TRIGGER")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Toggle("Use BLEDOM presence for HUD Auto Brightness", isOn: Binding(
+                            Toggle("Use ambient day/night consensus for HUD Auto Brightness", isOn: Binding(
                                 get: { state.ambientLight.hudBrightnessTriggerEnabled },
                                 set: { state.ambientLight.hudBrightnessTriggerEnabled = $0 }
                             ))
@@ -297,7 +297,7 @@ struct VehicleView: View {
                             }
 
                             Text("""
-                            The advertised-name field above selects only the light whose presence drives HUD Auto Brightness. Other paired ambient lights do not affect HUD brightness. BLEDOM does not need to appear in Settings → Bluetooth; the same CoreBluetooth manager now handles presence detection and direct ambient-light control. Absence is still confirmed after three timeout windows.
+                            HUD Auto Brightness now follows the stable two-light day/night signal: Dashboard + Center both ON = night/Auto Brightness ON, both OFF = day/Auto Brightness OFF, and a mixed state preserves the last confirmed mode. The advertised-name field remains for legacy Center discovery/status only; Center presence by itself does not control HUD brightness. BLEDOM does not need to appear in Settings → Bluetooth.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

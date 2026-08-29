@@ -50,6 +50,29 @@ GPS trace, top candidate roads, nearest OSM geometry, scoring/margins, speed tag
 and final resolved/held speed limit. See
 `docs/V90_17_SIMPLE_POWER_ON_AND_OSM_TRACE_DIAGNOSTICS.md`.
 
+### v90.17.1 — pre-drive audit hardening
+
+A second adversarial source audit before field testing found and corrected several edge
+cases without changing the v90.10-derived BLEDIM packet format or 20 Hz/raw-255 animation
+transport:
+
+- A failed terminal Breath commit is no longer logged/cleared as success. If the final
+  semantic `Power ON → RGB → preferred brightness` sequence fails, the existing one-shot
+  steady-state fail-safe is armed.
+- Shared/group brightness fades now carry an ownership token. Cancelling one member cleans
+  up every member of that same shared task, preventing stale `fade` ownership from
+  suppressing later restores.
+- OSM Trace now distinguishes a **fresh road resolution** from merely holding the previous
+  sign while no candidate is eligible or a road switch is still pending/rejected. Held
+  signs remain visually available for continuity but do not refresh the 12-second
+  overspeed-warning freshness clock. `OSM TRACE OUTPUT` logs `fresh=0/1`.
+- Engine diagnostic OFF no longer uses Door power as a veto, because the vehicle can retain
+  Door accessory power after engine shutdown. Engine diagnostics remain completely
+  independent of ambient animation admission.
+- Vehicle settings text now describes the actual Dashboard+Center consensus ownership of
+  HUD Auto Brightness.
+- Packaging excludes `.pytest_cache`, `__pycache__`, and `.pyc` artifacts.
+
 ## v89 — direct ambient-light control foundation
 
 v89 expands the existing ELK-BLEDOM presence monitor into a single multi-device

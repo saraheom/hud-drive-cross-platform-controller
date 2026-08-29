@@ -128,3 +128,13 @@ The field-proven v90.10-derived packet/animation transport remains the baseline:
 
 v90.13's BLEDIM 10 Hz experiment, minimal-GATT experiment and repeated three-round
 steady-state recovery are not restored.
+
+
+## v90.17.1 audit notes
+
+The pre-drive audit preserves the v90.17 architecture and adds four safety/diagnostic
+corrections: failed terminal Breath commits arm the existing one-shot restore fail-safe;
+shared fade cancellation cleans every member of the cancelled operation; OSM Trace marks
+held prior signs as `fresh=0` so they do not refresh warning eligibility; and engine
+diagnostics no longer treat retained Door accessory power as proof that the engine is on.
+The BLEDIM2 packet builder and 20 Hz/raw-255 animation transport are unchanged.

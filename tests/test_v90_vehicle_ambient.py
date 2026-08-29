@@ -49,7 +49,7 @@ def test_vehicle_automation_is_only_door_day_night_and_never_owns_power_on_breat
     assert "performVehicleShutdownFade" not in monitor
 
 
-def test_engine_power_uses_hud_primary_with_obd_and_door_off_veto():
+def test_engine_power_uses_hud_primary_with_obd_off_veto_without_door_retained_power():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     appstate = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
     obd = (ROOT / "ios/HUDController/Vehicle/HudOBDController.swift").read_text()
@@ -60,7 +60,8 @@ def test_engine_power_uses_hud_primary_with_obd_and_door_off_veto():
     assert "private enum EnginePowerConsensusObservation" in monitor
     assert "stable HUD transport (OBD2 not yet confirmed)" in monitor
     assert "direct OBD witness" in monitor
-    assert "doorEnginePowerEvidence" in monitor
+    assert "doorEnginePowerEvidence" not in monitor
+    assert "Door accessory power after engine shutdown" in monitor
     assert "self.ambientLight.hudTransportPowerSignal(true)" in appstate
     assert "self.ambientLight.hudTransportPowerSignal(false)" in appstate
     assert "!self.bluetooth.userDisconnectRequested" in appstate

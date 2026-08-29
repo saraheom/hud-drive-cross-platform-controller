@@ -60,4 +60,26 @@ final class V9017SimplePowerOnOptionalSyncTests: XCTestCase {
         XCTAssertTrue(speed.contains("OSM TRACE DECISION"))
         XCTAssertTrue(speed.contains("OSM TRACE OUTPUT"))
     }
+
+    func testFailedTerminalCommitSchedulesOneShotFailsafe() throws {
+        let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
+        XCTAssertTrue(monitor.contains("Breath terminal steady commit failed"))
+        XCTAssertTrue(monitor.contains("failedTerminalCommits"))
+        XCTAssertTrue(monitor.contains("scheduleAnimationAbortFailsafe(for: id, reason: \"Breath terminal steady commit failed\")"))
+    }
+
+    func testOSMTraceHeldLimitDoesNotRefreshFreshness() throws {
+        let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
+        XCTAssertTrue(speed.contains("private var traceLastResolutionFresh = false"))
+        XCTAssertTrue(speed.contains("let resolutionIsFresh = sourceMode != .traceOSM || traceLastResolutionFresh"))
+        XCTAssertTrue(speed.contains("fresh=%d"))
+    }
+
+    func testSharedFadeCancellationUsesTransitionTokenCleanup() throws {
+        let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
+        XCTAssertTrue(monitor.contains("private var brightnessTransitionTokenByID: [UUID: UUID]"))
+        XCTAssertTrue(monitor.contains("let transitionToken = UUID()"))
+        XCTAssertTrue(monitor.contains("affectedIDs"))
+    }
+
 }

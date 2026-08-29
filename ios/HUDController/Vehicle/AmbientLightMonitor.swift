@@ -264,12 +264,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// or duplicate day/night events from cancelling and restarting the same
     /// transition before it can finish.
     private var brightnessTransitionTargetByID: [UUID: Int] = [:]
+    /// One token is shared by every member of a group fade. Cancelling any member
+    /// must clean up the whole shared task rather than leaving stale "fade" owners
+    /// on the remaining members.
+    private var brightnessTransitionTokenByID: [UUID: UUID] = [:]
     private var animatedConnectionSession: Set<UUID> = []
     private var sessionResetTasks: [UUID: Task<Void, Never>] = [:]
 
-    /// All enabled lights that power up close together share one breath timeline.
-    /// A late GATT-ready device can join the active timeline instead of starting an
-    /// independent animation several seconds out of phase.
+    /// With optional synchronization enabled, prepared lights that become ready
+    /// inside the grouping window share one breath timeline. A late GATT-ready
+    /// device never joins halfway through; it starts a complete independent Breath.
     private var synchronizedBreathTask: Task<Void, Never>?
     private var pendingBreathStartTask: Task<Void, Never>?
     private var synchronizedBreathIDs: Set<UUID> = []
@@ -498,7 +502,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.17 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,fade=\(String(format: "%.1f", brightnessTransitionSeconds))s,headlightStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s}"
+            "Flight recorder v90.17.1 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,fade=\(String(format: "%.1f", brightnessTransitionSeconds))s,headlightStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -516,6 +520,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         brightnessTransitionTasks.values.forEach { $0.cancel() }
         brightnessTransitionTasks.removeAll()
         brightnessTransitionTargetByID.removeAll()
+        brightnessTransitionTokenByID.removeAll()
         synchronizedBreathTask?.cancel()
         synchronizedBreathTask = nil
         pendingBreathStartTask?.cancel()
@@ -1092,17 +1097,33 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     private func cancelBrightnessTransition(for id: UUID) {
-        let hadActiveTransition = brightnessTransitionTasks[id] != nil
-        brightnessTransitionTasks[id]?.cancel()
-        brightnessTransitionTasks[id] = nil
-        brightnessTransitionTargetByID[id] = nil
-        if hadActiveTransition {
+        guard let task = brightnessTransitionTasks[id] else {
+            brightnessTransitionTargetByID[id] = nil
+            brightnessTransitionTokenByID[id] = nil
+            return
+        }
+
+        let token = brightnessTransitionTokenByID[id]
+        let affectedIDs: [UUID]
+        if let token {
+            affectedIDs = brightnessTransitionTokenByID.compactMap { entryID, entryToken in
+                entryToken == token ? entryID : nil
+            }
+        } else {
+            affectedIDs = [id]
+        }
+
+        task.cancel()
+        for affectedID in affectedIDs {
+            brightnessTransitionTasks[affectedID] = nil
+            brightnessTransitionTargetByID[affectedID] = nil
+            brightnessTransitionTokenByID[affectedID] = nil
             logger.log(
                 "AMBIENT FADE",
-                "Brightness transition cancelled: \(pairedDevice(id)?.displayName ?? id.uuidString)"
+                "Brightness transition cancelled: \(pairedDevice(affectedID)?.displayName ?? affectedID.uuidString)"
             )
-            ambientTrace("Brightness fade cancelled \(pairedDevice(id)?.displayName ?? id.uuidString)")
-            scheduleAnimationAbortFailsafe(for: id, reason: "brightness transition cancelled")
+            ambientTrace("Brightness fade cancelled \(pairedDevice(affectedID)?.displayName ?? affectedID.uuidString)")
+            scheduleAnimationAbortFailsafe(for: affectedID, reason: "brightness transition cancelled")
         }
     }
 
@@ -1221,9 +1242,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         })
         let duration = max(1.0, min(15.0, seconds))
         let timelineTick = 0.05
+        let transitionToken = UUID()
+        for id in ids { brightnessTransitionTokenByID[id] = transitionToken }
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                for id in ids where self.brightnessTransitionTokenByID[id] == transitionToken {
+                    self.brightnessTransitionTasks[id] = nil
+                    self.brightnessTransitionTargetByID[id] = nil
+                    self.brightnessTransitionTokenByID[id] = nil
+                }
+            }
             var lastSentLevel: [UUID: Int] = [:]
             var lastWriteAt: [UUID: Date] = [:]
             let startedAt = Date()
@@ -1273,8 +1303,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 if !sent {
                     self.logger.log("AMBIENT FLOW", "Final brightness \(target)% could not be delivered to \(self.pairedDevice(id)?.displayName ?? id.uuidString)")
                 }
-                self.brightnessTransitionTasks[id] = nil
-                self.brightnessTransitionTargetByID[id] = nil
             }
             self.logger.log("AMBIENT FADE", "Smooth brightness transition complete reason=\(reason)")
             self.ambientTrace("Brightness fade complete reason=\(reason)")
@@ -1869,11 +1897,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.activeBreathIDs.remove(id)
             self.activeBreathStartBrightness[id] = nil
             self.activeBreathReturnBrightness[id] = nil
+            if !sent {
+                self.logger.log(
+                    "AMBIENT FAILSAFE",
+                    "Breath terminal commit failed: \(device.displayName); scheduling one-shot steady restore"
+                )
+                self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath terminal steady commit failed")
+            }
             self.logger.log(
                 "AMBIENT ANIM",
-                "Independent breath complete light=\(device.displayName) final=\(returnTarget)% sent=\(sent ? 1 : 0) elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s"
+                "Independent breath \(sent ? "complete" : "ended with failed terminal commit") light=\(device.displayName) final=\(returnTarget)% sent=\(sent ? 1 : 0) elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s"
             )
-            self.ambientTrace("Independent Breath complete \(device.displayName) final=\(returnTarget)%")
+            self.ambientTrace("Independent Breath ended \(device.displayName) final=\(returnTarget)% sent=\(sent ? 1 : 0)")
             if self.vehicleAutomationEnabled, device.role == .door {
                 self.applyCurrentDoorDayNightTarget(reason: "post-breath door target")
             }
@@ -1960,10 +1995,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
             guard !Task.isCancelled else { return }
             let finishedIDs = Array(self.synchronizedBreathIDs)
+            var failedTerminalCommits: [UUID] = []
             for id in finishedIDs {
                 guard let start = self.activeBreathStartBrightness[id] else { continue }
                 let returnTarget = self.activeBreathReturnBrightness[id] ?? start
-                _ = await self.finalizeBreathSteadyState(id, target: returnTarget)
+                if !(await self.finalizeBreathSteadyState(id, target: returnTarget)) {
+                    failedTerminalCommits.append(id)
+                }
             }
 
             self.synchronizedBreathTask = nil
@@ -1974,8 +2012,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 self.activeBreathReturnBrightness[id] = nil
             }
             self.synchronizedBreathIDs.removeAll()
-            self.logger.log("AMBIENT ANIM", "Synchronized breath complete lights=\(finishedIDs.count) elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
-            self.ambientTrace("Synchronized Breath complete lights=\(finishedIDs.count)")
+            for id in failedTerminalCommits {
+                self.logger.log(
+                    "AMBIENT FAILSAFE",
+                    "Synchronized Breath terminal commit failed: \(self.pairedDevice(id)?.displayName ?? id.uuidString); scheduling one-shot steady restore"
+                )
+                self.scheduleAnimationAbortFailsafe(for: id, reason: "Synchronized Breath terminal steady commit failed")
+            }
+            self.logger.log(
+                "AMBIENT ANIM",
+                "Synchronized breath ended lights=\(finishedIDs.count) terminalFailures=\(failedTerminalCommits.count) elapsed=\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s"
+            )
+            self.ambientTrace("Synchronized Breath ended lights=\(finishedIDs.count) terminalFailures=\(failedTerminalCommits.count)")
 
             if self.vehicleAutomationEnabled {
                 self.applyCurrentDoorDayNightTarget(reason: "post-breath door target")
@@ -2278,8 +2326,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     /// v90.16: evaluate HUD + OBD2 together, but asymmetrically. Stable HUD
     /// transport is sufficient to create engine ON; OBD2 may corroborate it.
-    /// For OFF, HUD + OBD2 must both be absent and Door/direct-OBD witnesses
-    /// must also be absent so a HUD-only reboot cannot create a false shutdown.
+    /// For OFF, HUD + OBD2 must both be absent and the independent direct-OBD
+    /// witness must also be absent. Door power is intentionally excluded because
+    /// the vehicle retains Door accessory power after engine shutdown.
     private func scheduleEngineSignalConsensusEvaluation(reason: String) {
         engineSignalConsensusTask?.cancel()
         engineSignalConsensusTask = Task { @MainActor [weak self] in
@@ -2345,20 +2394,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 return
             }
 
-            if self.doorEnginePowerEvidence() {
-                self.engineOffConfirmationTask?.cancel()
-                self.engineOffConfirmationTask = nil
-                self.enginePowerStatus = "Engine ON preserved • Door engine-power witness still present"
-                self.logger.log(
-                    "AMBIENT ENGINE",
-                    "HUD + OBD2 absent, but Door controller still shows engine-domain power; vetoing engine OFF (\(reason))"
-                )
-                return
-            }
-
             if let began = self.hudOutageBeganAt,
                Date().timeIntervalSince(began) < self.directOBDAcquireWindowSeconds {
-                self.enginePowerStatus = "HUD + OBD2 absent • checking OBD / Door power witnesses…"
+                self.enginePowerStatus = "HUD + OBD2 absent • checking direct OBD witness…"
                 self.logger.log(
                     "AMBIENT ENGINE",
                     "HUD + OBD2 both absent; holding OFF decision during witness acquisition window (\(reason))"
@@ -2367,7 +2405,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             }
 
             self.scheduleEnginePowerOffConfirmation(
-                source: "HUD + OBD2 absent and Door/direct-OBD witnesses absent; \(reason)"
+                source: "HUD + OBD2 absent and direct-OBD witness absent; \(reason)"
             )
         }
     }
@@ -2398,13 +2436,6 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ambientTrace("OBD2 engine witness changed")
             scheduleEngineSignalConsensusEvaluation(reason: present ? "OBD2 connected" : "OBD2 disconnected")
         }
-    }
-
-    private func doorEnginePowerEvidence(now: Date = Date()) -> Bool {
-        guard let doorID = deviceID(for: .door) else { return false }
-        if peripheralsByID[doorID]?.state == .connected { return true }
-        if let seen = lastSeenByID[doorID], now.timeIntervalSince(seen) <= 8.0 { return true }
-        return false
     }
 
     private func currentOBDTargetName() -> String {
@@ -2475,25 +2506,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
-        if doorEnginePowerEvidence(now: now) {
-            if enginePowerPresent {
-                engineOffConfirmationTask?.cancel()
-                engineOffConfirmationTask = nil
-                enginePowerStatus = "Engine ON preserved • Door engine-power witness present"
-            }
-            return
-        }
-
         guard enginePowerPresent else { return }
 
         if let began = hudOutageBeganAt,
            now.timeIntervalSince(began) < directOBDAcquireWindowSeconds {
-            enginePowerStatus = "HUD + OBD2 absent • checking OBD / Door power witnesses…"
+            enginePowerStatus = "HUD + OBD2 absent • checking direct OBD witness…"
             return
         }
 
         scheduleEnginePowerOffConfirmation(
-            source: "HUD absent and OBD / Door power witnesses absent"
+            source: "HUD absent and OBD/direct-OBD witnesses absent"
         )
     }
 
@@ -2525,23 +2547,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             enginePowerStatus = "Engine ON preserved • direct OBD witness present"
             return
         }
-        guard !doorEnginePowerEvidence() else {
-            enginePowerStatus = "Engine ON preserved • Door engine-power witness present"
-            return
-        }
         guard engineOffConfirmationTask == nil else { return }
 
         let delay = max(0.5, engineOffConfirmationSeconds)
-        enginePowerStatus = "Engine power OFF candidate • all engine witnesses absent • confirming \(String(format: "%.1f", delay))s"
-        logger.log("AMBIENT ENGINE", "\(source); all engine witnesses absent; confirming engine OFF for \(String(format: "%.1f", delay))s")
+        enginePowerStatus = "Engine power OFF candidate • HUD/OBD witnesses absent • confirming \(String(format: "%.1f", delay))s"
+        logger.log("AMBIENT ENGINE", "\(source); HUD/OBD witnesses absent; confirming engine OFF for \(String(format: "%.1f", delay))s")
         engineOffConfirmationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled,
                   !self.hudEnginePowerSignalPresent,
                   !self.obdEnginePowerSignalPresent,
-                  !self.isDirectOBDRecentlyPresent(),
-                  !self.doorEnginePowerEvidence() else { return }
+                  !self.isDirectOBDRecentlyPresent() else { return }
             self.engineOffConfirmationTask = nil
             self.confirmEnginePowerOff()
         }
