@@ -33,6 +33,33 @@ Note: after signing/archive is restored, App Store Connect may still return
 That is a separate external toolchain issue.
 
 
+## v90.18 — no-flash BLEDIM + fast Center day/night + true sync + Philly GIS
+
+v90.18 keeps the v90.17 per-light fresh-power architecture that eliminated the recurrent
+stuck-OFF behavior, then focuses on the remaining field-observed issues:
+
+- BLEDIM Door/Dashboard preload RGB + baseline around Power ON and use a brightness-only
+  terminal commit on successful Breath completion, avoiding routine start/end Power ON
+  flashes while retaining the one-shot Power/RGB/brightness fail-safe for actual failures.
+- Center/BLEDOM presence again owns the fast day/night edge used by both HUD Auto
+  Brightness and Door target brightness. Dashboard+Center consensus is diagnostic only.
+- Automatic Door day/night transition is a dedicated 1.0 s fade; manual/group fade
+  duration remains independently adjustable.
+- Optional Sync ON now forms a 3.0 s power-on cohort before protocol preparation and then
+  gives expected devices a bounded 1.5 s preparation grace before one common Breath T0.
+  Late devices still receive a complete independent Breath.
+- Speed-limit sources are reduced to **Current**, **OSM Trace**, and **Improved + Philly
+  GIS**. Existing OSM Trace remains the field-tested A/B baseline.
+- Improved mode loads untagged drivable OSM roads so entering a neighborhood can break
+  continuity with a prior arterial, clears a stale sign after 4 s without a fresh speed
+  source, and fixes the unmatched-trace infinite-score sentinel bug.
+- In Philadelphia, Improved mode also fuses the City's public Street Speed Limits and
+  Residential Streets ArcGIS layers. A confident explicit OSM motorway match is protected
+  from a nearby surface-street GIS override; outside Philadelphia or if City GIS is
+  unavailable, Improved mode continues with improved OSM only.
+
+See `docs/V90_18_NO_FLASH_FAST_CENTER_TRUE_SYNC_PHILLY_GIS.md`.
+
 ## v90.17 — simple power-on ambient lifecycle + optional sync + OSM Trace flight recorder
 
 v90.17 deliberately removes engine/courtesy/startup state from ambient animation admission.

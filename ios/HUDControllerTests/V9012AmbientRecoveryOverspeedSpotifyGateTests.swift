@@ -9,21 +9,21 @@ final class V9012AmbientRecoveryOverspeedSpotifyGateTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testStableTwoLightSignalOwnsOnlyDayNightAndHUDBrightness() throws {
+    func testFastCenterSignalOwnsDayNightWhileTwoLightSignalIsDiagnostic() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("private enum HeadlightConsensusObservation"))
         XCTAssertTrue(monitor.contains("headlightConsensusStabilitySeconds: TimeInterval = 0.75"))
-        XCTAssertTrue(monitor.contains("Two-light day/night consensus"))
-        XCTAssertTrue(monitor.contains("Headlight consensus → Auto brightness ON"))
-        XCTAssertTrue(monitor.contains("Headlight consensus → Auto brightness OFF"))
+        XCTAssertTrue(monitor.contains("Dashboard+Center diagnostic consensus"))
+        XCTAssertTrue(monitor.contains("Center presence → Auto brightness ON"))
+        XCTAssertTrue(monitor.contains("Center absence → Auto brightness OFF"))
     }
 
     func testPowerOnBreathIsIndependentAndCanBeUnsynchronized() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("var synchronizePowerOnBreathEnabled: Bool"))
         XCTAssertTrue(monitor.contains("startIndividualBreathSession"))
-        XCTAssertTrue(monitor.contains("Optional sync window armed for"))
-        XCTAssertTrue(monitor.contains("Sync window already closed; starting complete independent Breath"))
+        XCTAssertTrue(monitor.contains("Power-on cohort opened discovery="))
+        XCTAssertTrue(monitor.contains("Power-on cohort already started; running complete independent Breath"))
         XCTAssertTrue(monitor.contains("every controller return is a brand-new power-on event"))
     }
 

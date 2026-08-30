@@ -82,7 +82,7 @@ struct AmbientLightingView: View {
                             }
                             .buttonStyle(.borderedProminent)
 
-                            Text("Every controller return is treated as a fresh power-on event. BLEDIM Door/Dashboard wait briefly for firmware boot, then run Power ON → RGB → a complete Breath → preferred brightness. With synchronization OFF, each light owns its full animation independently. With it ON, lights that finish preparation within a 2.5 s grouping window share a timeline; late lights still get their own complete Breath.")
+                            Text("Every controller return is treated as a fresh power-on event. BLEDIM Door/Dashboard preload color and baseline brightness around Power ON to avoid the visible full-brightness flash, then run a complete Breath and finish with brightness-only steady commit. With synchronization OFF, each light starts independently. With it ON, power-on events within a 3 s cohort are collected first, then prepared members share one common start time; a controller that still misses the bounded preparation grace gets its own complete Breath.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -117,7 +117,7 @@ struct AmbientLightingView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Text("Door brightness is independent from animation and engine-session detection. Dashboard + Center both ON = night; both OFF = day; a mixed state preserves the last confirmed mode. That same stable two-light signal controls HUD Auto Brightness. Courtesy or reconnect events may still animate the individual lights, but they do not block Door day/night behavior.")
+                            Text("Door brightness is independent from animation and engine-session detection. Center/BLEDOM present = night and absent = day; that same fast signal controls HUD Auto Brightness. Dashboard + Center remain a diagnostic cross-check only. Automatic Door day/night changes use a dedicated fast 1.0 s fade, while the manual/group transition duration above remains independently adjustable.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }

@@ -16,8 +16,9 @@ def test_here_removed_from_runtime_and_ui():
 
 def test_three_no_billing_sources_are_exposed():
     assert 'case current = "Current"' in SPEED
-    assert 'case enhancedOSM = "Enhanced OSM"' in SPEED
     assert 'case traceOSM = "OSM Trace"' in SPEED
+    assert 'case improvedTracePhilly = "Improved + Philly GIS"' in SPEED
+    assert 'case enhancedOSM = "Enhanced OSM"' not in SPEED
     assert "No HERE code, API key, or commercial map-service dependency remains" in README
 
 

@@ -22,9 +22,10 @@ final class V9017SimplePowerOnOptionalSyncTests: XCTestCase {
     func testOptionalSyncNeverMakesLateControllerJoinMidCycle() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("var synchronizePowerOnBreathEnabled: Bool"))
-        XCTAssertTrue(monitor.contains("powerOnSyncWindowSeconds: TimeInterval = 2.5"))
+        XCTAssertTrue(monitor.contains("powerOnSyncWindowSeconds: TimeInterval = 3.0"))
+        XCTAssertTrue(monitor.contains("powerOnSyncPreparationGraceSeconds: TimeInterval = 1.5"))
         XCTAssertTrue(monitor.contains("if !self.synchronizePowerOnBreathEnabled"))
-        XCTAssertTrue(monitor.contains("Sync window already closed; starting complete independent Breath"))
+        XCTAssertTrue(monitor.contains("Power-on cohort already started; running complete independent Breath"))
         XCTAssertTrue(monitor.contains("startIndividualBreathSession"))
         XCTAssertTrue(monitor.contains("startSynchronizedBreathSession"))
     }
@@ -40,14 +41,16 @@ final class V9017SimplePowerOnOptionalSyncTests: XCTestCase {
         XCTAssertFalse(watchdog.contains("evaluateVehicleLightingAutomation()"))
     }
 
-    func testBreathAlwaysEndsWithSemanticPowerColorBrightnessCommit() throws {
+    func testBreathTerminalCommitIsNoFlashForBLEDIMAndSemanticForLotus() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         let block = monitor.components(separatedBy: "private func finalizeBreathSteadyState")[1]
             .components(separatedBy: "private func runStartupAnimationIfNeeded")[0]
-        XCTAssertTrue(block.contains("sendPowerWhenReady"))
-        XCTAssertTrue(block.contains("sendColorWhenReady"))
-        XCTAssertTrue(block.contains("applyRuntimeBrightnessWhenReady"))
+        let bledim = block.components(separatedBy: "if device.protocolKind == .bledim2")[1]
+            .components(separatedBy: "let powerSent =")[0]
+        XCTAssertTrue(bledim.contains("power-up breath final (BLEDIM no-flash)"))
+        XCTAssertFalse(bledim.contains("sendPowerWhenReady"))
         XCTAssertTrue(block.contains("power-up breath terminal Power ON"))
+        XCTAssertTrue(block.contains("power-up breath terminal RGB"))
     }
 
     func testOSMTraceDiagnosticsContainReplayGeometryAndOutput() throws {
@@ -71,7 +74,8 @@ final class V9017SimplePowerOnOptionalSyncTests: XCTestCase {
     func testOSMTraceHeldLimitDoesNotRefreshFreshness() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         XCTAssertTrue(speed.contains("private var traceLastResolutionFresh = false"))
-        XCTAssertTrue(speed.contains("let resolutionIsFresh = sourceMode != .traceOSM || traceLastResolutionFresh"))
+        XCTAssertTrue(speed.contains("case .traceOSM:"))
+        XCTAssertTrue(speed.contains("resolutionIsFresh = traceLastResolutionFresh"))
         XCTAssertTrue(speed.contains("fresh=%d"))
     }
 

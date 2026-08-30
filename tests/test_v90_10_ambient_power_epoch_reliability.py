@@ -31,17 +31,23 @@ def test_critical_restore_and_breath_prepare_writes_are_retried_in_order():
     assert "Task.sleep(for: .milliseconds(50))" in MONITOR
     restore = MONITOR.split("private func restoreDeviceState", 1)[1].split("private func runStartupAnimationIfNeeded", 1)[0]
     assert restore.index("sendPowerWhenReady") < restore.index("sendColorWhenReady") < restore.index("applyRuntimeBrightnessWhenReady")
-    prep = MONITOR.split("private func queuePowerUpBreath", 1)[1].split("private func startSynchronizedBreathSession", 1)[0]
-    assert prep.index("sendPowerWhenReady") < prep.index("sendColorWhenReady") < prep.index("applyRuntimeBrightnessWhenReady")
+    prep = MONITOR.split("private func queuePowerUpBreath", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
+    # v90.18 BLEDIM no-flash preparation intentionally preloads RGB + baseline
+    # before Power ON, then immediately reasserts the baseline. Lotus keeps the
+    # original Power ON -> RGB -> brightness ordering in its else branch.
+    assert prep.index("power-up breath preload RGB") < prep.index("power-up breath preload baseline") < prep.index("power-up breath prepare no-flash Power ON") < prep.index("power-up breath post-Power baseline")
+    lotus = prep.split("} else {", 1)[1]
+    assert lotus.index("sendPowerWhenReady") < lotus.index("sendColorWhenReady") < lotus.index("applyRuntimeBrightnessWhenReady")
 
 
-def test_headlight_signal_is_stable_two_light_consensus_but_does_not_own_animation():
+def test_center_signal_is_fast_day_night_owner_and_two_light_crosscheck_does_not_own_animation():
     assert 'noteHeadlightPowerSeen(id, reason: "advertisement")' in MONITOR
     assert 'noteHeadlightPowerSeen(id, reason: "didConnect")' in MONITOR
     assert "scheduleHeadlightPowerOffEvaluation" in MONITOR
-    assert "both Center + Dashboard stable ON" in MONITOR
-    assert "both Center + Dashboard stable OFF" in MONITOR
+    assert "Dashboard+Center diagnostic consensus" in MONITOR
+    assert "Center/BLEDOM remains authoritative for fast day/night" in MONITOR
     commit = MONITOR.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
+    assert "Fast Center day/night" in commit
     assert "queuePowerUpBreath" not in commit
 
 

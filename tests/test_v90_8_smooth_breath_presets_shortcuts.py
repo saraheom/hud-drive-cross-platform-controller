@@ -46,7 +46,7 @@ def test_breath_is_only_powerup_animation_and_uses_requested_path():
 def test_breath_and_group_fades_share_timeline_for_visual_sync():
     src = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     assert "activeBreathIDs" in src
-    assert "Optional sync window armed for" in src
+    assert "Power-on cohort opened discovery=" in src
     assert "startIndividualBreathSession" in src
     assert "try? await Task.sleep(for: .seconds(self.powerOnSyncWindowSeconds))" in src
     assert "let timelineTick = 0.05" in src

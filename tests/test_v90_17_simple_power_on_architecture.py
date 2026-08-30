@@ -9,7 +9,7 @@ SPEED = (ROOT / 'ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift').read
 def test_every_disconnect_rearms_next_controller_return_immediately():
     assert 'every controller return is a brand-new power-on event' in MONITOR
     assert 'animatedConnectionSession.remove(id)' in MONITOR
-    reset = MONITOR.split('private func scheduleStartupSessionReset', 1)[1].split('// MARK: - Independent day/night consensus', 1)[0]
+    reset = MONITOR.split('private func scheduleStartupSessionReset', 1)[1].split('// MARK: - Fast Center-driven day/night + diagnostic two-light cross-check', 1)[0]
     assert '15' not in reset
     assert 'Power-on animation re-armed immediately after disconnect' in reset
 
@@ -38,8 +38,8 @@ def test_sync_is_optional_and_late_devices_get_complete_independent_breath():
     prep = MONITOR.split('private func queuePowerUpBreath', 1)[1].split('private func startIndividualBreathSession', 1)[0]
     assert 'if !self.synchronizePowerOnBreathEnabled' in prep
     assert 'self.startIndividualBreathSession(id)' in prep
-    assert 'Optional sync window armed for' in prep
-    assert 'Sync window already closed; starting complete independent Breath' in prep
+    assert 'Power-on cohort opened discovery=' in prep
+    assert 'Power-on cohort already started; running complete independent Breath' in prep
     assert 'Toggle("Synchronize nearby power-on Breaths"' in VIEW
 
 
@@ -52,17 +52,18 @@ def test_independent_breath_has_complete_final_restore():
     assert 'Breath terminal steady commit failed' in block
 
 
-def test_day_night_consensus_is_separate_from_animation_and_engine():
+def test_fast_center_day_night_is_separate_from_animation_and_engine():
     schedule = MONITOR.split('private func scheduleHeadlightConsensusEvaluation', 1)[1].split('private func commitConfirmedHeadlightPower', 1)[0]
     assert 'enginePowerPresent' not in schedule
     assert 'vehicleStartupCompleted' not in schedule
+    assert 'Dashboard+Center diagnostic consensus' in schedule
     commit = MONITOR.split('private func commitConfirmedHeadlightPower', 1)[1].split('private func noteHeadlightPowerSeen', 1)[0]
-    assert 'Two-light day/night consensus' in commit
+    assert 'Fast Center day/night' in commit
     assert 'queuePowerUpBreath' not in commit
     assert 'tryStartConfirmedHeadlightBreath' not in commit
     assert 'applyCurrentDoorDayNightTarget' in commit
-    assert 'Headlight consensus → Auto brightness ON' in commit
-    assert 'Headlight consensus → Auto brightness OFF' in commit
+    assert 'Center presence → Auto brightness ON' in commit
+    assert 'Center absence → Auto brightness OFF' in commit
 
 
 def test_door_target_does_not_start_fade_during_bledim_boot_or_breath_prepare():
@@ -101,7 +102,7 @@ def test_osm_trace_logs_replayable_gps_path_candidates_and_decisions():
 def test_door_day_night_is_event_driven_not_reapplied_by_half_second_watchdog():
     watchdog = MONITOR.split('private func startWatchdog()', 1)[1]
     assert 'evaluateVehicleLightingAutomation()' not in watchdog
-    assert 'Consensus watchdog reasserted HUD auto brightness' in watchdog
+    assert 'Center-driven watchdog reasserted HUD auto brightness' in watchdog
 
 
 def test_same_door_fade_target_cannot_cancel_and_restart_itself():
@@ -140,7 +141,7 @@ def test_group_fade_cancellation_cleans_every_shared_owner():
 
 def test_osm_trace_held_sign_does_not_refresh_fresh_resolution_clock():
     assert 'private var traceLastResolutionFresh = false' in SPEED
-    assert 'let resolutionIsFresh = sourceMode != .traceOSM || traceLastResolutionFresh' in SPEED
+    assert 'case .traceOSM:' in SPEED and 'resolutionIsFresh = traceLastResolutionFresh' in SPEED
     assert 'if resolutionIsFresh {' in SPEED
     assert 'fresh=%d' in SPEED
     trace = SPEED.split('private func bestTraceSpeedLimit', 1)[1].split('private static func resolvedKmh', 1)[0]
@@ -148,8 +149,8 @@ def test_osm_trace_held_sign_does_not_refresh_fresh_resolution_clock():
     assert trace.count('traceLastResolutionFresh = true') >= 2
 
 
-def test_vehicle_help_text_matches_two_light_hud_brightness_owner():
+def test_vehicle_help_text_matches_fast_center_hud_brightness_owner():
     vehicle = (ROOT / 'ios/HUDController/UI/VehicleView.swift').read_text()
-    assert 'Use ambient day/night consensus for HUD Auto Brightness' in vehicle
-    assert 'Dashboard + Center both ON = night/Auto Brightness ON' in vehicle
-    assert 'Center presence by itself does not control HUD brightness' in vehicle
+    assert 'Use Center/BLEDOM power for HUD Auto Brightness' in vehicle
+    assert 'Center present = night/Auto Brightness ON' in vehicle
+    assert 'Dashboard cannot delay either output' in vehicle

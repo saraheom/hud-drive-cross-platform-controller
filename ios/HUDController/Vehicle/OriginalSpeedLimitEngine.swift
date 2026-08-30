@@ -4,8 +4,8 @@ import Observation
 
 enum SpeedLimitSourceMode: String, CaseIterable, Identifiable {
     case current = "Current"
-    case enhancedOSM = "Enhanced OSM"
     case traceOSM = "OSM Trace"
+    case improvedTracePhilly = "Improved + Philly GIS"
 
     var id: String { rawValue }
 
@@ -13,10 +13,10 @@ enum SpeedLimitSourceMode: String, CaseIterable, Identifiable {
         switch self {
         case .current:
             return "Original decompiled HUDWAY OSM matcher"
-        case .enhancedOSM:
-            return "Enhanced OSM directional + continuity matcher"
         case .traceOSM:
-            return "Rolling GPS-trace map matcher using OSM only"
+            return "Current rolling GPS-trace matcher using explicit OSM speed tags"
+        case .improvedTracePhilly:
+            return "Improved all-road trace matcher + Philadelphia public speed-limit GIS"
         }
     }
 }
@@ -108,6 +108,42 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let confidenceMargin: Double
     }
 
+    struct ImprovedOSMSegment {
+        let elementID: Int64
+        let highway: String
+        let name: String?
+        let reference: String?
+        let baseKmh: Int?
+        let forwardKmh: Int?
+        let backwardKmh: Int?
+        let baseConditional: String?
+        let forwardConditional: String?
+        let backwardConditional: String?
+        let parts: [SegmentPart]
+    }
+
+    struct PhiladelphiaSpeedSegment {
+        let objectID: Int
+        let name: String?
+        let speedMph: Int
+        let residentialLayer: Bool
+        /// False only when the Residential Streets layer had no valid numeric
+        /// speed and we filled 25 mph from the ordinary Philadelphia local-road
+        /// default. Inferred values may be displayed but must not arm warnings.
+        let speedWasExplicit: Bool
+        let parts: [SegmentPart]
+    }
+
+    private struct TraceGeometryMatch {
+        let score: Double
+        let currentDistance: Double
+        let currentAngle: Double
+        let matchedPoints: Int
+        let forward: Bool
+        let nearestStart: CLLocationCoordinate2D
+        let nearestEnd: CLLocationCoordinate2D
+    }
+
     private let locationManager = CLLocationManager()
     private let bluetooth: HudBluetoothManager
     private let logger: LogManager
@@ -130,12 +166,36 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// continuity must not refresh overspeed-warning freshness.
     private var traceLastResolutionFresh = false
 
+
+    // v90.18 improved source keeps its own caches/state so the current OSM Trace
+    // mode remains an unchanged A/B comparison path.
+    private var improvedSegments: [ImprovedOSMSegment] = []
+    private var improvedLastQueryLocation: CLLocation?
+    private var improvedRequestInFlight = false
+    private var improvedCurrentRoadID: Int64?
+    private var improvedPendingRoad: (id: Int64, count: Int)?
+    private var improvedLastConfidenceMargin: Double = 0
+    private var improvedLastResolutionFresh = false
+    private var improvedLastResolutionWarningEligible = false
+    private var improvedResolutionSource = "none"
+    private var improvedPendingLimit: (key: String, mph: Int, count: Int, source: String)?
+
+    private var philadelphiaSpeedSegments: [PhiladelphiaSpeedSegment] = []
+    private var philadelphiaLastQueryLocation: CLLocation?
+    private var philadelphiaRequestInFlight = false
+    private var philadelphiaDatasetAvailable = false
+    private let improvedDisplayGraceSeconds: TimeInterval = 4.0
+
     private(set) var currentSpeedMph = 0
     private(set) var currentSpeedLimitMph = 0
     /// Warning eligibility is intentionally stricter than merely having a cached
     /// integer limit. A previous-drive UserDefaults value must never arm a red-light
     /// warning before the currently selected matcher has resolved a live road limit.
     private(set) var speedLimitAvailableForWarning = false
+    /// The currently displayed limit may be useful even when it came from a
+    /// lower-confidence residential fallback. Warning eligibility is tracked
+    /// separately so inferred display values cannot arm HUD/ambient warnings.
+    private var currentLimitWarningEligible = false
     private var lastResolvedLimitAt: Date?
     private let warningLimitFreshnessSeconds: TimeInterval = 12.0
     private(set) var status = "Waiting for location"
@@ -168,7 +228,18 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 enabled = true
             }
             lastSentLimit = -1
-            resendCurrentLimitIfPossible()
+            if showSpeedLimit {
+                resendCurrentLimitIfPossible()
+            } else if bluetooth.state == .connected {
+                bluetooth.enqueue(
+                    HudCommands.speedLimit(limit: 0, tolerance: 0),
+                    label: "Speed-limit sign disabled → clear sign"
+                )
+                bluetooth.enqueue(
+                    HudCommands.speedWarningThreshold(0),
+                    label: "Speed-limit sign disabled → native warning OFF"
+                )
+            }
             refreshWarningLimitAvailability(now: Date())
             onSpeedStateChanged?(
                 currentSpeedMph,
@@ -194,9 +265,17 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             ? true
             : d.bool(forKey: "HUD.Speed.showLimit")
         self.currentSpeedLimitMph = max(0, d.integer(forKey: "HUD.Speed.lastKnownLimitMph"))
-        self.sourceMode = SpeedLimitSourceMode(
-            rawValue: d.string(forKey: "HUD.Speed.limitSource") ?? ""
-        ) ?? .current
+        let storedSource = d.string(forKey: "HUD.Speed.limitSource") ?? ""
+        // v90.18 removes the obsolete Enhanced OSM UI mode. Existing installs that
+        // had selected it migrate to the current OSM Trace comparison mode.
+        if storedSource == "Enhanced OSM" {
+            self.sourceMode = .traceOSM
+        } else if storedSource == "Improved Trace + Philly GIS" {
+            // Migration from the short-lived development label used before v90.18.
+            self.sourceMode = .improvedTracePhilly
+        } else {
+            self.sourceMode = SpeedLimitSourceMode(rawValue: storedSource) ?? .current
+        }
 
         super.init()
         locationManager.delegate = self
@@ -216,6 +295,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         // fresh enough to drive an ambient safety warning until this session's
         // matcher resolves it again.
         lastResolvedLimitAt = nil
+        currentLimitWarningEligible = false
         speedLimitAvailableForWarning = false
         onSpeedStateChanged?(currentSpeedMph, currentSpeedLimitMph, false)
         logger.log("SPEED", "Starting original-style GPS + OSM speed engine")
@@ -228,6 +308,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         locationManager.stopUpdatingLocation()
         status = "Disabled"
         lastResolvedLimitAt = nil
+        currentLimitWarningEligible = false
         speedLimitAvailableForWarning = false
         onSpeedStateChanged?(currentSpeedMph, currentSpeedLimitMph, false)
     }
@@ -243,6 +324,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         bluetooth.enqueue(
             HudCommands.speedLimit(limit: 0, tolerance: 0),
             label: "Speed-limit rectangle style prime (display tolerance 0)"
+        )
+        bluetooth.enqueue(
+            HudCommands.speedWarningThreshold(0),
+            label: "Speed-limit session prime → native warning OFF until fresh limit"
         )
         lastSentLimit = -1
         logger.log("SPEED SESSION", "Primed rectangular speed-limit style immediately")
@@ -299,9 +384,14 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             ),
             label: "Speed limit \(currentSpeedLimitMph) mph (tolerance 0)"
         )
-        sendOriginalAutomaticSpeedWarning(
-            legalLimitMph: currentSpeedLimitMph
-        )
+        if currentLimitWarningEligible {
+            sendOriginalAutomaticSpeedWarning(legalLimitMph: currentSpeedLimitMph)
+        } else {
+            bluetooth.enqueue(
+                HudCommands.speedWarningThreshold(0),
+                label: "Displayed limit is not warning-eligible → native warning OFF"
+            )
+        }
         lastSentLimit = currentSpeedLimitMph
     }
 
@@ -322,9 +412,24 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         tracePendingCandidate = nil
         traceLastConfidenceMargin = 0
         traceLastResolutionFresh = false
+        improvedSegments.removeAll()
+        improvedLastQueryLocation = nil
+        improvedRequestInFlight = false
+        improvedCurrentRoadID = nil
+        improvedPendingRoad = nil
+        improvedLastConfidenceMargin = 0
+        improvedLastResolutionFresh = false
+        improvedLastResolutionWarningEligible = false
+        improvedResolutionSource = "none"
+        improvedPendingLimit = nil
+        philadelphiaSpeedSegments.removeAll()
+        philadelphiaLastQueryLocation = nil
+        philadelphiaRequestInFlight = false
+        philadelphiaDatasetAvailable = false
         lastQueryLocation = nil
         requestInFlight = false
         currentSpeedLimitMph = 0
+        currentLimitWarningEligible = false
         lastResolvedLimitAt = nil
         speedLimitAvailableForWarning = false
         lastSentLimit = -1
@@ -334,6 +439,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             bluetooth.enqueue(
                 HudCommands.speedLimit(limit: 0, tolerance: 0),
                 label: "Speed-limit source changed → clear stale sign"
+            )
+            bluetooth.enqueue(
+                HudCommands.speedWarningThreshold(0),
+                label: "Speed-limit source changed → native warning OFF until fresh limit"
             )
         }
         logger.log("SPEED LIMIT", "Speed-limit source changed to \(sourceMode.rawValue)")
@@ -403,9 +512,6 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         case .current:
             limit = bestSpeedLimit(at: location)
             sourceDetail = "Current • original OSM"
-        case .enhancedOSM:
-            limit = bestEnhancedSpeedLimit(at: location)
-            sourceDetail = "Enhanced OSM • directional/continuity"
         case .traceOSM:
             logger.log(
                 "OSM TRACE GPS",
@@ -438,18 +544,71 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 format: "OSM Trace • rolling trace • margin %.2f",
                 traceLastConfidenceMargin
             )
+        case .improvedTracePhilly:
+            logger.log(
+                "IMPROVED TRACE GPS",
+                String(
+                    format: "lat=%.6f lon=%.6f acc=%.1fm course=%.1f speed=%.1fmps(%dmph) traceStored=%d",
+                    location.coordinate.latitude,
+                    location.coordinate.longitude,
+                    location.horizontalAccuracy,
+                    location.course,
+                    location.speed,
+                    currentSpeedMph,
+                    traceLocations.count
+                )
+            )
+            limit = bestImprovedTraceSpeedLimit(at: location)
+            logger.log(
+                "IMPROVED TRACE OUTPUT",
+                String(
+                    format: "gps=%.6f,%.6f resolved=%@ fresh=%d road=%@ source=%@ margin=%.2f phillyData=%d",
+                    location.coordinate.latitude,
+                    location.coordinate.longitude,
+                    limit.map { "\($0)mph" } ?? "none",
+                    improvedLastResolutionFresh ? 1 : 0,
+                    improvedCurrentRoadID.map { String($0) } ?? "none",
+                    improvedResolutionSource,
+                    improvedLastConfidenceMargin,
+                    philadelphiaDatasetAvailable ? 1 : 0
+                )
+            )
+            sourceDetail = String(
+                format: "Improved Trace • %@ • margin %.2f",
+                improvedResolutionSource,
+                improvedLastConfidenceMargin
+            )
         }
 
         if let limit, limit > 0 {
-            let resolutionIsFresh = sourceMode != .traceOSM || traceLastResolutionFresh
+            let resolutionIsFresh: Bool
+            switch sourceMode {
+            case .traceOSM:
+                resolutionIsFresh = traceLastResolutionFresh
+            case .improvedTracePhilly:
+                resolutionIsFresh = improvedLastResolutionFresh
+            case .current:
+                resolutionIsFresh = true
+            }
             if resolutionIsFresh {
-                applyResolvedLimit(limit)
+                let warningEligible = sourceMode == .improvedTracePhilly
+                    ? improvedLastResolutionWarningEligible
+                    : true
+                applyResolvedLimit(limit, warningEligible: warningEligible)
             }
             status = resolutionIsFresh
                 ? "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • limit \(limit) mph"
                 : "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • holding prior limit \(limit) mph"
         } else {
             status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
+        }
+
+        if sourceMode == .improvedTracePhilly,
+           !improvedLastResolutionFresh,
+           currentSpeedLimitMph > 0,
+           let lastResolvedLimitAt,
+           Date().timeIntervalSince(lastResolvedLimitAt) > improvedDisplayGraceSeconds {
+            clearDisplayedLimit(reason: "Improved Trace lost a fresh road match for >\(Int(improvedDisplayGraceSeconds))s")
         }
 
         // Warning requires a live/fresh resolution from the currently selected
@@ -466,26 +625,65 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         Task { await updateProviderDataIfNeeded(at: location, force: false) }
     }
 
-    private func applyResolvedLimit(_ limit: Int) {
+    private func applyResolvedLimit(_ limit: Int, warningEligible: Bool = true) {
+        let previousWarningEligible = currentLimitWarningEligible
+        let limitChanged = limit != lastSentLimit
         currentSpeedLimitMph = limit
+        currentLimitWarningEligible = warningEligible
         lastResolvedLimitAt = Date()
-        speedLimitAvailableForWarning = showSpeedLimit && limit > 0
+        speedLimitAvailableForWarning = showSpeedLimit && limit > 0 && warningEligible
         UserDefaults.standard.set(limit, forKey: "HUD.Speed.lastKnownLimitMph")
-        if showSpeedLimit, limit != lastSentLimit, bluetooth.state == .connected {
+
+        guard showSpeedLimit, bluetooth.state == .connected else { return }
+        if limitChanged {
             lastSentLimit = limit
             bluetooth.enqueue(
                 HudCommands.speedLimit(limit: limit, tolerance: 0),
                 label: "Speed limit \(limit) mph (tolerance 0) source=\(sourceMode.rawValue)"
             )
-            sendOriginalAutomaticSpeedWarning(
-                legalLimitMph: limit
+        }
+
+        // Warning eligibility can legitimately change while the displayed number
+        // stays the same (for example inferred residential 25 -> explicit posted 25).
+        // Keep the HUD firmware threshold synchronized with that confidence edge.
+        if limitChanged || warningEligible != previousWarningEligible {
+            if warningEligible {
+                sendOriginalAutomaticSpeedWarning(legalLimitMph: limit)
+            } else {
+                bluetooth.enqueue(
+                    HudCommands.speedWarningThreshold(0),
+                    label: "Display-only inferred speed limit — disable native warning threshold"
+                )
+                logger.log("SPEED LIMIT", "Displayed \(limit) mph as lower-confidence inferred value; speed warnings disabled")
+            }
+        }
+    }
+
+    private func clearDisplayedLimit(reason: String) {
+        guard currentSpeedLimitMph != 0 || lastSentLimit != 0 else { return }
+        currentSpeedLimitMph = 0
+        currentLimitWarningEligible = false
+        lastResolvedLimitAt = nil
+        speedLimitAvailableForWarning = false
+        lastSentLimit = 0
+        if showSpeedLimit, bluetooth.state == .connected {
+            bluetooth.enqueue(
+                HudCommands.speedLimit(limit: 0, tolerance: 0),
+                label: "Clear stale speed-limit sign — \(reason)"
+            )
+            bluetooth.enqueue(
+                HudCommands.speedWarningThreshold(0),
+                label: "Clear stale speed-limit warning threshold — \(reason)"
             )
         }
+        logger.log("SPEED LIMIT", "Cleared stale displayed limit: \(reason)")
+        onSpeedStateChanged?(currentSpeedMph, 0, false)
     }
 
     private func refreshWarningLimitAvailability(now: Date) {
         guard showSpeedLimit,
               currentSpeedLimitMph > 0,
+              currentLimitWarningEligible,
               let lastResolvedLimitAt,
               now.timeIntervalSince(lastResolvedLimitAt) <= warningLimitFreshnessSeconds else {
             speedLimitAvailableForWarning = false
@@ -498,8 +696,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         switch sourceMode {
         case .current:
             await updateOriginalSegmentsIfNeeded(at: location, force: force)
-        case .enhancedOSM, .traceOSM:
+        case .traceOSM:
             await updateEnhancedSegmentsIfNeeded(at: location, force: force)
+        case .improvedTracePhilly:
+            async let osmUpdate: Void = updateImprovedSegmentsIfNeeded(at: location, force: force)
+            async let phillyUpdate: Void = updatePhiladelphiaSpeedDataIfNeeded(at: location, force: force)
+            _ = await (osmUpdate, phillyUpdate)
         }
     }
 
@@ -652,8 +854,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 )
             }
         } catch {
-            self.logger.log("SPEED LIMIT ERROR", "Enhanced OSM: \(error.localizedDescription)")
-            self.status = "Enhanced OSM lookup failed; GPS speed still active"
+            self.logger.log("SPEED LIMIT ERROR", "OSM Trace: \(error.localizedDescription)")
+            self.status = "OSM Trace lookup failed; GPS speed still active"
         }
     }
 
@@ -1010,6 +1212,545 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
 
         return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil
+    }
+
+    // MARK: - v90.18 improved trace + Philadelphia public GIS
+
+    private func updateImprovedSegmentsIfNeeded(at location: CLLocation, force: Bool) async {
+        if !force, let improvedLastQueryLocation,
+           improvedLastQueryLocation.distance(from: location) <= 200 {
+            return
+        }
+        guard !improvedRequestInFlight else { return }
+        improvedRequestInFlight = true
+        defer { improvedRequestInFlight = false }
+
+        let lat = location.coordinate.latitude
+        let lon = location.coordinate.longitude
+        // Unlike the comparison OSM Trace mode, the improved source intentionally
+        // loads drivable roads even when maxspeed is absent. This lets the geometry
+        // matcher recognize a residential/local road instead of stealing the speed
+        // tag from a nearby arterial or parallel expressway.
+        let query = """
+        [out:json];
+        way[highway~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)$"](around:500,\(lat),\(lon));
+        out tags geom;
+        """
+        guard var comps = URLComponents(string: "https://overpass-api.de/api/interpreter") else { return }
+        comps.queryItems = [URLQueryItem(name: "data", value: query)]
+        guard let url = comps.url else { return }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw URLError(.badServerResponse)
+            }
+            let decoded = try JSONDecoder().decode(Response.self, from: data)
+            let roads = decoded.elements.compactMap(Self.makeImprovedSegment)
+            improvedSegments = roads
+            improvedLastQueryLocation = location
+            logger.log(
+                "IMPROVED TRACE QUERY",
+                String(format: "OSM center=%.6f,%.6f radius=500m allDrivableRoads=%d", lat, lon, roads.count)
+            )
+        } catch {
+            logger.log("SPEED LIMIT ERROR", "Improved OSM Trace: \(error.localizedDescription)")
+            status = "Improved OSM lookup failed; GPS speed still active"
+        }
+    }
+
+    private static func makeImprovedSegment(_ element: Element) -> ImprovedOSMSegment? {
+        guard let tags = element.tags,
+              let highway = tags.highway,
+              let geometry = element.geometry,
+              geometry.count >= 2 else { return nil }
+        let points = geometry.map {
+            CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)
+        }
+        return ImprovedOSMSegment(
+            elementID: element.id,
+            highway: highway,
+            name: tags.name,
+            reference: tags.ref,
+            baseKmh: tags.maxspeed.flatMap { parseOriginalMaxSpeed($0)?.kmh },
+            forwardKmh: tags.maxspeedForward.flatMap { parseOriginalMaxSpeed($0)?.kmh },
+            backwardKmh: tags.maxspeedBackward.flatMap { parseOriginalMaxSpeed($0)?.kmh },
+            baseConditional: tags.maxspeedConditional,
+            forwardConditional: tags.maxspeedForwardConditional,
+            backwardConditional: tags.maxspeedBackwardConditional,
+            parts: makeParts(points)
+        )
+    }
+
+    private func updatePhiladelphiaSpeedDataIfNeeded(at location: CLLocation, force: Bool) async {
+        guard Self.isInsidePhiladelphiaCoverage(location.coordinate) else {
+            philadelphiaSpeedSegments.removeAll()
+            philadelphiaDatasetAvailable = false
+            philadelphiaLastQueryLocation = nil
+            return
+        }
+        if !force, let philadelphiaLastQueryLocation,
+           philadelphiaLastQueryLocation.distance(from: location) <= 200 {
+            return
+        }
+        guard !philadelphiaRequestInFlight else { return }
+        philadelphiaRequestInFlight = true
+        defer { philadelphiaRequestInFlight = false }
+
+        do {
+            async let posted = fetchPhiladelphiaLayer(0, residential: false, at: location)
+            async let residential = fetchPhiladelphiaLayer(1, residential: true, at: location)
+            let (postedSegments, residentialSegments) = try await (posted, residential)
+            philadelphiaSpeedSegments = postedSegments + residentialSegments
+            philadelphiaDatasetAvailable = true
+            philadelphiaLastQueryLocation = location
+            logger.log(
+                "PHILLY GIS QUERY",
+                String(
+                    format: "center=%.6f,%.6f radius=500m posted=%d residential=%d total=%d",
+                    location.coordinate.latitude,
+                    location.coordinate.longitude,
+                    postedSegments.count,
+                    residentialSegments.count,
+                    postedSegments.count + residentialSegments.count
+                )
+            )
+        } catch {
+            // The improved source remains usable everywhere even if the optional City
+            // service is unreachable. OSM continues without inventing a Philadelphia
+            // result from stale GIS data.
+            philadelphiaSpeedSegments.removeAll()
+            philadelphiaDatasetAvailable = false
+            logger.log("PHILLY GIS ERROR", error.localizedDescription)
+        }
+    }
+
+    private func fetchPhiladelphiaLayer(
+        _ layer: Int,
+        residential: Bool,
+        at location: CLLocation
+    ) async throws -> [PhiladelphiaSpeedSegment] {
+        let base = "https://services8.arcgis.com/6pr2WaSuWO79zliF/ArcGIS/rest/services/SpeedLimits/FeatureServer/\(layer)/query"
+        guard var comps = URLComponents(string: base) else { return [] }
+        comps.queryItems = [
+            URLQueryItem(name: "f", value: "json"),
+            URLQueryItem(name: "where", value: "1=1"),
+            URLQueryItem(
+                name: "geometry",
+                value: String(format: "%.7f,%.7f", location.coordinate.longitude, location.coordinate.latitude)
+            ),
+            URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
+            URLQueryItem(name: "inSR", value: "4326"),
+            URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
+            URLQueryItem(name: "distance", value: "500"),
+            URLQueryItem(name: "units", value: "esriSRUnit_Meter"),
+            URLQueryItem(
+                name: "outFields",
+                value: "OBJECTID,OBJECTID_1,STNM_LAB,STREET,SPLIMIT,SPEED_LIMITS,SpeedLimits_MPH"
+            ),
+            URLQueryItem(name: "returnGeometry", value: "true"),
+            URLQueryItem(name: "outSR", value: "4326")
+        ]
+        guard let url = comps.url else { return [] }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+        return try Self.parsePhiladelphiaSpeedFeatures(data, residential: residential)
+    }
+
+    private static func parsePhiladelphiaSpeedFeatures(
+        _ data: Data,
+        residential: Bool
+    ) throws -> [PhiladelphiaSpeedSegment] {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
+        }
+        if let error = root["error"] as? [String: Any] {
+            let message = error["message"] as? String ?? "Philadelphia GIS returned an error"
+            throw NSError(domain: "PhiladelphiaSpeedGIS", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        guard let features = root["features"] as? [[String: Any]] else { return [] }
+
+        func intValue(_ value: Any?) -> Int? {
+            if let number = value as? NSNumber { return number.intValue }
+            if let string = value as? String {
+                let digits = string.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                return Int(digits)
+            }
+            return nil
+        }
+
+        return features.compactMap { feature in
+            guard let attributes = feature["attributes"] as? [String: Any],
+                  let geometry = feature["geometry"] as? [String: Any],
+                  let paths = geometry["paths"] as? [[[Double]]]
+            else { return nil }
+
+            func validSpeed(_ value: Any?) -> Int? {
+                guard let speed = intValue(value), (5...85).contains(speed) else { return nil }
+                return speed
+            }
+            let explicitSpeed = validSpeed(attributes["SPEED_LIMITS"])
+                ?? validSpeed(attributes["SpeedLimits_MPH"])
+                ?? validSpeed(attributes["SPLIMIT"])
+            let speed = explicitSpeed ?? (residential ? 25 : nil)
+            guard let speed else { return nil }
+
+            var parts: [SegmentPart] = []
+            for path in paths {
+                let points = path.compactMap { pair -> CLLocationCoordinate2D? in
+                    guard pair.count >= 2 else { return nil }
+                    return CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0])
+                }
+                parts.append(contentsOf: makeParts(points))
+            }
+            guard !parts.isEmpty else { return nil }
+
+            let objectID = intValue(attributes["OBJECTID_1"]) ?? intValue(attributes["OBJECTID"]) ?? 0
+            let name = (attributes["STNM_LAB"] as? String)
+                ?? (attributes["STREET"] as? String)
+            return PhiladelphiaSpeedSegment(
+                objectID: objectID,
+                name: name,
+                speedMph: speed,
+                residentialLayer: residential,
+                speedWasExplicit: explicitSpeed != nil,
+                parts: parts
+            )
+        }
+    }
+
+    private static func isInsidePhiladelphiaCoverage(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        // Loose city envelope only controls whether the optional public GIS is queried;
+        // it is not used to infer a speed limit.
+        (39.85...40.15).contains(coordinate.latitude)
+            && (-75.30 ... -74.95).contains(coordinate.longitude)
+    }
+
+    private func traceGeometryMatch(
+        parts: [SegmentPart],
+        trace: [CLLocation],
+        location: CLLocation,
+        continuityBonus: Double = 0
+    ) -> TraceGeometryMatch? {
+        guard !parts.isEmpty, !trace.isEmpty else { return nil }
+        let fallbackCourse = trace.reversed().first(where: { $0.course >= 0 })?.course ?? 0
+        let currentCourse = location.course >= 0 ? location.course : fallbackCourse
+        var currentBest: (
+            distance: Double,
+            angle: Double,
+            forward: Bool,
+            start: CLLocationCoordinate2D,
+            end: CLLocationCoordinate2D
+        )?
+        for part in parts {
+            let distance = Self.distanceFrom(location.coordinate, toSegmentA: part.start, b: part.end)
+            let forwardAngle = Self.angularDifference(part.direction, currentCourse)
+            let reverseAngle = Self.angularDifference(fmod(part.direction + 180, 360), currentCourse)
+            let forward = forwardAngle <= reverseAngle
+            let angle = min(forwardAngle, reverseAngle)
+            if currentBest == nil
+                || distance + angle * 0.15 < currentBest!.distance + currentBest!.angle * 0.15 {
+                currentBest = (distance, angle, forward, part.start, part.end)
+            }
+        }
+        guard let currentBest, currentBest.distance <= 60, currentBest.angle <= 105 else { return nil }
+
+        var weightedScore = 0.0
+        var totalWeight = 0.0
+        var matchedPoints = 0
+        for (index, sample) in trace.enumerated() {
+            let weight = Double(index + 1)
+            let sampleCourse = sample.course >= 0 ? sample.course : currentCourse
+            var pointBest: Double?
+            for part in parts {
+                let distance = Self.distanceFrom(sample.coordinate, toSegmentA: part.start, b: part.end)
+                guard distance <= 85 else { continue }
+                let forwardAngle = Self.angularDifference(part.direction, sampleCourse)
+                let reverseAngle = Self.angularDifference(fmod(part.direction + 180, 360), sampleCourse)
+                let angle = min(forwardAngle, reverseAngle)
+                let candidate = min(4.0, distance / 18.0) + min(3.0, angle / 35.0)
+                pointBest = min(pointBest ?? candidate, candidate)
+            }
+            if let pointBest {
+                matchedPoints += 1
+                weightedScore += pointBest * weight
+            } else {
+                weightedScore += 7.0 * weight
+            }
+            totalWeight += weight
+        }
+        guard matchedPoints >= max(1, trace.count / 2) else { return nil }
+        return TraceGeometryMatch(
+            score: weightedScore / max(1.0, totalWeight) + continuityBonus,
+            currentDistance: currentBest.distance,
+            currentAngle: currentBest.angle,
+            matchedPoints: matchedPoints,
+            forward: currentBest.forward,
+            nearestStart: currentBest.start,
+            nearestEnd: currentBest.end
+        )
+    }
+
+    private func bestImprovedTraceSpeedLimit(at location: CLLocation) -> Int? {
+        improvedLastResolutionFresh = false
+        improvedLastResolutionWarningEligible = false
+        let trace = Array(traceLocations.suffix(8))
+        guard !trace.isEmpty else { return nil }
+
+        struct OSMScored {
+            let segment: ImprovedOSMSegment
+            let match: TraceGeometryMatch
+            let speedMph: Int?
+        }
+        var osmScored: [OSMScored] = []
+        for segment in improvedSegments {
+            let continuity: Double
+            if segment.elementID == improvedCurrentRoadID {
+                continuity = -1.05
+            } else if let pending = improvedPendingRoad, pending.id == segment.elementID {
+                continuity = -0.25
+            } else {
+                continuity = 0
+            }
+            guard let match = traceGeometryMatch(
+                parts: segment.parts,
+                trace: trace,
+                location: location,
+                continuityBonus: continuity
+            ) else { continue }
+            let kmh = Self.resolvedKmh(for: segment, travelingForward: match.forward, at: location.timestamp)
+            let mph = kmh.map { Int((Double($0) / 1.609344).rounded()) }
+            osmScored.append(OSMScored(segment: segment, match: match, speedMph: mph))
+        }
+        osmScored.sort { $0.match.score < $1.match.score }
+
+        let tracePoints = trace.map { sample in
+            String(
+                format: "%.6f,%.6f,c=%.0f,a=%.0f",
+                sample.coordinate.latitude,
+                sample.coordinate.longitude,
+                sample.course,
+                sample.horizontalAccuracy
+            )
+        }.joined(separator: ";")
+        logger.log("IMPROVED TRACE PATH", "points=[\(tracePoints)]")
+
+        var confirmedOSM: OSMScored?
+        if let best = osmScored.first {
+            let secondScore = osmScored.dropFirst().first?.match.score ?? (best.match.score + 3.0)
+            let margin = max(0, secondScore - best.match.score)
+            improvedLastConfidenceMargin = margin
+            let summary = osmScored.prefix(5).map { item in
+                let name = (item.segment.name ?? "-").replacingOccurrences(of: "|", with: "/")
+                let ref = (item.segment.reference ?? "-").replacingOccurrences(of: "|", with: "/")
+                return String(
+                    format: "way=%lld name=%@ ref=%@ highway=%@ limit=%@ score=%.2f dist=%.1fm angle=%.1f matched=%d/%d seg=%.6f,%.6f>%.6f,%.6f speedTags=%@/%@/%@",
+                    item.segment.elementID,
+                    name,
+                    ref,
+                    item.segment.highway,
+                    item.speedMph.map { "\($0)" } ?? "-",
+                    item.match.score,
+                    item.match.currentDistance,
+                    item.match.currentAngle,
+                    item.match.matchedPoints,
+                    trace.count,
+                    item.match.nearestStart.latitude,
+                    item.match.nearestStart.longitude,
+                    item.match.nearestEnd.latitude,
+                    item.match.nearestEnd.longitude,
+                    item.segment.baseKmh.map(String.init) ?? "-",
+                    item.segment.forwardKmh.map(String.init) ?? "-",
+                    item.segment.backwardKmh.map(String.init) ?? "-"
+                )
+            }.joined(separator: " | ")
+            logger.log(
+                "IMPROVED TRACE OSM MATCH",
+                "currentWay=\(improvedCurrentRoadID.map(String.init) ?? "none") pending=\(improvedPendingRoad.map { "\($0.id)#\($0.count)" } ?? "none") top=[\(summary)]"
+            )
+
+            if best.segment.elementID == improvedCurrentRoadID {
+                improvedPendingRoad = nil
+                confirmedOSM = best
+            } else if margin >= 0.45 || improvedCurrentRoadID == nil {
+                if let pending = improvedPendingRoad, pending.id == best.segment.elementID {
+                    let next = pending.count + 1
+                    improvedPendingRoad = (best.segment.elementID, next)
+                    if next >= 2 {
+                        improvedCurrentRoadID = best.segment.elementID
+                        improvedPendingRoad = nil
+                        confirmedOSM = best
+                    }
+                } else {
+                    improvedPendingRoad = (best.segment.elementID, 1)
+                }
+            }
+        } else {
+            improvedLastConfidenceMargin = 0
+            logger.log("IMPROVED TRACE OSM MATCH", "no drivable OSM road candidate")
+        }
+
+        struct GISScored {
+            let segment: PhiladelphiaSpeedSegment
+            let match: TraceGeometryMatch
+        }
+        var gisScored: [GISScored] = []
+        for segment in philadelphiaSpeedSegments {
+            // Prefer explicit posted-speed segments when geometry is otherwise tied;
+            // residential layer still provides a valuable 25-mph neighborhood fill.
+            let layerPenalty = segment.residentialLayer ? 0.10 : 0.0
+            if let match = traceGeometryMatch(
+                parts: segment.parts,
+                trace: trace,
+                location: location,
+                continuityBonus: layerPenalty
+            ) {
+                gisScored.append(GISScored(segment: segment, match: match))
+            }
+        }
+        gisScored.sort { $0.match.score < $1.match.score }
+
+        let gisBest = gisScored.first
+        if let gisBest {
+            logger.log(
+                "PHILLY GIS MATCH",
+                String(
+                    format: "id=%d name=%@ limit=%d layer=%@ score=%.2f dist=%.1fm angle=%.1f matched=%d/%d seg=%.6f,%.6f>%.6f,%.6f",
+                    gisBest.segment.objectID,
+                    gisBest.segment.name ?? "-",
+                    gisBest.segment.speedMph,
+                    gisBest.segment.residentialLayer
+                        ? (gisBest.segment.speedWasExplicit ? "residential-explicit" : "residential-inferred")
+                        : "posted",
+                    gisBest.match.score,
+                    gisBest.match.currentDistance,
+                    gisBest.match.currentAngle,
+                    gisBest.match.matchedPoints,
+                    trace.count,
+                    gisBest.match.nearestStart.latitude,
+                    gisBest.match.nearestStart.longitude,
+                    gisBest.match.nearestEnd.latitude,
+                    gisBest.match.nearestEnd.longitude
+                )
+            )
+        } else if Self.isInsidePhiladelphiaCoverage(location.coordinate) {
+            logger.log("PHILLY GIS MATCH", "no nearby City speed/residential segment matched current trace")
+        }
+
+        // Protect a confidently matched, explicitly tagged limited-access motorway.
+        // This prevents a nearby surface-street City centerline from overriding a
+        // true Roosevelt Expressway trip. The field-test false-50 case was tagged
+        // OSM `trunk`, not `motorway`, so the Philadelphia 40-mph correction remains
+        // able to win there.
+        if let confirmedOSM,
+           let mph = confirmedOSM.speedMph,
+           ["motorway", "motorway_link"].contains(confirmedOSM.segment.highway),
+           confirmedOSM.match.currentDistance <= 20,
+           confirmedOSM.match.currentAngle <= 45,
+           confirmedOSM.match.score <= 2.0 {
+            return acceptImprovedLimit(
+                mph,
+                key: "osm:\(confirmedOSM.segment.elementID)",
+                source: "OSM explicit motorway"
+            )
+        }
+
+        // A close City segment is authoritative in Philadelphia. The 28 m cap is
+        // deliberate: it corrects surface-street/expressway parallel geometry while
+        // avoiding a distant Boulevard centerline stealing a true expressway trip.
+        if let gisBest,
+           gisBest.match.currentDistance <= 28,
+           gisBest.match.currentAngle <= 60,
+           gisBest.match.score <= 2.2 {
+            let inferredResidential = gisBest.segment.residentialLayer && !gisBest.segment.speedWasExplicit
+            return acceptImprovedLimit(
+                gisBest.segment.speedMph,
+                key: "philly:\(gisBest.segment.objectID):\(gisBest.segment.residentialLayer ? 1 : 0):\(gisBest.segment.speedWasExplicit ? 1 : 0)",
+                source: inferredResidential
+                    ? "Philadelphia residential GIS inferred"
+                    : (gisBest.segment.residentialLayer ? "Philadelphia residential GIS" : "Philadelphia posted-speed GIS"),
+                warningEligible: !inferredResidential
+            )
+        }
+
+        if let confirmedOSM, let mph = confirmedOSM.speedMph {
+            return acceptImprovedLimit(
+                mph,
+                key: "osm:\(confirmedOSM.segment.elementID)",
+                source: "OSM explicit"
+            )
+        }
+
+        improvedResolutionSource = confirmedOSM == nil ? "waiting for road confirmation" : "matched road has no explicit speed"
+        logger.log(
+            "IMPROVED TRACE DECISION",
+            "no fresh speed source; \(improvedResolutionSource); stale display will clear after \(Int(improvedDisplayGraceSeconds))s"
+        )
+        return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil
+    }
+
+    private func acceptImprovedLimit(
+        _ mph: Int,
+        key: String,
+        source: String,
+        warningEligible: Bool = true
+    ) -> Int? {
+        guard mph > 0 else { return nil }
+        if currentSpeedLimitMph == mph,
+           improvedResolutionSource == source {
+            improvedPendingLimit = nil
+            improvedLastResolutionFresh = true
+            improvedLastResolutionWarningEligible = warningEligible
+            improvedResolutionSource = source
+            logger.log("IMPROVED TRACE DECISION", "retain \(mph) mph source=\(source)")
+            return mph
+        }
+
+        if let pending = improvedPendingLimit,
+           pending.key == key,
+           pending.mph == mph,
+           pending.source == source {
+            let next = pending.count + 1
+            improvedPendingLimit = (key, mph, next, source)
+            logger.log("IMPROVED TRACE DECISION", "confirm \(mph) mph source=\(source) confirmation=\(next)/2")
+            if next >= 2 {
+                improvedPendingLimit = nil
+                improvedLastResolutionFresh = true
+                improvedLastResolutionWarningEligible = warningEligible
+                improvedResolutionSource = source
+                logger.log("SPEED LIMIT", "Improved Trace accepted \(mph) mph source=\(source)")
+                return mph
+            }
+        } else {
+            improvedPendingLimit = (key, mph, 1, source)
+            logger.log("IMPROVED TRACE DECISION", "new pending \(mph) mph source=\(source) confirmation=1/2")
+        }
+        improvedResolutionSource = "pending \(source)"
+        return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil
+    }
+
+    private static func resolvedKmh(
+        for segment: ImprovedOSMSegment,
+        travelingForward: Bool,
+        at date: Date
+    ) -> Int? {
+        let directionalConditional = travelingForward
+            ? segment.forwardConditional
+            : segment.backwardConditional
+        if let raw = directionalConditional,
+           let conditional = parseSimpleConditionalMaxSpeed(raw, at: date) {
+            return conditional
+        }
+        if let raw = segment.baseConditional,
+           let conditional = parseSimpleConditionalMaxSpeed(raw, at: date) {
+            return conditional
+        }
+        if travelingForward {
+            return segment.forwardKmh ?? segment.baseKmh ?? segment.backwardKmh
+        }
+        return segment.backwardKmh ?? segment.baseKmh ?? segment.forwardKmh
     }
 
     private static func resolvedKmh(

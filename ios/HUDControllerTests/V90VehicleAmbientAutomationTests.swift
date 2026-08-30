@@ -20,8 +20,9 @@ final class V90VehicleAmbientAutomationTests: XCTestCase {
     func testDoorDayNightIsIndependentFromAnimation() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("steadyBrightnessTarget(for device"))
-        XCTAssertTrue(monitor.contains("two-light consensus ON → night Door brightness"))
-        XCTAssertTrue(monitor.contains("two-light consensus OFF → day Door brightness"))
+        XCTAssertTrue(monitor.contains("Center present → night Door brightness"))
+        XCTAssertTrue(monitor.contains("Center absent → day Door brightness"))
+        XCTAssertTrue(monitor.contains("automaticDoorDayNightTransitionSeconds: TimeInterval = 1.0"))
         XCTAssertTrue(monitor.contains("activeBreathReturnBrightness[doorID] = target"))
     }
 

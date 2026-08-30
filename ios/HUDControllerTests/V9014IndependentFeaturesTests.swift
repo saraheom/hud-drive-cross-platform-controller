@@ -27,7 +27,7 @@ final class V9014IndependentFeaturesTests: XCTestCase {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         XCTAssertTrue(spotify.contains("guard automaticVehicleWakeAllowed else"))
         XCTAssertTrue(app.contains("bluetooth.state == .connected || obd.connected"))
-        XCTAssertTrue(speed.contains("case enhancedOSM = \"Enhanced OSM\""))
         XCTAssertTrue(speed.contains("case traceOSM = \"OSM Trace\""))
+        XCTAssertTrue(speed.contains("case improvedTracePhilly = \"Improved + Philly GIS\""))
     }
 }

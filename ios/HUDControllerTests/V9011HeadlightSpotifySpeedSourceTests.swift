@@ -9,13 +9,14 @@ final class V9011HeadlightSpotifySpeedSourceTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testHUDAndDoorUseStableTwoLightConsensus() throws {
+    func testHUDAndDoorUseFastCenterSignalWhileTwoLightCrosscheckRemainsDiagnostic() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("private enum HeadlightConsensusObservation"))
-        XCTAssertTrue(monitor.contains("both Center + Dashboard stable ON"))
-        XCTAssertTrue(monitor.contains("both Center + Dashboard stable OFF"))
-        XCTAssertTrue(monitor.contains("Headlight consensus → Auto brightness ON"))
-        XCTAssertTrue(monitor.contains("Headlight consensus → Auto brightness OFF"))
+        XCTAssertTrue(monitor.contains("Dashboard+Center diagnostic consensus"))
+        XCTAssertTrue(monitor.contains("Center presence → Auto brightness ON"))
+        XCTAssertTrue(monitor.contains("Center absence → Auto brightness OFF"))
+        XCTAssertTrue(monitor.contains("Center present → night Door brightness"))
+        XCTAssertTrue(monitor.contains("Center absent → day Door brightness"))
         XCTAssertFalse(monitor.contains("setAuthoritativeHeadlightPower"))
     }
 
@@ -35,8 +36,9 @@ final class V9011HeadlightSpotifySpeedSourceTests: XCTestCase {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         let view = try source("HUDController/UI/VehicleView.swift")
         XCTAssertTrue(speed.contains("case current = \"Current\""))
-        XCTAssertTrue(speed.contains("case enhancedOSM = \"Enhanced OSM\""))
         XCTAssertTrue(speed.contains("case traceOSM = \"OSM Trace\""))
+        XCTAssertTrue(speed.contains("case improvedTracePhilly = \"Improved + Philly GIS\""))
+        XCTAssertFalse(speed.contains("case enhancedOSM = \"Enhanced OSM\""))
         XCTAssertFalse(speed.contains("case here = \"HERE\""))
         XCTAssertTrue(view.contains("SpeedLimitSourceMode.allCases"))
         XCTAssertFalse(view.contains("Save HERE Key"))

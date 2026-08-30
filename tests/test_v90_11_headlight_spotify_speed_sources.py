@@ -8,13 +8,13 @@ VEHICLE = (ROOT / "ios/HUDController/UI/VehicleView.swift").read_text()
 MEDIA = (ROOT / "ios/HUDController/UI/MediaView.swift").read_text()
 
 
-def test_headlight_state_uses_two_light_consensus_instead_of_center_authority():
+def test_center_presence_is_fast_day_night_owner_and_two_light_consensus_is_diagnostic():
     assert "private enum HeadlightConsensusObservation" in MONITOR
-    assert "both Center + Dashboard stable ON" in MONITOR
-    assert "both Center + Dashboard stable OFF" in MONITOR
+    assert "Dashboard+Center diagnostic consensus" in MONITOR
+    assert "Center/BLEDOM remains authoritative for fast day/night" in MONITOR
+    assert "Center presence → Auto brightness ON" in MONITOR
+    assert "Center absence → Auto brightness OFF" in MONITOR
     assert "setAuthoritativeHeadlightPower" not in MONITOR
-    assert "Headlight consensus → Auto brightness ON" in MONITOR
-    assert "Headlight consensus → Auto brightness OFF" in MONITOR
 
 
 def test_headlight_consensus_is_day_night_only_and_power_on_breath_is_per_light():
@@ -40,15 +40,16 @@ def test_spotify_automatically_wakes_after_repeated_failures_without_clearing_to
     assert "you should not need to keep Spotify open" in MEDIA
 
 
-def test_speed_limit_source_selector_has_current_enhanced_and_trace_osm_only():
+def test_speed_limit_source_selector_has_current_trace_and_improved_philly_only():
     assert 'case current = "Current"' in SPEED
-    assert 'case enhancedOSM = "Enhanced OSM"' in SPEED
     assert 'case traceOSM = "OSM Trace"' in SPEED
+    assert 'case improvedTracePhilly = "Improved + Philly GIS"' in SPEED
+    assert 'case enhancedOSM = "Enhanced OSM"' not in SPEED
     assert 'case here = "HERE"' not in SPEED
     assert "SpeedLimitSourceMode.allCases" in VEHICLE
     assert "Picker(\"Speed-limit source\"" in VEHICLE
     assert "Current keeps the decompiled HUDWAY matcher unchanged" in VEHICLE
-    assert "commercial API" in VEHICLE
+    assert "Philadelphia" in VEHICLE
 
 
 def test_enhanced_osm_is_separate_from_original_matcher():

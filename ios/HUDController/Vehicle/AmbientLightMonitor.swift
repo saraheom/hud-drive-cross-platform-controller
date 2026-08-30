@@ -76,7 +76,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 evaluateVehicleLightingAutomation()
             } else {
                 vehicleAutomationStatus = "Door day/night automation disabled"
-                logger.log("AMBIENT AUTO", "Door day/night automation disabled; headlight consensus and per-light power-on animation remain active")
+                logger.log("AMBIENT AUTO", "Door day/night automation disabled; Center-driven HUD brightness and per-light power-on animation remain active")
             }
         }
     }
@@ -96,11 +96,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         didSet { UserDefaults.standard.set(max(0.5, min(8.0, engineOffConfirmationSeconds)), forKey: "HUD.Ambient.v90.engineOffConfirmation") }
     }
 
-    /// v90.8 shared transition profile. Every manual brightness change and every
-    /// automatic Door day/night change uses this same smooth interpolation duration.
+    /// v90.8 shared manual/group transition profile. v90.18 intentionally keeps
+    /// automatic Door day/night response on a separate, faster 1.0-second fade so
+    /// it follows the Center/BLEDOM power edge promptly without becoming abrupt.
     var brightnessTransitionSeconds: Double {
         didSet { UserDefaults.standard.set(max(1.0, min(15.0, brightnessTransitionSeconds)), forKey: "HUD.Ambient.v90_8.transitionDuration") }
     }
+
+    private let automaticDoorDayNightTransitionSeconds: TimeInterval = 1.0
 
     /// One global power-up animation profile keeps multiple lights on a common timebase.
     var breathCycles: Int {
@@ -110,12 +113,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         didSet { UserDefaults.standard.set(max(1.0, min(15.0, breathDurationSeconds)), forKey: "HUD.Ambient.v90_8.breathDuration") }
     }
 
-    /// v90.17: synchronization is optional. OFF is the robust default: every
-    /// controller owns a complete power-on Breath. ON groups controllers that
-    /// finish boot/GATT preparation within the short shared-start window; a late
-    /// controller still runs its own complete Breath instead of joining halfway.
+    /// v90.18: synchronization is optional. OFF remains the robust default. ON
+    /// forms a power-on cohort from controllers that physically/GATT-appear near
+    /// each other, then waits for their individual boot preparation before issuing
+    /// one common Breath T0. Late/unready members still get a complete independent
+    /// Breath rather than joining a running waveform.
     var synchronizePowerOnBreathEnabled: Bool {
-        didSet { UserDefaults.standard.set(synchronizePowerOnBreathEnabled, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath") }
+        didSet {
+            UserDefaults.standard.set(synchronizePowerOnBreathEnabled, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")
+            if !synchronizePowerOnBreathEnabled {
+                releasePendingSyncCohortToIndependentBreaths(reason: "sync disabled")
+            }
+        }
     }
 
     // MARK: - Finite ambient overspeed warning
@@ -174,7 +183,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private(set) var overspeedWarningStatus = "Armed — waiting for a valid speed limit"
 
-    private(set) var vehicleAutomationStatus = "Door day/night idle — waiting for Dashboard + Center consensus"
+    private(set) var vehicleAutomationStatus = "Door day/night idle — following Center/BLEDOM power"
     private(set) var enginePowerPresent = false
     private(set) var enginePowerStatus = "Engine power unknown — waiting for HUD / OBD"
     private(set) var vehicleHeadlightsActive = false
@@ -212,9 +221,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private let bluetooth: HudBluetoothManager
     private let logger: LogManager
 
-    /// Legacy tracked Center peripheral used for persistent CoreBluetooth
-    /// presence/reconnection and UI status. It contributes one half of the
-    /// Dashboard+Center day/night signal but never owns HUD brightness alone.
+    /// Tracked Center/BLEDOM peripheral used for persistent CoreBluetooth
+    /// presence/reconnection and the fast day/night signal. v90.18 deliberately
+    /// restores the field-proven behavior: Center presence alone drives HUD Auto
+    /// Brightness and Door day/night target; Dashboard remains a diagnostic cross-check.
     private var trackedPeripheral: CBPeripheral?
     private var lastSeen = Date.distantPast
     private var watchdogTask: Task<Void, Never>?
@@ -271,13 +281,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var animatedConnectionSession: Set<UUID> = []
     private var sessionResetTasks: [UUID: Task<Void, Never>] = [:]
 
-    /// With optional synchronization enabled, prepared lights that become ready
-    /// inside the grouping window share one breath timeline. A late GATT-ready
-    /// device never joins halfway through; it starts a complete independent Breath.
+    /// v90.18 optional synchronization is based on the physical/GATT power-on
+    /// cohort, not on whichever controller finishes preparation first. This is
+    /// important because Center is immediately writable while BLEDIM intentionally
+    /// waits for its 1.5 s boot settle.
     private var synchronizedBreathTask: Task<Void, Never>?
     private var pendingBreathStartTask: Task<Void, Never>?
-    private var synchronizedBreathIDs: Set<UUID> = []
-    private let powerOnSyncWindowSeconds: TimeInterval = 2.5
+    private var synchronizedBreathIDs: Set<UUID> = []       // prepared/ready members
+    private var syncCohortExpectedIDs: Set<UUID> = []       // appeared during cohort window
+    private var syncLateCohortIDs: Set<UUID> = []           // missed common T0; run independently
+    private var syncCohortOpenedAt: Date?
+    private let powerOnSyncWindowSeconds: TimeInterval = 3.0
+    private let powerOnSyncPreparationGraceSeconds: TimeInterval = 1.5
     private var activeBreathIDs: Set<UUID> = []
     private var activeBreathStartBrightness: [UUID: Int] = [:]
     /// Final steady-state target for the last leg of the breath. Normally this is
@@ -313,16 +328,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// behavior. The snapshots are intentionally emitted only on meaningful
     /// state-machine edges, never on the 20-Hz animation clock.
     private var ambientTraceSequence = 0
-    /// Dashboard + Center Console form the independent day/night signal.
-    /// This state affects Door steady brightness and HUD auto-brightness only;
-    /// it never gates or triggers a light's power-on Breath.
+    /// Center/BLEDOM presence is the fast day/night signal, matching the older
+    /// HUD-auto-brightness behavior that was field-proven before Door automation.
+    /// Dashboard+Center consensus remains diagnostic only. This state affects Door
+    /// steady brightness and HUD auto-brightness; it never gates a power-on Breath.
     private var headlightPowerSessionActive = false
     private var headlightStateGeneration = 0
 
-    /// v90.14: Center + Dashboard are a two-sensor physical-power consensus.
-    /// Mixed evidence is intentionally "unknown" and never flips the confirmed
-    /// vehicle headlight state. Both ON or both OFF must remain stable before
-    /// committing an edge.
+    /// Dashboard + Center remain a two-sensor diagnostic cross-check. Their stable
+    /// consensus is logged for the flight recorder but no longer delays the actual
+    /// day/night edge, which follows Center immediately.
     private var headlightConsensusTask: Task<Void, Never>?
     private var headlightConsensusCandidate: HeadlightConsensusObservation?
     private let headlightConsensusStabilitySeconds: TimeInterval = 0.75
@@ -502,7 +517,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.17.1 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,fade=\(String(format: "%.1f", brightnessTransitionSeconds))s,headlightStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s}"
+            "Flight recorder v90.18 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -1665,12 +1680,26 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    /// Terminal commit for every successful Breath. Brightness alone is not
-    /// sufficient on a BLEDIM controller that may have internally fallen back to
-    /// OFF during a disrupted power-up. Finish with one semantic Power ON → RGB
-    /// → steady brightness sequence; this is a single commit, not a recovery loop.
+    /// v90.18 terminal commit. BLEDIM Power ON visibly flashes at its internally
+    /// remembered brightness, so a routine successful Breath must not send another
+    /// Power ON. Commit only the final brightness for BLEDIM; if that write fails,
+    /// the existing one-shot fail-safe is still allowed to use the stronger semantic
+    /// Power ON → RGB → brightness restore. Lotus keeps its established terminal
+    /// commit because it does not exhibit the BLEDIM flash.
     private func finalizeBreathSteadyState(_ id: UUID, target: Int) async -> Bool {
         guard let device = pairedDevice(id), device.powerOn, isControllable(id) else { return false }
+        if device.protocolKind == .bledim2 {
+            let brightnessSent = await applyRuntimeBrightnessWhenReady(
+                id, percent: target, reason: "power-up breath final (BLEDIM no-flash)", persist: true
+            )
+            logger.log(
+                "AMBIENT ANIM",
+                "Breath terminal no-flash commit \(device.displayName) brightness=\(brightnessSent ? 1 : 0) target=\(target)%"
+            )
+            ambientTrace("Breath terminal no-flash commit \(device.displayName) target=\(target)%")
+            return brightnessSent
+        }
+
         let powerSent = await sendPowerWhenReady(id, on: true, reason: "power-up breath terminal Power ON")
         guard powerSent, !Task.isCancelled else { return false }
         let colorSent = await sendColorWhenReady(id, color: device.color, reason: "power-up breath terminal RGB")
@@ -1693,9 +1722,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
-        // v90.17: animation is strictly per physical/controller return. Engine,
-        // courtesy, and headlight state never gate a light's own power-on Breath.
-        // BLEDIM gets one boot-settle delay; Lotus can begin immediately.
+        // Animation is strictly per physical/controller return. Engine, courtesy,
+        // and day/night state never gate a light's own power-on Breath. When Sync
+        // is enabled, register the power-on event BEFORE protocol-specific boot
+        // preparation so BLEDIM's intentional settle delay cannot miss the cohort.
+        if synchronizePowerOnBreathEnabled {
+            registerPowerOnCohortMember(id)
+        }
         if device.protocolKind == .bledim2 {
             scheduleBLEDIMBootSettleReassert(for: id, reason: "new GATT control ready")
         } else {
@@ -1749,36 +1782,59 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
             // Critical preparation is serialized and retried instead of being
             // dropped under CoreBluetooth write-without-response backpressure.
-            guard await self.sendPowerWhenReady(id, on: true, reason: "power-up breath prepare") else {
-                self.logger.log("AMBIENT ANIM", "Breath prepare failed at Power ON: \(device.displayName)")
-                self.ambientTrace("Breath prepare failed power \(device.displayName)")
-                self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare Power ON failed")
-                return
-            }
-            guard !Task.isCancelled else {
-                self.logger.log("AMBIENT ANIM", "Breath prepare cancelled after Power ON: \(device.displayName)")
-                return
-            }
-            guard await self.sendColorWhenReady(id, color: device.color, reason: "power-up breath prepare") else {
-                self.logger.log("AMBIENT ANIM", "Breath prepare failed at RGB: \(device.displayName)")
-                self.ambientTrace("Breath prepare failed RGB \(device.displayName)")
-                self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare RGB failed")
-                return
-            }
-            guard !Task.isCancelled else {
-                self.logger.log("AMBIENT ANIM", "Breath prepare cancelled after RGB: \(device.displayName)")
-                return
-            }
-            guard await self.applyRuntimeBrightnessWhenReady(
-                id,
-                percent: initialBrightness,
-                reason: "power-up breath baseline",
-                persist: false
-            ) else {
-                self.logger.log("AMBIENT ANIM", "Breath prepare failed at baseline brightness: \(device.displayName) target=\(initialBrightness)%")
-                self.ambientTrace("Breath prepare failed baseline \(device.displayName)")
-                self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare baseline failed")
-                return
+            // BLEDIM-specific ordering preloads RGB + baseline BEFORE Power ON so
+            // the controller does not visibly jump to its remembered/full level.
+            // The immediate post-Power baseline reassert covers firmware that ignores
+            // brightness while logically off. Lotus retains the proven old ordering.
+            if device.protocolKind == .bledim2 {
+                guard await self.sendColorWhenReady(id, color: device.color, reason: "power-up breath preload RGB") else {
+                    self.logger.log("AMBIENT ANIM", "Breath prepare failed at BLEDIM preload RGB: \(device.displayName)")
+                    self.scheduleAnimationAbortFailsafe(for: id, reason: "BLEDIM Breath preload RGB failed")
+                    return
+                }
+                guard await self.applyRuntimeBrightnessWhenReady(
+                    id, percent: initialBrightness, reason: "power-up breath preload baseline", persist: false
+                ) else {
+                    self.logger.log("AMBIENT ANIM", "Breath prepare failed at BLEDIM preload brightness: \(device.displayName)")
+                    self.scheduleAnimationAbortFailsafe(for: id, reason: "BLEDIM Breath preload brightness failed")
+                    return
+                }
+                guard await self.sendPowerWhenReady(id, on: true, reason: "power-up breath prepare no-flash Power ON") else {
+                    self.logger.log("AMBIENT ANIM", "Breath prepare failed at Power ON: \(device.displayName)")
+                    self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare Power ON failed")
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                guard await self.applyRuntimeBrightnessWhenReady(
+                    id, percent: initialBrightness, reason: "power-up breath post-Power baseline", persist: false
+                ) else {
+                    self.logger.log("AMBIENT ANIM", "Breath prepare failed at BLEDIM post-Power baseline: \(device.displayName)")
+                    self.scheduleAnimationAbortFailsafe(for: id, reason: "BLEDIM Breath post-Power baseline failed")
+                    return
+                }
+            } else {
+                guard await self.sendPowerWhenReady(id, on: true, reason: "power-up breath prepare") else {
+                    self.logger.log("AMBIENT ANIM", "Breath prepare failed at Power ON: \(device.displayName)")
+                    self.ambientTrace("Breath prepare failed power \(device.displayName)")
+                    self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare Power ON failed")
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                guard await self.sendColorWhenReady(id, color: device.color, reason: "power-up breath prepare") else {
+                    self.logger.log("AMBIENT ANIM", "Breath prepare failed at RGB: \(device.displayName)")
+                    self.ambientTrace("Breath prepare failed RGB \(device.displayName)")
+                    self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare RGB failed")
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                guard await self.applyRuntimeBrightnessWhenReady(
+                    id, percent: initialBrightness, reason: "power-up breath baseline", persist: false
+                ) else {
+                    self.logger.log("AMBIENT ANIM", "Breath prepare failed at baseline brightness: \(device.displayName) target=\(initialBrightness)%")
+                    self.ambientTrace("Breath prepare failed baseline \(device.displayName)")
+                    self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare baseline failed")
+                    return
+                }
             }
             guard !Task.isCancelled, self.isControllable(id) else {
                 self.logger.log("AMBIENT ANIM", "Breath prepare lost ownership/GATT after baseline: \(device.displayName)")
@@ -1813,27 +1869,99 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 return
             }
 
-            // Optional synchronization is opportunistic, never a dependency.
-            // Devices prepared inside the optional grouping window share one timeline. A
-            // controller that arrives after that session has started gets its own
-            // complete Breath rather than joining halfway through.
-            if self.synchronizedBreathTask != nil {
-                self.logger.log("AMBIENT ANIM", "Sync window already closed; starting complete independent Breath for \(device.displayName)")
+            if self.syncLateCohortIDs.remove(id) != nil || self.synchronizedBreathTask != nil {
+                self.logger.log("AMBIENT ANIM", "Power-on cohort already started; running complete independent Breath for \(device.displayName)")
                 self.startIndividualBreathSession(id)
                 return
             }
 
-            self.synchronizedBreathIDs.insert(id)
-            if self.pendingBreathStartTask == nil {
-                self.logger.log("AMBIENT ANIM", "Optional sync window armed for \(String(format: "%.1f", self.powerOnSyncWindowSeconds))s")
-                self.pendingBreathStartTask = Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    try? await Task.sleep(for: .seconds(self.powerOnSyncWindowSeconds))
-                    guard !Task.isCancelled else { return }
-                    self.pendingBreathStartTask = nil
-                    self.startSynchronizedBreathSession()
-                }
+            if !self.syncCohortExpectedIDs.contains(id) {
+                self.registerPowerOnCohortMember(id)
             }
+            self.synchronizedBreathIDs.insert(id)
+            self.logger.log(
+                "AMBIENT ANIM",
+                "Power-on cohort member prepared: \(device.displayName) ready=\(self.synchronizedBreathIDs.count)/\(self.syncCohortExpectedIDs.count)"
+            )
+        }
+    }
+
+    private func registerPowerOnCohortMember(_ id: UUID) {
+        guard synchronizePowerOnBreathEnabled else { return }
+        if synchronizedBreathTask != nil {
+            syncLateCohortIDs.insert(id)
+            logger.log("AMBIENT ANIM", "Power-on cohort already running; marked late member \(pairedDevice(id)?.displayName ?? id.uuidString)")
+            return
+        }
+
+        let now = Date()
+        if let opened = syncCohortOpenedAt {
+            if now.timeIntervalSince(opened) <= powerOnSyncWindowSeconds {
+                syncCohortExpectedIDs.insert(id)
+                logger.log(
+                    "AMBIENT ANIM",
+                    "Power-on cohort joined: \(pairedDevice(id)?.displayName ?? id.uuidString) expected=\(syncCohortExpectedIDs.count)"
+                )
+            } else {
+                syncLateCohortIDs.insert(id)
+                logger.log("AMBIENT ANIM", "Power-on event arrived after cohort discovery window; marked late \(pairedDevice(id)?.displayName ?? id.uuidString)")
+            }
+            return
+        }
+
+        syncCohortOpenedAt = now
+        syncCohortExpectedIDs = [id]
+        synchronizedBreathIDs.removeAll()
+        pendingBreathStartTask?.cancel()
+        logger.log(
+            "AMBIENT ANIM",
+            "Power-on cohort opened discovery=\(String(format: "%.1f", powerOnSyncWindowSeconds))s preparationGrace=\(String(format: "%.1f", powerOnSyncPreparationGraceSeconds))s first=\(pairedDevice(id)?.displayName ?? id.uuidString)"
+        )
+        ambientTrace("Power-on sync cohort opened first=\(pairedDevice(id)?.displayName ?? id.uuidString)")
+
+        pendingBreathStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.powerOnSyncWindowSeconds))
+            guard !Task.isCancelled else { return }
+
+            let graceDeadline = Date().addingTimeInterval(self.powerOnSyncPreparationGraceSeconds)
+            while Date() < graceDeadline {
+                guard !Task.isCancelled else { return }
+                if self.syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs) { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard !Task.isCancelled else { return }
+
+            let expected = self.syncCohortExpectedIDs
+            let ready = expected.intersection(self.synchronizedBreathIDs)
+            let late = expected.subtracting(ready)
+            self.syncLateCohortIDs.formUnion(late)
+            self.synchronizedBreathIDs = ready
+            self.syncCohortExpectedIDs.removeAll()
+            self.syncCohortOpenedAt = nil
+            self.pendingBreathStartTask = nil
+
+            self.logger.log(
+                "AMBIENT ANIM",
+                "Power-on cohort common T0 ready=\(ready.count) late=\(late.count)"
+            )
+            self.ambientTrace("Power-on sync cohort T0 ready=\(ready.count) late=\(late.count)")
+            self.startSynchronizedBreathSession()
+        }
+    }
+
+    private func releasePendingSyncCohortToIndependentBreaths(reason: String) {
+        pendingBreathStartTask?.cancel()
+        pendingBreathStartTask = nil
+        let ready = Array(synchronizedBreathIDs)
+        syncLateCohortIDs.formUnion(syncCohortExpectedIDs.subtracting(synchronizedBreathIDs))
+        syncCohortExpectedIDs.removeAll()
+        synchronizedBreathIDs.removeAll()
+        syncCohortOpenedAt = nil
+        guard synchronizedBreathTask == nil else { return }
+        for id in ready where activeBreathIDs.contains(id) {
+            logger.log("AMBIENT ANIM", "Pending sync cohort released to independent Breath: \(pairedDevice(id)?.displayName ?? id.uuidString) reason=\(reason)")
+            startIndividualBreathSession(id)
         }
     }
 
@@ -2081,6 +2209,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         animationTasks[id] = nil
         activeBreathIDs.remove(id)
         synchronizedBreathIDs.remove(id)
+        syncCohortExpectedIDs.remove(id)
+        syncLateCohortIDs.remove(id)
         activeBreathStartBrightness[id] = nil
         activeBreathReturnBrightness[id] = nil
         if wasActive {
@@ -2091,12 +2221,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ambientTrace("Breath participant cancelled \(pairedDevice(id)?.displayName ?? id.uuidString)")
             scheduleAnimationAbortFailsafe(for: id, reason: "Breath participation cancelled")
         }
-        if synchronizedBreathIDs.isEmpty {
+        // A controller may disappear while a sync cohort is still waiting for its
+        // other expected members to finish boot preparation. Do not collapse that
+        // entire cohort merely because the prepared set is temporarily empty.
+        if synchronizedBreathIDs.isEmpty && syncCohortExpectedIDs.isEmpty {
             pendingBreathStartTask?.cancel()
             pendingBreathStartTask = nil
             synchronizedBreathTask?.cancel()
             synchronizedBreathTask = nil
             activeBreathStartedAt = nil
+            syncCohortOpenedAt = nil
         }
     }
 
@@ -2109,7 +2243,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         logger.log("AMBIENT ANIM", "Power-on animation re-armed immediately after disconnect for \(pairedDevice(id)?.displayName ?? id.uuidString)")
     }
 
-    // MARK: - Independent day/night consensus
+    // MARK: - Fast Center-driven day/night + diagnostic two-light cross-check
 
     private func deviceID(for role: AmbientLightRole) -> UUID? {
         pairedDevices.first(where: { $0.role == role })?.id
@@ -2216,18 +2350,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 return
             }
 
-            self.ambientTrace("Headlight consensus stable observation=\(observation.rawValue) reason=\(reason)")
-            switch observation {
-            case .bothOn:
-                guard !self.headlightPowerSessionActive else { return }
-                self.commitConfirmedHeadlightPower(true, reason: "both Center + Dashboard stable ON; \(reason)")
-            case .bothOff:
-                guard self.headlightPowerSessionActive else { return }
-                self.commitConfirmedHeadlightPower(false, reason: "both Center + Dashboard stable OFF; \(reason)")
-            case .mixed:
-                // Handled above, but keep this branch exhaustive.
-                return
-            }
+            self.ambientTrace("Dashboard+Center diagnostic consensus stable observation=\(observation.rawValue) reason=\(reason)")
+            self.logger.log(
+                "AMBIENT POWER",
+                "Dashboard+Center diagnostic consensus=\(observation.rawValue); Center/BLEDOM remains authoritative for fast day/night"
+            )
         }
     }
 
@@ -2235,21 +2362,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         guard headlightPowerSessionActive != on else { return }
         headlightPowerSessionActive = on
         headlightStateGeneration &+= 1
-        headlightConsensusCandidate = on ? .bothOn : .bothOff
         vehicleHeadlightsActive = on
 
         logger.log(
             "AMBIENT POWER",
-            "Two-light day/night consensus → \(on ? "NIGHT/ON" : "DAY/OFF") generation=\(headlightStateGeneration) (\(reason)); animation remains per-light power-on"
+            "Fast Center day/night → \(on ? "NIGHT/ON" : "DAY/OFF") generation=\(headlightStateGeneration) (\(reason)); Dashboard consensus is diagnostic only"
         )
-        ambientTrace("Confirmed day/night \(on ? "night" : "day") reason=\(reason)")
+        ambientTrace("Center-driven day/night \(on ? "night" : "day") reason=\(reason)")
 
         if hudBrightnessTriggerEnabled, bluetooth.state == .connected {
             bluetooth.enqueue(
                 HudCommands.autoBrightness(on),
                 label: on
-                    ? "Headlight consensus → Auto brightness ON"
-                    : "Headlight consensus → Auto brightness OFF"
+                    ? "Center presence → Auto brightness ON"
+                    : "Center absence → Auto brightness OFF"
             )
             lastHUDReassertAt = Date()
         }
@@ -2257,15 +2383,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         if vehicleAutomationEnabled {
             applyCurrentDoorDayNightTarget(
                 reason: on
-                    ? "two-light consensus ON → night Door brightness"
-                    : "two-light consensus OFF → day Door brightness"
+                    ? "Center present → night Door brightness"
+                    : "Center absent → day Door brightness"
             )
         }
     }
 
-    /// Record positive physical-power evidence for either headlight-fed controller.
-    /// Positive evidence alone never flips the headlight state; the stable two-light
-    /// consensus does.
+    /// Record headlight-fed controller evidence for the diagnostic Dashboard+Center
+    /// cross-check. Center/BLEDOM presence itself owns the fast day/night state.
     private func noteHeadlightPowerSeen(_ id: UUID, reason: String) {
         guard isHeadlightFedDevice(id) else { return }
         scheduleHeadlightConsensusEvaluation(
@@ -2273,14 +2398,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
     }
 
-    /// Compatibility call used by disconnect paths. OFF is no longer inferred from
-    /// one controller. The same consensus evaluator requires both to be absent.
+    /// Compatibility call used by disconnect paths. This only refreshes the
+    /// Dashboard+Center diagnostic cross-check; it cannot delay Center-driven day/night.
     private func scheduleHeadlightPowerOffEvaluation(reason: String) {
         scheduleHeadlightConsensusEvaluation(reason: reason)
     }
 
     private func headlightPowerPresent() -> Bool {
-        // Stable Dashboard + Center consensus is the Door/HUD day-night signal only.
+        // v90.18 fast path: this mirrors tracked Center/BLEDOM presence.
         headlightPowerSessionActive
     }
 
@@ -2293,7 +2418,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return "Door day/night automation off • day \(doorDayBrightness)% • night \(doorNightBrightness)%"
         }
         let target = doorTargetBrightness(night: headlightPowerSessionActive)
-        return "\(headlightPowerSessionActive ? "Night/headlight ON" : "Day/headlight OFF") • Door target \(target)%"
+        return "\(headlightPowerSessionActive ? "Night/Center ON" : "Day/Center OFF") • Door target \(target)%"
     }
 
     private func applyDoorTargetAfterSettingChange(changedNightTarget: Bool) {
@@ -2575,21 +2700,22 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             : "Independent OBD witness not calibrated"
         logger.log(
             "AMBIENT ENGINE",
-            "Engine diagnostic OFF confirmed; v90.17 leaves all light animations and Dashboard+Center day/night consensus untouched"
+            "Engine diagnostic OFF confirmed; v90.18 leaves all light animations and Center-driven day/night behavior untouched"
         )
         ambientTrace("Engine diagnostic OFF")
     }
 
-    /// v90.17: vehicle automation only means Door day/night brightness. It is
-    /// intentionally independent from engine/courtesy/startup state. The stable
-    /// Dashboard+Center two-light consensus is the sole automatic day/night input.
+    /// v90.18: vehicle automation only means Door day/night brightness. It is
+    /// intentionally independent from engine/courtesy/startup state. Fast tracked
+    /// Center/BLEDOM presence is the automatic day/night input; Dashboard+Center
+    /// consensus remains diagnostic only.
     private func evaluateVehicleLightingAutomation() {
         guard vehicleAutomationEnabled, enabled else { return }
         vehicleHeadlightsActive = headlightPowerSessionActive
         vehicleAutomationStatus = headlightPowerSessionActive
-            ? "Night/headlight ON • Door target \(doorNightBrightness)%"
-            : "Day/headlight OFF • Door target \(doorDayBrightness)%"
-        applyCurrentDoorDayNightTarget(reason: "day/night consensus evaluation")
+            ? "Night/Center ON • Door target \(doorNightBrightness)%"
+            : "Day/Center OFF • Door target \(doorDayBrightness)%"
+        applyCurrentDoorDayNightTarget(reason: "Center-driven day/night evaluation")
     }
 
     private func applyCurrentDoorDayNightTarget(reason: String) {
@@ -2617,7 +2743,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         transitionBrightness(
             ids: [doorID],
             targets: [doorID: target],
-            over: brightnessTransitionSeconds,
+            over: automaticDoorDayNightTransitionSeconds,
             reason: reason
         )
     }
@@ -2635,7 +2761,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// Preview the one supported power-up animation using every enabled, currently
     /// controllable light. They are queued into the same synchronized breath session.
     func previewEnabledBreathNow() {
-        for device in pairedDevices where device.startupAnimationEnabled && device.powerOn && isControllable(device.id) {
+        let devices = pairedDevices.filter { $0.startupAnimationEnabled && $0.powerOn && isControllable($0.id) }
+        if synchronizePowerOnBreathEnabled {
+            // Register the whole Preview set before any participant starts preparing;
+            // this gives Preview the same true common-T0 behavior as automatic power-on.
+            for device in devices { registerPowerOnCohortMember(device.id) }
+        }
+        for device in devices {
             animatedConnectionSession.remove(device.id)
             queuePowerUpBreath(device.id, force: true)
         }
@@ -3025,14 +3157,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         if becamePresent {
             logger.log(
                 "AMBIENT",
-                "\(name) became present via \(reason); contributing Center evidence to two-light headlight consensus"
+                "\(name) became present via \(reason); fast Center day/night → NIGHT"
             )
+            commitConfirmedHeadlightPower(true, reason: "Center/BLEDOM present via \(reason)")
         }
-
-        // v90.14: tracked Center presence remains useful for UI/status and as
-        // one half of headlight-power evidence, but it no longer changes the HUD
-        // brightness mode by itself. The stable Center + Dashboard consensus owns
-        // the shared headlight edge.
     }
 
     private func markAbsent(reason: String) {
@@ -3041,14 +3169,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         status = "\(targetName) absent"
         logger.log(
             "AMBIENT",
-            "\(targetName) became absent via \(reason); reevaluating two-light headlight consensus"
+            "\(targetName) became absent via \(reason); fast Center day/night → DAY"
         )
+        commitConfirmedHeadlightPower(false, reason: "Center/BLEDOM absent via \(reason)")
         if let trackedID = trackedPeripheral?.identifier, isHeadlightFedDevice(trackedID) {
             scheduleHeadlightPowerOffEvaluation(reason: "tracked Center became absent via \(reason)")
         }
-        // v90.14: a Center-only disappearance is transitional evidence, not
-        // a confirmed headlight-OFF edge. Consensus will change HUD auto brightness
-        // only after both Center and Dashboard are stably absent.
     }
 
     func rehydrateHUDState() {
@@ -3062,13 +3188,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         bluetooth.enqueue(
             HudCommands.autoBrightness(shouldEnable),
-            label: "HUD rehydrate → consensus auto brightness \(shouldEnable ? "ON" : "OFF")"
+            label: "HUD rehydrate → Center-driven auto brightness \(shouldEnable ? "ON" : "OFF")"
         )
         lastHUDReassertAt = Date()
 
         logger.log(
             "AMBIENT SESSION",
-            "Rehydrated brightness consensus=\(shouldEnable) centerConnected=\(connectedPresence) centerRecentAdvertisement=\(recentAdvertisement)"
+            "Rehydrated Center-driven brightness=\(shouldEnable) centerConnected=\(connectedPresence) centerRecentAdvertisement=\(recentAdvertisement)"
         )
     }
 
@@ -3659,12 +3785,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     let shouldEnable = self.headlightPowerSessionActive
                     self.bluetooth.enqueue(
                         HudCommands.autoBrightness(shouldEnable),
-                        label: "Ambient watchdog reassert → consensus Auto brightness \(shouldEnable ? "ON" : "OFF")"
+                        label: "Ambient watchdog reassert → Center-driven Auto brightness \(shouldEnable ? "ON" : "OFF")"
                     )
                     self.lastHUDReassertAt = Date()
                     self.logger.log(
                         "AMBIENT HUD",
-                        "Consensus watchdog reasserted HUD auto brightness=\(shouldEnable ? "ON" : "OFF")"
+                        "Center-driven watchdog reasserted HUD auto brightness=\(shouldEnable ? "ON" : "OFF")"
                     )
                 }
 

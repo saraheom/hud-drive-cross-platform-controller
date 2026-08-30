@@ -103,7 +103,7 @@ struct VehicleView: View {
                                 set: { state.speedEngine.sourceMode = $0 }
                             )) {
                                 ForEach(SpeedLimitSourceMode.allCases) { source in
-                                    Text(source.rawValue).tag(source)
+                                    Text(source == .improvedTracePhilly ? "Improved + Philly" : source.rawValue).tag(source)
                                 }
                             }
                             .pickerStyle(.segmented)
@@ -204,6 +204,8 @@ struct VehicleView: View {
                                     "Warning threshold",
                                     value: "> \(state.speedEngine.currentSpeedLimitMph + state.ambientLight.overspeedWarningOffsetMph) mph"
                                 )
+                            } else if state.speedEngine.currentSpeedLimitMph > 0 {
+                                LabeledContent("Warning threshold", value: "Displayed limit not warning-eligible — disabled")
                             } else {
                                 LabeledContent("Warning threshold", value: "No speed-limit sign — disabled")
                             }
@@ -219,8 +221,9 @@ struct VehicleView: View {
                             LabeledContent("GPS speed", value: "\(state.speedEngine.currentSpeedMph) mph")
                             LabeledContent(
                                 "Posted limit",
-                                value: state.speedEngine.speedLimitAvailableForWarning
-                                    ? "\(state.speedEngine.currentSpeedLimitMph) mph" : "—"
+                                value: state.speedEngine.currentSpeedLimitMph > 0
+                                    ? "\(state.speedEngine.currentSpeedLimitMph) mph\(state.speedEngine.speedLimitAvailableForWarning ? "" : " • warning off")"
+                                    : "—"
                             )
                             LabeledContent("Source", value: state.speedEngine.sourceMode.rawValue)
                             Text(state.speedEngine.status)
@@ -233,7 +236,7 @@ struct VehicleView: View {
                             .buttonStyle(.bordered)
 
                             Text("""
-                            Current keeps the decompiled HUDWAY matcher unchanged. Enhanced OSM is a separate test path with directional/conditional maxspeed tags and continuity confirmation. OSM Trace uses the same free OpenStreetMap data but scores a rolling GPS trace against nearby road geometry, so it can resist parallel-road, frontage-road, divided-highway and ramp jumps without a commercial API. OSM source selection affects both the displayed sign and the optional ambient warning. The ambient warning currently uses iPhone GPS speed by explicit user choice; it is suppressed whenever no valid speed-limit sign is available.
+                            Current keeps the decompiled HUDWAY matcher unchanged. OSM Trace preserves the rolling explicit-maxspeed matcher used in the latest road test for direct A/B comparison. Improved + Philly GIS loads all nearby drivable OSM roads, including neighborhood roads without maxspeed tags, clears stale signs after a short grace period, strengthens road continuity, and inside Philadelphia cross-checks the City’s public Street Speed Limits and Residential Streets layers. Outside Philadelphia, the improved mode automatically continues with improved OSM only. The ambient warning is suppressed unless the selected source has a fresh valid speed-limit result.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -265,7 +268,7 @@ struct VehicleView: View {
                             Text("HUD AUTO-BRIGHTNESS TRIGGER")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Toggle("Use ambient day/night consensus for HUD Auto Brightness", isOn: Binding(
+                            Toggle("Use Center/BLEDOM power for HUD Auto Brightness", isOn: Binding(
                                 get: { state.ambientLight.hudBrightnessTriggerEnabled },
                                 set: { state.ambientLight.hudBrightnessTriggerEnabled = $0 }
                             ))
@@ -297,7 +300,7 @@ struct VehicleView: View {
                             }
 
                             Text("""
-                            HUD Auto Brightness now follows the stable two-light day/night signal: Dashboard + Center both ON = night/Auto Brightness ON, both OFF = day/Auto Brightness OFF, and a mixed state preserves the last confirmed mode. The advertised-name field remains for legacy Center discovery/status only; Center presence by itself does not control HUD brightness. BLEDOM does not need to appear in Settings → Bluetooth.
+                            HUD Auto Brightness follows the fast Center/BLEDOM power signal, matching the earlier responsive behavior: Center present = night/Auto Brightness ON and Center absent = day/Auto Brightness OFF. Automatic Door day/night brightness consumes that same signal independently. Dashboard + Center are still recorded as a diagnostic cross-check, but Dashboard cannot delay either output. BLEDOM does not need to appear in Settings → Bluetooth.
                             """)
                             .font(.caption)
                             .foregroundStyle(.secondary)

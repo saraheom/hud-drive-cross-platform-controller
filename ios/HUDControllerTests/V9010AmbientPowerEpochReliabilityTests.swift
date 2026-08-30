@@ -22,15 +22,18 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("private func sendPowerWhenReady"))
         XCTAssertTrue(monitor.contains("private func sendColorWhenReady"))
         XCTAssertTrue(monitor.contains("private func applyRuntimeBrightnessWhenReady"))
-        XCTAssertTrue(monitor.contains("power-up breath baseline"))
-        XCTAssertTrue(monitor.contains("reason: \"power-up breath final\""))
+        XCTAssertTrue(monitor.contains("power-up breath preload RGB"))
+        XCTAssertTrue(monitor.contains("power-up breath preload baseline"))
+        XCTAssertTrue(monitor.contains("power-up breath prepare no-flash Power ON"))
+        XCTAssertTrue(monitor.contains("power-up breath post-Power baseline"))
+        XCTAssertTrue(monitor.contains("power-up breath final (BLEDIM no-flash)"))
     }
 
-    func testDayNightConsensusDoesNotOwnAnimation() throws {
+    func testCenterOwnsFastDayNightAndTwoLightCrosscheckDoesNotOwnAnimation() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("both Center + Dashboard stable ON"))
-        XCTAssertTrue(monitor.contains("both Center + Dashboard stable OFF"))
-        XCTAssertTrue(monitor.contains("Two-light day/night consensus"))
-        XCTAssertTrue(monitor.contains("animation remains per-light power-on"))
+        XCTAssertTrue(monitor.contains("Fast Center day/night"))
+        XCTAssertTrue(monitor.contains("Dashboard+Center diagnostic consensus"))
+        XCTAssertTrue(monitor.contains("Center/BLEDOM remains authoritative for fast day/night"))
+        XCTAssertTrue(monitor.contains("animation is strictly per physical/controller return"))
     }
 }
