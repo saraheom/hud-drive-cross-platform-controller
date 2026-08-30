@@ -33,6 +33,10 @@ Note: after signing/archive is restored, App Store Connect may still return
 That is a separate external toolchain issue.
 
 
+## v90.18.2 — iOS CI XCTest architecture-alignment fix
+
+v90.18.2 keeps the v90.18.1 runtime behavior unchanged and fixes two stale XCTest source-text assertions that depended on the capitalization of a comment. The tests now verify the actual architecture instead: power-on animation admission remains independent of engine/courtesy/headlight state, Sync cohort registration precedes BLEDIM boot settle, and every CoreBluetooth reconnect clears the per-connection animation-consumed flag. The flight-recorder version label is updated to v90.18.2 for field-log identification.
+
 ## v90.18.1 — Xcode 26.6 Philadelphia GIS actor-isolation fix
 
 v90.18.1 is a compiler-only hardening revision of v90.18. It moves the pure Philadelphia GIS numeric parsing helpers out of a nested `compactMap` helper and marks them `nonisolated static`, avoiding Swift 6 main-actor inference inside a synchronous collection transform. Ambient behavior, BLEDIM transport, sync behavior, speed-source algorithms, and GIS matching policy are unchanged.

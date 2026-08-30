@@ -34,6 +34,14 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("Fast Center day/night"))
         XCTAssertTrue(monitor.contains("Dashboard+Center diagnostic consensus"))
         XCTAssertTrue(monitor.contains("Center/BLEDOM remains authoritative for fast day/night"))
-        XCTAssertTrue(monitor.contains("animation is strictly per physical/controller return"))
+
+        let startupParts = monitor.components(separatedBy: "private func runStartupAnimationIfNeeded")
+        XCTAssertGreaterThan(startupParts.count, 1)
+        let startupBlock = startupParts[1].components(separatedBy: "private func queuePowerUpBreath")[0]
+        XCTAssertTrue(startupBlock.contains("registerPowerOnCohortMember(id)"))
+        XCTAssertTrue(startupBlock.contains("scheduleBLEDIMBootSettleReassert"))
+        XCTAssertTrue(startupBlock.contains("queuePowerUpBreath(id)"))
+        XCTAssertFalse(startupBlock.contains("enginePowerPresent"))
+        XCTAssertFalse(startupBlock.contains("headlightPowerSessionActive"))
     }
 }
