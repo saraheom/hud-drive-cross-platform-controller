@@ -33,6 +33,10 @@ Note: after signing/archive is restored, App Store Connect may still return
 That is a separate external toolchain issue.
 
 
+## v90.18.1 — Xcode 26.6 Philadelphia GIS actor-isolation fix
+
+v90.18.1 is a compiler-only hardening revision of v90.18. It moves the pure Philadelphia GIS numeric parsing helpers out of a nested `compactMap` helper and marks them `nonisolated static`, avoiding Swift 6 main-actor inference inside a synchronous collection transform. Ambient behavior, BLEDIM transport, sync behavior, speed-source algorithms, and GIS matching policy are unchanged.
+
 ## v90.18 — no-flash BLEDIM + fast Center day/night + true sync + Philly GIS
 
 v90.18 keeps the v90.17 per-light fresh-power architecture that eliminated the recurrent

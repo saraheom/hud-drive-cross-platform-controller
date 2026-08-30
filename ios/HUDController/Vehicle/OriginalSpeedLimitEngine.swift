@@ -1359,6 +1359,25 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         return try Self.parsePhiladelphiaSpeedFeatures(data, residential: residential)
     }
 
+
+    // These helpers are intentionally nonisolated. OriginalSpeedLimitEngine is @MainActor,
+    // while Sequence.compactMap executes its transform in a synchronous nonisolated context
+    // under Swift 6 actor-isolation checking. Keeping pure JSON scalar parsing outside the
+    // closure avoids an implicit cross-actor call during the Philadelphia GIS decode path.
+    private nonisolated static func philadelphiaIntValue(_ value: Any?) -> Int? {
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String {
+            let digits = string.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+            return Int(digits)
+        }
+        return nil
+    }
+
+    private nonisolated static func philadelphiaValidSpeed(_ value: Any?) -> Int? {
+        guard let speed = philadelphiaIntValue(value), (5...85).contains(speed) else { return nil }
+        return speed
+    }
+
     private static func parsePhiladelphiaSpeedFeatures(
         _ data: Data,
         residential: Bool
@@ -1372,28 +1391,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
         guard let features = root["features"] as? [[String: Any]] else { return [] }
 
-        func intValue(_ value: Any?) -> Int? {
-            if let number = value as? NSNumber { return number.intValue }
-            if let string = value as? String {
-                let digits = string.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
-                return Int(digits)
-            }
-            return nil
-        }
-
         return features.compactMap { feature in
             guard let attributes = feature["attributes"] as? [String: Any],
                   let geometry = feature["geometry"] as? [String: Any],
                   let paths = geometry["paths"] as? [[[Double]]]
             else { return nil }
 
-            func validSpeed(_ value: Any?) -> Int? {
-                guard let speed = intValue(value), (5...85).contains(speed) else { return nil }
-                return speed
-            }
-            let explicitSpeed = validSpeed(attributes["SPEED_LIMITS"])
-                ?? validSpeed(attributes["SpeedLimits_MPH"])
-                ?? validSpeed(attributes["SPLIMIT"])
+            let explicitSpeed = Self.philadelphiaValidSpeed(attributes["SPEED_LIMITS"])
+                ?? Self.philadelphiaValidSpeed(attributes["SpeedLimits_MPH"])
+                ?? Self.philadelphiaValidSpeed(attributes["SPLIMIT"])
             let speed = explicitSpeed ?? (residential ? 25 : nil)
             guard let speed else { return nil }
 
@@ -1407,7 +1413,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             }
             guard !parts.isEmpty else { return nil }
 
-            let objectID = intValue(attributes["OBJECTID_1"]) ?? intValue(attributes["OBJECTID"]) ?? 0
+            let objectID = Self.philadelphiaIntValue(attributes["OBJECTID_1"])
+                ?? Self.philadelphiaIntValue(attributes["OBJECTID"])
+                ?? 0
             let name = (attributes["STNM_LAB"] as? String)
                 ?? (attributes["STREET"] as? String)
             return PhiladelphiaSpeedSegment(

@@ -96,7 +96,10 @@ def test_improved_geometry_scorer_does_not_treat_greatest_finite_as_a_match():
     assert 'Double.greatestFiniteMagnitude' not in block
 
 def test_inferred_philly_residential_limit_is_display_only_for_warning_safety():
-    assert 'let explicitSpeed = validSpeed(attributes["SPEED_LIMITS"])' in SPEED
+    assert 'let explicitSpeed = Self.philadelphiaValidSpeed(attributes["SPEED_LIMITS"])' in SPEED
+    assert 'private nonisolated static func philadelphiaIntValue' in SPEED
+    assert 'private nonisolated static func philadelphiaValidSpeed' in SPEED
+    assert 'func intValue(_ value: Any?)' not in SPEED
     assert 'speedWasExplicit: explicitSpeed != nil' in SPEED
     assert 'warningEligible: !inferredResidential' in SPEED
     assert 'Display-only inferred speed limit — disable native warning threshold' in SPEED
