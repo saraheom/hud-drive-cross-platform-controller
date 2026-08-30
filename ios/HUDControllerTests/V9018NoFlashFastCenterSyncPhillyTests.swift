@@ -7,16 +7,20 @@ final class V9018NoFlashFastCenterSyncPhillyTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testBLEDIMNormalTerminalCommitIsBrightnessOnly() throws {
+    func testBLEDIMV90172IsDefaultAndTestLabIsOptIn() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        let block = monitor.components(separatedBy: "private func finalizeBreathSteadyState")[1]
+        let terminal = monitor.components(separatedBy: "private func finalizeBreathSteadyState")[1]
             .components(separatedBy: "private func runStartupAnimationIfNeeded")[0]
-        let bledim = block.components(separatedBy: "if device.protocolKind == .bledim2")[1]
-            .components(separatedBy: "let powerSent =")[0]
-        XCTAssertTrue(bledim.contains("power-up breath final (BLEDIM no-flash)"))
-        XCTAssertTrue(bledim.contains("applyRuntimeBrightnessWhenReady"))
-        XCTAssertFalse(bledim.contains("sendPowerWhenReady"))
-        XCTAssertFalse(bledim.contains("sendColorWhenReady"))
+        XCTAssertTrue(terminal.contains("power-up breath terminal Power ON"))
+        XCTAssertTrue(terminal.contains("power-up breath terminal RGB"))
+        XCTAssertTrue(terminal.contains("case .v90172Baseline, .baselineHold:"))
+        XCTAssertTrue(terminal.contains("case .brightnessOnlyFinish, .alreadyOnMinimal, .v9018NoFlash:"))
+
+        let prep = monitor.components(separatedBy: "private func queuePowerUpBreath")[1]
+            .components(separatedBy: "private func registerPowerOnCohortMember")[0]
+        XCTAssertTrue(prep.contains("applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline"))
+        XCTAssertTrue(prep.contains("case .v9018NoFlash:"))
+        XCTAssertTrue(prep.contains("power-up breath preload RGB [18 No-Flash]"))
     }
 
     func testCenterIsFastDayNightOwnerAndDoorAutoFadeIsOneSecond() throws {

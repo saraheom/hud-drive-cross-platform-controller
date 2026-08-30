@@ -41,16 +41,15 @@ final class V9017SimplePowerOnOptionalSyncTests: XCTestCase {
         XCTAssertFalse(watchdog.contains("evaluateVehicleLightingAutomation()"))
     }
 
-    func testBreathTerminalCommitIsNoFlashForBLEDIMAndSemanticForLotus() throws {
+    func testBreathTerminalCommitUsesKnownGoodV90172SemanticSequence() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         let block = monitor.components(separatedBy: "private func finalizeBreathSteadyState")[1]
             .components(separatedBy: "private func runStartupAnimationIfNeeded")[0]
-        let bledim = block.components(separatedBy: "if device.protocolKind == .bledim2")[1]
-            .components(separatedBy: "let powerSent =")[0]
-        XCTAssertTrue(bledim.contains("power-up breath final (BLEDIM no-flash)"))
-        XCTAssertFalse(bledim.contains("sendPowerWhenReady"))
         XCTAssertTrue(block.contains("power-up breath terminal Power ON"))
         XCTAssertTrue(block.contains("power-up breath terminal RGB"))
+        XCTAssertTrue(block.contains("power-up breath final"))
+        XCTAssertTrue(block.contains("case .v90172Baseline, .baselineHold:"))
+        XCTAssertTrue(block.contains("case .brightnessOnlyFinish, .alreadyOnMinimal, .v9018NoFlash:"))
     }
 
     func testOSMTraceDiagnosticsContainReplayGeometryAndOutput() throws {

@@ -17,16 +17,16 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertFalse(monitor.contains("BLEDIM10Hz"))
     }
 
-    func testCriticalPowerColorAndFinalBrightnessAreRetriedInOrder() throws {
+    func testCriticalPowerColorAndFinalBrightnessUseKnownGoodV90172Order() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("private func sendPowerWhenReady"))
         XCTAssertTrue(monitor.contains("private func sendColorWhenReady"))
         XCTAssertTrue(monitor.contains("private func applyRuntimeBrightnessWhenReady"))
-        XCTAssertTrue(monitor.contains("power-up breath preload RGB"))
-        XCTAssertTrue(monitor.contains("power-up breath preload baseline"))
-        XCTAssertTrue(monitor.contains("power-up breath prepare no-flash Power ON"))
-        XCTAssertTrue(monitor.contains("power-up breath post-Power baseline"))
-        XCTAssertTrue(monitor.contains("power-up breath final (BLEDIM no-flash)"))
+        XCTAssertTrue(monitor.contains("power-up breath terminal Power ON"))
+        XCTAssertTrue(monitor.contains("power-up breath terminal RGB"))
+        XCTAssertTrue(monitor.contains("applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline"))
+        XCTAssertTrue(monitor.contains("case .v90172Baseline, .baselineHold, .brightnessOnlyFinish, .noTerminalCommit:"))
+        XCTAssertTrue(monitor.contains("power-up breath terminal Power ON"))
     }
 
     func testCenterOwnsFastDayNightAndTwoLightCrosscheckDoesNotOwnAnimation() throws {

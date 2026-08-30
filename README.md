@@ -33,6 +33,17 @@ Note: after signing/archive is restored, App Store Connect may still return
 That is a separate external toolchain issue.
 
 
+
+## v90.21 — In-car BLEDIM animation strategy test lab
+
+v90.21 keeps the v90.17.2 BLEDIM sequence as the production/default automatic behavior and adds a compact in-app test lab so Door/Dashboard start/end flash hypotheses can be compared without rebuilding. Six strategies are available: `17.2 Baseline`, `17.2 + Hold`, `No End Power`, `No End Commit`, `Already-On Minimal`, and the historical `18 No-Flash` experiment. The selected strategy applies to Preview immediately; automatic BLEDIM power-on remains v90.17.2 unless the user explicitly opts into applying the selected strategy automatically. A focused `Preview BLEDIM Only` action excludes Center/Lotus for easier visual comparison. Sync cohort, fast Center-driven day/night/HUD behavior, Improved OSM + Philadelphia GIS, provider backoff, and stale-sign handling remain unchanged from v90.20.
+
+## v90.20 — v90.17.2 BLEDIM known-good rollback + v90.19 speed/provider improvements
+
+v90.20 deliberately rolls Door/Dashboard BLEDIM behavior back to the last field-proven v90.17.2 implementation. The BLEDIM `0x80` boolean mapping is restored exactly (`ON -> 01`, `OFF -> 00`), Breath preparation is again `Power ON -> RGB -> baseline brightness`, and successful terminal commit is again `Power ON -> RGB -> final brightness`. The v90.18-v90.19 no-flash preload/semantic experiments are removed. This rollback intentionally accepts the small start/end visual flash seen in v90.17.2 in exchange for restoring reliable manual power, Preview, and automatic Breath behavior.
+
+Later independent improvements remain: the true power-on sync cohort, fast Center/BLEDOM-driven HUD Auto Brightness and Door day/night target, 1-second Door automatic fade, three speed-limit modes, Improved OSM + Philadelphia GIS, corrected layer-specific Philadelphia fields, provider failure backoff, stale-sign clearing, warning safety, and the flight recorder. A one-time migration restores the known Door/Dashboard settings to configured ON so power states saved during the regressed builds do not suppress Preview.
+
 ## v90.19 — field-verified BLEDIM power semantics + Philadelphia GIS recovery
 
 v90.19 fixes two field-proven v90.18.2 regressions. Both BK-BLE controllers demonstrated that BLEDIM command `0x80` uses payload `00` for physical ON and `01` for physical OFF; the earlier PacketLogger recovery had the correct raw frames but the UI-state labels were reversed. The corrected mapping is used everywhere (manual power, fresh-power Breath preparation, steady restore, and one-shot recovery) while RGB/brightness framing, per-controller sequence bytes, 20 Hz/raw-255 Breath, Center/Lotus behavior, fast Center-driven day/night logic, and brightness-only successful BLEDIM terminal commits remain unchanged. A one-time migration re-enables the known Door/Dashboard roles because the v90.18.2 field test intentionally saved them as OFF to work around the inverted mapping.

@@ -32,12 +32,11 @@ def test_critical_restore_and_breath_prepare_writes_are_retried_in_order():
     restore = MONITOR.split("private func restoreDeviceState", 1)[1].split("private func runStartupAnimationIfNeeded", 1)[0]
     assert restore.index("sendPowerWhenReady") < restore.index("sendColorWhenReady") < restore.index("applyRuntimeBrightnessWhenReady")
     prep = MONITOR.split("private func queuePowerUpBreath", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
-    # v90.18 BLEDIM no-flash preparation intentionally preloads RGB + baseline
-    # before Power ON, then immediately reasserts the baseline. Lotus keeps the
-    # original Power ON -> RGB -> brightness ordering in its else branch.
-    assert prep.index("power-up breath preload RGB") < prep.index("power-up breath preload baseline") < prep.index("power-up breath prepare no-flash Power ON") < prep.index("power-up breath post-Power baseline")
-    lotus = prep.split("} else {", 1)[1]
-    assert lotus.index("sendPowerWhenReady") < lotus.index("sendColorWhenReady") < lotus.index("applyRuntimeBrightnessWhenReady")
+    assert prep.index("sendPowerWhenReady") < prep.index("sendColorWhenReady") < prep.index("applyRuntimeBrightnessWhenReady")
+    # v90.21 keeps the v90.17.2 sequence as the production default while
+    # retaining later sequences only inside the explicit in-car test lab.
+    assert '? (bledimStrategyOverride ?? (applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline))' in prep
+    assert 'case .v90172Baseline, .baselineHold, .brightnessOnlyFinish, .noTerminalCommit:' in prep
 
 
 def test_center_signal_is_fast_day_night_owner_and_two_light_crosscheck_does_not_own_animation():

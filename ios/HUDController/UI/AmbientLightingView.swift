@@ -82,8 +82,52 @@ struct AmbientLightingView: View {
                             }
                             .buttonStyle(.borderedProminent)
 
-                            Text("Every controller return is treated as a fresh power-on event. BLEDIM Door/Dashboard preload color and baseline brightness around Power ON to avoid the visible full-brightness flash, then run a complete Breath and finish with brightness-only steady commit. With synchronization OFF, each light starts independently. With it ON, power-on events within a 3 s cohort are collected first, then prepared members share one common start time; a controller that still misses the bounded preparation grace gets its own complete Breath.")
+                            Text("Every controller return is treated as a fresh power-on event. Production BLEDIM behavior defaults to the field-proven v90.17.2 sequence. With synchronization OFF, each light starts independently. With it ON, power-on events within a 3 s cohort are collected first, then prepared members share one common start time; a controller that still misses the bounded preparation grace gets its own complete Breath.")
                                 .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    section("BLEDIM ANIMATION TEST LAB") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Door + Dashboard only. Pick a sequence, then tap Preview BLEDIM Only. The selection affects Preview immediately; normal automatic power-on stays on the known-good v90.17.2 sequence unless you explicitly enable the automatic toggle below.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 8)], spacing: 8) {
+                                ForEach(BLEDIMAnimationStrategy.allCases) { strategy in
+                                    if monitor.bledimAnimationStrategy == strategy {
+                                        Button("✓ \(strategy.shortName)") { monitor.setBLEDIMAnimationStrategy(strategy) }
+                                            .buttonStyle(.borderedProminent)
+                                    } else {
+                                        Button(strategy.shortName) { monitor.setBLEDIMAnimationStrategy(strategy) }
+                                            .buttonStyle(.bordered)
+                                    }
+                                }
+                            }
+
+                            Text(monitor.bledimAnimationStrategy.sequenceDescription)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+
+                            Text(monitor.bledimAnimationStrategy.diagnosticPurpose)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+
+                            Toggle("Apply selected strategy to automatic BLEDIM power-on", isOn: Binding(
+                                get: { monitor.applyBLEDIMTestStrategyToAutomaticPowerOn },
+                                set: { monitor.applyBLEDIMTestStrategyToAutomaticPowerOn = $0 }
+                            ))
+
+                            HStack {
+                                Button("Preview BLEDIM Only") { monitor.previewEnabledBLEDIMBreathNow() }
+                                    .buttonStyle(.borderedProminent)
+                                Button("Preview All") { monitor.previewEnabledBreathNow() }
+                                    .buttonStyle(.bordered)
+                            }
+
+                            Text("Recommended order: 17.2 Baseline → 17.2 + Hold → No End Power → No End Commit → Already-On Minimal. The 18 No-Flash button reproduces the old v90.18 experiment only for comparison.")
+                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
                     }

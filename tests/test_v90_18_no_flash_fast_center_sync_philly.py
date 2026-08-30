@@ -7,21 +7,18 @@ VEHICLE = (ROOT / 'ios/HUDController/UI/VehicleView.swift').read_text()
 AMBIENT_VIEW = (ROOT / 'ios/HUDController/UI/AmbientLightingView.swift').read_text()
 
 
-def test_bledim_normal_breath_completion_is_brightness_only_no_flash():
-    block = MONITOR.split('private func finalizeBreathSteadyState', 1)[1].split('private func runStartupAnimationIfNeeded', 1)[0]
-    bledim = block.split('if device.protocolKind == .bledim2', 1)[1].split('let powerSent =', 1)[0]
-    assert 'power-up breath final (BLEDIM no-flash)' in bledim
-    assert 'applyRuntimeBrightnessWhenReady' in bledim
-    assert 'sendPowerWhenReady' not in bledim
-    assert 'sendColorWhenReady' not in bledim
+def test_bledim_v90172_is_default_and_experimental_sequences_are_opt_in():
+    terminal = MONITOR.split('private func finalizeBreathSteadyState', 1)[1].split('private func runStartupAnimationIfNeeded', 1)[0]
+    assert 'power-up breath terminal Power ON' in terminal
+    assert 'power-up breath terminal RGB' in terminal
+    assert 'case .v90172Baseline, .baselineHold:' in terminal
+    assert 'case .brightnessOnlyFinish, .alreadyOnMinimal, .v9018NoFlash:' in terminal
 
-
-def test_bledim_preloads_state_before_power_and_reasserts_baseline_after_power():
-    prep = MONITOR.split('private func queuePowerUpBreath', 1)[1].split('} else {', 1)[0]
-    assert prep.index('power-up breath preload RGB') < prep.index('power-up breath preload baseline')
-    assert prep.index('power-up breath preload baseline') < prep.index('power-up breath prepare no-flash Power ON')
-    assert prep.index('power-up breath prepare no-flash Power ON') < prep.index('power-up breath post-Power baseline')
-
+    prep = MONITOR.split('private func queuePowerUpBreath', 1)[1].split('private func registerPowerOnCohortMember', 1)[0]
+    assert '? (bledimStrategyOverride ?? (applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline))' in prep
+    assert 'case .v90172Baseline, .baselineHold, .brightnessOnlyFinish, .noTerminalCommit:' in prep
+    assert 'case .v9018NoFlash:' in prep
+    assert 'power-up breath preload RGB [18 No-Flash]' in prep
 
 def test_center_presence_drives_hud_and_door_without_dashboard_delay():
     present = MONITOR.split('private func markPresent', 1)[1].split('private func markAbsent', 1)[0]

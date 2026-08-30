@@ -3,13 +3,13 @@ import Foundation
 @testable import HUDController
 
 final class V907BLEDIM2ProtocolTests: XCTestCase {
-    func testFieldVerifiedPhysicalPowerSemanticsUseCapturedFrames() {
+    func testCapturedPowerFramesMatchOfficialIOSCapture() {
         XCTAssertEqual(
-            BLEDIM2Protocol.power(true, sequence: 0x09),
+            BLEDIM2Protocol.power(false, sequence: 0x09),
             Data([0x55, 0xAA, 0x09, 0x80, 0x00, 0x01, 0x00, 0x89])
         )
         XCTAssertEqual(
-            BLEDIM2Protocol.power(false, sequence: 0x0A),
+            BLEDIM2Protocol.power(true, sequence: 0x0A),
             Data([0x55, 0xAA, 0x0A, 0x80, 0x00, 0x01, 0x01, 0x8B])
         )
     }

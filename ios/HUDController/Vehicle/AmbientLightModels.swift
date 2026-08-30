@@ -2,6 +2,66 @@ import Foundation
 
 /// App-level protocol adapters for the inexpensive BLE ambient-light controllers.
 /// The UI and grouping layer never need to know packet details.
+
+/// v90.21 in-car diagnostic strategies for BLEDIM Door/Dashboard Breath sequencing.
+/// The known-good v90.17.2 strategy remains the automatic default. Experimental
+/// strategies can be exercised from Preview without rebuilding the app.
+enum BLEDIMAnimationStrategy: String, CaseIterable, Identifiable {
+    case v90172Baseline
+    case baselineHold
+    case brightnessOnlyFinish
+    case noTerminalCommit
+    case alreadyOnMinimal
+    case v9018NoFlash
+
+    var id: String { rawValue }
+
+    var shortName: String {
+        switch self {
+        case .v90172Baseline: return "17.2 Baseline"
+        case .baselineHold: return "17.2 + Hold"
+        case .brightnessOnlyFinish: return "No End Power"
+        case .noTerminalCommit: return "No End Commit"
+        case .alreadyOnMinimal: return "Already-On Minimal"
+        case .v9018NoFlash: return "18 No-Flash"
+        }
+    }
+
+    var sequenceDescription: String {
+        switch self {
+        case .v90172Baseline:
+            return "Power ON → RGB → Preferred | Breath | Power ON → RGB → Preferred"
+        case .baselineHold:
+            return "Power ON → RGB → Preferred → hold 0.75 s | Breath | Power ON → RGB → Preferred"
+        case .brightnessOnlyFinish:
+            return "Power ON → RGB → Preferred | Breath | Preferred only"
+        case .noTerminalCommit:
+            return "Power ON → RGB → Preferred | Breath | no extra terminal command"
+        case .alreadyOnMinimal:
+            return "No preparation write | Breath | Preferred only (for lights already ON)"
+        case .v9018NoFlash:
+            return "RGB → Preferred → Power ON → Preferred | Breath | Preferred only"
+        }
+    }
+
+    var diagnosticPurpose: String {
+        switch self {
+        case .v90172Baseline:
+            return "Known field-good control. Use this first to confirm the controller is behaving normally."
+        case .baselineHold:
+            return "Same known-good commands with a pause before Breath. If a flash occurs during the pause, preparation is the cause; if it begins after the pause, the waveform is the cause."
+        case .brightnessOnlyFinish:
+            return "Keeps proven startup preparation but removes terminal Power ON/RGB. Best candidate for isolating the end flash."
+        case .noTerminalCommit:
+            return "Tests whether any extra terminal command is responsible; relies on the final Breath frame already landing at Preferred."
+        case .alreadyOnMinimal:
+            return "Tests whether preparation itself creates the start flash. Intended for Preview while Door/Dashboard are already steadily ON."
+        case .v9018NoFlash:
+            return "Exact v90.18 BLEDIM no-flash experiment for comparison. This sequence was not field reliable as the automatic startup path."
+        }
+    }
+}
+
 enum AmbientLightProtocolKind: String, Codable, CaseIterable, Identifiable {
     case lotusLantern
     case bledim2
@@ -248,13 +308,12 @@ enum BLEDIM2Protocol {
     static let serviceUUID = CBUUIDString.fff0
     static let writeCharacteristicUUID = CBUUIDString.fff1
 
-    /// Field-verified BK-BLE power semantics (2026-08-30, Door + Dashboard):
-    /// payload 0x00 = physical ON, payload 0x01 = physical OFF.
-    /// Earlier PacketLogger work correctly recovered command 0x80 and its frame
-    /// grammar, but the UI action/state label attached to the two captured payloads
-    /// was reversed. Keep every other byte of the recovered protocol unchanged.
+    /// v90.20 rollback: exact field-proven v90.17.2 BLEDIM power mapping.
+    /// ON uses payload 0x01; OFF uses payload 0x00. The v90.18-v90.19
+    /// experiments that reinterpreted/reordered this command regressed both
+    /// manual power and Preview on the actual Door/Dashboard controllers.
     static func power(_ on: Bool, sequence: UInt8) -> Data {
-        frame(sequence: sequence, command: 0x80, payload: [on ? 0x00 : 0x01])
+        frame(sequence: sequence, command: 0x80, payload: [on ? 0x01 : 0x00])
     }
 
     static func color(_ rgb: AmbientRGB, sequence: UInt8) -> Data {
