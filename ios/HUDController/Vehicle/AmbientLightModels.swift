@@ -248,8 +248,13 @@ enum BLEDIM2Protocol {
     static let serviceUUID = CBUUIDString.fff0
     static let writeCharacteristicUUID = CBUUIDString.fff1
 
+    /// Field-verified BK-BLE power semantics (2026-08-30, Door + Dashboard):
+    /// payload 0x00 = physical ON, payload 0x01 = physical OFF.
+    /// Earlier PacketLogger work correctly recovered command 0x80 and its frame
+    /// grammar, but the UI action/state label attached to the two captured payloads
+    /// was reversed. Keep every other byte of the recovered protocol unchanged.
     static func power(_ on: Bool, sequence: UInt8) -> Data {
-        frame(sequence: sequence, command: 0x80, payload: [on ? 0x01 : 0x00])
+        frame(sequence: sequence, command: 0x80, payload: [on ? 0x00 : 0x01])
     }
 
     static func color(_ rgb: AmbientRGB, sequence: UInt8) -> Data {

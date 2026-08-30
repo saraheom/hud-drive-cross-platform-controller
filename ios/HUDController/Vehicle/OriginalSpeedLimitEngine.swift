@@ -172,6 +172,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var improvedSegments: [ImprovedOSMSegment] = []
     private var improvedLastQueryLocation: CLLocation?
     private var improvedRequestInFlight = false
+    private var improvedLastFailureAt: Date?
     private var improvedCurrentRoadID: Int64?
     private var improvedPendingRoad: (id: Int64, count: Int)?
     private var improvedLastConfidenceMargin: Double = 0
@@ -183,7 +184,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var philadelphiaSpeedSegments: [PhiladelphiaSpeedSegment] = []
     private var philadelphiaLastQueryLocation: CLLocation?
     private var philadelphiaRequestInFlight = false
+    private var philadelphiaLastFailureAt: Date?
     private var philadelphiaDatasetAvailable = false
+    private let providerFailureRetrySeconds: TimeInterval = 12.0
     private let improvedDisplayGraceSeconds: TimeInterval = 4.0
 
     private(set) var currentSpeedMph = 0
@@ -415,6 +418,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         improvedSegments.removeAll()
         improvedLastQueryLocation = nil
         improvedRequestInFlight = false
+        improvedLastFailureAt = nil
         improvedCurrentRoadID = nil
         improvedPendingRoad = nil
         improvedLastConfidenceMargin = 0
@@ -425,6 +429,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         philadelphiaSpeedSegments.removeAll()
         philadelphiaLastQueryLocation = nil
         philadelphiaRequestInFlight = false
+        philadelphiaLastFailureAt = nil
         philadelphiaDatasetAvailable = false
         lastQueryLocation = nil
         requestInFlight = false
@@ -1217,6 +1222,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     // MARK: - v90.18 improved trace + Philadelphia public GIS
 
     private func updateImprovedSegmentsIfNeeded(at location: CLLocation, force: Bool) async {
+        if !force, let improvedLastFailureAt,
+           Date().timeIntervalSince(improvedLastFailureAt) < providerFailureRetrySeconds {
+            return
+        }
         if !force, let improvedLastQueryLocation,
            improvedLastQueryLocation.distance(from: location) <= 200 {
             return
@@ -1249,12 +1258,14 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             let roads = decoded.elements.compactMap(Self.makeImprovedSegment)
             improvedSegments = roads
             improvedLastQueryLocation = location
+            improvedLastFailureAt = nil
             logger.log(
                 "IMPROVED TRACE QUERY",
                 String(format: "OSM center=%.6f,%.6f radius=500m allDrivableRoads=%d", lat, lon, roads.count)
             )
         } catch {
-            logger.log("SPEED LIMIT ERROR", "Improved OSM Trace: \(error.localizedDescription)")
+            improvedLastFailureAt = Date()
+            logger.log("SPEED LIMIT ERROR", "Improved OSM Trace: \(error.localizedDescription); retry backoff=\(Int(providerFailureRetrySeconds))s")
             status = "Improved OSM lookup failed; GPS speed still active"
         }
     }
@@ -1287,6 +1298,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             philadelphiaSpeedSegments.removeAll()
             philadelphiaDatasetAvailable = false
             philadelphiaLastQueryLocation = nil
+            philadelphiaLastFailureAt = nil
+            return
+        }
+        if !force, let philadelphiaLastFailureAt,
+           Date().timeIntervalSince(philadelphiaLastFailureAt) < providerFailureRetrySeconds {
             return
         }
         if !force, let philadelphiaLastQueryLocation,
@@ -1297,31 +1313,54 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         philadelphiaRequestInFlight = true
         defer { philadelphiaRequestInFlight = false }
 
+        // Fetch the two City layers independently so one schema/service problem
+        // cannot discard useful data returned by the other layer.
+        async let postedTask = fetchPhiladelphiaLayer(0, residential: false, at: location)
+        async let residentialTask = fetchPhiladelphiaLayer(1, residential: true, at: location)
+
+        var postedSegments: [PhiladelphiaSpeedSegment] = []
+        var residentialSegments: [PhiladelphiaSpeedSegment] = []
+        var successCount = 0
+        var failures: [String] = []
+
         do {
-            async let posted = fetchPhiladelphiaLayer(0, residential: false, at: location)
-            async let residential = fetchPhiladelphiaLayer(1, residential: true, at: location)
-            let (postedSegments, residentialSegments) = try await (posted, residential)
+            postedSegments = try await postedTask
+            successCount += 1
+        } catch {
+            failures.append("layer0 posted: \(error.localizedDescription)")
+        }
+        do {
+            residentialSegments = try await residentialTask
+            successCount += 1
+        } catch {
+            failures.append("layer1 residential: \(error.localizedDescription)")
+        }
+
+        if successCount > 0 {
             philadelphiaSpeedSegments = postedSegments + residentialSegments
             philadelphiaDatasetAvailable = true
             philadelphiaLastQueryLocation = location
+            philadelphiaLastFailureAt = failures.isEmpty ? nil : Date()
             logger.log(
                 "PHILLY GIS QUERY",
                 String(
-                    format: "center=%.6f,%.6f radius=500m posted=%d residential=%d total=%d",
+                    format: "center=%.6f,%.6f envelope≈500m posted=%d residential=%d total=%d layersOK=%d/2",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
                     postedSegments.count,
                     residentialSegments.count,
-                    postedSegments.count + residentialSegments.count
+                    postedSegments.count + residentialSegments.count,
+                    successCount
                 )
             )
-        } catch {
-            // The improved source remains usable everywhere even if the optional City
-            // service is unreachable. OSM continues without inventing a Philadelphia
-            // result from stale GIS data.
+            if !failures.isEmpty {
+                logger.log("PHILLY GIS ERROR", "Partial City GIS result; \(failures.joined(separator: " | ")); retry backoff=\(Int(providerFailureRetrySeconds))s")
+            }
+        } else {
             philadelphiaSpeedSegments.removeAll()
             philadelphiaDatasetAvailable = false
-            logger.log("PHILLY GIS ERROR", error.localizedDescription)
+            philadelphiaLastFailureAt = Date()
+            logger.log("PHILLY GIS ERROR", "All City GIS layers failed; \(failures.joined(separator: " | ")); retry backoff=\(Int(providerFailureRetrySeconds))s")
         }
     }
 
@@ -1332,22 +1371,36 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     ) async throws -> [PhiladelphiaSpeedSegment] {
         let base = "https://services8.arcgis.com/6pr2WaSuWO79zliF/ArcGIS/rest/services/SpeedLimits/FeatureServer/\(layer)/query"
         guard var comps = URLComponents(string: base) else { return [] }
+
+        // Use a WGS84 envelope rather than point+distance. It is accepted by the
+        // ArcGIS feature service regardless of the layer's native EPSG:2229 feet
+        // projection and avoids distance/unit parameter ambiguity.
+        let latitude = location.coordinate.latitude
+        let longitude = location.coordinate.longitude
+        let latDelta = 500.0 / 111_320.0
+        let lonScale = max(0.20, cos(latitude * .pi / 180.0))
+        let lonDelta = 500.0 / (111_320.0 * lonScale)
+        let envelope = String(
+            format: "%.7f,%.7f,%.7f,%.7f",
+            longitude - lonDelta, latitude - latDelta,
+            longitude + lonDelta, latitude + latDelta
+        )
+
+        // Layer 1 does NOT expose SpeedLimits_MPH. v90.18 requested it from both
+        // layers, causing ArcGIS to reject every residential query as invalid and
+        // therefore preventing the combined City dataset from ever loading.
+        let outFields = residential
+            ? "OBJECTID,OBJECTID_1,STNM_LAB,STREET,SPLIMIT,SPEED_LIMITS"
+            : "OBJECTID,OBJECTID_1,STNM_LAB,STREET,SPLIMIT,SPEED_LIMITS,SpeedLimits_MPH"
+
         comps.queryItems = [
             URLQueryItem(name: "f", value: "json"),
             URLQueryItem(name: "where", value: "1=1"),
-            URLQueryItem(
-                name: "geometry",
-                value: String(format: "%.7f,%.7f", location.coordinate.longitude, location.coordinate.latitude)
-            ),
-            URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
+            URLQueryItem(name: "geometry", value: envelope),
+            URLQueryItem(name: "geometryType", value: "esriGeometryEnvelope"),
             URLQueryItem(name: "inSR", value: "4326"),
             URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
-            URLQueryItem(name: "distance", value: "500"),
-            URLQueryItem(name: "units", value: "esriSRUnit_Meter"),
-            URLQueryItem(
-                name: "outFields",
-                value: "OBJECTID,OBJECTID_1,STNM_LAB,STREET,SPLIMIT,SPEED_LIMITS,SpeedLimits_MPH"
-            ),
+            URLQueryItem(name: "outFields", value: outFields),
             URLQueryItem(name: "returnGeometry", value: "true"),
             URLQueryItem(name: "outSR", value: "4326")
         ]

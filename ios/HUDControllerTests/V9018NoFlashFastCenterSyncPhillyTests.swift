@@ -51,7 +51,7 @@ final class V9018NoFlashFastCenterSyncPhillyTests: XCTestCase {
         XCTAssertFalse(speed.contains("case enhancedOSM = \"Enhanced OSM\""))
         XCTAssertTrue(speed.contains("FeatureServer/\\(layer)/query"))
         XCTAssertTrue(speed.contains("SPEED_LIMITS,SpeedLimits_MPH"))
-        XCTAssertTrue(speed.contains("async let residential = fetchPhiladelphiaLayer(1"))
+        XCTAssertTrue(speed.contains("async let residentialTask = fetchPhiladelphiaLayer(1"))
     }
 
     func testImprovedModeLoadsRoadsWithoutMaxspeedAndClearsStaleSign() throws {

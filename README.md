@@ -33,6 +33,12 @@ Note: after signing/archive is restored, App Store Connect may still return
 That is a separate external toolchain issue.
 
 
+## v90.19 — field-verified BLEDIM power semantics + Philadelphia GIS recovery
+
+v90.19 fixes two field-proven v90.18.2 regressions. Both BK-BLE controllers demonstrated that BLEDIM command `0x80` uses payload `00` for physical ON and `01` for physical OFF; the earlier PacketLogger recovery had the correct raw frames but the UI-state labels were reversed. The corrected mapping is used everywhere (manual power, fresh-power Breath preparation, steady restore, and one-shot recovery) while RGB/brightness framing, per-controller sequence bytes, 20 Hz/raw-255 Breath, Center/Lotus behavior, fast Center-driven day/night logic, and brightness-only successful BLEDIM terminal commits remain unchanged. A one-time migration re-enables the known Door/Dashboard roles because the v90.18.2 field test intentionally saved them as OFF to work around the inverted mapping.
+
+The Improved + Philly GIS provider now uses layer-specific ArcGIS fields, a WGS84 ~500 m envelope query, independent posted/residential layer failure handling, and a 12-second failure retry backoff. The old implementation incorrectly requested `SpeedLimits_MPH` from Residential Streets, a field that exists only on Street Speed Limits; every City request therefore failed and retried nearly every GPS update. Improved OSM gets the same failure backoff. Philadelphia GIS matching remains able to supply a speed independently of OSM, so local streets can still resolve while Overpass is temporarily unavailable.
+
 ## v90.18.2 — iOS CI XCTest architecture-alignment fix
 
 v90.18.2 keeps the v90.18.1 runtime behavior unchanged and fixes two stale XCTest source-text assertions that depended on the capitalization of a comment. The tests now verify the actual architecture instead: power-on animation admission remains independent of engine/courtesy/headlight state, Sync cohort registration precedes BLEDIM boot settle, and every CoreBluetooth reconnect clears the per-connection animation-consumed flag. The flight-recorder version label is updated to v90.18.2 for field-log identification.

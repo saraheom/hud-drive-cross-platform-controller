@@ -22,16 +22,21 @@ The trace proves that the application transport is ATT Write Command (`0x52`) to
 
 ### Power — command 0x80
 
-Payload: one byte, `00` = OFF, `01` = ON.
+Payload: one byte. The frame bytes were recovered correctly from PacketLogger, but later direct in-vehicle field testing on **both** BK-BLE controllers (Door and Dashboard, 2026-08-30) proved the earlier UI-state interpretation was reversed:
+
+- `00` = **physical ON**
+- `01` = **physical OFF**
+
+The original capture had correctly identified command `0x80`; only the semantic label assigned to its two payload values was wrong.
 
 Captured:
 
 ```
-OFF  55 AA 09 80 00 01 00 89
-ON   55 AA 0A 80 00 01 01 8B
+PHYSICAL ON   55 AA 09 80 00 01 00 89
+PHYSICAL OFF  55 AA 0A 80 00 01 01 8B
 ```
 
-The user's first requested ON produced no write because the light was already on; the following OFF and ON produced the two frames above.
+The two raw frames above remain authoritative protocol evidence. Direct vehicle testing is authoritative for their physical ON/OFF meaning.
 
 ### RGB — command 0x82
 

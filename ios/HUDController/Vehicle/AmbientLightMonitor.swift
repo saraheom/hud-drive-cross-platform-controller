@@ -424,6 +424,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         migrateLegacyBLEDOMPairingIfNeeded()
         migrateKnownVehicleRoles()
+        migrateV9019BLEDIMPhysicalPowerSemanticsIfNeeded()
         independentOBDWitnessStatus = directOBDWitnessProven
             ? "Independent OBD BLE witness calibrated"
             : "Not calibrated — switch only the HUD off once while the engine stays on"
@@ -491,6 +492,34 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         if changed { persistPairedDevices() }
     }
 
+    /// v90.19 corrects the field-verified BK-BLE power-bit meaning. During the
+    /// v90.18.2 field test the user intentionally set Door/Dashboard to OFF in
+    /// the UI because that buggy mapping physically illuminated them. Those false
+    /// values are therefore migration artifacts, not the intended steady config.
+    /// Re-enable the two known vehicle BLEDIM roles exactly once after upgrading.
+    private func migrateV9019BLEDIMPhysicalPowerSemanticsIfNeeded() {
+        let key = "HUD.Ambient.v90_19.bledimPhysicalPowerSemanticsMigrated"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: key) else { return }
+
+        var changed = false
+        for index in pairedDevices.indices {
+            guard pairedDevices[index].protocolKind == .bledim2,
+                  pairedDevices[index].role == .door || pairedDevices[index].role == .dashboard
+            else { continue }
+            if !pairedDevices[index].powerOn {
+                pairedDevices[index].powerOn = true
+                changed = true
+                logger.log(
+                    "AMBIENT MIGRATE",
+                    "v90.19 re-enabled \(pairedDevices[index].displayName) after correcting field-verified BLEDIM power semantics"
+                )
+            }
+        }
+        if changed { persistPairedDevices() }
+        defaults.set(true, forKey: key)
+    }
+
     // MARK: - Start / stop / discovery
 
     func start() {
@@ -517,7 +546,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.18.2 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s}"
+            "Flight recorder v90.19 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -1680,9 +1709,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    /// v90.18 terminal commit. BLEDIM Power ON visibly flashes at its internally
-    /// remembered brightness, so a routine successful Breath must not send another
-    /// Power ON. Commit only the final brightness for BLEDIM; if that write fails,
+    /// BLEDIM routine terminal commit stays brightness-only. The v90.18.2 field
+    /// test showed that the extra command previously called Power ON was actually
+    /// the inverted physical-OFF payload, explaining the visible terminal blink.
+    /// With semantics corrected, there is still no reason to add a routine power
+    /// command after a successful Breath; if the final brightness write fails,
     /// the existing one-shot fail-safe is still allowed to use the stronger semantic
     /// Power ON → RGB → brightness restore. Lotus keeps its established terminal
     /// commit because it does not exhibit the BLEDIM flash.

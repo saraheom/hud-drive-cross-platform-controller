@@ -80,8 +80,8 @@ def test_improved_mode_loads_untagged_roads_and_clears_stale_sign():
 def test_philadelphia_gis_and_motorway_protection_are_present():
     assert 'services8.arcgis.com/6pr2WaSuWO79zliF/ArcGIS/rest/services/SpeedLimits/FeatureServer/' in SPEED
     assert 'SPEED_LIMITS,SpeedLimits_MPH' in SPEED
-    assert 'async let posted = fetchPhiladelphiaLayer(0' in SPEED
-    assert 'async let residential = fetchPhiladelphiaLayer(1' in SPEED
+    assert 'async let postedTask = fetchPhiladelphiaLayer(0' in SPEED
+    assert 'async let residentialTask = fetchPhiladelphiaLayer(1' in SPEED
     assert '?? (residential ? 25 : nil)' in SPEED
     assert '["motorway", "motorway_link"].contains(confirmedOSM.segment.highway)' in SPEED
     assert 'source: "OSM explicit motorway"' in SPEED
