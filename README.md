@@ -34,6 +34,10 @@ That is a separate external toolchain issue.
 
 
 
+## v90.25.1 — CI XCTest contract alignment
+
+v90.25.1 is runtime-identical to v90.25. It updates the legacy `V9010AmbientPowerEpochReliabilityTests` source-contract assertion to the intentional v90.24+ synchronization implementation (`ownedByHeadlightBarrierNow` plus deferred Lotus visual preparation), fixing the iOS CI failure where 169/170 tests passed and the obsolete pre-v90.24 call-shape assertion failed.
+
 ## v90.25 — integrated ambient + speed continuity refinement
 
 v90.25 keeps the complete v90.24 ambient synchronization fix and adds two field-driven **Improved + Philly GIS** display-continuity refinements. A close, aligned forward OSM successor with the same normalized road identity can now take over when the previous way's continuity bonus has become stale, fixing the residual MLK Drive dropout where the next MLK segment was physically much closer but narrowly missed the old score-delta gate. In addition, an explicit road candidate already at confirmation 1/2 with the **same mph as the displayed sign** temporarily suppresses the four-second stale clear, preventing a one-second blank such as the North 38th Street 25 → blank → 25 race.

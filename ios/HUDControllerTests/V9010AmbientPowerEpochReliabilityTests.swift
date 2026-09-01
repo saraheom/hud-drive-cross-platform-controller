@@ -40,7 +40,12 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         let startupBlock = startupParts[1].components(separatedBy: "private func queuePowerUpBreath")[0]
         XCTAssertTrue(startupBlock.contains("registerPowerOnCohortMember(id)"))
         XCTAssertTrue(startupBlock.contains("scheduleBLEDIMBootSettleReassert"))
-        XCTAssertTrue(startupBlock.contains("queuePowerUpBreath(id, force: expectedByHeadlightBarrier || lateFromHeadlightBarrier)"))
+        // v90.24+ recomputes barrier ownership after registerPowerOnCohortMember()
+        // because that call may admit a just-arrived physical peer during the discovery floor.
+        // Verify the new semantics rather than the pre-v90.24 one-line call shape.
+        XCTAssertTrue(startupBlock.contains("let ownedByHeadlightBarrierNow = syncHeadlightBarrierActive && syncCohortExpectedIDs.contains(id)"))
+        XCTAssertTrue(startupBlock.contains("force: ownedByHeadlightBarrierNow || lateFromHeadlightBarrier"))
+        XCTAssertTrue(startupBlock.contains("deferVisualPreparationForSync: ownedByHeadlightBarrierNow"))
         XCTAssertFalse(startupBlock.contains("enginePowerPresent"))
         XCTAssertFalse(startupBlock.contains("headlightPowerSessionActive"))
     }
