@@ -33,7 +33,7 @@ def test_engine_off_is_diagnostic_only_and_cannot_cancel_light_animation():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     block = monitor.split("private func confirmEnginePowerOff()", 1)[1].split("private func evaluateVehicleLightingAutomation", 1)[0]
     assert "Engine diagnostic OFF confirmed" in block
-    assert "leaves all light animations" in block
+    assert "re-arms the one-time engine-start synchronization promotion" in block
     assert "removeFromActiveBreath" not in block
     assert "commitConfirmedHeadlightPower" not in block
     assert "transitionBrightness(" not in block

@@ -182,9 +182,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var improvedLastConfidenceMargin: Double = 0
     private var improvedLastResolutionFresh = false
     private var improvedLastResolutionWarningEligible = false
-    /// Fresh same-road geometry can preserve the displayed sign across an untagged
-    /// segment, but intentionally does not refresh warning eligibility.
+    /// Fresh display-only continuity can preserve the sign while road identity is
+    /// still geometrically trustworthy or while an explicit same-limit successor is
+    /// one confirmation sample away. Neither path refreshes warning eligibility.
     private var improvedDisplayContinuityFresh = false
+    private var improvedDisplayContinuityReason = "none"
     private var improvedResolutionSource = "none"
     private var improvedPendingLimit: (key: String, mph: Int, count: Int, source: String)?
 
@@ -433,6 +435,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         improvedLastResolutionFresh = false
         improvedLastResolutionWarningEligible = false
         improvedDisplayContinuityFresh = false
+        improvedDisplayContinuityReason = "none"
         improvedResolutionSource = "none"
         improvedPendingLimit = nil
         philadelphiaSpeedSegments.removeAll()
@@ -1599,6 +1602,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         improvedLastResolutionFresh = false
         improvedLastResolutionWarningEligible = false
         improvedDisplayContinuityFresh = false
+        improvedDisplayContinuityReason = "none"
         let trace = Array(traceLocations.suffix(8))
         guard !trace.isEmpty else { return nil }
 
@@ -1690,24 +1694,47 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             // Prefer that semantic continuity before considering a different road.
             var sameRoadExplicit: OSMScored?
             var sameRoadUntagged: OSMScored?
+            var sameRoadSuccessorIDs = Set<Int64>()
             if let identity = improvedCurrentRoadIdentity, currentSpeedLimitMph > 0 {
-                let strongSameRoadCandidates = osmScored.filter { item in
-                    Self.normalizedRoadIdentity(name: item.segment.name, reference: item.segment.reference) == identity &&
+                let sameIdentityCandidates = osmScored.filter { item in
+                    Self.normalizedRoadIdentity(name: item.segment.name, reference: item.segment.reference) == identity
+                }
+                let strongSameRoadCandidates = sameIdentityCandidates.filter { item in
                     item.match.currentDistance <= 35 &&
                     item.match.currentAngle <= 35 &&
                     item.match.matchedPoints >= max(1, trace.count - 1) &&
                     item.match.score <= min(2.5, best.match.score + 0.75)
                 }
-                sameRoadExplicit = strongSameRoadCandidates.first(where: { $0.speedMph == currentSpeedLimitMph })
-                let changedExplicit = strongSameRoadCandidates.first(where: {
+
+                // v90.25 forward-successor escape hatch. The continuity bonus can
+                // keep an aging current OSM way ranked first for one sample even
+                // after the car has physically entered the next piece of the same
+                // named street. Admit a very close/aligned same-road successor even
+                // when it narrowly misses the old best+0.75 score gate. This fixes
+                // the field-observed MLK dropout where the old way was ~40 m away
+                // while the next MLK way was <5 m away and matched 8/8 trace points.
+                let successorCandidates = sameIdentityCandidates.filter { item in
+                    item.segment.elementID != improvedCurrentRoadID &&
+                    item.match.currentDistance <= 20 &&
+                    item.match.currentAngle <= 20 &&
+                    item.match.matchedPoints >= max(1, trace.count - 1) &&
+                    item.match.score <= min(2.75, best.match.score + 1.25)
+                }
+                sameRoadSuccessorIDs = Set(successorCandidates.map { $0.segment.elementID })
+
+                let continuityCandidates = strongSameRoadCandidates + successorCandidates.filter { successor in
+                    !strongSameRoadCandidates.contains(where: { $0.segment.elementID == successor.segment.elementID })
+                }
+                sameRoadExplicit = continuityCandidates.first(where: { $0.speedMph == currentSpeedLimitMph })
+                let changedExplicit = continuityCandidates.first(where: {
                     guard let mph = $0.speedMph else { return false }
                     return mph != currentSpeedLimitMph
                 })
-                // Do not use an untagged sibling to mask a real posted-speed change
-                // on the same named road. In that case the changed explicit segment
+                // Do not use an untagged sibling/successor to mask a real posted-speed
+                // change on the same named road. A changed explicit segment still
                 // falls through to the normal confirmation path below.
                 if changedExplicit == nil {
-                    sameRoadUntagged = strongSameRoadCandidates.first(where: { $0.speedMph == nil })
+                    sameRoadUntagged = continuityCandidates.first(where: { $0.speedMph == nil })
                 }
             }
 
@@ -1721,9 +1748,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 improvedPendingRoad = nil
                 confirmedOSM = continuity
                 if previousID != continuity.segment.elementID {
+                    let handoffKind = sameRoadSuccessorIDs.contains(continuity.segment.elementID)
+                        ? "same-road successor fast handoff"
+                        : "same-road fast handoff"
                     logger.log(
                         "IMPROVED TRACE DECISION",
-                        "same-road fast handoff \(previousID.map(String.init) ?? "none") → \(continuity.segment.elementID) identity=\(improvedCurrentRoadIdentity ?? "-") limit=\(currentSpeedLimitMph)"
+                        "\(handoffKind) \(previousID.map(String.init) ?? "none") → \(continuity.segment.elementID) identity=\(improvedCurrentRoadIdentity ?? "-") limit=\(currentSpeedLimitMph)"
                     )
                 }
             } else if let continuity = sameRoadUntagged {
@@ -1736,9 +1766,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 improvedPendingRoad = nil
                 confirmedOSM = continuity
                 improvedDisplayContinuityFresh = true
+                improvedDisplayContinuityReason = sameRoadSuccessorIDs.contains(continuity.segment.elementID)
+                    ? "OSM same-road successor untagged continuity"
+                    : "OSM same-road untagged continuity"
+                let continuityKind = sameRoadSuccessorIDs.contains(continuity.segment.elementID)
+                    ? "same-road successor untagged continuity"
+                    : "same-road untagged continuity"
                 logger.log(
                     "IMPROVED TRACE DECISION",
-                    "same-road untagged continuity \(previousID.map(String.init) ?? "none") → \(continuity.segment.elementID) identity=\(improvedCurrentRoadIdentity ?? "-"); preserve displayed \(currentSpeedLimitMph) mph without refreshing warning freshness"
+                    "\(continuityKind) \(previousID.map(String.init) ?? "none") → \(continuity.segment.elementID) identity=\(improvedCurrentRoadIdentity ?? "-"); preserve displayed \(currentSpeedLimitMph) mph without refreshing warning freshness"
                 )
             } else if best.segment.elementID == improvedCurrentRoadID {
                 improvedPendingRoad = nil
@@ -1758,9 +1794,24 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                         )
                         improvedPendingRoad = nil
                         confirmedOSM = best
+                    } else if best.speedMph == currentSpeedLimitMph, currentSpeedLimitMph > 0 {
+                        improvedDisplayContinuityFresh = true
+                        improvedDisplayContinuityReason = "OSM pending same-limit road confirmation"
+                        logger.log(
+                            "IMPROVED TRACE DECISION",
+                            "pending same-limit road confirmation way=\(best.segment.elementID) limit=\(currentSpeedLimitMph) confirmation=\(next)/2; suppress stale display clear without refreshing warning freshness"
+                        )
                     }
                 } else {
                     improvedPendingRoad = (best.segment.elementID, 1)
+                    if best.speedMph == currentSpeedLimitMph, currentSpeedLimitMph > 0 {
+                        improvedDisplayContinuityFresh = true
+                        improvedDisplayContinuityReason = "OSM pending same-limit road confirmation"
+                        logger.log(
+                            "IMPROVED TRACE DECISION",
+                            "pending same-limit road confirmation way=\(best.segment.elementID) limit=\(currentSpeedLimitMph) confirmation=1/2; suppress stale display clear without refreshing warning freshness"
+                        )
+                    }
                 }
             }
         } else {
@@ -1860,10 +1911,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
 
         if improvedDisplayContinuityFresh, currentSpeedLimitMph > 0 {
-            improvedResolutionSource = "OSM same-road untagged continuity"
+            improvedResolutionSource = improvedDisplayContinuityReason
             logger.log(
                 "IMPROVED TRACE DECISION",
-                "same-road geometry remains fresh without explicit maxspeed; preserve displayed \(currentSpeedLimitMph) mph, warning freshness unchanged"
+                "display continuity active source=\(improvedDisplayContinuityReason); preserve displayed \(currentSpeedLimitMph) mph, warning freshness unchanged"
             )
             return currentSpeedLimitMph
         }

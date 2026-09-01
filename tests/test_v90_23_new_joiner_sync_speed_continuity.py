@@ -33,8 +33,9 @@ def test_headlight_barrier_admits_only_newly_joining_lights():
     assert "return !animatedConnectionSession.contains(id)" in helper
 
     barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
-    assert "let joiningDevices = eligibleDevices.filter { isJoiningHeadlightTransition($0) }" in barrier
-    assert "let alreadyActiveDevices = eligibleDevices.filter { !isJoiningHeadlightTransition($0) }" in barrier
+    assert "let joiningDevices = pairedDevices.filter { automaticHeadlightJoinEligible($0) }" in barrier
+    assert "let alreadyActiveDevices = pairedDevices.filter" in barrier
+    assert "isPhysicallyPresentOrConnecting($0.id)" in barrier
     assert "for device in joiningDevices {" in barrier
     assert "resetParticipantForHeadlightBarrier(device.id)" in barrier
     assert "let expected = Set(joiningDevices.map(\\.id))" in barrier
@@ -47,10 +48,10 @@ def test_headlight_barrier_admits_only_newly_joining_lights():
 
 def test_already_active_door_is_not_reset_or_prepared_by_headlight_barrier():
     barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
-    reset_loop = barrier.split("Never call resetParticipantForHeadlightBarrier on an already-active light.", 1)[1].split("let expected", 1)[0]
+    reset_loop = barrier.split("Never touch an already-steady controller here.", 1)[1].split("let expected", 1)[0]
     assert "for device in joiningDevices" in reset_loop
     assert "alreadyActiveDevices" not in reset_loop
-    prep_loop = barrier.split("Start preparation only after new-joiner membership is frozen", 1)[1]
+    prep_loop = barrier.split("Automatic shared-T0 preparation must be non-visual", 1)[1]
     assert "for device in joiningDevices where isControllable(device.id)" in prep_loop
     assert "alreadyActiveDevices" not in prep_loop
     assert "only lights newly joining the current startup/headlight transition" in VIEW
@@ -66,14 +67,14 @@ def test_fresh_new_joiner_bledim_settles_before_common_t0():
     assert "scheduleBLEDIMBootSettleReassert(" in barrier
     assert 'reason: "headlight sync barrier fresh BLEDIM new joiner"' in barrier
     assert "forceBreath: true" in barrier
-    assert "queuePowerUpBreath(device.id, force: true)" in barrier
+    assert "deferVisualPreparationForSync: true" in barrier
 
 
-def test_v9022_sync_migration_is_retained_in_v9023():
+def test_v9022_sync_migration_is_retained_in_v9024():
     assert 'HUD.Ambient.v90_22.headlightBarrierSyncMigrated' in MONITOR
     assert 'd.set(true, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
     assert 'self.synchronizePowerOnBreathEnabled = d.object(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
-    assert "Flight recorder v90.23 enabled" in MONITOR
+    assert "Flight recorder v90.25 enabled" in MONITOR
     assert "syncMembership=newJoinersOnly" in MONITOR
 
 
@@ -95,9 +96,10 @@ def test_untagged_same_road_preserves_display_but_not_warning_freshness():
     matcher = SPEED.split("private func bestImprovedTraceSpeedLimit", 1)[1].split("private func acceptImprovedLimit", 1)[0]
     assert "$0.speedMph == nil" in matcher
     assert "improvedDisplayContinuityFresh = true" in matcher
-    continuity = matcher.split('improvedResolutionSource = "OSM same-road untagged continuity"', 1)[1].split("return currentSpeedLimitMph", 1)[0]
+    continuity = matcher.split("if improvedDisplayContinuityFresh, currentSpeedLimitMph > 0", 1)[1].split("return currentSpeedLimitMph", 1)[0]
     assert "acceptImprovedLimit" not in continuity
     assert "warning freshness unchanged" in continuity
+    assert "improvedDisplayContinuityReason" in continuity
     assert "!improvedLastResolutionFresh," in SPEED
     assert "!improvedDisplayContinuityFresh," in SPEED
     assert "displayContinuity=%d" in SPEED

@@ -34,6 +34,26 @@ That is a separate external toolchain issue.
 
 
 
+## v90.25 — integrated ambient + speed continuity refinement
+
+v90.25 keeps the complete v90.24 ambient synchronization fix and adds two field-driven **Improved + Philly GIS** display-continuity refinements. A close, aligned forward OSM successor with the same normalized road identity can now take over when the previous way's continuity bonus has become stale, fixing the residual MLK Drive dropout where the next MLK segment was physically much closer but narrowly missed the old score-delta gate. In addition, an explicit road candidate already at confirmation 1/2 with the **same mph as the displayed sign** temporarily suppresses the four-second stale clear, preventing a one-second blank such as the North 38th Street 25 → blank → 25 race.
+
+Both paths are display-only continuity: they do not refresh overspeed-warning freshness and cannot use an untagged same-road segment to mask an explicit changed speed. v90.24's physical-new-joiner courtesy sync, readiness-only Lotus preparation, engine-start full three-light cohort, and Already-On Minimal behavior are unchanged.
+
+See `docs/V90_25_SPEED_CONTINUITY_REFINEMENT.md`.
+
+
+## v90.24 — physical auto-sync + engine-start full-cohort promotion
+
+v90.24 fixes the field-observed case where manual Preview synchronized correctly but automatic courtesy/engine-start animation did not. Normal courtesy/headlight barriers now start from **physically present/connecting new joiners only** and keep a 2.0 s discovery floor for slightly delayed CoreBluetooth callbacks; an absent configured Door no longer holds a Center+Dashboard courtesy cohort open. Automatic Lotus/Center preparation is also **readiness-only**: no Power/RGB/baseline command is sent before the shared T0, eliminating the visible Center lead that could occur while a BLEDIM peer was still settling.
+
+The initial confirmed engine OFF→ON edge is now the explicit startup exception to new-joiners-only behavior. Raw HUD engine ON reserves the crank window and suppresses a provisional partial cohort. After engine confirmation, the coordinator waits through a 4.0 s crank settle and requires BLEDIM GATT to remain ready for 1.5 s; once all enabled vehicle roles are controllable and the pipeline is idle, **Center + Door + Dashboard are deliberately promoted into one full startup cohort**, even if Dashboard had already been on from courtesy lighting. This promotion runs once per engine session and is re-armed by confirmed engine OFF. Later headlight transitions remain strictly new-joiners-only. A 9.0 s maximum wait prevents a missing controller from blocking forever.
+
+Already-On Minimal BLEDIM behavior and the v90.22/v90.23 MLK same-road speed-limit continuity are unchanged.
+
+See `docs/V90_24_AUTOMATIC_SYNC_ENGINE_START_PROMOTION.md`.
+
+
 ## v90.23 — newly joined lights only for synchronized Breath
 
 v90.23 keeps the v90.22 **Already-On Minimal** BLEDIM production path and MLK/same-road speed-limit continuity, but narrows the headlight synchronization barrier to the intended physical behavior: **only lights newly joining the current transition are allowed to animate**. A controller that is already steady in its current BLE/power session is excluded and left untouched.

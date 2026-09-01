@@ -113,11 +113,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         didSet { UserDefaults.standard.set(max(1.0, min(15.0, breathDurationSeconds)), forKey: "HUD.Ambient.v90_8.breathDuration") }
     }
 
-    /// v90.23: synchronization remains user-controllable, but a headlight/startup
-    /// barrier now admits only lights that are newly joining the current transition.
-    /// A controller already steady in the current BLE/power session is never recruited
-    /// into another Breath merely because Center/Dashboard join later. On a cold start,
-    /// all still-joining roles naturally enter the same cohort and share one Breath T0.
+    /// v90.24: normal courtesy/headlight barriers admit only lights physically joining
+    /// the current transition, so an already-steady controller is never replayed merely
+    /// because another lamp appears. The one deliberate exception is the initial confirmed
+    /// engine OFF→ON edge: after crank/GATT settle, every enabled vehicle role is promoted
+    /// into one full startup cohort so courtesy-established Dashboard can synchronize with
+    /// Center + Door at the vehicle's actual startup.
     var synchronizePowerOnBreathEnabled: Bool {
         didSet {
             UserDefaults.standard.set(synchronizePowerOnBreathEnabled, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")
@@ -305,8 +306,29 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// Unlike the legacy discovery cohort, its expected membership is known up
     /// front, so it can release as soon as every expected member is prepared.
     private var syncHeadlightBarrierActive = false
+    /// v90.24: an automatic headlight barrier starts with controllers that are
+    /// physically present/connecting and keeps a short discovery gate open for a
+    /// second newly-powered controller. This prevents an unpowered Door from being
+    /// pre-enrolled during courtesy lighting while still allowing Dashboard to join
+    /// Center when its GATT callback arrives a few hundred milliseconds later.
+    private var syncBarrierCollectsNewJoiners = false
+    private let headlightSyncDiscoveryFloorSeconds: TimeInterval = 2.0
     private let powerOnSyncWindowSeconds: TimeInterval = 3.0
     private let powerOnSyncPreparationGraceSeconds: TimeInterval = 1.5
+
+    /// v90.24 engine-start promotion. Courtesy lighting can establish Center /
+    /// Dashboard before the engine is started. The initial OFF -> ON engine edge is
+    /// therefore a special one-time full-cohort event: after crank-induced BLE
+    /// reconnects settle, every enabled/controllable vehicle light shares one T0.
+    /// Later headlight transitions remain new-joiners-only.
+    private var engineStartupSyncCandidateActive = false
+    private var engineStartupSyncPending = false
+    private var engineStartupSyncCompletedForCurrentEngineSession = false
+    private var engineStartupSyncTask: Task<Void, Never>?
+    private var gattControlReadyAtByID: [UUID: Date] = [:]
+    private let engineStartupCrankSettleSeconds: TimeInterval = 4.0
+    private let engineStartupBLEDIMQuietSeconds: TimeInterval = 1.5
+    private let engineStartupMaxWaitSeconds: TimeInterval = 9.0
     private var activeBreathIDs: Set<UUID> = []
     private var activeBreathStartBrightness: [UUID: Int] = [:]
     /// Final steady-state target for the last leg of the breath. Normally this is
@@ -575,7 +597,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.23 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal,syncMembership=newJoinersOnly}"
+            "Flight recorder v90.25 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,syncDiscoveryFloor=\(String(format: "%.1f", headlightSyncDiscoveryFloorSeconds))s,engineCrankSettle=\(String(format: "%.1f", engineStartupCrankSettleSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal,syncMembership=newJoinersOnly,autoSyncPrep=deferredToT0,engineStartupPromotion=fullCohort}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -603,7 +625,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         syncCohortExpectedIDs.removeAll()
         syncLateCohortIDs.removeAll()
         syncHeadlightBarrierActive = false
+        syncBarrierCollectsNewJoiners = false
         syncCohortOpenedAt = nil
+        engineStartupSyncTask?.cancel()
+        engineStartupSyncTask = nil
+        engineStartupSyncCandidateActive = false
+        engineStartupSyncPending = false
+        engineStartupSyncCompletedForCurrentEngineSession = false
+        gattControlReadyAtByID.removeAll()
         activeBreathStartBrightness.removeAll()
         activeBreathReturnBrightness.removeAll()
         activeBLEDIMAnimationStrategyByID.removeAll()
@@ -1174,7 +1203,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let dayNight = headlightPowerSessionActive ? "night" : "day"
         logger.log(
             "AMBIENT TRACE",
-            "#\(ambientTraceSequence) \(reason) | engineDiag{hud=\(hudEnginePowerSignalPresent ? 1 : 0),obd=\(obdEnginePowerSignalPresent ? 1 : 0),confirmed=\(enginePowerPresent ? 1 : 0),directOBD=\(directOBDRecent ? 1 : 0)} dayNight{raw=\(dayNightObservation),confirmed=\(dayNight),gen=\(headlightStateGeneration)} breath{sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),active=\(activeBreathIDs.count),queued=\(synchronizedBreathIDs.count)} | \(ambientRoleTraceState(.door)) \(ambientRoleTraceState(.dashboard)) \(ambientRoleTraceState(.centerConsole))"
+            "#\(ambientTraceSequence) \(reason) | engineDiag{hud=\(hudEnginePowerSignalPresent ? 1 : 0),obd=\(obdEnginePowerSignalPresent ? 1 : 0),confirmed=\(enginePowerPresent ? 1 : 0),directOBD=\(directOBDRecent ? 1 : 0)} startupSync{candidate=\(engineStartupSyncCandidateActive ? 1 : 0),pending=\(engineStartupSyncPending ? 1 : 0),completed=\(engineStartupSyncCompletedForCurrentEngineSession ? 1 : 0)} dayNight{raw=\(dayNightObservation),confirmed=\(dayNight),gen=\(headlightStateGeneration)} breath{sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),active=\(activeBreathIDs.count),queued=\(synchronizedBreathIDs.count)} | \(ambientRoleTraceState(.door)) \(ambientRoleTraceState(.dashboard)) \(ambientRoleTraceState(.centerConsole))"
         )
     }
 
@@ -1795,6 +1824,19 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
+        // v90.24: once raw HUD transport says the engine is starting, automatic
+        // per-device admission is temporarily owned by the engine-start coordinator.
+        // This prevents Center/Door from beginning a two-light Breath during the
+        // crank window while Dashboard is still the courtesy-light survivor.
+        if synchronizePowerOnBreathEnabled && (engineStartupSyncCandidateActive || engineStartupSyncPending) {
+            logger.log(
+                "AMBIENT ANIM",
+                "Automatic Breath deferred to engine-start coordinator: \(device.displayName) candidate=\(engineStartupSyncCandidateActive ? 1 : 0) pending=\(engineStartupSyncPending ? 1 : 0)"
+            )
+            ambientTrace("Engine-start coordinator owns new GATT role=\(device.role?.rawValue ?? "unassigned")")
+            return
+        }
+
         // A headlight-transition barrier owns expected members when active. Otherwise
         // preserve the robust per-controller power-on cohort behavior. Late members
         // from a completed headlight barrier are deliberately allowed to run a full
@@ -1806,18 +1848,31 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 registerPowerOnCohortMember(id)
             }
         }
+        // registerPowerOnCohortMember may have admitted a just-arrived physical peer
+        // into the still-open v90.24 discovery floor. Recompute ownership before
+        // choosing preparation semantics.
+        let ownedByHeadlightBarrierNow = syncHeadlightBarrierActive && syncCohortExpectedIDs.contains(id)
         if device.protocolKind == .bledim2 {
             scheduleBLEDIMBootSettleReassert(
                 for: id,
-                reason: expectedByHeadlightBarrier ? "headlight barrier member GATT ready" : "new GATT control ready",
-                forceBreath: expectedByHeadlightBarrier || lateFromHeadlightBarrier
+                reason: ownedByHeadlightBarrierNow ? "headlight barrier member GATT ready" : "new GATT control ready",
+                forceBreath: ownedByHeadlightBarrierNow || lateFromHeadlightBarrier
             )
         } else {
-            queuePowerUpBreath(id, force: expectedByHeadlightBarrier || lateFromHeadlightBarrier)
+            queuePowerUpBreath(
+                id,
+                force: ownedByHeadlightBarrierNow || lateFromHeadlightBarrier,
+                deferVisualPreparationForSync: ownedByHeadlightBarrierNow
+            )
         }
     }
 
-    private func queuePowerUpBreath(_ id: UUID, force: Bool = false, bledimStrategyOverride: BLEDIMAnimationStrategy? = nil) {
+    private func queuePowerUpBreath(
+        _ id: UUID,
+        force: Bool = false,
+        bledimStrategyOverride: BLEDIMAnimationStrategy? = nil,
+        deferVisualPreparationForSync: Bool = false
+    ) {
         guard let device = pairedDevice(id) else { return }
         guard isControllable(id) else {
             logger.log("AMBIENT ANIM", "Breath request deferred: \(device.displayName) GATT not controllable")
@@ -1860,7 +1915,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         logger.log(
             "AMBIENT ANIM",
-            "Breath prepare queued: \(device.displayName) role=\(device.role?.rawValue ?? "unassigned") initial=\(initialBrightness)% force=\(force ? 1 : 0) strategy=\(capturedBLEDIMStrategy?.shortName ?? "Lotus baseline")"
+            "Breath prepare queued: \(device.displayName) role=\(device.role?.rawValue ?? "unassigned") initial=\(initialBrightness)% force=\(force ? 1 : 0) strategy=\(capturedBLEDIMStrategy?.shortName ?? "Lotus baseline") prep=\(deferVisualPreparationForSync ? "deferredToT0" : "normal")"
         )
         ambientTrace("Breath prepare queued \(device.displayName) initial=\(initialBrightness)%")
 
@@ -1923,8 +1978,21 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                         return
                     }
                 }
+            } else if deferVisualPreparationForSync {
+                // v90.24 automatic shared-T0 path: GATT readiness is preparation.
+                // Do not send Lotus Power/RGB/baseline here. Those writes made Center
+                // visibly change several seconds before a slower BLEDIM member reached
+                // the common T0. The physical controller is already powered (we could
+                // not have a live GATT characteristic otherwise), so the synchronized
+                // waveform itself becomes the first visible app-driven change. The
+                // terminal steady commit still restores Power/RGB/final brightness.
+                guard self.isControllable(id) else { return }
+                self.logger.log(
+                    "AMBIENT ANIM",
+                    "Lotus automatic sync preparation readiness-only; no pre-T0 Power/RGB/brightness write for \(device.displayName)"
+                )
             } else {
-                // Lotus remains completely unchanged.
+                // Manual/independent Lotus behavior remains unchanged.
                 guard await self.sendPowerWhenReady(id, on: true, reason: "power-up breath prepare") else {
                     self.logger.log("AMBIENT ANIM", "Breath prepare failed at Power ON: \(device.displayName)")
                     self.ambientTrace("Breath prepare failed power \(device.displayName)")
@@ -2024,12 +2092,38 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         animatedConnectionSession.remove(id)
     }
 
+    /// If the raw HUD engine witness arrives while an automatic headlight barrier
+    /// is still only preparing, engine startup becomes the stronger owner. Cancel the
+    /// provisional cohort before it can commit a partial common T0. A Breath that is
+    /// already visibly running is allowed to finish; the engine coordinator waits for
+    /// the animation pipeline to become idle before starting the one-time full cohort.
+    private func supersedePendingHeadlightBarrierForEngineStartup(reason: String) {
+        guard syncHeadlightBarrierActive, synchronizedBreathTask == nil else { return }
+        let owned = syncCohortExpectedIDs.union(synchronizedBreathIDs)
+        pendingBreathStartTask?.cancel()
+        pendingBreathStartTask = nil
+        for id in owned {
+            resetParticipantForHeadlightBarrier(id)
+        }
+        syncCohortExpectedIDs.removeAll()
+        synchronizedBreathIDs.removeAll()
+        syncLateCohortIDs.removeAll()
+        syncCohortOpenedAt = nil
+        syncHeadlightBarrierActive = false
+        syncBarrierCollectsNewJoiners = false
+        logger.log(
+            "AMBIENT ANIM",
+            "Pending headlight sync barrier superseded by engine-start coordinator members=\(owned.count) reason=\(reason)"
+        )
+        ambientTrace("Headlight barrier superseded by engine-start members=\(owned.count)")
+    }
+
     /// A light is a member of the current headlight/startup transition only while
     /// it is still establishing its connection-session Breath. Once it has reached
     /// steady state, `animatedConnectionSession` keeps later headlight edges from
     /// replaying Breath on that already-active controller. Active/preparing members
-    /// remain joiners so a cold-start Door that happened to arrive milliseconds before
-    /// Center can still be re-barriered with Center/Dashboard onto one common T0.
+    /// remain joiners so a cold-start controller that arrived just before another
+    /// member can still be re-barriered onto one common T0.
     private func isJoiningHeadlightTransition(_ device: AmbientLightDevice) -> Bool {
         let id = device.id
         if bledimBootSettleTasks[id] != nil ||
@@ -2041,35 +2135,66 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         return !animatedConnectionSession.contains(id)
     }
 
-    /// v90.23 vehicle-level synchronization barrier. The barrier is transition-
-    /// membership based: only newly joining lights are admitted. An already-steady
-    /// Door therefore keeps its current output while newly powered Center/Dashboard
-    /// wait for one another and share a common T0. On a cold start, all three are
-    /// still joiners and naturally form the full three-light cohort.
+    /// v90.24: "newly joining" is a physical fact, not merely a persisted animation
+    /// flag. A configured Door that has no live/connecting CoreBluetooth peripheral
+    /// must not hold a courtesy-light Center+Dashboard cohort open for 4.5 seconds.
+    private func isPhysicallyPresentOrConnecting(_ id: UUID) -> Bool {
+        if isConnected(id) || isControllable(id) { return true }
+        if connectionStartedByID[id] != nil { return true }
+        if let peripheral = peripheralsByID[id] {
+            return peripheral.state == .connected || peripheral.state == .connecting
+        }
+        return false
+    }
+
+    private func automaticHeadlightJoinEligible(_ device: AmbientLightDevice) -> Bool {
+        device.role != nil &&
+            device.startupAnimationEnabled &&
+            device.powerOn &&
+            isJoiningHeadlightTransition(device) &&
+            isPhysicallyPresentOrConnecting(device.id)
+    }
+
+    /// v90.24 vehicle-level headlight barrier. Later headlight/courtesy edges remain
+    /// NEW-JOINERS-ONLY. Membership starts from physically present controllers and a
+    /// short discovery floor remains open so a peer whose didConnect/GATT callback is
+    /// a few hundred milliseconds later can still join. An absent Door is not guessed
+    /// into the cohort merely because it is configured in the app.
     private func beginHeadlightTransitionSyncCohort(reason: String) {
         guard synchronizePowerOnBreathEnabled else { return }
+
+        // Raw HUD ON arrives before the 0.75-s engine confirmation. During that
+        // narrow crank window, do not create a provisional Center/Door cohort that
+        // would exclude a courtesy-established Dashboard. Engine confirmation owns
+        // the one-time full startup cohort instead.
+        if engineStartupSyncCandidateActive || engineStartupSyncPending {
+            logger.log(
+                "AMBIENT ANIM",
+                "Headlight sync barrier deferred to engine-start coordinator candidate=\(engineStartupSyncCandidateActive ? 1 : 0) pending=\(engineStartupSyncPending ? 1 : 0) (\(reason))"
+            )
+            ambientTrace("Headlight barrier deferred engine-start reason=\(reason)")
+            return
+        }
+
         guard synchronizedBreathTask == nil else {
             logger.log("AMBIENT ANIM", "Headlight sync barrier skipped because a synchronized Breath is already running (\(reason))")
             return
         }
 
-        let eligibleDevices = pairedDevices.filter {
-            $0.role != nil && $0.startupAnimationEnabled && $0.powerOn
+        let joiningDevices = pairedDevices.filter { automaticHeadlightJoinEligible($0) }
+        let alreadyActiveDevices = pairedDevices.filter {
+            $0.role != nil && $0.startupAnimationEnabled && $0.powerOn &&
+                isPhysicallyPresentOrConnecting($0.id) && !isJoiningHeadlightTransition($0)
         }
-        let joiningDevices = eligibleDevices.filter { isJoiningHeadlightTransition($0) }
-        let alreadyActiveDevices = eligibleDevices.filter { !isJoiningHeadlightTransition($0) }
         guard !joiningDevices.isEmpty else {
             logger.log(
                 "AMBIENT ANIM",
-                "Headlight sync barrier found no newly joining animation participants; alreadyActive=\(alreadyActiveDevices.count) (\(reason))"
+                "Headlight sync barrier found no physically joining animation participants; alreadyActive=\(alreadyActiveDevices.count) (\(reason))"
             )
-            ambientTrace("Headlight sync barrier no new joiners alreadyActive=\(alreadyActiveDevices.count) reason=\(reason)")
+            ambientTrace("Headlight sync barrier no physical new joiners alreadyActive=\(alreadyActiveDevices.count) reason=\(reason)")
             return
         }
 
-        // Only newly joining BLEDIM members may need the 1.5-s firmware settle.
-        // Already-active Door/Dashboard members are deliberately excluded and are
-        // never reset, prepared, or brightness-modulated by this Breath cohort.
         var freshBLEDIMIDs: Set<UUID> = []
         for device in joiningDevices where device.protocolKind == .bledim2 && isControllable(device.id) {
             if bledimBootSettleTasks[device.id] != nil || !animatedConnectionSession.contains(device.id) {
@@ -2083,31 +2208,35 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         synchronizedBreathIDs.removeAll()
         syncLateCohortIDs.removeAll()
 
-        // Supersede only in-flight startup animation work belonging to joiners.
-        // Never call resetParticipantForHeadlightBarrier on an already-active light.
+        // Supersede only in-flight automatic startup work belonging to the actual
+        // physical joiners. Never touch an already-steady controller here.
         for device in joiningDevices {
             resetParticipantForHeadlightBarrier(device.id)
         }
 
         let expected = Set(joiningDevices.map(\.id))
         syncHeadlightBarrierActive = true
-        syncCohortOpenedAt = Date()
+        syncBarrierCollectsNewJoiners = true
+        let openedAt = Date()
+        syncCohortOpenedAt = openedAt
         syncCohortExpectedIDs = expected
 
         let joiningRoles = joiningDevices.compactMap { $0.role?.rawValue }.joined(separator: ",")
         let untouchedRoles = alreadyActiveDevices.compactMap { $0.role?.rawValue }.joined(separator: ",")
         logger.log(
             "AMBIENT ANIM",
-            "Headlight sync barrier opened NEW-JOINERS-ONLY expected=\(expected.count) deadline=\(String(format: "%.1f", powerOnSyncWindowSeconds + powerOnSyncPreparationGraceSeconds))s joining=\(joiningRoles) untouchedAlreadyActive=\(untouchedRoles.isEmpty ? "none" : untouchedRoles) reason=\(reason)"
+            "Headlight sync barrier opened NEW-JOINERS-ONLY physicalExpected=\(expected.count) discoveryFloor=\(String(format: "%.1f", headlightSyncDiscoveryFloorSeconds))s deadline=\(String(format: "%.1f", powerOnSyncWindowSeconds + powerOnSyncPreparationGraceSeconds))s joining=\(joiningRoles) untouchedAlreadyActive=\(untouchedRoles.isEmpty ? "none" : untouchedRoles) reason=\(reason)"
         )
-        ambientTrace("Headlight sync barrier newJoiners=\(expected.count) untouched=\(alreadyActiveDevices.count) reason=\(reason)")
+        ambientTrace("Headlight sync barrier physicalNewJoiners=\(expected.count) untouched=\(alreadyActiveDevices.count) reason=\(reason)")
 
         pendingBreathStartTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let deadline = Date().addingTimeInterval(self.powerOnSyncWindowSeconds + self.powerOnSyncPreparationGraceSeconds)
+            let discoveryEnd = openedAt.addingTimeInterval(self.headlightSyncDiscoveryFloorSeconds)
+            let deadline = openedAt.addingTimeInterval(self.powerOnSyncWindowSeconds + self.powerOnSyncPreparationGraceSeconds)
             while Date() < deadline {
                 guard !Task.isCancelled, self.syncHeadlightBarrierActive else { return }
-                if !self.syncCohortExpectedIDs.isEmpty,
+                if Date() >= discoveryEnd,
+                   !self.syncCohortExpectedIDs.isEmpty,
                    self.syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs) {
                     break
                 }
@@ -2123,6 +2252,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.syncCohortExpectedIDs.removeAll()
             self.syncCohortOpenedAt = nil
             self.syncHeadlightBarrierActive = false
+            self.syncBarrierCollectsNewJoiners = false
             self.pendingBreathStartTask = nil
 
             self.logger.log(
@@ -2133,8 +2263,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.startSynchronizedBreathSession()
         }
 
-        // Start preparation only after new-joiner membership is frozen. Fresh
-        // BLEDIM keeps its boot settle; Lotus/ready BLEDIM can prepare immediately.
+        // Automatic shared-T0 preparation must be non-visual. BLEDIM Already-On
+        // Minimal already sends no prep writes; Lotus now uses readiness-only prep
+        // so Center does not visibly lead the cohort before T0.
         for device in joiningDevices where isControllable(device.id) {
             if device.protocolKind == .bledim2, freshBLEDIMIDs.contains(device.id) {
                 scheduleBLEDIMBootSettleReassert(
@@ -2143,7 +2274,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     forceBreath: true
                 )
             } else {
-                queuePowerUpBreath(device.id, force: true)
+                queuePowerUpBreath(
+                    device.id,
+                    force: true,
+                    deferVisualPreparationForSync: true
+                )
             }
         }
     }
@@ -2153,6 +2288,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         if syncHeadlightBarrierActive {
             if syncCohortExpectedIDs.contains(id) {
                 logger.log("AMBIENT ANIM", "Headlight sync barrier already expects \(pairedDevice(id)?.displayName ?? id.uuidString)")
+            } else if syncBarrierCollectsNewJoiners,
+                      let opened = syncCohortOpenedAt,
+                      Date().timeIntervalSince(opened) <= headlightSyncDiscoveryFloorSeconds,
+                      let device = pairedDevice(id),
+                      automaticHeadlightJoinEligible(device) {
+                syncCohortExpectedIDs.insert(id)
+                logger.log(
+                    "AMBIENT ANIM",
+                    "Headlight sync barrier discovered additional physical new joiner: \(device.displayName) expected=\(syncCohortExpectedIDs.count)"
+                )
+                ambientTrace("Headlight barrier discovered joiner role=\(device.role?.rawValue ?? "unassigned")")
             } else {
                 syncLateCohortIDs.insert(id)
                 logger.log("AMBIENT ANIM", "Non-member power-on arrived during headlight barrier; marked late \(pairedDevice(id)?.displayName ?? id.uuidString)")
@@ -2181,6 +2327,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
 
         syncCohortOpenedAt = now
+        syncBarrierCollectsNewJoiners = false
         syncCohortExpectedIDs = [id]
         synchronizedBreathIDs.removeAll()
         pendingBreathStartTask?.cancel()
@@ -2211,6 +2358,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.syncCohortExpectedIDs.removeAll()
             self.syncCohortOpenedAt = nil
             self.syncHeadlightBarrierActive = false
+            self.syncBarrierCollectsNewJoiners = false
             self.pendingBreathStartTask = nil
 
             self.logger.log(
@@ -2231,6 +2379,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         synchronizedBreathIDs.removeAll()
         syncCohortOpenedAt = nil
         syncHeadlightBarrierActive = false
+        syncBarrierCollectsNewJoiners = false
         guard synchronizedBreathTask == nil else { return }
         for id in ready where activeBreathIDs.contains(id) {
             logger.log("AMBIENT ANIM", "Pending sync cohort released to independent Breath: \(pairedDevice(id)?.displayName ?? id.uuidString) reason=\(reason)")
@@ -2508,6 +2657,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             activeBreathStartedAt = nil
             syncCohortOpenedAt = nil
             syncHeadlightBarrierActive = false
+            syncBarrierCollectsNewJoiners = false
             }
     }
 
@@ -2647,9 +2797,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
         ambientTrace("Center-driven day/night \(on ? "night" : "day") reason=\(reason)")
 
-        // v90.23: the vehicle headlight edge coordinates only controllers that are
-        // newly joining this transition. An already-active Door is intentionally left
-        // out of the Breath cohort and may continue/fade to its night target normally.
+        // v90.24: ordinary vehicle headlight/courtesy edges coordinate only controllers
+        // physically joining this transition. An already-active Door is left out and may
+        // continue/fade normally. If this edge belongs to initial engine OFF→ON, the raw
+        // engine candidate suppresses this provisional barrier and the confirmed engine
+        // coordinator later promotes all enabled roles into one startup cohort.
         if on {
             beginHeadlightTransitionSyncCohort(reason: reason)
         }
@@ -2829,8 +2981,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         hudEnginePowerSignalPresent = present
         if present {
             hudOutageBeganAt = nil
+            if synchronizePowerOnBreathEnabled && !enginePowerPresent && !engineStartupSyncCompletedForCurrentEngineSession {
+                engineStartupSyncCandidateActive = true
+                supersedePendingHeadlightBarrierForEngineStartup(reason: "raw HUD engine ON")
+                logger.log(
+                    "AMBIENT ENGINE",
+                    "Raw HUD ON arms engine-start sync candidate; automatic per-light Breath admission is temporarily deferred"
+                )
+                ambientTrace("Engine-start sync candidate armed by raw HUD ON")
+            }
         } else {
             hudOutageBeganAt = Date()
+            if !enginePowerPresent && !engineStartupSyncPending {
+                engineStartupSyncCandidateActive = false
+            }
         }
         if changed {
             logger.log("AMBIENT ENGINE", "Raw HUD engine witness → \(present ? "ON" : "OFF")")
@@ -2930,6 +3094,194 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
     }
 
+    /// v90.24 one-time engine-start promotion. Courtesy lights can put Dashboard
+    /// into steady state before the engine starts, while the crank transition can
+    /// briefly reboot one of the headlight-fed controllers. Wait through that power
+    /// disturbance, require BLEDIM GATT to have been quiet for its normal boot-settle
+    /// interval, then deliberately recruit every enabled vehicle role into one shared
+    /// startup T0. This path runs once per confirmed engine session only.
+    private func scheduleEngineStartupSynchronization(source: String) {
+        guard synchronizePowerOnBreathEnabled else {
+            engineStartupSyncPending = false
+            engineStartupSyncCompletedForCurrentEngineSession = true
+            return
+        }
+        guard !engineStartupSyncCompletedForCurrentEngineSession else { return }
+
+        engineStartupSyncTask?.cancel()
+        engineStartupSyncPending = true
+        let beganAt = Date()
+        logger.log(
+            "AMBIENT ANIM",
+            "Engine-start full-cohort coordinator armed crankSettle=\(String(format: "%.1f", engineStartupCrankSettleSeconds))s bledimQuiet=\(String(format: "%.1f", engineStartupBLEDIMQuietSeconds))s maxWait=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s source=\(source)"
+        )
+        ambientTrace("Engine-start full-cohort coordinator armed source=\(source)")
+
+        engineStartupSyncTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let minimumStart = beganAt.addingTimeInterval(self.engineStartupCrankSettleSeconds)
+            let deadline = beganAt.addingTimeInterval(self.engineStartupMaxWaitSeconds)
+
+            while Date() < deadline {
+                guard !Task.isCancelled, self.enginePowerPresent else {
+                    self.engineStartupSyncPending = false
+                    self.engineStartupSyncTask = nil
+                    return
+                }
+
+                let now = Date()
+                let eligible = self.pairedDevices.filter {
+                    $0.role != nil && $0.startupAnimationEnabled && $0.powerOn
+                }
+                let ready = eligible.filter { self.isControllable($0.id) }
+                let allConfiguredReady = !eligible.isEmpty && ready.count == eligible.count
+                let bledimQuiet = ready
+                    .filter { $0.protocolKind == .bledim2 }
+                    .allSatisfy { device in
+                        guard let readyAt = self.gattControlReadyAtByID[device.id] else { return false }
+                        return now.timeIntervalSince(readyAt) >= self.engineStartupBLEDIMQuietSeconds
+                    }
+                let animationPipelineIdle = self.synchronizedBreathTask == nil &&
+                    self.activeBreathIDs.isEmpty &&
+                    self.breathPrepareTasks.isEmpty &&
+                    self.bledimBootSettleTasks.isEmpty
+
+                if now >= minimumStart,
+                   self.headlightPowerSessionActive,
+                   allConfiguredReady,
+                   bledimQuiet,
+                   animationPipelineIdle {
+                    self.engineStartupSyncTask = nil
+                    self.beginEngineStartupFullSyncCohort(
+                        devices: eligible,
+                        reason: "confirmed engine OFF→ON after crank/GATT settle"
+                    )
+                    return
+                }
+
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+
+            guard !Task.isCancelled, self.enginePowerPresent else {
+                self.engineStartupSyncPending = false
+                self.engineStartupSyncTask = nil
+                return
+            }
+
+            self.engineStartupSyncTask = nil
+            if self.headlightPowerSessionActive {
+                let fallback = self.pairedDevices.filter {
+                    $0.role != nil && $0.startupAnimationEnabled && $0.powerOn && self.isControllable($0.id)
+                }
+                if !fallback.isEmpty {
+                    self.logger.log(
+                        "AMBIENT ANIM",
+                        "Engine-start coordinator reached max wait; releasing controllable full-startup subset=\(fallback.count)"
+                    )
+                    self.beginEngineStartupFullSyncCohort(
+                        devices: fallback,
+                        reason: "engine-start max-wait fallback"
+                    )
+                    return
+                }
+            }
+
+            // Engine came on in a true daytime/headlight-off state, or no configured
+            // controller became controllable. Do not keep a latent startup promotion:
+            // a later headlight edge is a normal new-joiners-only event.
+            self.engineStartupSyncPending = false
+            self.engineStartupSyncCompletedForCurrentEngineSession = true
+            self.logger.log(
+                "AMBIENT ANIM",
+                "Engine-start full-cohort promotion completed without Breath headlightOn=\(self.headlightPowerSessionActive ? 1 : 0); later headlight edges remain new-joiners-only"
+            )
+            self.ambientTrace("Engine-start promotion no-cohort headlightOn=\(self.headlightPowerSessionActive ? 1 : 0)")
+        }
+    }
+
+    /// Force-all is intentionally scoped to the initial engine OFF→ON edge. Unlike
+    /// beginHeadlightTransitionSyncCohort, this method may recruit a courtesy-established
+    /// Dashboard because that is the desired startup exception. All participants use
+    /// readiness-only preparation so no controller visibly leads before the common T0.
+    private func beginEngineStartupFullSyncCohort(devices: [AmbientLightDevice], reason: String) {
+        guard synchronizePowerOnBreathEnabled, !devices.isEmpty else {
+            engineStartupSyncPending = false
+            engineStartupSyncCompletedForCurrentEngineSession = true
+            return
+        }
+        guard synchronizedBreathTask == nil else {
+            logger.log("AMBIENT ANIM", "Engine-start full-cohort waiting skipped because synchronized Breath is already running")
+            engineStartupSyncPending = false
+            engineStartupSyncCompletedForCurrentEngineSession = true
+            return
+        }
+
+        pendingBreathStartTask?.cancel()
+        pendingBreathStartTask = nil
+        syncCohortExpectedIDs.removeAll()
+        synchronizedBreathIDs.removeAll()
+        syncLateCohortIDs.removeAll()
+
+        for device in devices {
+            resetParticipantForHeadlightBarrier(device.id)
+        }
+
+        let expected = Set(devices.map(\.id))
+        syncHeadlightBarrierActive = true
+        syncBarrierCollectsNewJoiners = false
+        syncCohortOpenedAt = Date()
+        syncCohortExpectedIDs = expected
+        engineStartupSyncPending = false
+        engineStartupSyncCompletedForCurrentEngineSession = true
+
+        let roles = devices.compactMap { $0.role?.rawValue }.joined(separator: ",")
+        logger.log(
+            "AMBIENT ANIM",
+            "ENGINE-START FULL-COHORT opened expected=\(expected.count) roles=\(roles) prep=deferredToT0 reason=\(reason)"
+        )
+        ambientTrace("Engine-start full-cohort opened expected=\(expected.count) roles=\(roles)")
+
+        pendingBreathStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let deadline = Date().addingTimeInterval(self.powerOnSyncPreparationGraceSeconds)
+            while Date() < deadline {
+                guard !Task.isCancelled, self.syncHeadlightBarrierActive else { return }
+                if !self.syncCohortExpectedIDs.isEmpty,
+                   self.syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs) {
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+            guard !Task.isCancelled, self.syncHeadlightBarrierActive else { return }
+
+            let expectedNow = self.syncCohortExpectedIDs
+            let ready = expectedNow.intersection(self.synchronizedBreathIDs)
+            let late = expectedNow.subtracting(ready)
+            self.syncLateCohortIDs.formUnion(late)
+            self.synchronizedBreathIDs = ready
+            self.syncCohortExpectedIDs.removeAll()
+            self.syncCohortOpenedAt = nil
+            self.syncHeadlightBarrierActive = false
+            self.syncBarrierCollectsNewJoiners = false
+            self.pendingBreathStartTask = nil
+
+            self.logger.log(
+                "AMBIENT ANIM",
+                "ENGINE-START FULL-COHORT common T0 ready=\(ready.count) late=\(late.count)"
+            )
+            self.ambientTrace("Engine-start full-cohort T0 ready=\(ready.count) late=\(late.count)")
+            self.startSynchronizedBreathSession()
+        }
+
+        for device in devices where isControllable(device.id) {
+            queuePowerUpBreath(
+                device.id,
+                force: true,
+                deferVisualPreparationForSync: true
+            )
+        }
+    }
+
     private func confirmEnginePowerOn(source: String) {
         engineOffConfirmationTask?.cancel()
         engineOffConfirmationTask = nil
@@ -2937,11 +3289,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         enginePowerPresent = true
         enginePowerStatus = "Engine power ON • \(source)"
         if wasOff {
+            engineStartupSyncCandidateActive = false
             logger.log(
                 "AMBIENT ENGINE",
-                "Engine diagnostic ON via \(source); v90.17 does not gate or re-arm ambient animations from engine state"
+                "Engine diagnostic OFF→ON via \(source); v90.24 promotes the initial night startup to one full synchronized cohort after crank/GATT settle"
             )
-            ambientTrace("Engine diagnostic ON source=\(source)")
+            ambientTrace("Engine diagnostic ON source=\(source) startupPromotion=armed")
+            scheduleEngineStartupSynchronization(source: source)
         }
     }
 
@@ -2978,13 +3332,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private func confirmEnginePowerOff() {
         guard enginePowerPresent else { return }
         enginePowerPresent = false
+        engineStartupSyncTask?.cancel()
+        engineStartupSyncTask = nil
+        engineStartupSyncCandidateActive = false
+        engineStartupSyncPending = false
+        engineStartupSyncCompletedForCurrentEngineSession = false
         enginePowerStatus = "Engine power OFF • diagnostic witnesses absent"
         independentOBDWitnessStatus = directOBDWitnessProven
             ? "Calibrated OBD witness absent"
             : "Independent OBD witness not calibrated"
         logger.log(
             "AMBIENT ENGINE",
-            "Engine diagnostic OFF confirmed; v90.18 leaves all light animations and Center-driven day/night behavior untouched"
+            "Engine diagnostic OFF confirmed; v90.24 re-arms the one-time engine-start synchronization promotion for the next vehicle session"
         )
         ambientTrace("Engine diagnostic OFF")
     }
@@ -3703,6 +4062,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             let id = peripheral.identifier
             self.connectionStartedByID[id] = nil
             self.writeCharacteristicsByID[id] = nil
+            self.gattControlReadyAtByID[id] = nil
             self.lastServiceDiscoveryRequestByID[id] = nil
             self.lastBLEDIMNotifyLogAtByID[id] = nil
             self.animationTasks[id]?.cancel()
@@ -3829,6 +4189,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.characteristicUUIDsByID[id] = set
 
             if newlyReady, let device = self.pairedDevice(id) {
+                self.gattControlReadyAtByID[id] = Date()
                 if device.protocolKind == .bledim2 {
                     self.controllerStatus = "\(device.displayName) BLEDIM2 FFF1 control ready"
                     self.logger.log(

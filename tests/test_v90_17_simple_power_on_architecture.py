@@ -20,7 +20,8 @@ def test_power_on_animation_is_not_gated_by_engine_or_headlight_state():
     assert 'vehicleStartupCompleted' not in run
     assert 'headlightPowerSessionActive' not in run
     assert 'scheduleBLEDIMBootSettleReassert' in run
-    assert 'queuePowerUpBreath(id, force: expectedByHeadlightBarrier || lateFromHeadlightBarrier)' in run
+    assert 'let ownedByHeadlightBarrierNow = syncHeadlightBarrierActive' in run
+    assert 'deferVisualPreparationForSync: ownedByHeadlightBarrierNow' in run
 
 
 def test_bledim_waits_for_boot_then_runs_one_complete_power_on_sequence():

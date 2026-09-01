@@ -82,7 +82,7 @@ struct AmbientLightingView: View {
                             }
                             .buttonStyle(.borderedProminent)
 
-                            Text("With synchronization ON, only lights newly joining the current startup/headlight transition enter the shared Breath. A light that is already active stays untouched. For example, if Door is already on and Center + Dashboard join with the headlights, only Center + Dashboard wait for each other and share one common animation clock. On a cold start, if all three are still joining, all three synchronize. The barrier remains bounded, and a truly late joiner receives a complete catch-up Breath.")
+                            Text("With synchronization ON, only lights newly joining the current startup/headlight transition enter the shared Breath; courtesy/headlight transitions use the same new-joiner rule. A light that is already active stays untouched. For example, if Door is already on and Center + Dashboard join with the headlights, only Center + Dashboard wait for each other and share one common animation clock. The initial confirmed engine start is the one deliberate exception: after a brief crank/BLE settle, all enabled vehicle lights form one full startup cohort, so Center + Door + Dashboard synchronize even if Dashboard was already on from courtesy lighting. On a cold start, if all three are still joining, all three synchronize. The barrier remains bounded, and a truly late joiner receives a complete catch-up Breath.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
