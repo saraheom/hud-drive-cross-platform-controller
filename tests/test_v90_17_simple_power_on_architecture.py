@@ -20,15 +20,15 @@ def test_power_on_animation_is_not_gated_by_engine_or_headlight_state():
     assert 'vehicleStartupCompleted' not in run
     assert 'headlightPowerSessionActive' not in run
     assert 'scheduleBLEDIMBootSettleReassert' in run
-    assert 'queuePowerUpBreath(id)' in run
+    assert 'queuePowerUpBreath(id, force: expectedByHeadlightBarrier || lateFromHeadlightBarrier)' in run
 
 
 def test_bledim_waits_for_boot_then_runs_one_complete_power_on_sequence():
     block = MONITOR.split('private func scheduleBLEDIMBootSettleReassert', 1)[1].split('private func animationWriteInterval', 1)[0]
     assert 'bledimBootSettleDelaySeconds' in block
     assert 'Fresh power-on boot settle scheduled' in block
-    assert 'starting one complete power-on sequence' in block
-    assert 'self.queuePowerUpBreath(id)' in block
+    assert 'admitting Already-On Minimal Breath' in block
+    assert 'self.queuePowerUpBreath(id, force: forceBreath)' in block
     assert 'restoreDeviceState(id)' not in block
 
 
@@ -40,7 +40,7 @@ def test_sync_is_optional_and_late_devices_get_complete_independent_breath():
     assert 'self.startIndividualBreathSession(id)' in prep
     assert 'Power-on cohort opened discovery=' in prep
     assert 'Power-on cohort already started; running complete independent Breath' in prep
-    assert 'Toggle("Synchronize nearby power-on Breaths"' in VIEW
+    assert 'Toggle("Synchronize headlight/startup Breaths"' in VIEW
 
 
 def test_independent_breath_has_complete_final_restore():
@@ -59,7 +59,7 @@ def test_fast_center_day_night_is_separate_from_animation_and_engine():
     assert 'Dashboard+Center diagnostic consensus' in schedule
     commit = MONITOR.split('private func commitConfirmedHeadlightPower', 1)[1].split('private func noteHeadlightPowerSeen', 1)[0]
     assert 'Fast Center day/night' in commit
-    assert 'queuePowerUpBreath' not in commit
+    assert 'beginHeadlightTransitionSyncCohort(reason: reason)' in commit
     assert 'tryStartConfirmedHeadlightBreath' not in commit
     assert 'applyCurrentDoorDayNightTarget' in commit
     assert 'Center presence → Auto brightness ON' in commit

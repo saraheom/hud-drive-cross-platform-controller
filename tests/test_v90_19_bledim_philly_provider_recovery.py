@@ -12,9 +12,9 @@ def test_v9020_restores_exact_v90172_bledim_power_mapping():
     assert "exact field-proven v90.17.2 BLEDIM power mapping" in MODEL
 
 
-def test_v9021_preserves_v90172_as_default_while_exposing_test_lab_sequences():
+def test_v9022_promotes_already_on_minimal_while_retaining_legacy_decoder_paths():
     prep = MONITOR.split("breathPrepareTasks[id] = Task", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
-    assert '? (bledimStrategyOverride ?? (applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline))' in MONITOR
+    assert '? .alreadyOnMinimal' in MONITOR
     assert 'case .v90172Baseline, .baselineHold, .brightnessOnlyFinish, .noTerminalCommit:' in prep
     terminal = MONITOR.split("private func finalizeBreathSteadyState", 1)[1].split("private func runStartupAnimationIfNeeded", 1)[0]
     assert 'case .v90172Baseline, .baselineHold:' in terminal

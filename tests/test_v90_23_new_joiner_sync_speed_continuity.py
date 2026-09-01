@@ -1,0 +1,103 @@
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MONITOR = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
+SPEED = (ROOT / "ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift").read_text()
+VIEW = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
+
+
+def test_production_bledim_is_already_on_minimal_and_lab_ui_is_gone():
+    prep = MONITOR.split("private func queuePowerUpBreath", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
+    assert "? .alreadyOnMinimal" in prep
+    minimal = prep.split("case .alreadyOnMinimal:", 1)[1].split("case .v9018NoFlash:", 1)[0]
+    assert "sendPowerWhenReady" not in minimal
+    assert "sendColorWhenReady" not in minimal
+    assert "applyRuntimeBrightnessWhenReady" not in minimal
+    terminal = MONITOR.split("private func finalizeBreathSteadyState", 1)[1].split("private func runStartupAnimationIfNeeded", 1)[0]
+    assert "case .brightnessOnlyFinish, .alreadyOnMinimal, .v9018NoFlash:" in terminal
+    assert "BLEDIM ANIMATION TEST LAB" not in VIEW
+    assert "BLEDIM PRODUCTION ANIMATION" in VIEW
+    assert "Already-On Minimal" in VIEW
+
+
+def test_headlight_barrier_admits_only_newly_joining_lights():
+    commit = MONITOR.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
+    assert "if on {" in commit
+    assert "beginHeadlightTransitionSyncCohort(reason: reason)" in commit
+
+    helper = MONITOR.split("private func isJoiningHeadlightTransition", 1)[1].split("private func beginHeadlightTransitionSyncCohort", 1)[0]
+    assert "bledimBootSettleTasks[id] != nil" in helper
+    assert "breathPrepareTasks[id] != nil" in helper
+    assert "activeBreathIDs.contains(id)" in helper
+    assert "animationTasks[id] != nil" in helper
+    assert "return !animatedConnectionSession.contains(id)" in helper
+
+    barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
+    assert "let joiningDevices = eligibleDevices.filter { isJoiningHeadlightTransition($0) }" in barrier
+    assert "let alreadyActiveDevices = eligibleDevices.filter { !isJoiningHeadlightTransition($0) }" in barrier
+    assert "for device in joiningDevices {" in barrier
+    assert "resetParticipantForHeadlightBarrier(device.id)" in barrier
+    assert "let expected = Set(joiningDevices.map(\\.id))" in barrier
+    assert "Headlight sync barrier opened NEW-JOINERS-ONLY" in barrier
+    assert "untouchedAlreadyActive" in barrier
+    assert "syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs)" in barrier
+    assert "Headlight sync barrier common T0 newJoinersReady=" in barrier
+    assert "self.startSynchronizedBreathSession()" in barrier
+
+
+def test_already_active_door_is_not_reset_or_prepared_by_headlight_barrier():
+    barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
+    reset_loop = barrier.split("Never call resetParticipantForHeadlightBarrier on an already-active light.", 1)[1].split("let expected", 1)[0]
+    assert "for device in joiningDevices" in reset_loop
+    assert "alreadyActiveDevices" not in reset_loop
+    prep_loop = barrier.split("Start preparation only after new-joiner membership is frozen", 1)[1]
+    assert "for device in joiningDevices where isControllable(device.id)" in prep_loop
+    assert "alreadyActiveDevices" not in prep_loop
+    assert "only lights newly joining the current startup/headlight transition" in VIEW
+    assert "A light that is already active stays untouched" in VIEW
+    assert "only Center + Dashboard wait for each other" in VIEW
+    assert "if all three are still joining, all three synchronize" in VIEW
+
+
+def test_fresh_new_joiner_bledim_settles_before_common_t0():
+    barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
+    assert "freshBLEDIMIDs" in barrier
+    assert "for device in joiningDevices where device.protocolKind == .bledim2" in barrier
+    assert "scheduleBLEDIMBootSettleReassert(" in barrier
+    assert 'reason: "headlight sync barrier fresh BLEDIM new joiner"' in barrier
+    assert "forceBreath: true" in barrier
+    assert "queuePowerUpBreath(device.id, force: true)" in barrier
+
+
+def test_v9022_sync_migration_is_retained_in_v9023():
+    assert 'HUD.Ambient.v90_22.headlightBarrierSyncMigrated' in MONITOR
+    assert 'd.set(true, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
+    assert 'self.synchronizePowerOnBreathEnabled = d.object(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
+    assert "Flight recorder v90.23 enabled" in MONITOR
+    assert "syncMembership=newJoinersOnly" in MONITOR
+
+
+def test_same_named_road_explicit_limit_hands_off_without_stale_gap():
+    assert "private static func normalizedRoadIdentity" in SPEED
+    assert '"jr": "junior"' in SPEED
+    matcher = SPEED.split("private func bestImprovedTraceSpeedLimit", 1)[1].split("private func acceptImprovedLimit", 1)[0]
+    assert "strongSameRoadCandidates" in matcher
+    assert "$0.speedMph == currentSpeedLimitMph" in matcher
+    assert "same-road fast handoff" in matcher
+    assert "improvedPendingRoad = nil" in matcher
+    assert "item.match.currentDistance <= 35" in matcher
+    assert "item.match.currentAngle <= 35" in matcher
+    assert "item.match.matchedPoints >= max(1, trace.count - 1)" in matcher
+    assert "changedExplicit == nil" in matcher
+
+
+def test_untagged_same_road_preserves_display_but_not_warning_freshness():
+    matcher = SPEED.split("private func bestImprovedTraceSpeedLimit", 1)[1].split("private func acceptImprovedLimit", 1)[0]
+    assert "$0.speedMph == nil" in matcher
+    assert "improvedDisplayContinuityFresh = true" in matcher
+    continuity = matcher.split('improvedResolutionSource = "OSM same-road untagged continuity"', 1)[1].split("return currentSpeedLimitMph", 1)[0]
+    assert "acceptImprovedLimit" not in continuity
+    assert "warning freshness unchanged" in continuity
+    assert "!improvedLastResolutionFresh," in SPEED
+    assert "!improvedDisplayContinuityFresh," in SPEED
+    assert "displayContinuity=%d" in SPEED

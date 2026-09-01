@@ -15,8 +15,8 @@ def test_bledim_v90172_is_default_and_experimental_sequences_are_opt_in():
     assert 'case .brightnessOnlyFinish, .alreadyOnMinimal, .v9018NoFlash:' in terminal
 
     prep = MONITOR.split('private func queuePowerUpBreath', 1)[1].split('private func registerPowerOnCohortMember', 1)[0]
-    assert '? (bledimStrategyOverride ?? (applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline))' in prep
-    assert 'case .v90172Baseline, .baselineHold, .brightnessOnlyFinish, .noTerminalCommit:' in prep
+    assert '? .alreadyOnMinimal' in prep
+    assert 'case .alreadyOnMinimal:' in prep
     assert 'case .v9018NoFlash:' in prep
     assert 'power-up breath preload RGB [18 No-Flash]' in prep
 

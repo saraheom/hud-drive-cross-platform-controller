@@ -7,10 +7,10 @@ final class V9021BLEDIMAnimationTestLabTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testKnownGoodBaselineIsAutomaticDefault() throws {
+    func testV9022PromotesMinimalToAutomaticDefault() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains(") ?? .v90172Baseline"))
-        XCTAssertTrue(monitor.contains("applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline"))
+        XCTAssertTrue(monitor.contains(") ?? .alreadyOnMinimal"))
+        XCTAssertTrue(monitor.contains("? .alreadyOnMinimal"))
         XCTAssertTrue(monitor.contains("applyBLEDIMTestStrategyToAutomaticPowerOn = d.object"))
     }
 
@@ -22,7 +22,9 @@ final class V9021BLEDIMAnimationTestLabTests: XCTestCase {
             XCTAssertTrue(model.contains("case \(name)"))
         }
         XCTAssertTrue(monitor.contains("previewEnabledBLEDIMBreathNow"))
-        XCTAssertTrue(view.contains("BLEDIM ANIMATION TEST LAB"))
+        XCTAssertFalse(view.contains("BLEDIM ANIMATION TEST LAB"))
+        XCTAssertTrue(view.contains("BLEDIM PRODUCTION ANIMATION"))
+        XCTAssertTrue(view.contains("Already-On Minimal"))
         XCTAssertTrue(view.contains("Preview BLEDIM Only"))
     }
 

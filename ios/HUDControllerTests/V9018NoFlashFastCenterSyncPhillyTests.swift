@@ -7,7 +7,7 @@ final class V9018NoFlashFastCenterSyncPhillyTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testBLEDIMV90172IsDefaultAndTestLabIsOptIn() throws {
+    func testLegacyBLEDIMSequencesRemainDecodableButMinimalIsProduction() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         let terminal = monitor.components(separatedBy: "private func finalizeBreathSteadyState")[1]
             .components(separatedBy: "private func runStartupAnimationIfNeeded")[0]
@@ -18,7 +18,7 @@ final class V9018NoFlashFastCenterSyncPhillyTests: XCTestCase {
 
         let prep = monitor.components(separatedBy: "private func queuePowerUpBreath")[1]
             .components(separatedBy: "private func registerPowerOnCohortMember")[0]
-        XCTAssertTrue(prep.contains("applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline"))
+        XCTAssertTrue(prep.contains("? .alreadyOnMinimal"))
         XCTAssertTrue(prep.contains("case .v9018NoFlash:"))
         XCTAssertTrue(prep.contains("power-up breath preload RGB [18 No-Flash]"))
     }

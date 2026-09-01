@@ -3,9 +3,9 @@ import Foundation
 /// App-level protocol adapters for the inexpensive BLE ambient-light controllers.
 /// The UI and grouping layer never need to know packet details.
 
-/// v90.21 in-car diagnostic strategies for BLEDIM Door/Dashboard Breath sequencing.
-/// The known-good v90.17.2 strategy remains the automatic default. Experimental
-/// strategies can be exercised from Preview without rebuilding the app.
+/// Historical v90.21 BLEDIM strategy values are retained so persisted settings and
+/// source-level diagnostics remain decodable. v90.22 production and Preview behavior
+/// no longer exposes this selector: Door/Dashboard always use Already-On Minimal.
 enum BLEDIMAnimationStrategy: String, CaseIterable, Identifiable {
     case v90172Baseline
     case baselineHold

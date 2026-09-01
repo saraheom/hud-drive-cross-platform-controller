@@ -34,6 +34,27 @@ That is a separate external toolchain issue.
 
 
 
+## v90.23 — newly joined lights only for synchronized Breath
+
+v90.23 keeps the v90.22 **Already-On Minimal** BLEDIM production path and MLK/same-road speed-limit continuity, but narrows the headlight synchronization barrier to the intended physical behavior: **only lights newly joining the current transition are allowed to animate**. A controller that is already steady in its current BLE/power session is excluded and left untouched.
+
+Example: if Door is already on and the headlights power Center + Dashboard, Door continues normally while only Center + Dashboard wait for one another and share the common Breath T0. Conversely, on a cold startup where Center, Door, and Dashboard are all still joining (including a Door whose startup Breath has begun but has not reached steady state yet), all three are treated as members of the same startup cohort and synchronize together.
+
+The membership test considers boot-settle, Breath preparation, and an in-progress Breath to still be **joining**. Once a light has reached steady state in `animatedConnectionSession`, a later headlight edge cannot reset, prepare, or replay Breath on that light. The existing bounded barrier and late independent catch-up behavior remain unchanged for genuine new joiners. Flight-recorder entries now identify `syncMembership=newJoinersOnly` and log both the joining and untouched already-active roles.
+
+See `docs/V90_23_NEW_JOINERS_ONLY_SYNC.md`.
+
+
+## v90.22 — Already-On Minimal + headlight barrier sync + MLK speed continuity
+
+v90.22 promotes the field-validated **Already-On Minimal** BLEDIM Breath to the only production/Preview strategy and removes the v90.21 strategy test lab from the UI. Door/Dashboard now avoid routine Power/RGB/baseline preparation writes and use a brightness-only final commit, preserving the smooth sequence without the observed start/end blink.
+
+Synchronization is now driven by the **headlight ON transition**, not merely by whichever BLE controller finishes GATT first. The transition pre-registers all configured Center/Door/Dashboard participants, lets slower BLEDIM controllers finish their existing 1.5 s settle, then releases every ready member onto one common Breath timeline/T0. The barrier is bounded by the existing 3.0 s discovery window + 1.5 s preparation grace; a truly late controller receives a complete independent catch-up Breath instead of blocking the others. A one-time migration enables Sync on upgrade, after which the UI toggle remains user-controllable.
+
+Improved + Philly GIS also gains **same-road speed-limit continuity** based on normalized road name/ref rather than raw OSM way ID. Adjacent pieces of Martin Luther King Junior Drive with the same explicit 25 mph limit can hand off immediately, and a geometrically continuous untagged MLK segment can preserve the displayed 25 mph sign without refreshing overspeed-warning freshness. Real road changes still follow the existing confirmation and four-second stale-clear path. Improved Trace logs now include `displayContinuity=0/1` and explicit same-road handoff decisions.
+
+See `docs/V90_22_ALREADY_ON_MINIMAL_HEADLIGHT_BARRIER_MLK_CONTINUITY.md`.
+
 ## v90.21 — In-car BLEDIM animation strategy test lab
 
 v90.21 keeps the v90.17.2 BLEDIM sequence as the production/default automatic behavior and adds a compact in-app test lab so Door/Dashboard start/end flash hypotheses can be compared without rebuilding. Six strategies are available: `17.2 Baseline`, `17.2 + Hold`, `No End Power`, `No End Commit`, `Already-On Minimal`, and the historical `18 No-Flash` experiment. The selected strategy applies to Preview immediately; automatic BLEDIM power-on remains v90.17.2 unless the user explicitly opts into applying the selected strategy automatically. A focused `Preview BLEDIM Only` action excludes Center/Lotus for easier visual comparison. Sync cohort, fast Center-driven day/night/HUD behavior, Improved OSM + Philadelphia GIS, provider backoff, and stale-sign handling remain unchanged from v90.20.

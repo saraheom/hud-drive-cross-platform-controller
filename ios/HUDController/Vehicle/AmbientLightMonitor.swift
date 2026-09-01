@@ -113,11 +113,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         didSet { UserDefaults.standard.set(max(1.0, min(15.0, breathDurationSeconds)), forKey: "HUD.Ambient.v90_8.breathDuration") }
     }
 
-    /// v90.18: synchronization is optional. OFF remains the robust default. ON
-    /// forms a power-on cohort from controllers that physically/GATT-appear near
-    /// each other, then waits for their individual boot preparation before issuing
-    /// one common Breath T0. Late/unready members still get a complete independent
-    /// Breath rather than joining a running waveform.
+    /// v90.23: synchronization remains user-controllable, but a headlight/startup
+    /// barrier now admits only lights that are newly joining the current transition.
+    /// A controller already steady in the current BLE/power session is never recruited
+    /// into another Breath merely because Center/Dashboard join later. On a cold start,
+    /// all still-joining roles naturally enter the same cohort and share one Breath T0.
     var synchronizePowerOnBreathEnabled: Bool {
         didSet {
             UserDefaults.standard.set(synchronizePowerOnBreathEnabled, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")
@@ -127,9 +127,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    /// v90.21 test lab. Preview always uses this strategy for BLEDIM lights.
-    /// Automatic/manual power-on remains on the v90.17.2 baseline unless the
-    /// separate opt-in toggle below is enabled.
+    /// Retained only to migrate/source-read v90.21 settings. v90.22 production and
+    /// Preview BLEDIM Breath both use Already-On Minimal unconditionally.
     var bledimAnimationStrategy: BLEDIMAnimationStrategy {
         didSet { UserDefaults.standard.set(bledimAnimationStrategy.rawValue, forKey: "HUD.Ambient.v90_21.bledimAnimationStrategy") }
     }
@@ -302,6 +301,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var syncCohortExpectedIDs: Set<UUID> = []       // appeared during cohort window
     private var syncLateCohortIDs: Set<UUID> = []           // missed common T0; run independently
     private var syncCohortOpenedAt: Date?
+    /// When true, the current cohort was opened by the vehicle headlight ON edge.
+    /// Unlike the legacy discovery cohort, its expected membership is known up
+    /// front, so it can release as soon as every expected member is prepared.
+    private var syncHeadlightBarrierActive = false
     private let powerOnSyncWindowSeconds: TimeInterval = 3.0
     private let powerOnSyncPreparationGraceSeconds: TimeInterval = 1.5
     private var activeBreathIDs: Set<UUID> = []
@@ -402,11 +405,19 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             ? 2 : max(2, min(5, d.integer(forKey: "HUD.Ambient.v90_8.breathCycles")))
         self.breathDurationSeconds = d.object(forKey: "HUD.Ambient.v90_8.breathDuration") == nil
             ? 6.0 : max(1.0, min(15.0, d.double(forKey: "HUD.Ambient.v90_8.breathDuration")))
+        // v90.22 synchronization is the validated production behavior. Force it ON
+        // once when upgrading from an older build (which may have persisted the old
+        // optional Sync toggle as OFF), then continue respecting the user's setting.
+        let v9022SyncMigrationKey = "HUD.Ambient.v90_22.headlightBarrierSyncMigrated"
+        if !d.bool(forKey: v9022SyncMigrationKey) {
+            d.set(true, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")
+            d.set(true, forKey: v9022SyncMigrationKey)
+        }
         self.synchronizePowerOnBreathEnabled = d.object(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath") == nil
-            ? false : d.bool(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")
+            ? true : d.bool(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")
         self.bledimAnimationStrategy = BLEDIMAnimationStrategy(
             rawValue: d.string(forKey: "HUD.Ambient.v90_21.bledimAnimationStrategy") ?? ""
-        ) ?? .v90172Baseline
+        ) ?? .alreadyOnMinimal
         self.applyBLEDIMTestStrategyToAutomaticPowerOn = d.object(forKey: "HUD.Ambient.v90_21.applyBLEDIMTestStrategyAutomatically") == nil
             ? false : d.bool(forKey: "HUD.Ambient.v90_21.applyBLEDIMTestStrategyAutomatically")
         self.overspeedWarningEnabled = d.object(forKey: "HUD.Ambient.v90_12.overspeed.enabled") == nil
@@ -564,7 +575,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.21 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimLab=\(bledimAnimationStrategy.rawValue),labAuto=\(applyBLEDIMTestStrategyToAutomaticPowerOn ? 1 : 0)}"
+            "Flight recorder v90.23 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,syncWindow=\(String(format: "%.1f", powerOnSyncWindowSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal,syncMembership=newJoinersOnly}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -589,6 +600,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         pendingBreathStartTask = nil
         activeBreathIDs.removeAll()
         synchronizedBreathIDs.removeAll()
+        syncCohortExpectedIDs.removeAll()
+        syncLateCohortIDs.removeAll()
+        syncHeadlightBarrierActive = false
+        syncCohortOpenedAt = nil
         activeBreathStartBrightness.removeAll()
         activeBreathReturnBrightness.removeAll()
         activeBLEDIMAnimationStrategyByID.removeAll()
@@ -1238,12 +1253,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    /// v90.17: a newly powered BLEDIM controller gets a quiet firmware-settle
-    /// interval before the semantic Power ON → RGB → baseline → Breath sequence.
-    /// This replaces the v90.16 mid-animation delayed reassert. The controller
-    /// therefore receives one clean post-boot sequence rather than two owners
-    /// competing over brightness.
-    private func scheduleBLEDIMBootSettleReassert(for id: UUID, reason: String) {
+    /// A newly powered BLEDIM controller gets a quiet firmware-settle interval
+    /// before its Breath is admitted. v90.22 then uses Already-On Minimal: there is
+    /// no routine Power/RGB/baseline preparation write after this settle.
+    private func scheduleBLEDIMBootSettleReassert(for id: UUID, reason: String, forceBreath: Bool = false) {
         guard let device = pairedDevice(id), device.protocolKind == .bledim2 else { return }
 
         bledimBootSettleTasks[id]?.cancel()
@@ -1262,10 +1275,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                   let current = self.pairedDevice(id), current.protocolKind == .bledim2 else { return }
             self.logger.log(
                 "AMBIENT BLEDIM",
-                "Fresh power-on boot settle complete: \(current.displayName); starting one complete power-on sequence"
+                "Fresh power-on boot settle complete: \(current.displayName); admitting Already-On Minimal Breath"
             )
             self.ambientTrace("BLEDIM boot settled; power-on Breath admitted \(current.displayName)")
-            self.queuePowerUpBreath(id)
+            self.queuePowerUpBreath(id, force: forceBreath)
         }
     }
 
@@ -1732,14 +1745,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    /// v90.21 keeps Lotus on the proven full terminal commit and makes BLEDIM
-    /// completion selectable for in-car diagnosis. The v90.17.2 full commit is
-    /// always the fallback when no per-animation test strategy was captured.
+    /// v90.22 keeps Lotus on the proven full terminal commit. BLEDIM production
+    /// completion is brightness-only, matching the field-validated Already-On
+    /// Minimal sequence that avoids both the start and terminal blink.
     private func finalizeBreathSteadyState(_ id: UUID, target: Int) async -> Bool {
         guard let device = pairedDevice(id), device.powerOn, isControllable(id) else { return false }
 
         if device.protocolKind == .bledim2 {
-            let strategy = activeBLEDIMAnimationStrategyByID[id] ?? .v90172Baseline
+            let strategy = activeBLEDIMAnimationStrategyByID[id] ?? .alreadyOnMinimal
             switch strategy {
             case .brightnessOnlyFinish, .alreadyOnMinimal, .v9018NoFlash:
                 let brightnessSent = await applyRuntimeBrightnessWhenReady(
@@ -1782,17 +1795,25 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
-        // Animation is strictly per physical/controller return. Engine, courtesy,
-        // and day/night state never gate a light's own power-on Breath. When Sync
-        // is enabled, register the power-on event BEFORE protocol-specific boot
-        // preparation so BLEDIM's intentional settle delay cannot miss the cohort.
+        // A headlight-transition barrier owns expected members when active. Otherwise
+        // preserve the robust per-controller power-on cohort behavior. Late members
+        // from a completed headlight barrier are deliberately allowed to run a full
+        // independent Breath rather than opening a second cohort.
+        let expectedByHeadlightBarrier = syncHeadlightBarrierActive && syncCohortExpectedIDs.contains(id)
+        let lateFromHeadlightBarrier = syncLateCohortIDs.contains(id)
         if synchronizePowerOnBreathEnabled {
-            registerPowerOnCohortMember(id)
+            if !expectedByHeadlightBarrier && !lateFromHeadlightBarrier {
+                registerPowerOnCohortMember(id)
+            }
         }
         if device.protocolKind == .bledim2 {
-            scheduleBLEDIMBootSettleReassert(for: id, reason: "new GATT control ready")
+            scheduleBLEDIMBootSettleReassert(
+                for: id,
+                reason: expectedByHeadlightBarrier ? "headlight barrier member GATT ready" : "new GATT control ready",
+                forceBreath: expectedByHeadlightBarrier || lateFromHeadlightBarrier
+            )
         } else {
-            queuePowerUpBreath(id)
+            queuePowerUpBreath(id, force: expectedByHeadlightBarrier || lateFromHeadlightBarrier)
         }
     }
 
@@ -1829,8 +1850,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         restoreTasks[id] = nil
 
         let initialBrightness = steadyBrightnessTarget(for: device)
+        // v90.22 production decision: all BLEDIM Breaths use the field-validated
+        // Already-On Minimal path. Keep the override parameter only for source/API
+        // compatibility with old diagnostics; it can no longer select a blink-prone
+        // production sequence.
         let capturedBLEDIMStrategy: BLEDIMAnimationStrategy? = device.protocolKind == .bledim2
-            ? (bledimStrategyOverride ?? (applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline))
+            ? .alreadyOnMinimal
             : nil
 
         logger.log(
@@ -1973,8 +1998,167 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    /// Supersede an older per-light Breath/fade without scheduling the normal abort
+    /// restore. The headlight barrier immediately becomes the new owner and will
+    /// return the light to its current steady target at the end of the shared Breath.
+    private func resetParticipantForHeadlightBarrier(_ id: UUID) {
+        animationTasks[id]?.cancel()
+        animationTasks[id] = nil
+        breathPrepareTasks[id]?.cancel()
+        breathPrepareTasks[id] = nil
+        bledimBootSettleTasks[id]?.cancel()
+        bledimBootSettleTasks[id] = nil
+        restoreTasks[id]?.cancel()
+        restoreTasks[id] = nil
+        animationAbortFailsafeTasks[id]?.cancel()
+        animationAbortFailsafeTasks[id] = nil
+        cancelBrightnessTransition(for: id)
+
+        activeBreathIDs.remove(id)
+        synchronizedBreathIDs.remove(id)
+        syncCohortExpectedIDs.remove(id)
+        syncLateCohortIDs.remove(id)
+        activeBreathStartBrightness[id] = nil
+        activeBreathReturnBrightness[id] = nil
+        activeBLEDIMAnimationStrategyByID[id] = nil
+        animatedConnectionSession.remove(id)
+    }
+
+    /// A light is a member of the current headlight/startup transition only while
+    /// it is still establishing its connection-session Breath. Once it has reached
+    /// steady state, `animatedConnectionSession` keeps later headlight edges from
+    /// replaying Breath on that already-active controller. Active/preparing members
+    /// remain joiners so a cold-start Door that happened to arrive milliseconds before
+    /// Center can still be re-barriered with Center/Dashboard onto one common T0.
+    private func isJoiningHeadlightTransition(_ device: AmbientLightDevice) -> Bool {
+        let id = device.id
+        if bledimBootSettleTasks[id] != nil ||
+            breathPrepareTasks[id] != nil ||
+            activeBreathIDs.contains(id) ||
+            animationTasks[id] != nil {
+            return true
+        }
+        return !animatedConnectionSession.contains(id)
+    }
+
+    /// v90.23 vehicle-level synchronization barrier. The barrier is transition-
+    /// membership based: only newly joining lights are admitted. An already-steady
+    /// Door therefore keeps its current output while newly powered Center/Dashboard
+    /// wait for one another and share a common T0. On a cold start, all three are
+    /// still joiners and naturally form the full three-light cohort.
+    private func beginHeadlightTransitionSyncCohort(reason: String) {
+        guard synchronizePowerOnBreathEnabled else { return }
+        guard synchronizedBreathTask == nil else {
+            logger.log("AMBIENT ANIM", "Headlight sync barrier skipped because a synchronized Breath is already running (\(reason))")
+            return
+        }
+
+        let eligibleDevices = pairedDevices.filter {
+            $0.role != nil && $0.startupAnimationEnabled && $0.powerOn
+        }
+        let joiningDevices = eligibleDevices.filter { isJoiningHeadlightTransition($0) }
+        let alreadyActiveDevices = eligibleDevices.filter { !isJoiningHeadlightTransition($0) }
+        guard !joiningDevices.isEmpty else {
+            logger.log(
+                "AMBIENT ANIM",
+                "Headlight sync barrier found no newly joining animation participants; alreadyActive=\(alreadyActiveDevices.count) (\(reason))"
+            )
+            ambientTrace("Headlight sync barrier no new joiners alreadyActive=\(alreadyActiveDevices.count) reason=\(reason)")
+            return
+        }
+
+        // Only newly joining BLEDIM members may need the 1.5-s firmware settle.
+        // Already-active Door/Dashboard members are deliberately excluded and are
+        // never reset, prepared, or brightness-modulated by this Breath cohort.
+        var freshBLEDIMIDs: Set<UUID> = []
+        for device in joiningDevices where device.protocolKind == .bledim2 && isControllable(device.id) {
+            if bledimBootSettleTasks[device.id] != nil || !animatedConnectionSession.contains(device.id) {
+                freshBLEDIMIDs.insert(device.id)
+            }
+        }
+
+        pendingBreathStartTask?.cancel()
+        pendingBreathStartTask = nil
+        syncCohortExpectedIDs.removeAll()
+        synchronizedBreathIDs.removeAll()
+        syncLateCohortIDs.removeAll()
+
+        // Supersede only in-flight startup animation work belonging to joiners.
+        // Never call resetParticipantForHeadlightBarrier on an already-active light.
+        for device in joiningDevices {
+            resetParticipantForHeadlightBarrier(device.id)
+        }
+
+        let expected = Set(joiningDevices.map(\.id))
+        syncHeadlightBarrierActive = true
+        syncCohortOpenedAt = Date()
+        syncCohortExpectedIDs = expected
+
+        let joiningRoles = joiningDevices.compactMap { $0.role?.rawValue }.joined(separator: ",")
+        let untouchedRoles = alreadyActiveDevices.compactMap { $0.role?.rawValue }.joined(separator: ",")
+        logger.log(
+            "AMBIENT ANIM",
+            "Headlight sync barrier opened NEW-JOINERS-ONLY expected=\(expected.count) deadline=\(String(format: "%.1f", powerOnSyncWindowSeconds + powerOnSyncPreparationGraceSeconds))s joining=\(joiningRoles) untouchedAlreadyActive=\(untouchedRoles.isEmpty ? "none" : untouchedRoles) reason=\(reason)"
+        )
+        ambientTrace("Headlight sync barrier newJoiners=\(expected.count) untouched=\(alreadyActiveDevices.count) reason=\(reason)")
+
+        pendingBreathStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let deadline = Date().addingTimeInterval(self.powerOnSyncWindowSeconds + self.powerOnSyncPreparationGraceSeconds)
+            while Date() < deadline {
+                guard !Task.isCancelled, self.syncHeadlightBarrierActive else { return }
+                if !self.syncCohortExpectedIDs.isEmpty,
+                   self.syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs) {
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard !Task.isCancelled, self.syncHeadlightBarrierActive else { return }
+
+            let expectedNow = self.syncCohortExpectedIDs
+            let ready = expectedNow.intersection(self.synchronizedBreathIDs)
+            let late = expectedNow.subtracting(ready)
+            self.syncLateCohortIDs.formUnion(late)
+            self.synchronizedBreathIDs = ready
+            self.syncCohortExpectedIDs.removeAll()
+            self.syncCohortOpenedAt = nil
+            self.syncHeadlightBarrierActive = false
+            self.pendingBreathStartTask = nil
+
+            self.logger.log(
+                "AMBIENT ANIM",
+                "Headlight sync barrier common T0 newJoinersReady=\(ready.count) late=\(late.count)"
+            )
+            self.ambientTrace("Headlight sync barrier T0 newJoinersReady=\(ready.count) late=\(late.count)")
+            self.startSynchronizedBreathSession()
+        }
+
+        // Start preparation only after new-joiner membership is frozen. Fresh
+        // BLEDIM keeps its boot settle; Lotus/ready BLEDIM can prepare immediately.
+        for device in joiningDevices where isControllable(device.id) {
+            if device.protocolKind == .bledim2, freshBLEDIMIDs.contains(device.id) {
+                scheduleBLEDIMBootSettleReassert(
+                    for: device.id,
+                    reason: "headlight sync barrier fresh BLEDIM new joiner",
+                    forceBreath: true
+                )
+            } else {
+                queuePowerUpBreath(device.id, force: true)
+            }
+        }
+    }
+
     private func registerPowerOnCohortMember(_ id: UUID) {
         guard synchronizePowerOnBreathEnabled else { return }
+        if syncHeadlightBarrierActive {
+            if syncCohortExpectedIDs.contains(id) {
+                logger.log("AMBIENT ANIM", "Headlight sync barrier already expects \(pairedDevice(id)?.displayName ?? id.uuidString)")
+            } else {
+                syncLateCohortIDs.insert(id)
+                logger.log("AMBIENT ANIM", "Non-member power-on arrived during headlight barrier; marked late \(pairedDevice(id)?.displayName ?? id.uuidString)")
+            }
+            return
+        }
         if synchronizedBreathTask != nil {
             syncLateCohortIDs.insert(id)
             logger.log("AMBIENT ANIM", "Power-on cohort already running; marked late member \(pairedDevice(id)?.displayName ?? id.uuidString)")
@@ -2026,6 +2210,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.synchronizedBreathIDs = ready
             self.syncCohortExpectedIDs.removeAll()
             self.syncCohortOpenedAt = nil
+            self.syncHeadlightBarrierActive = false
             self.pendingBreathStartTask = nil
 
             self.logger.log(
@@ -2045,6 +2230,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         syncCohortExpectedIDs.removeAll()
         synchronizedBreathIDs.removeAll()
         syncCohortOpenedAt = nil
+        syncHeadlightBarrierActive = false
         guard synchronizedBreathTask == nil else { return }
         for id in ready where activeBreathIDs.contains(id) {
             logger.log("AMBIENT ANIM", "Pending sync cohort released to independent Breath: \(pairedDevice(id)?.displayName ?? id.uuidString) reason=\(reason)")
@@ -2321,7 +2507,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             synchronizedBreathTask = nil
             activeBreathStartedAt = nil
             syncCohortOpenedAt = nil
-        }
+            syncHeadlightBarrierActive = false
+            }
     }
 
     /// v90.17: every disconnect/reconnect is treated as a fresh power-on event.
@@ -2459,6 +2646,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             "Fast Center day/night → \(on ? "NIGHT/ON" : "DAY/OFF") generation=\(headlightStateGeneration) (\(reason)); Dashboard consensus is diagnostic only"
         )
         ambientTrace("Center-driven day/night \(on ? "night" : "day") reason=\(reason)")
+
+        // v90.23: the vehicle headlight edge coordinates only controllers that are
+        // newly joining this transition. An already-active Door is intentionally left
+        // out of the Breath cohort and may continue/fade to its night target normally.
+        if on {
+            beginHeadlightTransitionSyncCohort(reason: reason)
+        }
 
         if hudBrightnessTriggerEnabled, bluetooth.state == .connected {
             bluetooth.enqueue(
@@ -2848,37 +3042,36 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
     }
 
-    /// Preview all enabled lights. Lotus always uses its production sequence; BLEDIM
-    /// Door/Dashboard use the currently selected test-lab strategy for this Preview.
+    /// Preview all enabled controllable lights using the same production animation
+    /// semantics as the vehicle. BLEDIM is permanently Already-On Minimal in v90.22.
     func previewEnabledBreathNow() {
         let devices = pairedDevices.filter { $0.startupAnimationEnabled && $0.powerOn && isControllable($0.id) }
-        previewBreath(devices: devices, useBLEDIMLabStrategy: true)
+        previewBreath(devices: devices)
     }
 
-    /// Focused in-car diagnostic Preview so Door/Dashboard can be compared without
-    /// Center/Lotus visually masking a BLEDIM start/end flash.
+    /// Focused Preview for Door/Dashboard only. This remains useful for checking the
+    /// physical BLEDIM pair without Center/Lotus, but it no longer selects a lab strategy.
     func previewEnabledBLEDIMBreathNow() {
         let devices = pairedDevices.filter {
             $0.protocolKind == .bledim2 && $0.startupAnimationEnabled && $0.powerOn && isControllable($0.id)
         }
-        logger.log("AMBIENT LAB", "BLEDIM-only Preview requested strategy=\(bledimAnimationStrategy.shortName) eligible=\(devices.count)")
-        previewBreath(devices: devices, useBLEDIMLabStrategy: true)
+        logger.log("AMBIENT ANIM", "BLEDIM-only Already-On Minimal Preview requested eligible=\(devices.count)")
+        previewBreath(devices: devices)
     }
 
-    private func previewBreath(devices: [AmbientLightDevice], useBLEDIMLabStrategy: Bool) {
+    private func previewBreath(devices: [AmbientLightDevice]) {
         guard !devices.isEmpty else {
-            logger.log("AMBIENT LAB", "Preview requested but no enabled controllable lights were eligible")
+            logger.log("AMBIENT ANIM", "Preview requested but no enabled controllable lights were eligible")
             return
         }
         if synchronizePowerOnBreathEnabled {
             // Register the whole Preview set before any participant starts preparing;
-            // this gives Preview the same true common-T0 behavior as automatic power-on.
+            // this gives Preview the same shared timeline as automatic startup cohorts.
             for device in devices { registerPowerOnCohortMember(device.id) }
         }
         for device in devices {
             animatedConnectionSession.remove(device.id)
-            let override = (useBLEDIMLabStrategy && device.protocolKind == .bledim2) ? bledimAnimationStrategy : nil
-            queuePowerUpBreath(device.id, force: true, bledimStrategyOverride: override)
+            queuePowerUpBreath(device.id, force: true)
         }
     }
 

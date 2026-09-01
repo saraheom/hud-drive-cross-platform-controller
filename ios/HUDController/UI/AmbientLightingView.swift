@@ -72,7 +72,7 @@ struct AmbientLightingView: View {
                                 suffix: "s"
                             )
 
-                            Toggle("Synchronize nearby power-on Breaths", isOn: Binding(
+                            Toggle("Synchronize headlight/startup Breaths", isOn: Binding(
                                 get: { monitor.synchronizePowerOnBreathEnabled },
                                 set: { monitor.synchronizePowerOnBreathEnabled = $0 }
                             ))
@@ -82,53 +82,27 @@ struct AmbientLightingView: View {
                             }
                             .buttonStyle(.borderedProminent)
 
-                            Text("Every controller return is treated as a fresh power-on event. Production BLEDIM behavior defaults to the field-proven v90.17.2 sequence. With synchronization OFF, each light starts independently. With it ON, power-on events within a 3 s cohort are collected first, then prepared members share one common start time; a controller that still misses the bounded preparation grace gets its own complete Breath.")
+                            Text("With synchronization ON, only lights newly joining the current startup/headlight transition enter the shared Breath. A light that is already active stays untouched. For example, if Door is already on and Center + Dashboard join with the headlights, only Center + Dashboard wait for each other and share one common animation clock. On a cold start, if all three are still joining, all three synchronize. The barrier remains bounded, and a truly late joiner receives a complete catch-up Breath.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
 
-                    section("BLEDIM ANIMATION TEST LAB") {
+                    section("BLEDIM PRODUCTION ANIMATION") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Door + Dashboard only. Pick a sequence, then tap Preview BLEDIM Only. The selection affects Preview immediately; normal automatic power-on stays on the known-good v90.17.2 sequence unless you explicitly enable the automatic toggle below.")
+                            HStack {
+                                Text("Door + Dashboard")
+                                Spacer()
+                                Text("Already-On Minimal")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+
+                            Text("BLEDIM now uses the field-validated minimal sequence for automatic and Preview Breaths: no routine Power/RGB/baseline preparation writes, then a brightness-only final commit. This avoids the start/end blink seen with the experimental sequences while keeping the same synchronized Breath timeline.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 8)], spacing: 8) {
-                                ForEach(BLEDIMAnimationStrategy.allCases) { strategy in
-                                    if monitor.bledimAnimationStrategy == strategy {
-                                        Button("✓ \(strategy.shortName)") { monitor.setBLEDIMAnimationStrategy(strategy) }
-                                            .buttonStyle(.borderedProminent)
-                                    } else {
-                                        Button(strategy.shortName) { monitor.setBLEDIMAnimationStrategy(strategy) }
-                                            .buttonStyle(.bordered)
-                                    }
-                                }
-                            }
-
-                            Text(monitor.bledimAnimationStrategy.sequenceDescription)
-                                .font(.caption.monospaced())
-                                .textSelection(.enabled)
-
-                            Text(monitor.bledimAnimationStrategy.diagnosticPurpose)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-
-                            Toggle("Apply selected strategy to automatic BLEDIM power-on", isOn: Binding(
-                                get: { monitor.applyBLEDIMTestStrategyToAutomaticPowerOn },
-                                set: { monitor.applyBLEDIMTestStrategyToAutomaticPowerOn = $0 }
-                            ))
-
-                            HStack {
-                                Button("Preview BLEDIM Only") { monitor.previewEnabledBLEDIMBreathNow() }
-                                    .buttonStyle(.borderedProminent)
-                                Button("Preview All") { monitor.previewEnabledBreathNow() }
-                                    .buttonStyle(.bordered)
-                            }
-
-                            Text("Recommended order: 17.2 Baseline → 17.2 + Hold → No End Power → No End Commit → Already-On Minimal. The 18 No-Flash button reproduces the old v90.18 experiment only for comparison.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            Button("Preview BLEDIM Only") { monitor.previewEnabledBLEDIMBreathNow() }
+                                .buttonStyle(.bordered)
                         }
                     }
 

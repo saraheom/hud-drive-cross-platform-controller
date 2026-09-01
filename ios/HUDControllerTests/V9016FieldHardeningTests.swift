@@ -11,8 +11,8 @@ final class V9016FieldHardeningTests: XCTestCase {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("bledimBootSettleDelaySeconds: TimeInterval = 1.50"))
         XCTAssertTrue(monitor.contains("Fresh power-on boot settle scheduled"))
-        XCTAssertTrue(monitor.contains("starting one complete power-on sequence"))
-        XCTAssertTrue(monitor.contains("self.queuePowerUpBreath(id)"))
+        XCTAssertTrue(monitor.contains("admitting Already-On Minimal Breath"))
+        XCTAssertTrue(monitor.contains("self.queuePowerUpBreath(id, force: forceBreath)"))
     }
 
     func testAbortFailsafeStillProtectsTransientZeroBrightness() throws {

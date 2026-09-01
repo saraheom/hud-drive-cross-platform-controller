@@ -6,23 +6,24 @@ MONITOR = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_te
 VIEW = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
 
 
-def test_six_bledim_strategies_are_exposed_with_v90172_as_default():
+def test_six_historical_bledim_strategies_remain_decodable_but_minimal_is_default():
     for case in [
         "v90172Baseline", "baselineHold", "brightnessOnlyFinish",
         "noTerminalCommit", "alreadyOnMinimal", "v9018NoFlash",
     ]:
         assert f"case {case}" in MODEL
-    assert ") ?? .v90172Baseline" in MONITOR
-    assert '? false : d.bool(forKey: "HUD.Ambient.v90_21.applyBLEDIMTestStrategyAutomatically")' in MONITOR
+    assert ") ?? .alreadyOnMinimal" in MONITOR
+    assert "? .alreadyOnMinimal" in MONITOR
 
 
-def test_preview_uses_selected_strategy_without_forcing_automatic_strategy():
+def test_v9022_removes_strategy_picker_and_preview_uses_production_minimal():
     assert "previewEnabledBLEDIMBreathNow" in MONITOR
-    assert "bledimStrategyOverride: override" in MONITOR
-    assert "applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline" in MONITOR
-    assert "BLEDIM ANIMATION TEST LAB" in VIEW
+    assert "bledimStrategyOverride: override" not in MONITOR
+    assert "BLEDIM ANIMATION TEST LAB" not in VIEW
+    assert "BLEDIM PRODUCTION ANIMATION" in VIEW
+    assert "Already-On Minimal" in VIEW
     assert "Preview BLEDIM Only" in VIEW
-    assert "Apply selected strategy to automatic BLEDIM power-on" in VIEW
+    assert "Apply selected strategy to automatic BLEDIM power-on" not in VIEW
 
 
 def test_diagnostic_methods_isolate_start_and_end_flash_hypotheses():

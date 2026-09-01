@@ -6,7 +6,7 @@ def test_bledim_boot_settle_precedes_one_complete_breath():
     assert 'bledimBootSettleDelaySeconds: TimeInterval = 1.50' in MONITOR
     block=MONITOR.split('private func scheduleBLEDIMBootSettleReassert',1)[1].split('private func animationWriteInterval',1)[0]
     assert 'Fresh power-on boot settle scheduled' in block
-    assert 'self.queuePowerUpBreath(id)' in block
+    assert 'self.queuePowerUpBreath(id, force: forceBreath)' in block
     assert 'restoreDeviceState(id)' not in block
 
 def test_bledim_boot_settle_is_cancelled_on_disconnect():

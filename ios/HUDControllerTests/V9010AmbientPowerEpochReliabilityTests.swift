@@ -17,14 +17,14 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertFalse(monitor.contains("BLEDIM10Hz"))
     }
 
-    func testCriticalPowerColorAndFinalBrightnessUseKnownGoodV90172Order() throws {
+    func testCriticalRestoreWritesRemainAndProductionBLEDIMUsesMinimal() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("private func sendPowerWhenReady"))
         XCTAssertTrue(monitor.contains("private func sendColorWhenReady"))
         XCTAssertTrue(monitor.contains("private func applyRuntimeBrightnessWhenReady"))
         XCTAssertTrue(monitor.contains("power-up breath terminal Power ON"))
         XCTAssertTrue(monitor.contains("power-up breath terminal RGB"))
-        XCTAssertTrue(monitor.contains("applyBLEDIMTestStrategyToAutomaticPowerOn ? bledimAnimationStrategy : .v90172Baseline"))
+        XCTAssertTrue(monitor.contains("? .alreadyOnMinimal"))
         XCTAssertTrue(monitor.contains("case .v90172Baseline, .baselineHold, .brightnessOnlyFinish, .noTerminalCommit:"))
         XCTAssertTrue(monitor.contains("power-up breath terminal Power ON"))
     }
@@ -40,7 +40,7 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         let startupBlock = startupParts[1].components(separatedBy: "private func queuePowerUpBreath")[0]
         XCTAssertTrue(startupBlock.contains("registerPowerOnCohortMember(id)"))
         XCTAssertTrue(startupBlock.contains("scheduleBLEDIMBootSettleReassert"))
-        XCTAssertTrue(startupBlock.contains("queuePowerUpBreath(id)"))
+        XCTAssertTrue(startupBlock.contains("queuePowerUpBreath(id, force: expectedByHeadlightBarrier || lateFromHeadlightBarrier)"))
         XCTAssertFalse(startupBlock.contains("enginePowerPresent"))
         XCTAssertFalse(startupBlock.contains("headlightPowerSessionActive"))
     }

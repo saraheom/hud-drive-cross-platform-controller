@@ -174,10 +174,17 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var improvedRequestInFlight = false
     private var improvedLastFailureAt: Date?
     private var improvedCurrentRoadID: Int64?
+    /// Stable semantic identity for the currently confirmed OSM road. OSM commonly
+    /// splits one physical street into many way IDs; v90.22 uses normalized name/ref
+    /// identity to hand off between those pieces without blanking an unchanged sign.
+    private var improvedCurrentRoadIdentity: String?
     private var improvedPendingRoad: (id: Int64, count: Int)?
     private var improvedLastConfidenceMargin: Double = 0
     private var improvedLastResolutionFresh = false
     private var improvedLastResolutionWarningEligible = false
+    /// Fresh same-road geometry can preserve the displayed sign across an untagged
+    /// segment, but intentionally does not refresh warning eligibility.
+    private var improvedDisplayContinuityFresh = false
     private var improvedResolutionSource = "none"
     private var improvedPendingLimit: (key: String, mph: Int, count: Int, source: String)?
 
@@ -420,10 +427,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         improvedRequestInFlight = false
         improvedLastFailureAt = nil
         improvedCurrentRoadID = nil
+        improvedCurrentRoadIdentity = nil
         improvedPendingRoad = nil
         improvedLastConfidenceMargin = 0
         improvedLastResolutionFresh = false
         improvedLastResolutionWarningEligible = false
+        improvedDisplayContinuityFresh = false
         improvedResolutionSource = "none"
         improvedPendingLimit = nil
         philadelphiaSpeedSegments.removeAll()
@@ -567,11 +576,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             logger.log(
                 "IMPROVED TRACE OUTPUT",
                 String(
-                    format: "gps=%.6f,%.6f resolved=%@ fresh=%d road=%@ source=%@ margin=%.2f phillyData=%d",
+                    format: "gps=%.6f,%.6f resolved=%@ fresh=%d displayContinuity=%d road=%@ source=%@ margin=%.2f phillyData=%d",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
                     limit.map { "\($0)mph" } ?? "none",
                     improvedLastResolutionFresh ? 1 : 0,
+                    improvedDisplayContinuityFresh ? 1 : 0,
                     improvedCurrentRoadID.map { String($0) } ?? "none",
                     improvedResolutionSource,
                     improvedLastConfidenceMargin,
@@ -610,6 +620,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         if sourceMode == .improvedTracePhilly,
            !improvedLastResolutionFresh,
+           !improvedDisplayContinuityFresh,
            currentSpeedLimitMph > 0,
            let lastResolvedLimitAt,
            Date().timeIntervalSince(lastResolvedLimitAt) > improvedDisplayGraceSeconds {
@@ -1554,9 +1565,40 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         )
     }
 
+    /// OSM way IDs are implementation details, not road identities. Normalize the
+    /// human-facing name first (or ref when unnamed) so adjacent pieces of the same
+    /// street can hand off without a false stale-sign interval.
+    private static func normalizedRoadIdentity(name: String?, reference: String?) -> String? {
+        func normalize(_ raw: String) -> String {
+            let aliases: [String: String] = [
+                "jr": "junior", "dr": "drive", "rd": "road", "st": "street",
+                "ave": "avenue", "av": "avenue", "blvd": "boulevard",
+                "hwy": "highway", "pkwy": "parkway"
+            ]
+            return raw
+                .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+                .map { aliases[$0] ?? $0 }
+                .joined(separator: " ")
+        }
+
+        if let name {
+            let normalized = normalize(name)
+            if !normalized.isEmpty { return "name:\(normalized)" }
+        }
+        if let reference {
+            let normalized = normalize(reference)
+            if !normalized.isEmpty { return "ref:\(normalized)" }
+        }
+        return nil
+    }
+
     private func bestImprovedTraceSpeedLimit(at location: CLLocation) -> Int? {
         improvedLastResolutionFresh = false
         improvedLastResolutionWarningEligible = false
+        improvedDisplayContinuityFresh = false
         let trace = Array(traceLocations.suffix(8))
         guard !trace.isEmpty else { return nil }
 
@@ -1632,15 +1674,88 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 "currentWay=\(improvedCurrentRoadID.map(String.init) ?? "none") pending=\(improvedPendingRoad.map { "\($0.id)#\($0.count)" } ?? "none") top=[\(summary)]"
             )
 
-            if best.segment.elementID == improvedCurrentRoadID {
+            if improvedCurrentRoadIdentity == nil, let currentID = improvedCurrentRoadID,
+               let currentSegment = improvedSegments.first(where: { $0.elementID == currentID }) {
+                improvedCurrentRoadIdentity = Self.normalizedRoadIdentity(
+                    name: currentSegment.name,
+                    reference: currentSegment.reference
+                )
+            }
+
+            // v90.22 same-road fast handoff. A single physical street such as
+            // Martin Luther King Junior Drive is split into many OSM ways. At those
+            // boundaries a nearby service/link way can briefly win first place and
+            // start the old 4-s stale countdown even while another excellent trace
+            // candidate is the same named road with the same explicit 25-mph limit.
+            // Prefer that semantic continuity before considering a different road.
+            var sameRoadExplicit: OSMScored?
+            var sameRoadUntagged: OSMScored?
+            if let identity = improvedCurrentRoadIdentity, currentSpeedLimitMph > 0 {
+                let strongSameRoadCandidates = osmScored.filter { item in
+                    Self.normalizedRoadIdentity(name: item.segment.name, reference: item.segment.reference) == identity &&
+                    item.match.currentDistance <= 35 &&
+                    item.match.currentAngle <= 35 &&
+                    item.match.matchedPoints >= max(1, trace.count - 1) &&
+                    item.match.score <= min(2.5, best.match.score + 0.75)
+                }
+                sameRoadExplicit = strongSameRoadCandidates.first(where: { $0.speedMph == currentSpeedLimitMph })
+                let changedExplicit = strongSameRoadCandidates.first(where: {
+                    guard let mph = $0.speedMph else { return false }
+                    return mph != currentSpeedLimitMph
+                })
+                // Do not use an untagged sibling to mask a real posted-speed change
+                // on the same named road. In that case the changed explicit segment
+                // falls through to the normal confirmation path below.
+                if changedExplicit == nil {
+                    sameRoadUntagged = strongSameRoadCandidates.first(where: { $0.speedMph == nil })
+                }
+            }
+
+            if let continuity = sameRoadExplicit {
+                let previousID = improvedCurrentRoadID
+                improvedCurrentRoadID = continuity.segment.elementID
+                improvedCurrentRoadIdentity = Self.normalizedRoadIdentity(
+                    name: continuity.segment.name,
+                    reference: continuity.segment.reference
+                )
+                improvedPendingRoad = nil
+                confirmedOSM = continuity
+                if previousID != continuity.segment.elementID {
+                    logger.log(
+                        "IMPROVED TRACE DECISION",
+                        "same-road fast handoff \(previousID.map(String.init) ?? "none") → \(continuity.segment.elementID) identity=\(improvedCurrentRoadIdentity ?? "-") limit=\(currentSpeedLimitMph)"
+                    )
+                }
+            } else if let continuity = sameRoadUntagged {
+                let previousID = improvedCurrentRoadID
+                improvedCurrentRoadID = continuity.segment.elementID
+                improvedCurrentRoadIdentity = Self.normalizedRoadIdentity(
+                    name: continuity.segment.name,
+                    reference: continuity.segment.reference
+                )
+                improvedPendingRoad = nil
+                confirmedOSM = continuity
+                improvedDisplayContinuityFresh = true
+                logger.log(
+                    "IMPROVED TRACE DECISION",
+                    "same-road untagged continuity \(previousID.map(String.init) ?? "none") → \(continuity.segment.elementID) identity=\(improvedCurrentRoadIdentity ?? "-"); preserve displayed \(currentSpeedLimitMph) mph without refreshing warning freshness"
+                )
+            } else if best.segment.elementID == improvedCurrentRoadID {
                 improvedPendingRoad = nil
                 confirmedOSM = best
+                if let identity = Self.normalizedRoadIdentity(name: best.segment.name, reference: best.segment.reference) {
+                    improvedCurrentRoadIdentity = identity
+                }
             } else if margin >= 0.45 || improvedCurrentRoadID == nil {
                 if let pending = improvedPendingRoad, pending.id == best.segment.elementID {
                     let next = pending.count + 1
                     improvedPendingRoad = (best.segment.elementID, next)
                     if next >= 2 {
                         improvedCurrentRoadID = best.segment.elementID
+                        improvedCurrentRoadIdentity = Self.normalizedRoadIdentity(
+                            name: best.segment.name,
+                            reference: best.segment.reference
+                        )
                         improvedPendingRoad = nil
                         confirmedOSM = best
                     }
@@ -1742,6 +1857,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 key: "osm:\(confirmedOSM.segment.elementID)",
                 source: "OSM explicit"
             )
+        }
+
+        if improvedDisplayContinuityFresh, currentSpeedLimitMph > 0 {
+            improvedResolutionSource = "OSM same-road untagged continuity"
+            logger.log(
+                "IMPROVED TRACE DECISION",
+                "same-road geometry remains fresh without explicit maxspeed; preserve displayed \(currentSpeedLimitMph) mph, warning freshness unchanged"
+            )
+            return currentSpeedLimitMph
         }
 
         improvedResolutionSource = confirmedOSM == nil ? "waiting for road confirmation" : "matched road has no explicit speed"
