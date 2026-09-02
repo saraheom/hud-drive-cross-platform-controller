@@ -26,7 +26,7 @@ final class V9025SpeedContinuityRefinementTests: XCTestCase {
 
     func testIntegratedBuildKeepsV9024AmbientCoordinator() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("Flight recorder v90.25 enabled"))
+        XCTAssertTrue(monitor.contains("Flight recorder v90.26 enabled"))
         XCTAssertTrue(monitor.contains("syncMembership=newJoinersOnly"))
         XCTAssertTrue(monitor.contains("autoSyncPrep=deferredToT0"))
         XCTAssertTrue(monitor.contains("engineStartupPromotion=fullCohort"))

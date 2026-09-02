@@ -27,19 +27,17 @@ def test_v9020_migrates_workaround_power_state_back_to_enabled_once():
     assert "pairedDevices[index].powerOn = true" in MONITOR
     assert "pairedDevices[index].role == .door || pairedDevices[index].role == .dashboard" in MONITOR
 
-def test_philly_layers_use_schema_specific_fields_and_valid_envelope_query():
+def test_philly_centerline_uses_current_schema_and_valid_envelope_query():
     assert 'geometryType", value: "esriGeometryEnvelope"' in SPEED
     assert 'URLQueryItem(name: "distance"' not in SPEED
     assert 'URLQueryItem(name: "units"' not in SPEED
-    assert '? "OBJECTID,OBJECTID_1,STNM_LAB,STREET,SPLIMIT,SPEED_LIMITS"' in SPEED
-    assert ': "OBJECTID,OBJECTID_1,STNM_LAB,STREET,SPLIMIT,SPEED_LIMITS,SpeedLimits_MPH"' in SPEED
+    assert 'TRANSPORTATION_street_segment/FeatureServer/0/query' in SPEED
+    assert 'OBJECTID,SEGMENT_ID,FULL_STREET_NAME,STREET_NAME,SPEED_LIMIT,POSTED_SPEED_LIMIT,ROAD_CLASS,BUILT_STATUS' in SPEED
 
 
-def test_philly_layers_are_partial_failure_tolerant_and_backed_off():
-    assert "async let postedTask = fetchPhiladelphiaLayer(0" in SPEED
-    assert "async let residentialTask = fetchPhiladelphiaLayer(1" in SPEED
-    assert "if successCount > 0" in SPEED
-    assert "layersOK=%d/2" in SPEED
+def test_philly_centerline_failure_is_backed_off_without_discarding_osm_path():
+    assert "fetchPhiladelphiaStreetCenterlines" in SPEED
+    assert "layersOK=1/1" in SPEED
     assert "providerFailureRetrySeconds: TimeInterval = 12.0" in SPEED
     assert "philadelphiaLastFailureAt" in SPEED
     assert "improvedLastFailureAt" in SPEED
@@ -48,7 +46,7 @@ def test_philly_layers_are_partial_failure_tolerant_and_backed_off():
 
 def test_philly_gis_can_still_supply_limit_without_an_osm_candidate():
     matcher = SPEED.split("private func bestImprovedTraceSpeedLimit", 1)[1].split("private func acceptImprovedLimit", 1)[0]
-    gis_accept = matcher.find("if let gisBest,")
+    gis_accept = matcher.find("if let gisCandidate = {")
     osm_fallback = matcher.find("if let confirmedOSM, let mph")
     assert gis_accept >= 0 and osm_fallback >= 0 and gis_accept < osm_fallback
     assert "philadelphiaSpeedSegments" in matcher

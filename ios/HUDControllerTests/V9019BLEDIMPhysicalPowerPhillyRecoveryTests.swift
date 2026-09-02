@@ -27,13 +27,13 @@ final class V9019BLEDIMPhysicalPowerPhillyRecoveryTests: XCTestCase {
         XCTAssertTrue(monitor.contains("pairedDevices[index].powerOn = true"))
     }
 
-    func testPhiladelphiaQueryUsesLayerSpecificSchemaAndBackoff() throws {
+    func testPhiladelphiaQueryUsesCurrentStreetCenterlineSchemaAndBackoff() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         XCTAssertTrue(speed.contains("esriGeometryEnvelope"))
-        XCTAssertTrue(speed.contains("SPLIMIT,SPEED_LIMITS\""))
-        XCTAssertTrue(speed.contains("SPLIMIT,SPEED_LIMITS,SpeedLimits_MPH\""))
+        XCTAssertTrue(speed.contains("TRANSPORTATION_street_segment/FeatureServer/0/query"))
+        XCTAssertTrue(speed.contains("POSTED_SPEED_LIMIT"))
+        XCTAssertTrue(speed.contains("SPEED_LIMIT"))
         XCTAssertTrue(speed.contains("providerFailureRetrySeconds: TimeInterval = 12.0"))
-        XCTAssertTrue(speed.contains("if successCount > 0"))
-        XCTAssertTrue(speed.contains("layersOK=%d/2"))
+        XCTAssertTrue(speed.contains("layersOK=1/1"))
     }
 }

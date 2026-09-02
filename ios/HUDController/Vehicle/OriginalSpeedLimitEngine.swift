@@ -16,7 +16,7 @@ enum SpeedLimitSourceMode: String, CaseIterable, Identifiable {
         case .traceOSM:
             return "Current rolling GPS-trace matcher using explicit OSM speed tags"
         case .improvedTracePhilly:
-            return "Improved all-road trace matcher + Philadelphia public speed-limit GIS"
+            return "Improved all-road trace matcher + Philadelphia Street Centerline speed GIS"
         }
     }
 }
@@ -189,6 +189,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var improvedDisplayContinuityReason = "none"
     private var improvedResolutionSource = "none"
     private var improvedPendingLimit: (key: String, mph: Int, count: Int, source: String)?
+    /// The displayed speed may only be propagated across same-road untagged pieces
+    /// when it was actually established for the current road identity. A hard turn
+    /// onto a different road disarms inherited continuity until the new road gets a
+    /// fresh explicit/GIS/corridor-consensus limit.
+    private var improvedSameRoadContinuityArmed = true
 
     private var philadelphiaSpeedSegments: [PhiladelphiaSpeedSegment] = []
     private var philadelphiaLastQueryLocation: CLLocation?
@@ -438,6 +443,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         improvedDisplayContinuityReason = "none"
         improvedResolutionSource = "none"
         improvedPendingLimit = nil
+        improvedSameRoadContinuityArmed = true
         philadelphiaSpeedSegments.removeAll()
         philadelphiaLastQueryLocation = nil
         philadelphiaRequestInFlight = false
@@ -1327,68 +1333,42 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         philadelphiaRequestInFlight = true
         defer { philadelphiaRequestInFlight = false }
 
-        // Fetch the two City layers independently so one schema/service problem
-        // cannot discard useful data returned by the other layer.
-        async let postedTask = fetchPhiladelphiaLayer(0, residential: false, at: location)
-        async let residentialTask = fetchPhiladelphiaLayer(1, residential: true, at: location)
-
-        var postedSegments: [PhiladelphiaSpeedSegment] = []
-        var residentialSegments: [PhiladelphiaSpeedSegment] = []
-        var successCount = 0
-        var failures: [String] = []
-
         do {
-            postedSegments = try await postedTask
-            successCount += 1
-        } catch {
-            failures.append("layer0 posted: \(error.localizedDescription)")
-        }
-        do {
-            residentialSegments = try await residentialTask
-            successCount += 1
-        } catch {
-            failures.append("layer1 residential: \(error.localizedDescription)")
-        }
-
-        if successCount > 0 {
-            philadelphiaSpeedSegments = postedSegments + residentialSegments
+            let centerlineSegments = try await fetchPhiladelphiaStreetCenterlines(at: location)
+            philadelphiaSpeedSegments = centerlineSegments
             philadelphiaDatasetAvailable = true
             philadelphiaLastQueryLocation = location
-            philadelphiaLastFailureAt = failures.isEmpty ? nil : Date()
+            philadelphiaLastFailureAt = nil
             logger.log(
                 "PHILLY GIS QUERY",
                 String(
-                    format: "center=%.6f,%.6f envelope≈500m posted=%d residential=%d total=%d layersOK=%d/2",
+                    format: "center=%.6f,%.6f envelope≈500m streetCenterline=%d layersOK=1/1",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
-                    postedSegments.count,
-                    residentialSegments.count,
-                    postedSegments.count + residentialSegments.count,
-                    successCount
+                    centerlineSegments.count
                 )
             )
-            if !failures.isEmpty {
-                logger.log("PHILLY GIS ERROR", "Partial City GIS result; \(failures.joined(separator: " | ")); retry backoff=\(Int(providerFailureRetrySeconds))s")
-            }
-        } else {
+        } catch {
             philadelphiaSpeedSegments.removeAll()
             philadelphiaDatasetAvailable = false
             philadelphiaLastFailureAt = Date()
-            logger.log("PHILLY GIS ERROR", "All City GIS layers failed; \(failures.joined(separator: " | ")); retry backoff=\(Int(providerFailureRetrySeconds))s")
+            logger.log(
+                "PHILLY GIS ERROR",
+                "Philadelphia Street Centerline failed: \(error.localizedDescription); retry backoff=\(Int(providerFailureRetrySeconds))s"
+            )
         }
     }
 
-    private func fetchPhiladelphiaLayer(
-        _ layer: Int,
-        residential: Bool,
+    /// v90.26: use Philadelphia's current Street Centerline feature layer. The old
+    /// SpeedLimits/FeatureServer service used by v90.18-v90.25 returned successful
+    /// empty queries in the field. The maintained centerline schema exposes both
+    /// POSTED_SPEED_LIMIT and SPEED_LIMIT directly on the street polylines.
+    private func fetchPhiladelphiaStreetCenterlines(
         at location: CLLocation
     ) async throws -> [PhiladelphiaSpeedSegment] {
-        let base = "https://services8.arcgis.com/6pr2WaSuWO79zliF/ArcGIS/rest/services/SpeedLimits/FeatureServer/\(layer)/query"
+        let base = "https://services.arcgis.com/0L95CJ0VTaxqcmED/ArcGIS/rest/services/TRANSPORTATION_street_segment/FeatureServer/0/query"
         guard var comps = URLComponents(string: base) else { return [] }
 
-        // Use a WGS84 envelope rather than point+distance. It is accepted by the
-        // ArcGIS feature service regardless of the layer's native EPSG:2229 feet
-        // projection and avoids distance/unit parameter ambiguity.
         let latitude = location.coordinate.latitude
         let longitude = location.coordinate.longitude
         let latDelta = 500.0 / 111_320.0
@@ -1400,21 +1380,14 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             longitude + lonDelta, latitude + latDelta
         )
 
-        // Layer 1 does NOT expose SpeedLimits_MPH. v90.18 requested it from both
-        // layers, causing ArcGIS to reject every residential query as invalid and
-        // therefore preventing the combined City dataset from ever loading.
-        let outFields = residential
-            ? "OBJECTID,OBJECTID_1,STNM_LAB,STREET,SPLIMIT,SPEED_LIMITS"
-            : "OBJECTID,OBJECTID_1,STNM_LAB,STREET,SPLIMIT,SPEED_LIMITS,SpeedLimits_MPH"
-
         comps.queryItems = [
             URLQueryItem(name: "f", value: "json"),
-            URLQueryItem(name: "where", value: "1=1"),
+            URLQueryItem(name: "where", value: "BUILT_STATUS=2"),
             URLQueryItem(name: "geometry", value: envelope),
             URLQueryItem(name: "geometryType", value: "esriGeometryEnvelope"),
             URLQueryItem(name: "inSR", value: "4326"),
             URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
-            URLQueryItem(name: "outFields", value: outFields),
+            URLQueryItem(name: "outFields", value: "OBJECTID,SEGMENT_ID,FULL_STREET_NAME,STREET_NAME,SPEED_LIMIT,POSTED_SPEED_LIMIT,ROAD_CLASS,BUILT_STATUS"),
             URLQueryItem(name: "returnGeometry", value: "true"),
             URLQueryItem(name: "outSR", value: "4326")
         ]
@@ -1423,7 +1396,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw URLError(.badServerResponse)
         }
-        return try Self.parsePhiladelphiaSpeedFeatures(data, residential: residential)
+        return try Self.parsePhiladelphiaSpeedFeatures(data)
     }
 
 
@@ -1446,8 +1419,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     private static func parsePhiladelphiaSpeedFeatures(
-        _ data: Data,
-        residential: Bool
+        _ data: Data
     ) throws -> [PhiladelphiaSpeedSegment] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return []
@@ -1464,11 +1436,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                   let paths = geometry["paths"] as? [[[Double]]]
             else { return nil }
 
-            let explicitSpeed = Self.philadelphiaValidSpeed(attributes["SPEED_LIMITS"])
-                ?? Self.philadelphiaValidSpeed(attributes["SpeedLimits_MPH"])
-                ?? Self.philadelphiaValidSpeed(attributes["SPLIMIT"])
-            let speed = explicitSpeed ?? (residential ? 25 : nil)
-            guard let speed else { return nil }
+            let explicitSpeed = Self.philadelphiaValidSpeed(attributes["POSTED_SPEED_LIMIT"])
+                ?? Self.philadelphiaValidSpeed(attributes["SPEED_LIMIT"])
+            guard let speed = explicitSpeed else { return nil }
 
             var parts: [SegmentPart] = []
             for path in paths {
@@ -1480,17 +1450,17 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             }
             guard !parts.isEmpty else { return nil }
 
-            let objectID = Self.philadelphiaIntValue(attributes["OBJECTID_1"])
-                ?? Self.philadelphiaIntValue(attributes["OBJECTID"])
+            let objectID = Self.philadelphiaIntValue(attributes["OBJECTID"])
+                ?? Self.philadelphiaIntValue(attributes["SEGMENT_ID"])
                 ?? 0
-            let name = (attributes["STNM_LAB"] as? String)
-                ?? (attributes["STREET"] as? String)
+            let name = (attributes["FULL_STREET_NAME"] as? String)
+                ?? (attributes["STREET_NAME"] as? String)
             return PhiladelphiaSpeedSegment(
                 objectID: objectID,
                 name: name,
                 speedMph: speed,
-                residentialLayer: residential,
-                speedWasExplicit: explicitSpeed != nil,
+                residentialLayer: false,
+                speedWasExplicit: true,
                 parts: parts
             )
         }
@@ -1598,6 +1568,54 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         return nil
     }
 
+    /// Return a static, direction-independent explicit speed only when an OSM way
+    /// is internally unambiguous. Directional or conditional conflicts are excluded
+    /// from road-level inference and remain eligible only for direct local matching.
+    private static func unambiguousStaticOSMSpeedMph(_ segment: ImprovedOSMSegment) -> Int? {
+        if segment.baseConditional != nil || segment.forwardConditional != nil || segment.backwardConditional != nil {
+            return nil
+        }
+        let values = [segment.baseKmh, segment.forwardKmh, segment.backwardKmh].compactMap { $0 }
+        guard !values.isEmpty, Set(values).count == 1, let kmh = values.first else { return nil }
+        return Int((Double(kmh) / 1.609344).rounded())
+    }
+
+    private static func minimumDistance(
+        from coordinate: CLLocationCoordinate2D,
+        to parts: [SegmentPart]
+    ) -> Double {
+        parts.map { part in
+            distanceFrom(coordinate, toSegmentA: part.start, b: part.end)
+        }.min() ?? 999_999
+    }
+
+    /// v90.26 road-level inference for an untagged current OSM piece. Only explicit,
+    /// static speed tags on the exact same normalized road identity are considered.
+    /// At least two nearby tagged ways must agree unanimously; conflicting speeds
+    /// (for example a road that changes from 30 to 25) disable the inference.
+    private func sameRoadOSMSpeedConsensus(
+        identity: String,
+        at location: CLLocation
+    ) -> (mph: Int, count: Int, nearestMeters: Double)? {
+        let observations: [(mph: Int, distance: Double)] = improvedSegments.compactMap { segment in
+            guard Self.normalizedRoadIdentity(name: segment.name, reference: segment.reference) == identity,
+                  let mph = Self.unambiguousStaticOSMSpeedMph(segment) else { return nil }
+            let distance = Self.minimumDistance(from: location.coordinate, to: segment.parts)
+            guard distance <= 650 else { return nil }
+            return (mph, distance)
+        }
+        guard observations.count >= 2 else { return nil }
+        let values = Set(observations.map(\.mph))
+        guard values.count == 1, let mph = values.first else {
+            if observations.count >= 2 {
+                let speeds = values.sorted().map(String.init).joined(separator: ",")
+                logger.log("IMPROVED TRACE DECISION", "same-road corridor consensus withheld identity=\(identity) conflicting=\(speeds)")
+            }
+            return nil
+        }
+        return (mph, observations.count, observations.map(\.distance).min() ?? 999)
+    }
+
     private func bestImprovedTraceSpeedLimit(at location: CLLocation) -> Int? {
         improvedLastResolutionFresh = false
         improvedLastResolutionWarningEligible = false
@@ -1686,6 +1704,67 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 )
             }
 
+            // v90.26 completed-turn takeover. Rolling-trace history intentionally
+            // favors the previous road, but after a real 90-degree turn that inertia
+            // can hold the old way for many blocks. Use current-sample geometry to
+            // hand road identity to a very close, well-aligned different street as
+            // soon as the previous road is clearly behind/perpendicular.
+            var hardRoadTakeover: OSMScored?
+            if let currentID = improvedCurrentRoadID,
+               let currentIdentity = improvedCurrentRoadIdentity,
+               location.speed >= 1.5 {
+                let currentCandidate = osmScored.first(where: { $0.segment.elementID == currentID })
+                let currentLooksDeparted = currentCandidate == nil ||
+                    currentCandidate!.match.currentDistance >= 18 ||
+                    currentCandidate!.match.currentAngle >= 45
+                if currentLooksDeparted {
+                    hardRoadTakeover = osmScored
+                        .filter { item in
+                            item.segment.elementID != currentID &&
+                            Self.normalizedRoadIdentity(name: item.segment.name, reference: item.segment.reference) != nil &&
+                            Self.normalizedRoadIdentity(name: item.segment.name, reference: item.segment.reference) != currentIdentity &&
+                            item.match.currentDistance <= 12 &&
+                            item.match.currentAngle <= 20 &&
+                            item.match.matchedPoints >= max(4, trace.count / 2) &&
+                            item.match.score <= 3.25
+                        }
+                        .min { lhs, rhs in
+                            lhs.match.currentDistance + lhs.match.currentAngle * 0.20 <
+                                rhs.match.currentDistance + rhs.match.currentAngle * 0.20
+                        }
+                }
+            }
+
+            if let takeover = hardRoadTakeover {
+                let previousID = improvedCurrentRoadID
+                let previousIdentity = improvedCurrentRoadIdentity ?? "none"
+                improvedCurrentRoadID = takeover.segment.elementID
+                improvedCurrentRoadIdentity = Self.normalizedRoadIdentity(
+                    name: takeover.segment.name,
+                    reference: takeover.segment.reference
+                )
+                improvedPendingRoad = nil
+                improvedPendingLimit = nil
+                improvedSameRoadContinuityArmed = false
+                currentLimitWarningEligible = false
+                speedLimitAvailableForWarning = false
+                confirmedOSM = takeover
+                logger.log(
+                    "IMPROVED TRACE DECISION",
+                    String(
+                        format: "completed-turn road takeover %lld(%@) → %lld(%@) dist=%.1fm angle=%.1f matched=%d/%d; inherited continuity disarmed",
+                        previousID ?? 0,
+                        previousIdentity,
+                        takeover.segment.elementID,
+                        improvedCurrentRoadIdentity ?? "-",
+                        takeover.match.currentDistance,
+                        takeover.match.currentAngle,
+                        takeover.match.matchedPoints,
+                        trace.count
+                    )
+                )
+            }
+
             // v90.22 same-road fast handoff. A single physical street such as
             // Martin Luther King Junior Drive is split into many OSM ways. At those
             // boundaries a nearby service/link way can briefly win first place and
@@ -1695,7 +1774,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             var sameRoadExplicit: OSMScored?
             var sameRoadUntagged: OSMScored?
             var sameRoadSuccessorIDs = Set<Int64>()
-            if let identity = improvedCurrentRoadIdentity, currentSpeedLimitMph > 0 {
+            if hardRoadTakeover == nil,
+               improvedSameRoadContinuityArmed,
+               let identity = improvedCurrentRoadIdentity,
+               currentSpeedLimitMph > 0 {
                 let sameIdentityCandidates = osmScored.filter { item in
                     Self.normalizedRoadIdentity(name: item.segment.name, reference: item.segment.reference) == identity
                 }
@@ -1738,7 +1820,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 }
             }
 
-            if let continuity = sameRoadExplicit {
+            if hardRoadTakeover != nil {
+                // `confirmedOSM` was assigned by current-sample completed-turn geometry.
+                // Do not let the previous road's display-continuity machinery override it.
+            } else if let continuity = sameRoadExplicit {
                 let previousID = improvedCurrentRoadID
                 improvedCurrentRoadID = continuity.segment.elementID
                 improvedCurrentRoadIdentity = Self.normalizedRoadIdentity(
@@ -1787,11 +1872,19 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                     let next = pending.count + 1
                     improvedPendingRoad = (best.segment.elementID, next)
                     if next >= 2 {
-                        improvedCurrentRoadID = best.segment.elementID
-                        improvedCurrentRoadIdentity = Self.normalizedRoadIdentity(
+                        let previousIdentity = improvedCurrentRoadIdentity
+                        let nextIdentity = Self.normalizedRoadIdentity(
                             name: best.segment.name,
                             reference: best.segment.reference
                         )
+                        improvedCurrentRoadID = best.segment.elementID
+                        improvedCurrentRoadIdentity = nextIdentity
+                        if previousIdentity != nil, nextIdentity != previousIdentity {
+                            improvedSameRoadContinuityArmed = false
+                            improvedPendingLimit = nil
+                            currentLimitWarningEligible = false
+                            speedLimitAvailableForWarning = false
+                        }
                         improvedPendingRoad = nil
                         confirmedOSM = best
                     } else if best.speedMph == currentSpeedLimitMph, currentSpeedLimitMph > 0 {
@@ -1840,6 +1933,21 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         gisScored.sort { $0.match.score < $1.match.score }
 
         let gisBest = gisScored.first
+        // v90.26 turn acquisition path: recent trace points still belong to the old
+        // road immediately after a turn, so the rolling score can lag for blocks.
+        // A City centerline that is extremely close and aligned with the *current*
+        // GPS course may be used as the local candidate even before trace history
+        // fully rotates onto the new street.
+        let gisCurrentGeometryBest = gisScored
+            .filter { item in
+                item.match.currentDistance <= 12 &&
+                item.match.currentAngle <= 20 &&
+                item.match.matchedPoints >= max(4, trace.count / 2)
+            }
+            .min { lhs, rhs in
+                lhs.match.currentDistance + lhs.match.currentAngle * 0.20 <
+                    rhs.match.currentDistance + rhs.match.currentAngle * 0.20
+            }
         if let gisBest {
             logger.log(
                 "PHILLY GIS MATCH",
@@ -1848,9 +1956,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                     gisBest.segment.objectID,
                     gisBest.segment.name ?? "-",
                     gisBest.segment.speedMph,
-                    gisBest.segment.residentialLayer
-                        ? (gisBest.segment.speedWasExplicit ? "residential-explicit" : "residential-inferred")
-                        : "posted",
+                    "street-centerline",
                     gisBest.match.score,
                     gisBest.match.currentDistance,
                     gisBest.match.currentAngle,
@@ -1863,7 +1969,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 )
             )
         } else if Self.isInsidePhiladelphiaCoverage(location.coordinate) {
-            logger.log("PHILLY GIS MATCH", "no nearby City speed/residential segment matched current trace")
+            logger.log("PHILLY GIS MATCH", "no nearby Philadelphia Street Centerline speed segment matched current trace")
         }
 
         // Protect a confidently matched, explicitly tagged limited-access motorway.
@@ -1887,18 +1993,41 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         // A close City segment is authoritative in Philadelphia. The 28 m cap is
         // deliberate: it corrects surface-street/expressway parallel geometry while
         // avoiding a distant Boulevard centerline stealing a true expressway trip.
-        if let gisBest,
-           gisBest.match.currentDistance <= 28,
-           gisBest.match.currentAngle <= 60,
-           gisBest.match.score <= 2.2 {
-            let inferredResidential = gisBest.segment.residentialLayer && !gisBest.segment.speedWasExplicit
+        if let gisCandidate = {
+            if let local = gisCurrentGeometryBest,
+               location.speed >= 1.5 {
+                return local
+            }
+            if let best = gisBest,
+               best.match.currentDistance <= 28,
+               best.match.currentAngle <= 60,
+               best.match.score <= 2.2 {
+                return best
+            }
+            return nil
+        }() {
+            let fastTurn = gisCurrentGeometryBest?.segment.objectID == gisCandidate.segment.objectID &&
+                !(gisBest?.segment.objectID == gisCandidate.segment.objectID && (gisBest?.match.score ?? 99) <= 2.2)
+            if fastTurn {
+                logger.log(
+                    "PHILLY GIS MATCH",
+                    String(
+                        format: "current-geometry fast acquisition id=%d name=%@ limit=%d dist=%.1fm angle=%.1f matched=%d/%d",
+                        gisCandidate.segment.objectID,
+                        gisCandidate.segment.name ?? "-",
+                        gisCandidate.segment.speedMph,
+                        gisCandidate.match.currentDistance,
+                        gisCandidate.match.currentAngle,
+                        gisCandidate.match.matchedPoints,
+                        trace.count
+                    )
+                )
+            }
             return acceptImprovedLimit(
-                gisBest.segment.speedMph,
-                key: "philly:\(gisBest.segment.objectID):\(gisBest.segment.residentialLayer ? 1 : 0):\(gisBest.segment.speedWasExplicit ? 1 : 0)",
-                source: inferredResidential
-                    ? "Philadelphia residential GIS inferred"
-                    : (gisBest.segment.residentialLayer ? "Philadelphia residential GIS" : "Philadelphia posted-speed GIS"),
-                warningEligible: !inferredResidential
+                gisCandidate.segment.speedMph,
+                key: "philly-centerline:\(gisCandidate.segment.objectID)",
+                source: fastTurn ? "Philadelphia Street Centerline fast acquisition" : "Philadelphia Street Centerline GIS",
+                warningEligible: true
             )
         }
 
@@ -1907,6 +2036,31 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 mph,
                 key: "osm:\(confirmedOSM.segment.elementID)",
                 source: "OSM explicit"
+            )
+        }
+
+        if let confirmedOSM,
+           confirmedOSM.speedMph == nil,
+           confirmedOSM.match.currentDistance <= 15,
+           confirmedOSM.match.currentAngle <= 25,
+           confirmedOSM.match.matchedPoints >= max(4, trace.count - 2),
+           let identity = improvedCurrentRoadIdentity,
+           let consensus = sameRoadOSMSpeedConsensus(identity: identity, at: location) {
+            logger.log(
+                "IMPROVED TRACE DECISION",
+                String(
+                    format: "same-road corridor consensus identity=%@ limit=%d explicitWays=%d nearest=%.1fm warningFresh=0",
+                    identity,
+                    consensus.mph,
+                    consensus.count,
+                    consensus.nearestMeters
+                )
+            )
+            return acceptImprovedLimit(
+                consensus.mph,
+                key: "osm-road-consensus:\(identity):\(consensus.mph)",
+                source: "OSM same-road corridor consensus",
+                warningEligible: false
             )
         }
 
@@ -1940,6 +2094,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             improvedLastResolutionFresh = true
             improvedLastResolutionWarningEligible = warningEligible
             improvedResolutionSource = source
+            improvedSameRoadContinuityArmed = true
             logger.log("IMPROVED TRACE DECISION", "retain \(mph) mph source=\(source)")
             return mph
         }
@@ -1956,6 +2111,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 improvedLastResolutionFresh = true
                 improvedLastResolutionWarningEligible = warningEligible
                 improvedResolutionSource = source
+                improvedSameRoadContinuityArmed = true
                 logger.log("SPEED LIMIT", "Improved Trace accepted \(mph) mph source=\(source)")
                 return mph
             }

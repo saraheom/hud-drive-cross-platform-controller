@@ -45,7 +45,7 @@ final class V9023NewJoinerSyncSpeedContinuityTests: XCTestCase {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         XCTAssertTrue(monitor.contains("HUD.Ambient.v90_22.headlightBarrierSyncMigrated"))
-        XCTAssertTrue(monitor.contains("Flight recorder v90.25 enabled"))
+        XCTAssertTrue(monitor.contains("Flight recorder v90.26 enabled"))
         XCTAssertTrue(monitor.contains("syncMembership=newJoinersOnly"))
         XCTAssertTrue(speed.contains("private static func normalizedRoadIdentity"))
         XCTAssertTrue(speed.contains("same-road fast handoff"))

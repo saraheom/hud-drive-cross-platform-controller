@@ -66,7 +66,7 @@ def test_confirmed_engine_start_promotes_all_enabled_roles_after_crank_and_gatt_
     confirm = function_body(m, "private func confirmEnginePowerOn", "private func scheduleEnginePowerOffConfirmation")
     assert "engineStartupCrankSettleSeconds: TimeInterval = 4.0" in m
     assert "engineStartupBLEDIMQuietSeconds: TimeInterval = 1.5" in m
-    assert "engineStartupMaxWaitSeconds: TimeInterval = 9.0" in m
+    assert "engineStartupMaxWaitSeconds: TimeInterval = 16.0" in m
     assert "$0.role != nil && $0.startupAnimationEnabled && $0.powerOn" in schedule
     assert "ready.count == eligible.count" in schedule
     assert "gattControlReadyAtByID" in schedule
@@ -96,6 +96,6 @@ def test_manual_preview_remains_separate_from_automatic_deferred_prep():
     assert "previewBreath(devices: devices)" in preview
     assert "queuePowerUpBreath(device.id, force: true)" in preview
     assert "deferVisualPreparationForSync" not in preview
-    assert "Flight recorder v90.25 enabled" in m
+    assert "Flight recorder v90.26 enabled" in m
     assert "autoSyncPrep=deferredToT0" in m
     assert "engineStartupPromotion=fullCohort" in m

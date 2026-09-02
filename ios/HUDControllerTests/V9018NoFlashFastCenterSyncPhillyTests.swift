@@ -53,9 +53,9 @@ final class V9018NoFlashFastCenterSyncPhillyTests: XCTestCase {
         XCTAssertTrue(speed.contains("case traceOSM = \"OSM Trace\""))
         XCTAssertTrue(speed.contains("case improvedTracePhilly = \"Improved + Philly GIS\""))
         XCTAssertFalse(speed.contains("case enhancedOSM = \"Enhanced OSM\""))
-        XCTAssertTrue(speed.contains("FeatureServer/\\(layer)/query"))
-        XCTAssertTrue(speed.contains("SPEED_LIMITS,SpeedLimits_MPH"))
-        XCTAssertTrue(speed.contains("async let residentialTask = fetchPhiladelphiaLayer(1"))
+        XCTAssertTrue(speed.contains("TRANSPORTATION_street_segment/FeatureServer/0/query"))
+        XCTAssertTrue(speed.contains("POSTED_SPEED_LIMIT"))
+        XCTAssertTrue(speed.contains("fetchPhiladelphiaStreetCenterlines"))
     }
 
     func testImprovedModeLoadsRoadsWithoutMaxspeedAndClearsStaleSign() throws {
@@ -78,12 +78,12 @@ final class V9018NoFlashFastCenterSyncPhillyTests: XCTestCase {
         XCTAssertTrue(speed.contains("[\"motorway\", \"motorway_link\"].contains(confirmedOSM.segment.highway)"))
         XCTAssertTrue(speed.contains("source: \"OSM explicit motorway\""))
     }
-    func testInferredResidentialFallbackCannotArmWarnings() throws {
+    func testCurrentPhiladelphiaCenterlineUsesExplicitSpeedAndWarningGateRemains() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
-        XCTAssertTrue(speed.contains("speedWasExplicit: explicitSpeed != nil"))
-        XCTAssertTrue(speed.contains("warningEligible: !inferredResidential"))
+        XCTAssertTrue(speed.contains("POSTED_SPEED_LIMIT"))
+        XCTAssertTrue(speed.contains("SPEED_LIMIT"))
+        XCTAssertTrue(speed.contains("speedWasExplicit: true"))
         XCTAssertTrue(speed.contains("currentLimitWarningEligible"))
-        XCTAssertTrue(speed.contains("Display-only inferred speed limit — disable native warning threshold"))
         XCTAssertTrue(speed.contains("Clear stale speed-limit warning threshold"))
         XCTAssertTrue(speed.contains("Speed-limit source changed → native warning OFF until fresh limit"))
     }

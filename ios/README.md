@@ -2,6 +2,10 @@
 
 Native SwiftUI iOS client for the validated HUD Drive BLE protocol.
 
+## v90.26 field-fix baseline
+
+The current build uses admitted-member-aware ambient synchronization, a bounded post-crank engine-start reacquisition window, completed-turn road takeover, OSM same-road corridor consensus, and Philadelphia Street Centerline `POSTED_SPEED_LIMIT` / `SPEED_LIMIT` data for faster new-road limit acquisition. See `../docs/V90_26_AMBIENT_SPEED_ACQUISITION.md`.
+
 ## v0.1 features
 
 - CoreBluetooth HUD discovery and connection

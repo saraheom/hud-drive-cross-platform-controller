@@ -34,6 +34,18 @@ That is a separate external toolchain issue.
 
 
 
+## v90.26 — admitted-member sync + post-crank recovery + fast new-road speed acquisition
+
+v90.26 is the integrated field-fix build based on the 2026-09-01 drive log. Automatic headlight/courtesy synchronization now freezes physical membership after the normal 2.0 s discovery floor but **waits for an admitted live member to finish its known GATT/BLEDIM preparation** instead of releasing the common T0 underneath a 1.5 s BLEDIM boot settle. A configured light with only a stale persistent CoreBluetooth connect request no longer counts as physically present unless it is connected or has recent radio evidence. Manual Preview is unchanged.
+
+The one-time initial engine-start exception now keeps a **15 s post-crank headlight/controller reacquisition window** (16 s bounded maximum) before deciding that the car truly started with the headlight-fed lights off. If Center + Door + Dashboard return and become controllable during that window, the existing engine-start full-cohort path waits for BLEDIM GATT quiet and releases all three on one common T0. Later headlight transitions remain new-joiners-only.
+
+Improved speed matching now has a completed-turn takeover path that can drop sticky rolling-trace ownership when the prior road is clearly behind/perpendicular and a different named road is within 12 m and 20 degrees of the current travel direction. A hard road change immediately disables the inherited road's warning eligibility. For untagged current OSM pieces, a road-level speed may be displayed only when at least two nearby explicit OSM ways with the exact normalized road identity unanimously agree; this corridor inference is display-only until a local explicit source confirms it.
+
+Philadelphia fallback was migrated from the old SpeedLimits service (which returned successful zero-feature queries throughout the field drive) to the maintained **Street Centerline** FeatureServer. The current layer exposes `POSTED_SPEED_LIMIT`, `SPEED_LIMIT`, and `FULL_STREET_NAME` on street polylines. The City matcher also has a tight 12 m / 20 degree current-geometry acquisition path after a turn so eight historical trace samples from the old road cannot delay a new-road limit for multiple blocks. The existing v90.25 same-road successor and pending-same-limit continuity protections remain intact.
+
+See `docs/V90_26_AMBIENT_SPEED_ACQUISITION.md`.
+
 ## v90.25.1 — CI XCTest contract alignment
 
 v90.25.1 is runtime-identical to v90.25. It updates the legacy `V9010AmbientPowerEpochReliabilityTests` source-contract assertion to the intentional v90.24+ synchronization implementation (`ownedByHeadlightBarrierNow` plus deferred Lotus visual preparation), fixing the iOS CI failure where 169/170 tests passed and the obsolete pre-v90.24 call-shape assertion failed.

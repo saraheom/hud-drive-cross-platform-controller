@@ -75,15 +75,12 @@ def test_improved_mode_loads_untagged_roads_and_clears_stale_sign():
 
 
 def test_philadelphia_gis_and_motorway_protection_are_present():
-    assert 'services8.arcgis.com/6pr2WaSuWO79zliF/ArcGIS/rest/services/SpeedLimits/FeatureServer/' in SPEED
-    assert 'SPEED_LIMITS,SpeedLimits_MPH' in SPEED
-    assert 'async let postedTask = fetchPhiladelphiaLayer(0' in SPEED
-    assert 'async let residentialTask = fetchPhiladelphiaLayer(1' in SPEED
-    assert '?? (residential ? 25 : nil)' in SPEED
+    assert 'TRANSPORTATION_street_segment/FeatureServer/0/query' in SPEED
+    assert 'POSTED_SPEED_LIMIT' in SPEED and 'SPEED_LIMIT' in SPEED
+    assert 'fetchPhiladelphiaStreetCenterlines' in SPEED
     assert '["motorway", "motorway_link"].contains(confirmedOSM.segment.highway)' in SPEED
     assert 'source: "OSM explicit motorway"' in SPEED
-    assert 'Philadelphia residential GIS' in SPEED
-    assert 'Philadelphia posted-speed GIS' in SPEED
+    assert 'Philadelphia Street Centerline GIS' in SPEED
 
 
 def test_improved_geometry_scorer_does_not_treat_greatest_finite_as_a_match():
@@ -92,14 +89,12 @@ def test_improved_geometry_scorer_does_not_treat_greatest_finite_as_a_match():
     assert 'if let pointBest {' in block
     assert 'Double.greatestFiniteMagnitude' not in block
 
-def test_inferred_philly_residential_limit_is_display_only_for_warning_safety():
-    assert 'let explicitSpeed = Self.philadelphiaValidSpeed(attributes["SPEED_LIMITS"])' in SPEED
+def test_philly_centerline_uses_explicit_speed_fields_and_warning_safety_remains():
+    assert 'let explicitSpeed = Self.philadelphiaValidSpeed(attributes["POSTED_SPEED_LIMIT"])' in SPEED
+    assert '?? Self.philadelphiaValidSpeed(attributes["SPEED_LIMIT"])' in SPEED
     assert 'private nonisolated static func philadelphiaIntValue' in SPEED
     assert 'private nonisolated static func philadelphiaValidSpeed' in SPEED
-    assert 'func intValue(_ value: Any?)' not in SPEED
-    assert 'speedWasExplicit: explicitSpeed != nil' in SPEED
-    assert 'warningEligible: !inferredResidential' in SPEED
-    assert 'Display-only inferred speed limit — disable native warning threshold' in SPEED
+    assert 'speedWasExplicit: true' in SPEED
     assert 'currentLimitWarningEligible' in SPEED
     refresh = SPEED.split('private func refreshWarningLimitAvailability', 1)[1].split('private func updateProviderDataIfNeeded', 1)[0]
     assert 'currentLimitWarningEligible' in refresh

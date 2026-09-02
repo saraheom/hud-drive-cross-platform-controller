@@ -35,7 +35,7 @@ final class V9024AutomaticSyncEnginePromotionTests: XCTestCase {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("engineStartupCrankSettleSeconds: TimeInterval = 4.0"))
         XCTAssertTrue(monitor.contains("engineStartupBLEDIMQuietSeconds: TimeInterval = 1.5"))
-        XCTAssertTrue(monitor.contains("engineStartupMaxWaitSeconds: TimeInterval = 9.0"))
+        XCTAssertTrue(monitor.contains("engineStartupMaxWaitSeconds: TimeInterval = 16.0"))
         XCTAssertTrue(monitor.contains("private func scheduleEngineStartupSynchronization"))
         XCTAssertTrue(monitor.contains("private func beginEngineStartupFullSyncCohort"))
         XCTAssertTrue(monitor.contains("ENGINE-START FULL-COHORT opened"))

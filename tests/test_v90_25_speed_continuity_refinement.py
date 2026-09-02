@@ -10,7 +10,7 @@ def matcher_body():
 
 
 def test_v9025_keeps_v9024_ambient_baseline_and_identifies_release():
-    assert "Flight recorder v90.25 enabled" in MONITOR
+    assert "Flight recorder v90.26 enabled" in MONITOR
     assert "engineStartupPromotion=fullCohort" in MONITOR
     assert "syncMembership=newJoinersOnly" in MONITOR
     assert "autoSyncPrep=deferredToT0" in MONITOR
