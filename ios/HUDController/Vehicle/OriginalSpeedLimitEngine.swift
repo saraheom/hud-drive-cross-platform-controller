@@ -134,6 +134,13 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let parts: [SegmentPart]
     }
 
+    private struct PhiladelphiaFetchResult {
+        let segments: [PhiladelphiaSpeedSegment]
+        let rawFeatures: Int
+        let featuresWithSpeed: Int
+        let featuresWithGeometry: Int
+    }
+
     private struct TraceGeometryMatch {
         let score: Double
         let currentDistance: Double
@@ -194,6 +201,20 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// onto a different road disarms inherited continuity until the new road gets a
     /// fresh explicit/GIS/corridor-consensus limit.
     private var improvedSameRoadContinuityArmed = true
+
+    // v90.27 bounded same-road display cache. A limit that was freshly established
+    // for the current semantic road may survive short OSM/cache holes while GPS
+    // trajectory remains compatible with that same road. Cached holds are always
+    // display-only: they never refresh warning eligibility.
+    private var improvedRoadLimitCacheIdentity: String?
+    private var improvedRoadLimitCacheMph = 0
+    private var improvedRoadLimitCacheSupportedAt: Date?
+    private var improvedRoadLimitCacheLocation: CLLocation?
+    private var improvedRoadLimitCacheCourse: CLLocationDirection = -1
+    private var improvedLatestLocation: CLLocation?
+    private let improvedRoadLimitCacheMaxAgeSeconds: TimeInterval = 90.0
+    private let improvedRoadLimitCacheMaxDistanceMeters: CLLocationDistance = 1_200
+    private let improvedRoadLimitCacheMaxCourseDeltaDegrees: Double = 35.0
 
     private var philadelphiaSpeedSegments: [PhiladelphiaSpeedSegment] = []
     private var philadelphiaLastQueryLocation: CLLocation?
@@ -435,6 +456,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         improvedLastFailureAt = nil
         improvedCurrentRoadID = nil
         improvedCurrentRoadIdentity = nil
+        improvedRoadLimitCacheIdentity = nil
+        improvedRoadLimitCacheMph = 0
+        improvedRoadLimitCacheSupportedAt = nil
+        improvedRoadLimitCacheLocation = nil
+        improvedRoadLimitCacheCourse = -1
+        improvedLatestLocation = nil
         improvedPendingRoad = nil
         improvedLastConfidenceMargin = 0
         improvedLastResolutionFresh = false
@@ -658,6 +685,22 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         lastResolvedLimitAt = Date()
         speedLimitAvailableForWarning = showSpeedLimit && limit > 0 && warningEligible
         UserDefaults.standard.set(limit, forKey: "HUD.Speed.lastKnownLimitMph")
+
+        if sourceMode == .improvedTracePhilly,
+           warningEligible || improvedResolutionSource.contains("corridor consensus"),
+           !improvedResolutionSource.contains("cached same-road"),
+           let identity = improvedCurrentRoadIdentity,
+           let location = improvedLatestLocation {
+            improvedRoadLimitCacheIdentity = identity
+            improvedRoadLimitCacheMph = limit
+            improvedRoadLimitCacheSupportedAt = Date()
+            improvedRoadLimitCacheLocation = location
+            improvedRoadLimitCacheCourse = location.course
+            logger.log(
+                "IMPROVED TRACE DECISION",
+                "same-road display cache refreshed identity=\(identity) limit=\(limit) source=\(improvedResolutionSource)"
+            )
+        }
 
         guard showSpeedLimit, bluetooth.state == .connected else { return }
         if limitChanged {
@@ -1334,18 +1377,21 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         defer { philadelphiaRequestInFlight = false }
 
         do {
-            let centerlineSegments = try await fetchPhiladelphiaStreetCenterlines(at: location)
-            philadelphiaSpeedSegments = centerlineSegments
+            let result = try await fetchPhiladelphiaStreetCenterlines(at: location)
+            philadelphiaSpeedSegments = result.segments
             philadelphiaDatasetAvailable = true
             philadelphiaLastQueryLocation = location
             philadelphiaLastFailureAt = nil
             logger.log(
                 "PHILLY GIS QUERY",
                 String(
-                    format: "center=%.6f,%.6f envelope≈500m streetCenterline=%d layersOK=1/1",
+                    format: "center=%.6f,%.6f envelope≈500m rawFeatures=%d featuresWithSpeed=%d featuresWithGeometry=%d parsedSegments=%d layersOK=1/1",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
-                    centerlineSegments.count
+                    result.rawFeatures,
+                    result.featuresWithSpeed,
+                    result.featuresWithGeometry,
+                    result.segments.count
                 )
             )
         } catch {
@@ -1365,9 +1411,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// POSTED_SPEED_LIMIT and SPEED_LIMIT directly on the street polylines.
     private func fetchPhiladelphiaStreetCenterlines(
         at location: CLLocation
-    ) async throws -> [PhiladelphiaSpeedSegment] {
+    ) async throws -> PhiladelphiaFetchResult {
         let base = "https://services.arcgis.com/0L95CJ0VTaxqcmED/ArcGIS/rest/services/TRANSPORTATION_street_segment/FeatureServer/0/query"
-        guard var comps = URLComponents(string: base) else { return [] }
+        guard var comps = URLComponents(string: base) else { return PhiladelphiaFetchResult(segments: [], rawFeatures: 0, featuresWithSpeed: 0, featuresWithGeometry: 0) }
 
         let latitude = location.coordinate.latitude
         let longitude = location.coordinate.longitude
@@ -1391,7 +1437,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             URLQueryItem(name: "returnGeometry", value: "true"),
             URLQueryItem(name: "outSR", value: "4326")
         ]
-        guard let url = comps.url else { return [] }
+        guard let url = comps.url else { return PhiladelphiaFetchResult(segments: [], rawFeatures: 0, featuresWithSpeed: 0, featuresWithGeometry: 0) }
         let (data, response) = try await URLSession.shared.data(from: url)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw URLError(.badServerResponse)
@@ -1420,25 +1466,34 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     private static func parsePhiladelphiaSpeedFeatures(
         _ data: Data
-    ) throws -> [PhiladelphiaSpeedSegment] {
+    ) throws -> PhiladelphiaFetchResult {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return []
+            return PhiladelphiaFetchResult(segments: [], rawFeatures: 0, featuresWithSpeed: 0, featuresWithGeometry: 0)
         }
         if let error = root["error"] as? [String: Any] {
             let message = error["message"] as? String ?? "Philadelphia GIS returned an error"
             throw NSError(domain: "PhiladelphiaSpeedGIS", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
         }
-        guard let features = root["features"] as? [[String: Any]] else { return [] }
+        guard let features = root["features"] as? [[String: Any]] else {
+            return PhiladelphiaFetchResult(segments: [], rawFeatures: 0, featuresWithSpeed: 0, featuresWithGeometry: 0)
+        }
 
-        return features.compactMap { feature in
-            guard let attributes = feature["attributes"] as? [String: Any],
-                  let geometry = feature["geometry"] as? [String: Any],
-                  let paths = geometry["paths"] as? [[[Double]]]
-            else { return nil }
+        var featuresWithSpeed = 0
+        var featuresWithGeometry = 0
+        var parsed: [PhiladelphiaSpeedSegment] = []
+        parsed.reserveCapacity(features.count)
 
+        for feature in features {
+            guard let attributes = feature["attributes"] as? [String: Any] else { continue }
             let explicitSpeed = Self.philadelphiaValidSpeed(attributes["POSTED_SPEED_LIMIT"])
                 ?? Self.philadelphiaValidSpeed(attributes["SPEED_LIMIT"])
-            guard let speed = explicitSpeed else { return nil }
+            if explicitSpeed != nil { featuresWithSpeed += 1 }
+
+            guard let geometry = feature["geometry"] as? [String: Any],
+                  let paths = geometry["paths"] as? [[[Double]]],
+                  !paths.isEmpty else { continue }
+            featuresWithGeometry += 1
+            guard let speed = explicitSpeed else { continue }
 
             var parts: [SegmentPart] = []
             for path in paths {
@@ -1448,22 +1503,31 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 }
                 parts.append(contentsOf: makeParts(points))
             }
-            guard !parts.isEmpty else { return nil }
+            guard !parts.isEmpty else { continue }
 
             let objectID = Self.philadelphiaIntValue(attributes["OBJECTID"])
                 ?? Self.philadelphiaIntValue(attributes["SEGMENT_ID"])
                 ?? 0
             let name = (attributes["FULL_STREET_NAME"] as? String)
                 ?? (attributes["STREET_NAME"] as? String)
-            return PhiladelphiaSpeedSegment(
-                objectID: objectID,
-                name: name,
-                speedMph: speed,
-                residentialLayer: false,
-                speedWasExplicit: true,
-                parts: parts
+            parsed.append(
+                PhiladelphiaSpeedSegment(
+                    objectID: objectID,
+                    name: name,
+                    speedMph: speed,
+                    residentialLayer: false,
+                    speedWasExplicit: true,
+                    parts: parts
+                )
             )
         }
+
+        return PhiladelphiaFetchResult(
+            segments: parsed,
+            rawFeatures: features.count,
+            featuresWithSpeed: featuresWithSpeed,
+            featuresWithGeometry: featuresWithGeometry
+        )
     }
 
     private static func isInsidePhiladelphiaCoverage(_ coordinate: CLLocationCoordinate2D) -> Bool {
@@ -1617,6 +1681,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     private func bestImprovedTraceSpeedLimit(at location: CLLocation) -> Int? {
+        improvedLatestLocation = location
         improvedLastResolutionFresh = false
         improvedLastResolutionWarningEligible = false
         improvedDisplayContinuityFresh = false
@@ -1743,6 +1808,13 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                     name: takeover.segment.name,
                     reference: takeover.segment.reference
                 )
+                if improvedRoadLimitCacheIdentity != improvedCurrentRoadIdentity {
+                    improvedRoadLimitCacheIdentity = nil
+                    improvedRoadLimitCacheMph = 0
+                    improvedRoadLimitCacheSupportedAt = nil
+                    improvedRoadLimitCacheLocation = nil
+                    improvedRoadLimitCacheCourse = -1
+                }
                 improvedPendingRoad = nil
                 improvedPendingLimit = nil
                 improvedSameRoadContinuityArmed = false
@@ -1880,6 +1952,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                         improvedCurrentRoadID = best.segment.elementID
                         improvedCurrentRoadIdentity = nextIdentity
                         if previousIdentity != nil, nextIdentity != previousIdentity {
+                            improvedRoadLimitCacheIdentity = nil
+                            improvedRoadLimitCacheMph = 0
+                            improvedRoadLimitCacheSupportedAt = nil
+                            improvedRoadLimitCacheLocation = nil
+                            improvedRoadLimitCacheCourse = -1
                             improvedSameRoadContinuityArmed = false
                             improvedPendingLimit = nil
                             currentLimitWarningEligible = false
@@ -2066,11 +2143,73 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         if improvedDisplayContinuityFresh, currentSpeedLimitMph > 0 {
             improvedResolutionSource = improvedDisplayContinuityReason
+            if improvedRoadLimitCacheIdentity == improvedCurrentRoadIdentity, improvedRoadLimitCacheMph == currentSpeedLimitMph {
+                improvedRoadLimitCacheSupportedAt = Date()
+                improvedRoadLimitCacheLocation = location
+                improvedRoadLimitCacheCourse = location.course
+            }
             logger.log(
                 "IMPROVED TRACE DECISION",
                 "display continuity active source=\(improvedDisplayContinuityReason); preserve displayed \(currentSpeedLimitMph) mph, warning freshness unchanged"
             )
             return currentSpeedLimitMph
+        }
+
+        // v90.27: preserve a previously established limit through bounded provider/cache
+        // holes when the semantic road is unchanged. With a live untagged OSM match,
+        // same-road identity + geometry is sufficient. With no OSM candidate at all,
+        // require recent support, bounded travel distance, and compatible course.
+        if let cacheIdentity = improvedRoadLimitCacheIdentity,
+           cacheIdentity == improvedCurrentRoadIdentity,
+           improvedRoadLimitCacheMph > 0,
+           let supportedAt = improvedRoadLimitCacheSupportedAt,
+           let supportedLocation = improvedRoadLimitCacheLocation,
+           Date().timeIntervalSince(supportedAt) <= improvedRoadLimitCacheMaxAgeSeconds {
+            var cacheSafe = false
+            var cacheReason = ""
+            if let confirmedOSM,
+               Self.normalizedRoadIdentity(name: confirmedOSM.segment.name, reference: confirmedOSM.segment.reference) == cacheIdentity,
+               confirmedOSM.match.currentDistance <= 70,
+               confirmedOSM.match.currentAngle <= 35,
+               confirmedOSM.match.matchedPoints >= max(4, trace.count - 2) {
+                cacheSafe = true
+                cacheReason = "live same-road untagged geometry"
+                improvedRoadLimitCacheSupportedAt = Date()
+                improvedRoadLimitCacheLocation = location
+                improvedRoadLimitCacheCourse = location.course
+            } else if confirmedOSM == nil {
+                let distance = supportedLocation.distance(from: location)
+                let courseCompatible: Bool
+                if improvedRoadLimitCacheCourse >= 0, location.course >= 0 {
+                    courseCompatible = Self.angularDifference(improvedRoadLimitCacheCourse, location.course) <= improvedRoadLimitCacheMaxCourseDeltaDegrees
+                } else {
+                    courseCompatible = true
+                }
+                cacheSafe = distance <= improvedRoadLimitCacheMaxDistanceMeters && courseCompatible
+                cacheReason = String(format: "provider hole distance=%.0fm courseOK=%d", distance, courseCompatible ? 1 : 0)
+            }
+
+            if cacheSafe {
+                improvedDisplayContinuityFresh = true
+                improvedDisplayContinuityReason = "OSM cached same-road hold"
+                improvedLastResolutionWarningEligible = false
+                improvedResolutionSource = improvedDisplayContinuityReason
+                if currentLimitWarningEligible {
+                    currentLimitWarningEligible = false
+                    speedLimitAvailableForWarning = false
+                    if showSpeedLimit, bluetooth.state == .connected {
+                        bluetooth.enqueue(
+                            HudCommands.speedWarningThreshold(0),
+                            label: "Cached same-road display hold — disable native warning threshold"
+                        )
+                    }
+                }
+                logger.log(
+                    "IMPROVED TRACE DECISION",
+                    "cached same-road limit hold identity=\(cacheIdentity) limit=\(improvedRoadLimitCacheMph) reason=\(cacheReason) age=\(String(format: "%.1f", Date().timeIntervalSince(supportedAt)))s warningFresh=0"
+                )
+                return improvedRoadLimitCacheMph
+            }
         }
 
         improvedResolutionSource = confirmedOSM == nil ? "waiting for road confirmation" : "matched road has no explicit speed"

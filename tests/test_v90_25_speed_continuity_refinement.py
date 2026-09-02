@@ -10,10 +10,10 @@ def matcher_body():
 
 
 def test_v9025_keeps_v9024_ambient_baseline_and_identifies_release():
-    assert "Flight recorder v90.26 enabled" in MONITOR
-    assert "engineStartupPromotion=fullCohort" in MONITOR
-    assert "syncMembership=newJoinersOnly" in MONITOR
-    assert "autoSyncPrep=deferredToT0" in MONITOR
+    assert "Flight recorder v90.27 enabled" in MONITOR
+    assert "startupSync=OBD-gated-all-three" in MONITOR
+    assert "headlightSync=new-joiners-strict" in MONITOR
+    assert "noLateCatchup=1" in MONITOR
 
 
 def test_close_aligned_same_road_successor_can_escape_aging_current_way_bonus():

@@ -22,61 +22,37 @@ def test_production_bledim_is_already_on_minimal_and_lab_ui_is_gone():
 
 def test_headlight_barrier_admits_only_newly_joining_lights():
     commit = MONITOR.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
-    assert "if on {" in commit
+    assert "if on, obdEnginePowerSignalPresent" in commit
     assert "beginHeadlightTransitionSyncCohort(reason: reason)" in commit
-
-    helper = MONITOR.split("private func isJoiningHeadlightTransition", 1)[1].split("private func beginHeadlightTransitionSyncCohort", 1)[0]
-    assert "bledimBootSettleTasks[id] != nil" in helper
-    assert "breathPrepareTasks[id] != nil" in helper
-    assert "activeBreathIDs.contains(id)" in helper
-    assert "animationTasks[id] != nil" in helper
-    assert "return !animatedConnectionSession.contains(id)" in helper
-
     barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
     assert "let joiningDevices = pairedDevices.filter { automaticHeadlightJoinEligible($0) }" in barrier
     assert "let alreadyActiveDevices = pairedDevices.filter" in barrier
-    assert "isPhysicallyPresentOrConnecting($0.id)" in barrier
-    assert "for device in joiningDevices {" in barrier
-    assert "resetParticipantForHeadlightBarrier(device.id)" in barrier
-    assert "let expected = Set(joiningDevices.map(\\.id))" in barrier
-    assert "Headlight sync barrier opened NEW-JOINERS-ONLY" in barrier
     assert "untouchedAlreadyActive" in barrier
-    assert "syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs)" in barrier
-    assert "Headlight sync barrier common T0 newJoinersReady=" in barrier
-    assert "self.startSynchronizedBreathSession()" in barrier
-
+    assert "joiningRoles.contains(.centerConsole) || joiningRoles.contains(.dashboard)" in barrier
+    assert "HEADLIGHT STRICT-COHORT common T0" in barrier
 
 def test_already_active_door_is_not_reset_or_prepared_by_headlight_barrier():
     barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
-    reset_loop = barrier.split("Never touch an already-steady controller here.", 1)[1].split("let expected", 1)[0]
-    assert "for device in joiningDevices" in reset_loop
-    assert "alreadyActiveDevices" not in reset_loop
-    prep_loop = barrier.split("Automatic shared-T0 preparation must be non-visual", 1)[1]
-    assert "for device in joiningDevices where isControllable(device.id)" in prep_loop
-    assert "alreadyActiveDevices" not in prep_loop
-    assert "only lights newly joining the current startup/headlight transition" in VIEW
-    assert "A light that is already active stays untouched" in VIEW
-    assert "only Center + Dashboard wait for each other" in VIEW
-    assert "if all three are still joining, all three synchronize" in VIEW
-
+    assert 'Door is enrolled only when Door itself is newly joining' in barrier
+    assert 'already-on courtesy Door is never replayed' in barrier
+    assert 'expectedDevicesByID' in barrier
+    assert 'untouchedAlreadyActive' in barrier
 
 def test_fresh_new_joiner_bledim_settles_before_common_t0():
-    barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
-    assert "freshBLEDIMIDs" in barrier
-    assert "for device in joiningDevices where device.protocolKind == .bledim2" in barrier
-    assert "scheduleBLEDIMBootSettleReassert(" in barrier
-    assert 'reason: "headlight sync barrier fresh BLEDIM new joiner"' in barrier
-    assert "forceBreath: true" in barrier
-    assert "deferVisualPreparationForSync: true" in barrier
-
+    helper = MONITOR.split('private func prepareAutomaticSyncMember', 1)[1].split('private func queuePowerUpBreath', 1)[0]
+    assert 'scheduleBLEDIMBootSettleReassert' in helper
+    assert 'forceBreath: true' in helper
+    barrier = MONITOR.split('private func beginHeadlightTransitionSyncCohort', 1)[1].split('private func registerPowerOnCohortMember', 1)[0]
+    assert 'syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs)' in barrier
+    assert 'HEADLIGHT STRICT-COHORT common T0' in barrier
 
 def test_v9022_sync_migration_is_retained_in_v9024():
     assert 'HUD.Ambient.v90_22.headlightBarrierSyncMigrated' in MONITOR
     assert 'd.set(true, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
     assert 'self.synchronizePowerOnBreathEnabled = d.object(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
-    assert "Flight recorder v90.26 enabled" in MONITOR
-    assert "syncMembership=newJoinersOnly" in MONITOR
-
+    assert "Flight recorder v90.27 enabled" in MONITOR
+    assert 'startupSync=OBD-gated-all-three' in MONITOR
+    assert 'headlightSync=new-joiners-strict' in MONITOR
 
 def test_same_named_road_explicit_limit_hands_off_without_stale_gap():
     assert "private static func normalizedRoadIdentity" in SPEED

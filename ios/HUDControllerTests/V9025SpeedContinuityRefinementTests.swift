@@ -24,11 +24,11 @@ final class V9025SpeedContinuityRefinementTests: XCTestCase {
         XCTAssertTrue(speed.contains("private var improvedDisplayContinuityReason = \"none\""))
     }
 
-    func testIntegratedBuildKeepsV9024AmbientCoordinator() throws {
+    func testIntegratedBuildKeepsStrictSynchronizedAmbientCoordinator() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("Flight recorder v90.26 enabled"))
-        XCTAssertTrue(monitor.contains("syncMembership=newJoinersOnly"))
-        XCTAssertTrue(monitor.contains("autoSyncPrep=deferredToT0"))
-        XCTAssertTrue(monitor.contains("engineStartupPromotion=fullCohort"))
+        XCTAssertTrue(monitor.contains("Flight recorder v90.27 enabled"))
+        XCTAssertTrue(monitor.contains("startupSync=OBD-gated-all-three"))
+        XCTAssertTrue(monitor.contains("headlightSync=new-joiners-strict"))
+        XCTAssertTrue(monitor.contains("noLateCatchup=1"))
     }
 }

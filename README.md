@@ -33,6 +33,17 @@ Note: after signing/archive is restored, App Store Connect may still return
 That is a separate external toolchain issue.
 
 
+## v90.27 — OBD-gated strict ambient sync + bounded same-road speed cache
+
+v90.27 simplifies automatic ambient animation ownership around the user's requested state machine. **OBD connection is now the sole ignition gate for automatic Breath.** Courtesy-light connections before OBD remain steady and do not animate. When OBD connects, the app opens one strict startup cohort for Center + Door + Dashboard and waits up to 10 seconds for all three to become ready; only a full 3/3 cohort receives a common T0. Missing members cause the startup Breath to be skipped rather than releasing a partial or late catch-up animation. HUD transport remains available for engine diagnostics but no longer arms ambient startup animation.
+
+After the one-time OBD startup opportunity, normal headlight-ON transitions remain automatic. Only newly powered lights participate. Center and Dashboard are explicitly paired as the headlight-fed cohort, so if either appears the other is enrolled and Center cannot start early while Dashboard is still settling. An already-active Door remains untouched. Headlight cohorts are also strict: all enrolled members must be ready before the shared T0 or that transition's Breath is skipped. Manual Preview remains unchanged.
+
+Speed-limit handling retains v90.26's completed-turn takeover and corridor consensus, and adds a bounded **same-road display cache** to prevent MLK's 25 mph sign from blinking out during short OSM/cache holes. The cache is limited by road identity, 90 seconds, 1.2 km, and course compatibility when no OSM candidate exists; cached periods are display-only and immediately disable the warning threshold. A confirmed turn to another road invalidates the cache. Philadelphia Street Centerline logging now reports raw features, speed-bearing features, geometry-bearing features, and parsed segments so the persistent zero-result fallback can be diagnosed from one field log.
+
+Media/navigation roadmap: structured **CarPlay adapter metadata is now preferred over further iOS 27 ScreenCaptureKit work** while the adapter test verifies Now Playing `0x5000/0x5001` and Route Guidance `0x5200`–`0x5204`. ScreenCaptureKit remains only an experimental fallback/reference path.
+
+See `docs/V90_27_OBD_GATED_SYNC_SPEED_CACHE.md` and `docs/MEDIA_NAVIGATION_SOURCES.md`.
 
 ## v90.26 — admitted-member sync + post-crank recovery + fast new-road speed acquisition
 

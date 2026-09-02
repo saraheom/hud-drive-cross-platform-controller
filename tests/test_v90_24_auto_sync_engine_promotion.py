@@ -17,19 +17,13 @@ def function_body(text: str, name: str, next_marker: str) -> str:
 
 def test_courtesy_barrier_uses_only_physical_new_joiners_and_has_discovery_floor():
     m = source(MONITOR)
-    barrier = function_body(
-        m,
-        "private func beginHeadlightTransitionSyncCohort",
-        "private func registerPowerOnCohortMember",
-    )
-    assert "isPhysicallyPresentOrConnecting" in m
-    assert "automaticHeadlightJoinEligible" in m
-    assert "let joiningDevices = pairedDevices.filter { automaticHeadlightJoinEligible($0) }" in barrier
-    assert "configured Door" in m and "must not hold a courtesy-light" in m
-    assert "headlightSyncDiscoveryFloorSeconds: TimeInterval = 2.0" in m
-    assert "syncBarrierCollectsNewJoiners = true" in barrier
-    assert "physicalExpected=" in barrier
-
+    run = function_body(m, "private func runStartupAnimationIfNeeded", "private func prepareAutomaticSyncMember")
+    barrier = function_body(m, "private func beginHeadlightTransitionSyncCohort", "private func registerPowerOnCohortMember")
+    assert 'guard obdEnginePowerSignalPresent else' in run
+    assert 'Automatic Breath held until OBD connection' in run
+    assert 'guard obdEnginePowerSignalPresent else' in barrier
+    assert 'let joiningDevices = pairedDevices.filter { automaticHeadlightJoinEligible($0) }' in barrier
+    assert 'Door is enrolled only when Door itself is newly joining' in barrier
 
 def test_automatic_lotus_shared_sync_has_no_visible_pre_t0_preparation():
     m = source(MONITOR)
@@ -48,47 +42,40 @@ def test_automatic_lotus_shared_sync_has_no_visible_pre_t0_preparation():
 
 def test_raw_engine_on_owns_crank_window_and_suppresses_provisional_barrier():
     m = source(MONITOR)
-    run = function_body(m, "private func runStartupAnimationIfNeeded", "private func queuePowerUpBreath")
-    barrier = function_body(m, "private func beginHeadlightTransitionSyncCohort", "private func registerPowerOnCohortMember")
     hud = function_body(m, "func hudTransportPowerSignal", "func obdPowerSignal")
-    assert "engineStartupSyncCandidateActive || engineStartupSyncPending" in run
-    assert "Automatic Breath deferred to engine-start coordinator" in run
-    assert "engineStartupSyncCandidateActive || engineStartupSyncPending" in barrier
-    assert "Headlight sync barrier deferred to engine-start coordinator" in barrier
-    assert "engineStartupSyncCandidateActive = true" in hud
-    assert "supersedePendingHeadlightBarrierForEngineStartup" in hud
-
+    obd = function_body(m, "func obdPowerSignal", "private func currentOBDTargetName")
+    assert 'HUD transport remains available for engine diagnostics' in hud
+    assert 'it no longer arms ambient animation' in hud
+    assert 'scheduleEngineStartupSynchronization(source: "OBD connected")' in obd
+    assert 'engineStartupSyncCompletedForCurrentEngineSession = false' in obd
+    assert 'Pending automatic sync cancelled because OBD disconnected' in obd
 
 def test_confirmed_engine_start_promotes_all_enabled_roles_after_crank_and_gatt_settle():
     m = source(MONITOR)
     schedule = function_body(m, "private func scheduleEngineStartupSynchronization", "private func beginEngineStartupFullSyncCohort")
     full = function_body(m, "private func beginEngineStartupFullSyncCohort", "private func confirmEnginePowerOn")
     confirm = function_body(m, "private func confirmEnginePowerOn", "private func scheduleEnginePowerOffConfirmation")
-    assert "engineStartupCrankSettleSeconds: TimeInterval = 4.0" in m
-    assert "engineStartupBLEDIMQuietSeconds: TimeInterval = 1.5" in m
-    assert "engineStartupMaxWaitSeconds: TimeInterval = 16.0" in m
-    assert "$0.role != nil && $0.startupAnimationEnabled && $0.powerOn" in schedule
-    assert "ready.count == eligible.count" in schedule
-    assert "gattControlReadyAtByID" in schedule
-    assert "animationPipelineIdle" in schedule
-    assert "beginEngineStartupFullSyncCohort" in schedule
-    assert "ENGINE-START FULL-COHORT opened" in full
-    assert "deferVisualPreparationForSync: true" in full
-    assert "isJoiningHeadlightTransition" not in full
-    assert "scheduleEngineStartupSynchronization(source: source)" in confirm
-
+    assert 'engineStartupMaxWaitSeconds: TimeInterval = 10.0' in m
+    assert 'requiredRoles: Set<AmbientLightRole> = [.centerConsole, .door, .dashboard]' in schedule
+    assert 'roles == requiredRoles' in schedule
+    assert 'OBD STARTUP armed' in schedule
+    assert 'OBD STARTUP FULL-COHORT opened' in full
+    assert 'ready.count == 3' in full
+    assert 'no partial/late Breath' in full
+    assert 'deferVisualPreparationForSync: true' in m
+    assert 'ambient animation remains gated exclusively by OBD connection' in confirm
+    assert 'scheduleEngineStartupSynchronization(source: source)' not in confirm
 
 def test_engine_off_rearms_startup_exception_but_later_headlight_rule_stays_new_joiners_only():
     m = source(MONITOR)
-    off = function_body(m, "private func confirmEnginePowerOff", "private func evaluateVehicleLightingAutomation")
+    obd = function_body(m, "func obdPowerSignal", "private func currentOBDTargetName")
     view = source(VIEW)
-    assert "engineStartupSyncCompletedForCurrentEngineSession = false" in off
-    assert "re-arms the one-time engine-start synchronization promotion" in off
-    assert "only lights newly joining the current startup/headlight transition" in view
-    assert "A light that is already active stays untouched" in view
-    assert "initial confirmed engine start is the one deliberate exception" in view
-    assert "even if Dashboard was already on from courtesy lighting" in view
-
+    assert 'engineStartupSyncCompletedForCurrentEngineSession = false' in obd
+    assert 'OBD disconnected' in obd
+    assert 'Automatic Breath is OBD-gated' in view
+    assert 'Center + Door + Dashboard' in view
+    assert 'Door is already on and Center + Dashboard turn on with the headlights' in view
+    assert 'There is no late independent catch-up Breath' in view
 
 def test_manual_preview_remains_separate_from_automatic_deferred_prep():
     m = source(MONITOR)
@@ -96,6 +83,7 @@ def test_manual_preview_remains_separate_from_automatic_deferred_prep():
     assert "previewBreath(devices: devices)" in preview
     assert "queuePowerUpBreath(device.id, force: true)" in preview
     assert "deferVisualPreparationForSync" not in preview
-    assert "Flight recorder v90.26 enabled" in m
-    assert "autoSyncPrep=deferredToT0" in m
-    assert "engineStartupPromotion=fullCohort" in m
+    assert "Flight recorder v90.27 enabled" in m
+    assert "obdAnimationGate=1" in m
+    assert "noLateCatchup=1" in m
+

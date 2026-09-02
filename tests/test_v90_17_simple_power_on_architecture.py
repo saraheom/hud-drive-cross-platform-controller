@@ -15,14 +15,15 @@ def test_every_disconnect_rearms_next_controller_return_immediately():
 
 
 def test_power_on_animation_is_not_gated_by_engine_or_headlight_state():
-    run = MONITOR.split('private func runStartupAnimationIfNeeded', 1)[1].split('private func queuePowerUpBreath', 1)[0]
+    run = MONITOR.split('private func runStartupAnimationIfNeeded', 1)[1].split('private func prepareAutomaticSyncMember', 1)[0]
+    assert 'guard obdEnginePowerSignalPresent else' in run
+    assert 'Automatic Breath held until OBD connection' in run
     assert 'enginePowerPresent' not in run
-    assert 'vehicleStartupCompleted' not in run
     assert 'headlightPowerSessionActive' not in run
-    assert 'scheduleBLEDIMBootSettleReassert' in run
-    assert 'let ownedByHeadlightBarrierNow = syncHeadlightBarrierActive' in run
-    assert 'deferVisualPreparationForSync: ownedByHeadlightBarrierNow' in run
-
+    assert 'Automatic Breath withheld outside OBD-start/headlight cohort' in run
+    helper = MONITOR.split('private func prepareAutomaticSyncMember', 1)[1].split('private func queuePowerUpBreath', 1)[0]
+    assert 'scheduleBLEDIMBootSettleReassert' in helper
+    assert 'deferVisualPreparationForSync: true' in helper
 
 def test_bledim_waits_for_boot_then_runs_one_complete_power_on_sequence():
     block = MONITOR.split('private func scheduleBLEDIMBootSettleReassert', 1)[1].split('private func animationWriteInterval', 1)[0]

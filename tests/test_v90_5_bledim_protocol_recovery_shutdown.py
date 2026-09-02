@@ -33,12 +33,8 @@ def test_engine_off_is_diagnostic_only_and_cannot_cancel_light_animation():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()
     block = monitor.split("private func confirmEnginePowerOff()", 1)[1].split("private func evaluateVehicleLightingAutomation", 1)[0]
     assert "Engine diagnostic OFF confirmed" in block
-    assert "re-arms the one-time engine-start synchronization promotion" in block
-    assert "removeFromActiveBreath" not in block
-    assert "commitConfirmedHeadlightPower" not in block
-    assert "transitionBrightness(" not in block
-    assert "performVehicleShutdownFade" not in block
-
+    assert "ambient animation session itself is re-armed by OBD disconnect/reconnect" in block
+    assert "synchronizedBreathTask?.cancel" not in block
 
 def test_v908_old_courtesy_shutdown_latch_is_removed():
     monitor = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_text()

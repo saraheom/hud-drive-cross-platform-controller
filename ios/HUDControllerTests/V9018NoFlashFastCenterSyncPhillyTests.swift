@@ -34,17 +34,15 @@ final class V9018NoFlashFastCenterSyncPhillyTests: XCTestCase {
         XCTAssertTrue(monitor.contains("Dashboard+Center diagnostic consensus"))
     }
 
-    func testSyncUsesPowerOnCohortBeforeBLEDIMBootSettle() throws {
+    func testAutomaticSyncPreparesOnlyExplicitCohortMembersBeforeCommonT0() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        let run = monitor.components(separatedBy: "private func runStartupAnimationIfNeeded")[1]
+        let helper = monitor.components(separatedBy: "private func prepareAutomaticSyncMember")[1]
             .components(separatedBy: "private func queuePowerUpBreath")[0]
-        XCTAssertLessThan(
-            run.range(of: "registerPowerOnCohortMember(id)")!.lowerBound,
-            run.range(of: "scheduleBLEDIMBootSettleReassert")!.lowerBound
-        )
-        XCTAssertTrue(monitor.contains("Power-on cohort common T0"))
-        XCTAssertTrue(monitor.contains("syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs)"))
-        XCTAssertTrue(monitor.contains("synchronizedBreathIDs.isEmpty && syncCohortExpectedIDs.isEmpty"))
+        XCTAssertTrue(helper.contains("scheduleBLEDIMBootSettleReassert"))
+        XCTAssertTrue(helper.contains("forceBreath: true"))
+        XCTAssertTrue(helper.contains("deferVisualPreparationForSync: true"))
+        XCTAssertTrue(monitor.contains("HEADLIGHT STRICT-COHORT common T0"))
+        XCTAssertTrue(monitor.contains("no partial/late Breath"))
     }
 
     func testRequestedThreeSpeedSourcesAndPhiladelphiaGISArePresent() throws {

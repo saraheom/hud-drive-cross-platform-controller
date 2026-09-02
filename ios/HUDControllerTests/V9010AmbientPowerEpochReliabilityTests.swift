@@ -29,7 +29,7 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("power-up breath terminal Power ON"))
     }
 
-    func testCenterOwnsFastDayNightAndTwoLightCrosscheckDoesNotOwnAnimation() throws {
+    func testCenterOwnsFastDayNightAndAutomaticBreathIsOBDGated() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("Fast Center day/night"))
         XCTAssertTrue(monitor.contains("Dashboard+Center diagnostic consensus"))
@@ -37,15 +37,11 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
 
         let startupParts = monitor.components(separatedBy: "private func runStartupAnimationIfNeeded")
         XCTAssertGreaterThan(startupParts.count, 1)
-        let startupBlock = startupParts[1].components(separatedBy: "private func queuePowerUpBreath")[0]
-        XCTAssertTrue(startupBlock.contains("registerPowerOnCohortMember(id)"))
-        XCTAssertTrue(startupBlock.contains("scheduleBLEDIMBootSettleReassert"))
-        // v90.24+ recomputes barrier ownership after registerPowerOnCohortMember()
-        // because that call may admit a just-arrived physical peer during the discovery floor.
-        // Verify the new semantics rather than the pre-v90.24 one-line call shape.
-        XCTAssertTrue(startupBlock.contains("let ownedByHeadlightBarrierNow = syncHeadlightBarrierActive && syncCohortExpectedIDs.contains(id)"))
-        XCTAssertTrue(startupBlock.contains("force: ownedByHeadlightBarrierNow || lateFromHeadlightBarrier"))
-        XCTAssertTrue(startupBlock.contains("deferVisualPreparationForSync: ownedByHeadlightBarrierNow"))
+        let startupBlock = startupParts[1].components(separatedBy: "private func prepareAutomaticSyncMember")[0]
+        XCTAssertTrue(startupBlock.contains("guard obdEnginePowerSignalPresent else"))
+        XCTAssertTrue(startupBlock.contains("Automatic Breath held until OBD connection"))
+        XCTAssertTrue(startupBlock.contains("syncHeadlightBarrierActive, syncCohortExpectedIDs.contains(id)"))
+        XCTAssertTrue(startupBlock.contains("Automatic Breath withheld outside OBD-start/headlight cohort"))
         XCTAssertFalse(startupBlock.contains("enginePowerPresent"))
         XCTAssertFalse(startupBlock.contains("headlightPowerSessionActive"))
     }

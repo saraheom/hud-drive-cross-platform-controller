@@ -43,16 +43,15 @@ def test_automatic_door_day_night_fade_is_fast_and_separate_from_manual_fade():
 
 
 def test_sync_cohort_is_registered_before_bledim_boot_settle_and_uses_common_t0():
-    run = MONITOR.split('private func runStartupAnimationIfNeeded', 1)[1].split('private func queuePowerUpBreath', 1)[0]
-    assert run.index('registerPowerOnCohortMember(id)') < run.index('scheduleBLEDIMBootSettleReassert')
-    cohort = MONITOR.split('private func registerPowerOnCohortMember', 1)[1].split('private func releasePendingSyncCohortToIndependentBreaths', 1)[0]
-    assert 'powerOnSyncWindowSeconds' in cohort
-    assert 'powerOnSyncPreparationGraceSeconds' in cohort
-    assert 'syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs)' in cohort
-    assert 'Power-on cohort common T0' in cohort
-    cleanup = MONITOR.split('private func removeFromActiveBreath', 1)[1].split('private func scheduleStartupSessionReset', 1)[0]
-    assert 'synchronizedBreathIDs.isEmpty && syncCohortExpectedIDs.isEmpty' in cleanup
-
+    run = MONITOR.split('private func runStartupAnimationIfNeeded', 1)[1].split('private func prepareAutomaticSyncMember', 1)[0]
+    helper = MONITOR.split('private func prepareAutomaticSyncMember', 1)[1].split('private func queuePowerUpBreath', 1)[0]
+    assert 'syncHeadlightBarrierActive, syncCohortExpectedIDs.contains(id)' in run
+    assert 'prepareAutomaticSyncMember' in run
+    assert 'scheduleBLEDIMBootSettleReassert' in helper
+    assert 'forceBreath: true' in helper
+    barrier = MONITOR.split('private func beginHeadlightTransitionSyncCohort', 1)[1].split('private func registerPowerOnCohortMember', 1)[0]
+    assert 'HEADLIGHT STRICT-COHORT common T0' in barrier
+    assert 'no partial/late Breath' in barrier
 
 def test_only_three_requested_speed_sources_are_exposed():
     enum = SPEED.split('enum SpeedLimitSourceMode', 1)[1].split('@MainActor', 1)[0]

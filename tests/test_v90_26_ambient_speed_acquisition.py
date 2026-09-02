@@ -7,12 +7,11 @@ SPEED = (ROOT / 'ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift').read
 
 def test_headlight_barrier_waits_for_admitted_live_member_preparation():
     barrier = MONITOR.split('private func beginHeadlightTransitionSyncCohort', 1)[1].split('private func registerPowerOnCohortMember', 1)[0]
-    assert 'headlightSyncAdmittedPreparationHardCapSeconds: TimeInterval = 7.0' in MONITOR
-    assert 'isAdmittedSyncMemberStillPreparing' in MONITOR
-    assert 'ordinaryDeadline' in barrier
-    assert 'admittedPreparationHardDeadline' in barrier
-    assert 'Headlight sync barrier extending for admitted preparation' in barrier
-
+    assert 'headlightStrictReadyTimeoutSeconds: TimeInterval = 10.0' in MONITOR
+    assert 'syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs)' in barrier
+    assert 'HEADLIGHT STRICT-COHORT skipped' in barrier
+    assert 'no partial/late Breath' in barrier
+    assert 'HEADLIGHT STRICT-COHORT common T0' in barrier
 
 def test_absent_persistent_connect_request_is_not_physical_cohort_membership():
     physical = MONITOR.split('private func isPhysicallyPresentOrConnecting', 1)[1].split('private func isAdmittedSyncMemberStillPreparing', 1)[0]
@@ -23,11 +22,11 @@ def test_absent_persistent_connect_request_is_not_physical_cohort_membership():
 
 
 def test_engine_start_keeps_post_crank_reacquisition_window_open():
-    assert 'engineStartupHeadlightReacquireSeconds: TimeInterval = 15.0' in MONITOR
-    assert 'engineStartupMaxWaitSeconds: TimeInterval = 16.0' in MONITOR
-    assert 'post-crank reacquisition window' in MONITOR
-    assert 'later headlight edges remain new-joiners-only' in MONITOR
-
+    assert 'engineStartupMaxWaitSeconds: TimeInterval = 10.0' in MONITOR
+    assert 'OBD STARTUP armed' in MONITOR
+    assert 'courtesy-connected lights remain steady' in MONITOR
+    assert 'OBD STARTUP FULL-COHORT common T0 ready=3 late=0' in MONITOR
+    assert 'strict all-three readiness not met' in MONITOR
 
 def test_philly_uses_current_street_centerline_speed_layer():
     assert 'TRANSPORTATION_street_segment/FeatureServer/0/query' in SPEED

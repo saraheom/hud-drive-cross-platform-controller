@@ -1,3 +1,5 @@
+> **Roadmap note (v90.27):** ScreenCaptureKit is no longer the primary media/navigation path. The CarPlay-adapter metadata path is now preferred while Now Playing `0x5000/0x5001` and Route Guidance `0x5200`–`0x5204` are being field-verified. Keep this document as an experimental fallback/reference only.
+
 # v30 test plan
 
 ## ScreenCaptureKit on iOS 27
