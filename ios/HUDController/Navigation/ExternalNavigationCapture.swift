@@ -333,7 +333,7 @@ final class ExternalNavigationCapture: NSObject {
 
         armNavigationIfNeeded()
         navigation.current = latestInstruction
-        navigation.sendCurrent()
+        navigation.sendCurrent(owner: .ocr)
         rememberSent(latestInstruction)
 
         logger.log(
@@ -888,7 +888,7 @@ final class ExternalNavigationCapture: NSObject {
         }
 
         navigation.current = result.instruction
-        navigation.sendCurrent()
+        navigation.sendCurrent(owner: .ocr)
         rememberSent(result.instruction)
 
         logger.log(
@@ -904,7 +904,7 @@ final class ExternalNavigationCapture: NSObject {
               !navigationModeArmed,
               navigation.bluetooth.state == .connected else { return }
 
-        navigation.navigationOn()
+        navigation.navigationOn(owner: .ocr)
         navigationModeArmed = true
         logger.log("SCREEN NAV", "Automatically enabled HUD navigation mode")
     }
@@ -924,7 +924,7 @@ final class ExternalNavigationCapture: NSObject {
         guard lastSentKey != key else { return }
 
         navigation.current = proceed
-        navigation.sendCurrent()
+        navigation.sendCurrent(owner: .ocr)
         lastSentKey = key
         lastSentDistance = 0
         logger.log("SCREEN NAV", "Sent Proceed to route state")
@@ -938,7 +938,7 @@ final class ExternalNavigationCapture: NSObject {
         // Do not trust our local navigationModeArmed flag here. A physical HUD
         // reboot can leave firmware Navigation ON while the phone believes it
         // is unarmed. Capture health is authoritative: no stream = Freeride.
-        navigation.navigationOff()
+        navigation.navigationOff(owner: .ocr)
         navigationModeArmed = false
         pendingCandidateKey = ""
         pendingCandidateCount = 0
@@ -958,12 +958,12 @@ final class ExternalNavigationCapture: NSObject {
             guard let self,
                   generation == self.captureLossGeneration,
                   self.stream == nil else { return }
-            self.navigation.navigationOff()
+            self.navigation.navigationOff(owner: .ocr)
 
             try? await Task.sleep(for: .milliseconds(850))
             guard generation == self.captureLossGeneration,
                   self.stream == nil else { return }
-            self.navigation.navigationOff()
+            self.navigation.navigationOff(owner: .ocr)
         }
     }
 
@@ -1017,7 +1017,7 @@ final class ExternalNavigationCapture: NSObject {
                 primaryText: "You have arrived",
                 streetName: ""
             )
-            navigation.sendCurrent()
+            navigation.sendCurrent(owner: .ocr)
         }
 
         detectedScreenState = .arrived
@@ -1034,7 +1034,7 @@ final class ExternalNavigationCapture: NSObject {
         arrivalTask = nil
 
         if navigationModeArmed && navigation.bluetooth.state == .connected {
-            navigation.navigationOff()
+            navigation.navigationOff(owner: .ocr)
         }
 
         navigationModeArmed = false

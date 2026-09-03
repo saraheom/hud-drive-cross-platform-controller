@@ -71,7 +71,7 @@ final class V44HUDSessionRehydrationTests: XCTestCase {
 
         XCTAssertLessThan(health.lowerBound, rearm.lowerBound)
         XCTAssertTrue(source.contains("navigation.current = latestInstruction"))
-        XCTAssertTrue(source.contains("navigation.sendCurrent()"))
+        XCTAssertTrue(source.contains("navigation.sendCurrent(owner: .ocr)"))
     }
 
     func testAmbientUsesThreeWindowHysteresis() throws {

@@ -98,10 +98,25 @@ final class HudOBDController {
         self.autoConnect = d.object(forKey: "HUD.OBD.autoConnect") == nil
             ? true
             : d.bool(forKey: "HUD.OBD.autoConnect")
+        // v90.31 default Navigation layout: Speed | Navigation | ETA. Migrate
+        // only the legacy default-looking Speed + Time pair; any other explicit
+        // widget customization remains untouched.
+        if !d.bool(forKey: "HUD.Widget.v9031NavigationEtaMigrated") {
+            let oldLeft = d.string(forKey: "HUD.Widget.navigationLeft")
+            let oldRight = d.string(forKey: "HUD.Widget.navigationRight")
+            let legacyDefaultPair = (oldLeft == nil || oldLeft == HudSideWidget.speed.rawValue)
+                && (oldRight == nil || oldRight == HudSideWidget.time.rawValue)
+            if legacyDefaultPair {
+                d.set(HudSideWidget.speed.rawValue, forKey: "HUD.Widget.navigationLeft")
+                d.set(HudSideWidget.eta.rawValue, forKey: "HUD.Widget.navigationRight")
+            }
+            d.set(true, forKey: "HUD.Widget.v9031NavigationEtaMigrated")
+        }
+
         self.freerideLeft = Self.loadWidget("HUD.Widget.freerideLeft", fallback: .distance)
         self.freerideRight = Self.loadWidget("HUD.Widget.freerideRight", fallback: .tripTime)
         self.navigationLeft = Self.loadWidget("HUD.Widget.navigationLeft", fallback: .speed)
-        self.navigationRight = Self.loadWidget("HUD.Widget.navigationRight", fallback: .time)
+        self.navigationRight = Self.loadWidget("HUD.Widget.navigationRight", fallback: .eta)
 
         bluetooth.onOBDConnectionEvent = { [weak self] connected, pids in
             guard let self else { return }

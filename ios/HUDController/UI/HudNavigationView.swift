@@ -12,6 +12,8 @@ struct HudNavigationView: View {
                 VStack(spacing: 18) {
                     ConnectionCard(state: state)
 
+                    RouteGuidanceStatusCard(state: state)
+
                     HudCard {
                         VStack(spacing: 14) {
                             Image(systemName: state.navigation.current.maneuver.symbol)

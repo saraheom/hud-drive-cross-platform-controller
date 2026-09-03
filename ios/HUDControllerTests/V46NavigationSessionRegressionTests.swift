@@ -19,6 +19,6 @@ final class V46NavigationSessionRegressionTests: XCTestCase {
 
         XCTAssertFalse(methodText.contains("stop()"))
         XCTAssertFalse(methodText.contains("presentFullDisplayPicker()"))
-        XCTAssertTrue(methodText.contains("navigation.sendCurrent()"))
+        XCTAssertTrue(methodText.contains("navigation.sendCurrent(owner: .ocr)"))
     }
 }

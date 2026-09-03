@@ -112,6 +112,17 @@ enum HudCommands {
         return HudProtocol.frame(command: 2, p1: 1, p2: 0, payload: payload)
     }
 
+    /// Original HUDWAY `HudEtaPacket`: CommandPacket(p1=114, p2=0),
+    /// payload = DataOutputStream.writeLong(absolute ETA milliseconds).
+    static func eta(arrivalTimeMilliseconds: Int64) -> Data {
+        HudProtocol.frame(
+            command: 2,
+            p1: 114,
+            p2: 0,
+            payload: HudProtocol.int64(arrivalTimeMilliseconds)
+        )
+    }
+
     static func dashboard(left: String, center: String, right: String, navigationLayout: Bool) -> Data {
         var payload = HudProtocol.javaWriteUTF(left)
         payload.append(HudProtocol.javaWriteUTF(center))

@@ -13,6 +13,8 @@ struct HudNavigationView: View {
                 VStack(spacing: 18) {
                     ConnectionCard(state: state)
 
+                    RouteGuidanceStatusCard(state: state)
+
                     HudCard {
                         VStack(alignment: .leading, spacing: 10) {
                             Label("Ambient-light test build", systemImage: "lightbulb.led")

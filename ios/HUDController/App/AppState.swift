@@ -8,6 +8,7 @@ final class AppState {
     let logger: LogManager
     let bluetooth: HudBluetoothManager
     let navigation: HudNavigationController
+    let routeGuidance: RouteGuidanceAdapterClient
     let spotify: SpotifyMediaController
     let obd: HudOBDController
     let speedEngine: OriginalSpeedLimitEngine
@@ -23,11 +24,17 @@ final class AppState {
         self.logger = logger
         let bluetooth = HudBluetoothManager(logger: logger)
         self.bluetooth = bluetooth
-        self.navigation = HudNavigationController(bluetooth: bluetooth, logger: logger)
+        let navigation = HudNavigationController(bluetooth: bluetooth, logger: logger)
+        self.navigation = navigation
+        let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
+        self.routeGuidance = routeGuidance
         let spotify = SpotifyMediaController(logger: logger)
         self.spotify = spotify
         let obd = HudOBDController(bluetooth: bluetooth, logger: logger)
         self.obd = obd
+        routeGuidance.onWillActivate = { [weak obd] in
+            obd?.applyNavigationWidgets()
+        }
         let speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)
         self.speedEngine = speedEngine
         let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
@@ -61,6 +68,7 @@ final class AppState {
             self.ambientLight.hudTransportPowerSignal(true)
             self.updateSpotifyVehicleWakeGate(reason: "HUD connected")
             self.speedEngine.primeRectangularStyle()
+            self.routeGuidance.start(reason: "HUD BLE transport ready")
 
             if #available(iOS 27.0, *),
                let capture = self.externalCapture27 as? ExternalNavigationCapture {
@@ -87,6 +95,7 @@ final class AppState {
             self.hudReassertTask?.cancel()
             self.hudReassertTask = nil
             self.obd.transportDisconnected()
+            self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.updateSpotifyVehicleWakeGate(reason: "HUD disconnected")
             if #available(iOS 27.0, *),
                let capture = self.externalCapture27 as? ExternalNavigationCapture {

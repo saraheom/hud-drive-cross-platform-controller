@@ -34,6 +34,15 @@ That is a separate external toolchain issue.
 
 
 
+## v90.31 — live CarPlay Route Guidance + native ETA
+
+v90.31 connects the HUD app directly to the matched U2W v8.5 live Route Guidance exporter at `192.168.50.2`. Structured iAP2 `0x5201/0x5202/0x5204` data now becomes the preferred navigation source; the existing ScreenCaptureKit/OCR pipeline remains a fallback. The app keeps fresh per-source snapshots and enforces **Google Maps > Apple Maps > Waze** priority without allowing a stale higher-priority source to suppress a current lower-priority route.
+
+CarPlay `CPManeuverType` values map directly into the existing HUD maneuver arrows. Destination/current-road/next-distance data feed the existing `NavigationInstruction` path, while ETA uses the original decompiled HUDWAY `HudEtaPacket` (`2/114/0`, Int64 absolute milliseconds). The default Navigation dashboard is migrated from the legacy `Speed | Navigation | Time` combination to **`Speed | Navigation | ETA`**; the speed-limit sign remains independently managed by the existing speed engine. Local adapter polling starts with the HUD BLE session and releases ownership automatically if its Route Guidance sequence becomes stale, allowing OCR to recover.
+
+See `docs/V90_31_CARPLAY_ROUTE_GUIDANCE.md`.
+
+
 ## v90.30 — crank-stabilized HUD startup + fresh Dashboard headlight synchronization
 
 v90.30 is a narrow ambient-light reliability update based on the stationary September 2 field test. The startup coordinator already achieved a strict 3/3 common T0 in v90.29, but Dashboard disconnected during the first Breath while the vehicle was still in its crank/accessory transition. A later headlight OFF→ON then admitted Center alone because CoreBluetooth still reported Dashboard as an already-active connection even though the physical Dashboard light was dark.
