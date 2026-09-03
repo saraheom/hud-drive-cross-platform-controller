@@ -23,9 +23,9 @@ def test_absent_persistent_connect_request_is_not_physical_cohort_membership():
 
 def test_engine_start_keeps_post_crank_reacquisition_window_open():
     assert 'engineStartupMaxWaitSeconds: TimeInterval = 10.0' in MONITOR
-    assert 'OBD STARTUP armed' in MONITOR
+    assert 'HUD STARTUP armed' in MONITOR
     assert 'courtesy-connected lights remain steady' in MONITOR
-    assert 'OBD STARTUP FULL-COHORT common T0 ready=3 late=0' in MONITOR
+    assert 'HUD STARTUP FULL-COHORT common T0 ready=3 late=0' in MONITOR
     assert 'strict all-three readiness not met' in MONITOR
 
 def test_philly_uses_current_street_centerline_speed_layer():

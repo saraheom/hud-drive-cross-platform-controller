@@ -64,7 +64,8 @@ def test_engine_power_uses_hud_primary_with_obd_off_veto_without_door_retained_p
     assert "Door accessory power after engine shutdown" in monitor
     assert "self.ambientLight.hudTransportPowerSignal(true)" in appstate
     assert "self.ambientLight.hudTransportPowerSignal(false)" in appstate
-    assert "!self.bluetooth.userDisconnectRequested" in appstate
+    assert "self.ambientLight.hudTransportPowerSignal(false)" in appstate
+    assert "Ignoring user-requested HUD disconnect as an engine-power OFF signal" not in appstate
     assert "var onConnectionChanged: ((Bool) -> Void)?" in obd
     assert "engineRPM >" not in monitor
 

@@ -11,21 +11,21 @@ def block(text, start, end):
     return text.split(start, 1)[1].split(end, 1)[0]
 
 
-def test_automatic_breath_is_gated_by_raw_obd_not_hud_engine_diagnostic():
+def test_v9029_supersedes_obd_animation_gate_with_hud_transport_gate():
     run = block(MONITOR, 'private func runStartupAnimationIfNeeded', 'private func prepareAutomaticSyncMember')
     hud = block(MONITOR, 'func hudTransportPowerSignal', 'func obdPowerSignal')
-    assert 'guard obdEnginePowerSignalPresent else' in run
-    assert 'Automatic Breath held until OBD connection' in run
-    assert 'enginePowerPresent' not in run
-    assert 'it no longer arms ambient animation' in hud
-    assert 'engineStartupSyncCandidateActive = true' not in hud
-
-
-def test_obd_connection_arms_exactly_one_all_three_startup_opportunity():
     obd = block(MONITOR, 'func obdPowerSignal', 'private func currentOBDTargetName')
+    assert 'guard hudEnginePowerSignalPresent else' in run
+    assert 'Automatic Breath held until HUD connection' in run
+    assert 'scheduleEngineStartupSynchronization(source: "HUD connected")' in hud
+    assert 'scheduleEngineStartupSynchronization' not in obd
+    assert 'diagnostic/corroborating state only' in obd
+
+
+def test_hud_connection_arms_exactly_one_all_three_startup_opportunity():
+    hud = block(MONITOR, 'func hudTransportPowerSignal', 'func obdPowerSignal')
     schedule = block(MONITOR, 'private func scheduleEngineStartupSynchronization', 'private func beginEngineStartupFullSyncCohort')
-    assert 'scheduleEngineStartupSynchronization(source: "OBD connected")' in obd
-    assert 'engineStartupSyncCompletedForCurrentEngineSession = false' in obd
+    assert 'engineStartupSyncCompletedForCurrentEngineSession = false' in hud
     assert 'requiredRoles: Set<AmbientLightRole> = [.centerConsole, .door, .dashboard]' in schedule
     assert 'roles == requiredRoles' in schedule
     assert 'engineStartupMaxWaitSeconds: TimeInterval = 10.0' in MONITOR
@@ -36,7 +36,7 @@ def test_startup_never_releases_partial_or_late_catchup_breath():
     assert 'ready == expectedNow, ready.count == 3' in full
     assert 'strict all-three readiness not met' in full
     assert 'no partial/late Breath' in full
-    assert 'OBD STARTUP FULL-COHORT common T0 ready=3 late=0' in full
+    assert 'HUD STARTUP FULL-COHORT common T0 ready=3 late=0' in full
 
 
 def test_later_headlight_on_pairs_center_and_dashboard_but_leaves_active_door_out():
@@ -80,8 +80,8 @@ def test_philly_diagnostics_separate_raw_speed_geometry_and_parsed_counts():
     assert 'featuresWithGeometry: featuresWithGeometry' in SPEED
 
 
-def test_ui_and_media_roadmap_match_obd_sync_and_carplay_adapter_direction():
-    assert 'Automatic Breath is OBD-gated' in VIEW
+def test_ui_and_media_roadmap_match_hud_sync_and_carplay_adapter_direction():
+    assert 'Automatic Breath is HUD-connection-gated' in VIEW
     assert 'There is no late independent catch-up Breath' in VIEW
     assert 'CarPlay adapter' in MEDIA
     assert '0x5000/0x5001' in MEDIA

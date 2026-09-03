@@ -37,6 +37,9 @@ final class AppState {
         }
 
         obd.onConnectionChanged = { [weak self, weak ambientLight] connected in
+            // OBD remains useful telemetry/diagnostic state, but v90.29 no longer
+            // uses it as permission for ambient animation. HUD transport readiness
+            // is the reliable automatic-animation session gate.
             ambientLight?.obdPowerSignal(connected)
             self?.updateSpotifyVehicleWakeGate(reason: connected ? "OBD connected" : "OBD disconnected")
         }
@@ -75,11 +78,10 @@ final class AppState {
 
         bluetooth.onTransportDisconnected = { [weak self] in
             guard let self else { return }
-            if !self.bluetooth.userDisconnectRequested {
-                self.ambientLight.hudTransportPowerSignal(false)
-            } else {
-                self.logger.log("AMBIENT ENGINE", "Ignoring user-requested HUD disconnect as an engine-power OFF signal")
-            }
+            // Ambient animation is gated by the actual HUD transport session.
+            // Any HUD disconnect closes that gate; courtesy lights may remain on,
+            // but automatic Breath waits for the next HUD transport connection.
+            self.ambientLight.hudTransportPowerSignal(false)
             self.hudRehydrateTask?.cancel()
             self.hudRehydrateTask = nil
             self.hudReassertTask?.cancel()
@@ -95,6 +97,36 @@ final class AppState {
             self.logger.log(
                 "HUD SESSION",
                 "BLE transport disconnected; capture transport suspended while preserving explicit user intent"
+            )
+        }
+
+    }
+
+    /// The original HUDWAY protocol separates dashboard profile configuration
+    /// (`HudWidgetCommandPacket`, type 0/1) from the active Navigation/Freeride
+    /// mode (`navigationState`). Rehydrating both profiles must therefore finish by
+    /// restoring the actual active mode; otherwise a firmware/session reset can
+    /// leave the HUD center presentation in the wrong state even though the
+    /// Freeride type-0 profile itself is correct.
+    private func restoreDashboardOperatingMode(reason: String) {
+        guard bluetooth.state == .connected else { return }
+        if navigation.navigationActive {
+            bluetooth.enqueue(
+                HudCommands.navigationState(true),
+                label: "Restore dashboard mode → Navigation ON"
+            )
+            // The active navigation source owns maneuver re-delivery. ScreenCaptureKit
+            // and future CarPlay-adapter navigation each already retain their own last
+            // validated instruction; do not fabricate/resend the controller's default.
+            logger.log("DASHBOARD MODE", "Restored Navigation ON after profile rehydration reason=\(reason)")
+        } else {
+            bluetooth.enqueue(
+                HudCommands.navigationState(false),
+                label: "Restore dashboard mode → Freeride (Navigation OFF)"
+            )
+            logger.log(
+                "DASHBOARD MODE",
+                "Restored original Freeride active mode via Navigation OFF after profile rehydration reason=\(reason)"
             )
         }
     }
@@ -231,6 +263,16 @@ final class AppState {
 
     func applyDashboardPreset() {
         let p = settings.selectedPreset
+        if p.name == "Freeride" {
+            // The original HUDWAY Freeride mode is the type=0 dashboard packet
+            // with center=Simple and user-selectable side widgets. Route the
+            // generic Dashboard preset through that exact implementation so the
+            // Dashboard screen cannot replace the original center RPM/bar UI with
+            // the older approximation (`center=Speedo`).
+            obd.applyFreerideWidgets()
+            logger.log("DASHBOARD", "Freeride preset routed to original type=0 center=Simple implementation")
+            return
+        }
         bluetooth.enqueue(
             HudCommands.dashboard(left: p.left, center: p.center, right: p.right, navigationLayout: p.navigationLayout),
             label: "Dashboard \(p.name)"
@@ -336,6 +378,7 @@ final class AppState {
         applyColorTheme()
         applyNotificationSettings()
         obd.hudDidBecomeReady()
+        restoreDashboardOperatingMode(reason: "phase 2 persisted state / \(reason)")
         ambientLight.rehydrateHUDState()
         speedEngine.primeRectangularStyle()
         speedEngine.rehydrateHUDState()
@@ -368,6 +411,7 @@ final class AppState {
         applyColorTheme()
         applyTimeWeather()
         obd.applyWidgetSelection()
+        restoreDashboardOperatingMode(reason: "phase 3 display reassert / \(reason)")
         ambientLight.rehydrateHUDState()
         speedEngine.rehydrateHUDState()
 

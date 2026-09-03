@@ -10,8 +10,8 @@ def matcher_body():
 
 
 def test_v9025_keeps_v9024_ambient_baseline_and_identifies_release():
-    assert "Flight recorder v90.27 enabled" in MONITOR
-    assert "startupSync=OBD-gated-all-three" in MONITOR
+    assert "Flight recorder v90.29 enabled" in MONITOR
+    assert "startupSync=HUD-gated-all-three" in MONITOR
     assert "headlightSync=new-joiners-strict" in MONITOR
     assert "noLateCatchup=1" in MONITOR
 

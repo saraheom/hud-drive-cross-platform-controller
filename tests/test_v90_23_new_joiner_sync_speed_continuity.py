@@ -22,7 +22,7 @@ def test_production_bledim_is_already_on_minimal_and_lab_ui_is_gone():
 
 def test_headlight_barrier_admits_only_newly_joining_lights():
     commit = MONITOR.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
-    assert "if on, obdEnginePowerSignalPresent" in commit
+    assert "if on, hudEnginePowerSignalPresent" in commit
     assert "beginHeadlightTransitionSyncCohort(reason: reason)" in commit
     barrier = MONITOR.split("private func beginHeadlightTransitionSyncCohort", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
     assert "let joiningDevices = pairedDevices.filter { automaticHeadlightJoinEligible($0) }" in barrier
@@ -50,8 +50,8 @@ def test_v9022_sync_migration_is_retained_in_v9024():
     assert 'HUD.Ambient.v90_22.headlightBarrierSyncMigrated' in MONITOR
     assert 'd.set(true, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
     assert 'self.synchronizePowerOnBreathEnabled = d.object(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
-    assert "Flight recorder v90.27 enabled" in MONITOR
-    assert 'startupSync=OBD-gated-all-three' in MONITOR
+    assert "Flight recorder v90.29 enabled" in MONITOR
+    assert 'startupSync=HUD-gated-all-three' in MONITOR
     assert 'headlightSync=new-joiners-strict' in MONITOR
 
 def test_same_named_road_explicit_limit_hands_off_without_stale_gap():

@@ -7,18 +7,18 @@ final class V9027OBDGatedSyncSpeedCacheTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testAutomaticBreathIsOBDGatedAndHUDDoesNotArmIt() throws {
+    func testV9029SupersedesOBDGateWithHUDTransportGate() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("Automatic Breath held until OBD connection"))
-        XCTAssertTrue(monitor.contains("scheduleEngineStartupSynchronization(source: \"OBD connected\")"))
-        XCTAssertTrue(monitor.contains("HUD transport remains available for engine diagnostics"))
-        XCTAssertTrue(monitor.contains("it no longer arms ambient animation"))
+        XCTAssertTrue(monitor.contains("Automatic Breath held until HUD connection"))
+        XCTAssertTrue(monitor.contains("scheduleEngineStartupSynchronization(source: \"HUD connected\")"))
+        XCTAssertTrue(monitor.contains("diagnostic/corroborating state only"))
+        XCTAssertTrue(monitor.contains("hudAnimationGate=1"))
     }
 
-    func testOBDStartupRequiresExactlyCenterDoorDashboard() throws {
+    func testHUDStartupRequiresExactlyCenterDoorDashboard() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("requiredRoles: Set<AmbientLightRole> = [.centerConsole, .door, .dashboard]"))
-        XCTAssertTrue(monitor.contains("OBD STARTUP FULL-COHORT common T0 ready=3 late=0"))
+        XCTAssertTrue(monitor.contains("HUD STARTUP FULL-COHORT common T0 ready=3 late=0"))
         XCTAssertTrue(monitor.contains("strict all-three readiness not met"))
         XCTAssertTrue(monitor.contains("no partial/late Breath"))
     }

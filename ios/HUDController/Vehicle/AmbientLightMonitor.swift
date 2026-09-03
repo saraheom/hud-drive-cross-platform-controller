@@ -321,9 +321,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// preparation tail so BLEDIM's 1.5-s boot settle can actually finish.
     private let headlightSyncAdmittedPreparationHardCapSeconds: TimeInterval = 7.0
 
-    /// v90.27 simplified automatic animation ownership. OBD connection is the sole
-    /// ignition gate for ambient Breath. Courtesy-light connections before OBD are
-    /// allowed to become steady, but may not animate. The first OBD-connected
+    /// v90.29 simplified automatic animation ownership. HUD transport connection
+    /// is the sole session gate for ambient Breath. Courtesy-light connections before
+    /// the HUD is ready may become steady, but may not animate. The first HUD-connected
     /// opportunity waits for Center + Door + Dashboard and releases one common T0.
     /// Later headlight-ON events animate only their newly powered cohort.
     private var engineStartupSyncCandidateActive = false // retained in flight-recorder schema; no longer driven by HUD transport
@@ -601,7 +601,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.27 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,obdAnimationGate=1,startupWait=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s,headlightStrictWait=\(String(format: "%.1f", headlightStrictReadyTimeoutSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal,startupSync=OBD-gated-all-three,headlightSync=new-joiners-strict,noLateCatchup=1}"
+            "Flight recorder v90.29 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,hudAnimationGate=1,startupWait=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s,headlightStrictWait=\(String(format: "%.1f", headlightStrictReadyTimeoutSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal,startupSync=HUD-gated-all-three,headlightSync=new-joiners-strict,noLateCatchup=1}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -1828,26 +1828,26 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
-        // v90.27: a light becoming connected is never, by itself, permission to
-        // animate. Courtesy lights may establish GATT while the engine is off; they
-        // stay steady until OBD connects and owns the one-time startup cohort.
-        guard obdEnginePowerSignalPresent else {
-            logger.log("AMBIENT ANIM", "Automatic Breath held until OBD connection: \(device.displayName)")
-            ambientTrace("Automatic Breath held OBD=0 role=\(device.role?.rawValue ?? "unassigned")")
+        // v90.29: a light becoming connected is never, by itself, permission to
+        // animate. Courtesy lights may establish GATT before the HUD session is ready;
+        // they stay steady until HUD transport connects and owns the one-time startup cohort.
+        guard hudEnginePowerSignalPresent else {
+            logger.log("AMBIENT ANIM", "Automatic Breath held until HUD connection: \(device.displayName)")
+            ambientTrace("Automatic Breath held HUD=0 role=\(device.role?.rawValue ?? "unassigned")")
             return
         }
 
         if !engineStartupSyncCompletedForCurrentEngineSession {
             if !engineStartupSyncPending {
-                scheduleEngineStartupSynchronization(source: "GATT ready while OBD connected")
+                scheduleEngineStartupSynchronization(source: "GATT ready while HUD connected")
             }
             if syncHeadlightBarrierActive, syncCohortExpectedIDs.contains(id) {
-                prepareAutomaticSyncMember(id, reason: "OBD-startup cohort member GATT ready")
+                prepareAutomaticSyncMember(id, reason: "HUD-startup cohort member GATT ready")
             }
             return
         }
 
-        // After the one-time OBD startup opportunity, only an explicit headlight-ON
+        // After the one-time HUD startup opportunity, only an explicit headlight-ON
         // cohort may own automatic Breath. There is no legacy per-device/late catch-up
         // animation path anymore; this is what makes synchronization deterministic.
         if syncHeadlightBarrierActive, syncCohortExpectedIDs.contains(id) {
@@ -1858,7 +1858,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         animatedConnectionSession.insert(id)
         logger.log(
             "AMBIENT ANIM",
-            "Automatic Breath withheld outside OBD-start/headlight cohort: \(device.displayName); steady state only"
+            "Automatic Breath withheld outside HUD-start/headlight cohort: \(device.displayName); steady state only"
         )
         restoreDeviceState(id)
     }
@@ -2206,13 +2206,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// into the cohort merely because it is configured in the app.
     private func beginHeadlightTransitionSyncCohort(reason: String) {
         guard synchronizePowerOnBreathEnabled else { return }
-        guard obdEnginePowerSignalPresent else {
-            logger.log("AMBIENT ANIM", "Headlight Breath suppressed because OBD is disconnected (\(reason))")
-            ambientTrace("Headlight Breath suppressed OBD=0 reason=\(reason)")
+        guard hudEnginePowerSignalPresent else {
+            logger.log("AMBIENT ANIM", "Headlight Breath suppressed because HUD is disconnected (\(reason))")
+            ambientTrace("Headlight Breath suppressed HUD=0 reason=\(reason)")
             return
         }
         guard engineStartupSyncCompletedForCurrentEngineSession, !engineStartupSyncPending else {
-            logger.log("AMBIENT ANIM", "Headlight Breath deferred because OBD-startup cohort still owns animation (\(reason))")
+            logger.log("AMBIENT ANIM", "Headlight Breath deferred because HUD-startup cohort still owns animation (\(reason))")
             return
         }
         guard synchronizedBreathTask == nil, !syncHeadlightBarrierActive else {
@@ -2277,7 +2277,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             guard let self else { return }
             let deadline = Date().addingTimeInterval(self.headlightStrictReadyTimeoutSeconds)
             while Date() < deadline {
-                guard !Task.isCancelled, self.syncHeadlightBarrierActive, self.obdEnginePowerSignalPresent else { return }
+                guard !Task.isCancelled, self.syncHeadlightBarrierActive, self.hudEnginePowerSignalPresent else { return }
                 if !self.syncCohortExpectedIDs.isEmpty,
                    self.syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs) {
                     break
@@ -2842,17 +2842,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
         ambientTrace("Center-driven day/night \(on ? "night" : "day") reason=\(reason)")
 
-        // v90.27: headlight/day-night Breath is allowed only while OBD is connected
-        // and only after the one-time OBD startup opportunity has completed/skipped.
-        // A courtesy headlight edge before OBD therefore never consumes animation.
-        if on, obdEnginePowerSignalPresent {
+        // v90.29: headlight/day-night Breath is allowed only while the HUD transport
+        // is connected and only after the one-time HUD startup opportunity has
+        // completed/skipped. A courtesy headlight edge before HUD connection therefore
+        // never consumes animation.
+        if on, hudEnginePowerSignalPresent {
             if engineStartupSyncCompletedForCurrentEngineSession && !engineStartupSyncPending {
                 beginHeadlightTransitionSyncCohort(reason: reason)
             } else {
-                logger.log("AMBIENT ANIM", "Headlight ON recorded while OBD startup still owns animation; no provisional Breath")
+                logger.log("AMBIENT ANIM", "Headlight ON recorded while HUD startup still owns animation; no provisional Breath")
             }
         } else if on {
-            logger.log("AMBIENT ANIM", "Courtesy/headlight ON while OBD disconnected; animation intentionally held")
+            logger.log("AMBIENT ANIM", "Courtesy/headlight ON while HUD disconnected; animation intentionally held")
         }
 
         if hudBrightnessTriggerEnabled, bluetooth.state == .connected {
@@ -3033,54 +3034,59 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         } else {
             hudOutageBeganAt = Date()
         }
-        // v90.27: HUD transport remains available for engine diagnostics and other
-        // vehicle features, but it no longer arms ambient animation. OBD connection
-        // is the sole ignition gate for automatic Breath.
-        engineStartupSyncCandidateActive = false
-        if changed {
-            logger.log("AMBIENT ENGINE", "Raw HUD engine witness → \(present ? "ON" : "OFF")")
-            ambientTrace("HUD engine witness changed")
+
+        guard changed else {
             scheduleEngineSignalConsensusEvaluation(reason: present ? "HUD connected" : "HUD disconnected")
+            return
         }
+
+        logger.log("AMBIENT ENGINE", "Raw HUD engine/session witness → \(present ? "ON" : "OFF")")
+        ambientTrace("HUD animation gate changed")
+
+        if present {
+            // HUD transport readiness is the v90.29 automatic-animation session edge.
+            // Courtesy-connected lights are recruited into one strict all-three startup
+            // cohort; subsequent headlight ON edges use new-joiners-only cohorts.
+            engineStartupSyncCandidateActive = false
+            engineStartupSyncCompletedForCurrentEngineSession = false
+            engineStartupSyncPending = false
+            scheduleEngineStartupSynchronization(source: "HUD connected")
+        } else {
+            // Closing the HUD gate re-arms the next HUD session. Any not-yet-started
+            // automatic cohort is cancelled without a partial/late Breath.
+            engineStartupSyncTask?.cancel()
+            engineStartupSyncTask = nil
+            engineStartupSyncCandidateActive = false
+            engineStartupSyncPending = false
+            engineStartupSyncCompletedForCurrentEngineSession = false
+            if syncHeadlightBarrierActive, synchronizedBreathTask == nil {
+                let pending = syncCohortExpectedIDs.union(synchronizedBreathIDs)
+                pendingBreathStartTask?.cancel()
+                pendingBreathStartTask = nil
+                for id in pending {
+                    resetParticipantForHeadlightBarrier(id)
+                    if isControllable(id) { restoreDeviceState(id) }
+                }
+                syncCohortExpectedIDs.removeAll()
+                synchronizedBreathIDs.removeAll()
+                syncLateCohortIDs.removeAll()
+                syncCohortOpenedAt = nil
+                syncHeadlightBarrierActive = false
+                syncBarrierCollectsNewJoiners = false
+                logger.log("AMBIENT ANIM", "Pending automatic sync cancelled because HUD disconnected members=\(pending.count)")
+            }
+        }
+        scheduleEngineSignalConsensusEvaluation(reason: present ? "HUD connected" : "HUD disconnected")
     }
 
     func obdPowerSignal(_ present: Bool) {
         let changed = obdEnginePowerSignalPresent != present
         obdEnginePowerSignalPresent = present
         if changed {
-            logger.log("AMBIENT ENGINE", "Raw OBD2 engine witness → \(present ? "ON" : "OFF")")
-            ambientTrace("OBD2 engine witness changed")
-
-            if present {
-                // OBD connection is the v90.27 animation ignition edge. Courtesy
-                // lights that were already connected are recruited into the strict
-                // all-three startup cohort now; no HUD/headlight inference is needed.
-                engineStartupSyncCompletedForCurrentEngineSession = false
-                engineStartupSyncPending = false
-                scheduleEngineStartupSynchronization(source: "OBD connected")
-            } else {
-                engineStartupSyncTask?.cancel()
-                engineStartupSyncTask = nil
-                engineStartupSyncCandidateActive = false
-                engineStartupSyncPending = false
-                engineStartupSyncCompletedForCurrentEngineSession = false
-                if syncHeadlightBarrierActive, synchronizedBreathTask == nil {
-                    let pending = syncCohortExpectedIDs.union(synchronizedBreathIDs)
-                    pendingBreathStartTask?.cancel()
-                    pendingBreathStartTask = nil
-                    for id in pending {
-                        resetParticipantForHeadlightBarrier(id)
-                        if isControllable(id) { restoreDeviceState(id) }
-                    }
-                    syncCohortExpectedIDs.removeAll()
-                    synchronizedBreathIDs.removeAll()
-                    syncLateCohortIDs.removeAll()
-                    syncCohortOpenedAt = nil
-                    syncHeadlightBarrierActive = false
-                    syncBarrierCollectsNewJoiners = false
-                    logger.log("AMBIENT ANIM", "Pending automatic sync cancelled because OBD disconnected members=\(pending.count)")
-                }
-            }
+            // OBD remains diagnostic/corroborating state only. It deliberately does
+            // not arm, cancel, or release ambient animation cohorts in v90.29.
+            logger.log("AMBIENT ENGINE", "Raw OBD2 diagnostic witness → \(present ? "ON" : "OFF")")
+            ambientTrace("OBD2 diagnostic witness changed")
             scheduleEngineSignalConsensusEvaluation(reason: present ? "OBD2 connected" : "OBD2 disconnected")
         }
     }
@@ -3179,12 +3185,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             engineStartupSyncCompletedForCurrentEngineSession = true
             return
         }
-        guard obdEnginePowerSignalPresent else { return }
+        guard hudEnginePowerSignalPresent else { return }
         guard !engineStartupSyncCompletedForCurrentEngineSession, !engineStartupSyncPending else { return }
         guard synchronizedBreathTask == nil else { return }
 
         engineStartupSyncCandidateActive = false
-        supersedePendingHeadlightBarrierForEngineStartup(reason: "OBD startup ownership")
+        supersedePendingHeadlightBarrierForEngineStartup(reason: "HUD startup ownership")
 
         let requiredRoles: Set<AmbientLightRole> = [.centerConsole, .door, .dashboard]
         let devices = pairedDevices.filter {
@@ -3194,15 +3200,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let roles = Set(devices.compactMap(\.role))
         guard roles == requiredRoles else {
             engineStartupSyncCompletedForCurrentEngineSession = true
-            logger.log("AMBIENT ANIM", "OBD STARTUP skipped: Center + Door + Dashboard are not all configured/enabled")
+            logger.log("AMBIENT ANIM", "HUD STARTUP skipped: Center + Door + Dashboard are not all configured/enabled")
             return
         }
 
         logger.log(
             "AMBIENT ANIM",
-            "OBD STARTUP armed; courtesy-connected lights remain steady until Center+Door+Dashboard are all ready timeout=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s source=\(source)"
+            "HUD STARTUP armed; courtesy-connected lights remain steady until Center+Door+Dashboard are all ready timeout=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s source=\(source)"
         )
-        ambientTrace("OBD startup armed source=\(source)")
+        ambientTrace("HUD startup armed source=\(source)")
         beginEngineStartupFullSyncCohort(devices: devices, reason: source)
     }
 
@@ -3212,7 +3218,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// Dashboard because that is the desired startup exception. All participants use
     /// readiness-only preparation so no controller visibly leads before the common T0.
     private func beginEngineStartupFullSyncCohort(devices: [AmbientLightDevice], reason: String) {
-        guard synchronizePowerOnBreathEnabled, obdEnginePowerSignalPresent, !devices.isEmpty else { return }
+        guard synchronizePowerOnBreathEnabled, hudEnginePowerSignalPresent, !devices.isEmpty else { return }
         guard synchronizedBreathTask == nil else { return }
 
         pendingBreathStartTask?.cancel()
@@ -3233,15 +3239,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let roles = devices.compactMap { $0.role?.rawValue }.sorted().joined(separator: ",")
         logger.log(
             "AMBIENT ANIM",
-            "OBD STARTUP FULL-COHORT opened expected=\(expected.count) roles=\(roles) prep=deferredToT0 timeout=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s reason=\(reason)"
+            "HUD STARTUP FULL-COHORT opened expected=\(expected.count) roles=\(roles) prep=deferredToT0 timeout=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s reason=\(reason)"
         )
-        ambientTrace("OBD startup full cohort opened expected=\(expected.count) roles=\(roles)")
+        ambientTrace("HUD startup full cohort opened expected=\(expected.count) roles=\(roles)")
 
         pendingBreathStartTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let deadline = Date().addingTimeInterval(self.engineStartupMaxWaitSeconds)
             while Date() < deadline {
-                guard !Task.isCancelled, self.syncHeadlightBarrierActive, self.obdEnginePowerSignalPresent else { return }
+                guard !Task.isCancelled, self.syncHeadlightBarrierActive, self.hudEnginePowerSignalPresent else { return }
                 if self.syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs) { break }
                 try? await Task.sleep(for: .milliseconds(50))
             }
@@ -3257,7 +3263,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 let missingRoles = missing.compactMap { self.pairedDevice($0)?.role?.rawValue }.sorted().joined(separator: ",")
                 self.logger.log(
                     "AMBIENT ANIM",
-                    "OBD STARTUP skipped: strict all-three readiness not met ready=\(ready.count)/3 missing=\(missingRoles.isEmpty ? "unknown" : missingRoles); no partial/late Breath"
+                    "HUD STARTUP skipped: strict all-three readiness not met ready=\(ready.count)/3 missing=\(missingRoles.isEmpty ? "unknown" : missingRoles); no partial/late Breath"
                 )
                 for id in expectedNow {
                     self.resetParticipantForHeadlightBarrier(id)
@@ -3271,7 +3277,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 self.syncHeadlightBarrierActive = false
                 self.syncBarrierCollectsNewJoiners = false
                 self.pendingBreathStartTask = nil
-                self.ambientTrace("OBD startup skipped missing=\(missingRoles)")
+                self.ambientTrace("HUD startup skipped missing=\(missingRoles)")
                 return
             }
 
@@ -3281,13 +3287,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.syncHeadlightBarrierActive = false
             self.syncBarrierCollectsNewJoiners = false
             self.pendingBreathStartTask = nil
-            self.logger.log("AMBIENT ANIM", "OBD STARTUP FULL-COHORT common T0 ready=3 late=0")
-            self.ambientTrace("OBD startup full cohort T0 ready=3")
+            self.logger.log("AMBIENT ANIM", "HUD STARTUP FULL-COHORT common T0 ready=3 late=0")
+            self.ambientTrace("HUD startup full cohort T0 ready=3")
             self.startSynchronizedBreathSession()
         }
 
         for device in devices where isControllable(device.id) {
-            prepareAutomaticSyncMember(device.id, reason: "OBD startup initial preparation")
+            prepareAutomaticSyncMember(device.id, reason: "HUD startup initial preparation")
         }
     }
 
@@ -3302,7 +3308,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             engineStartupSyncCandidateActive = false
             logger.log(
                 "AMBIENT ENGINE",
-                "Engine diagnostic OFF→ON via \(source); ambient animation remains gated exclusively by OBD connection in v90.27"
+                "Engine diagnostic OFF→ON via \(source); ambient animation remains gated exclusively by HUD transport connection in v90.29"
             )
             ambientTrace("Engine diagnostic ON source=\(source) ambientGate=OBD")
         }

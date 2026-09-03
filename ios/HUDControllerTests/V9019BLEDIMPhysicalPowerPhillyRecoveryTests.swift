@@ -29,7 +29,9 @@ final class V9019BLEDIMPhysicalPowerPhillyRecoveryTests: XCTestCase {
 
     func testPhiladelphiaQueryUsesCurrentStreetCenterlineSchemaAndBackoff() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
-        XCTAssertTrue(speed.contains("esriGeometryEnvelope"))
+        XCTAssertTrue(speed.contains("esriGeometryPoint"))
+        XCTAssertTrue(speed.contains("URLQueryItem(name: \"distance\", value: \"650\")"))
+        XCTAssertTrue(speed.contains("URLQueryItem(name: \"units\", value: \"esriSRUnit_Meter\")"))
         XCTAssertTrue(speed.contains("TRANSPORTATION_street_segment/FeatureServer/0/query"))
         XCTAssertTrue(speed.contains("POSTED_SPEED_LIMIT"))
         XCTAssertTrue(speed.contains("SPEED_LIMIT"))

@@ -107,11 +107,6 @@ struct DashboardView: View {
 
                     sectionTitle("SET UP YOUR HUD VIEWS")
                     HudCard {
-                        Toggle("Minimize widgets", isOn: Binding(
-                            get: { state.settings.minimizeWidgets },
-                            set: { state.settings.minimizeWidgets = $0 }
-                        ))
-                        Divider()
                         HStack {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(state.settings.selectedPreset.name).font(.title3.bold())

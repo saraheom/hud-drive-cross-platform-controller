@@ -27,10 +27,12 @@ def test_v9020_migrates_workaround_power_state_back_to_enabled_once():
     assert "pairedDevices[index].powerOn = true" in MONITOR
     assert "pairedDevices[index].role == .door || pairedDevices[index].role == .dashboard" in MONITOR
 
-def test_philly_centerline_uses_current_schema_and_valid_envelope_query():
-    assert 'geometryType", value: "esriGeometryEnvelope"' in SPEED
-    assert 'URLQueryItem(name: "distance"' not in SPEED
-    assert 'URLQueryItem(name: "units"' not in SPEED
+def test_philly_centerline_uses_current_schema_and_projection_safe_point_query():
+    assert 'geometryType", value: "esriGeometryPoint"' in SPEED
+    assert 'URLQueryItem(name: "distance", value: "650")' in SPEED
+    assert 'URLQueryItem(name: "units", value: "esriSRUnit_Meter")' in SPEED
+    assert 'URLQueryItem(name: "inSR", value: "4326")' in SPEED
+    assert 'URLQueryItem(name: "outSR", value: "4326")' in SPEED
     assert 'TRANSPORTATION_street_segment/FeatureServer/0/query' in SPEED
     assert 'OBJECTID,SEGMENT_ID,FULL_STREET_NAME,STREET_NAME,SPEED_LIMIT,POSTED_SPEED_LIMIT,ROAD_CLASS,BUILT_STATUS' in SPEED
 

@@ -16,11 +16,11 @@ def test_every_disconnect_rearms_next_controller_return_immediately():
 
 def test_power_on_animation_is_not_gated_by_engine_or_headlight_state():
     run = MONITOR.split('private func runStartupAnimationIfNeeded', 1)[1].split('private func prepareAutomaticSyncMember', 1)[0]
-    assert 'guard obdEnginePowerSignalPresent else' in run
-    assert 'Automatic Breath held until OBD connection' in run
+    assert 'guard hudEnginePowerSignalPresent else' in run
+    assert 'Automatic Breath held until HUD connection' in run
     assert 'enginePowerPresent' not in run
     assert 'headlightPowerSessionActive' not in run
-    assert 'Automatic Breath withheld outside OBD-start/headlight cohort' in run
+    assert 'Automatic Breath withheld outside HUD-start/headlight cohort' in run
     helper = MONITOR.split('private func prepareAutomaticSyncMember', 1)[1].split('private func queuePowerUpBreath', 1)[0]
     assert 'scheduleBLEDIMBootSettleReassert' in helper
     assert 'deferVisualPreparationForSync: true' in helper

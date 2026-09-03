@@ -11,6 +11,7 @@ final class HudNavigationController {
         streetName: "Main St"
     )
     private(set) var simulatorRunning = false
+    private(set) var navigationActive = false
     private var simulatorTask: Task<Void, Never>?
 
     let bluetooth: HudBluetoothManager
@@ -22,12 +23,16 @@ final class HudNavigationController {
     }
 
     func navigationOn() {
+        navigationActive = true
         bluetooth.enqueue(HudCommands.navigationState(true), label: "Navigation ON")
+        logger.log("DASHBOARD MODE", "Navigation active")
     }
 
     func navigationOff() {
         stopSimulator()
+        navigationActive = false
         bluetooth.enqueue(HudCommands.navigationState(false), label: "Navigation OFF")
+        logger.log("DASHBOARD MODE", "Navigation inactive; HUD Freeride mode active")
     }
 
     func sendCurrent() {

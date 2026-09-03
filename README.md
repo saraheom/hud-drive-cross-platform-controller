@@ -33,6 +33,27 @@ Note: after signing/archive is restored, App Store Connect may still return
 That is a separate external toolchain issue.
 
 
+
+## v90.29 — HUD-gated strict ambient sync + original Freeride mode restore
+
+v90.29 steps back from the v90.28 Freeride watchdog and OBD animation-gate workaround after the corrected afternoon-drive chronology. The Freeride center RPM/bar disappeared **mid-drive** during a HUD/session rehydration, and relaunching our app repeated the same state. The original JADX-derived dashboard protocol remains `HudWidgetCommandPacket` (2/111/0): type 0 Freeride uses `center=Simple`, type 1 Navigation uses `center=Navigation`, with original SideWidget dash names on the sides. Those packets configure the two profiles; the active mode is separate. After each phase-2/phase-3 profile rehydration v90.29 now explicitly restores `Navigation OFF` when navigation is inactive (or `Navigation ON` when it is active). There is **no periodic Freeride watchdog** and no fabricated phone-side RPM/orange-bar rendering. The unused Minimize-widgets UI stays removed.
+
+Ambient automatic Breath is now **HUD-transport-gated instead of OBD-gated**. Courtesy-light connections before HUD readiness remain steady. The first HUD transport connection arms one strict Center + Door + Dashboard startup cohort; only 3/3 ready members receive one common T0. Later headlight-ON events while HUD remains connected animate only the newly powered cohort, normally Center + Dashboard while an already-active Door is untouched. HUD disconnect re-arms the next startup opportunity. OBD remains diagnostic/corroborating vehicle state only and its v90.28 animation-gate-specific retry/grace changes are removed.
+
+The accepted v90.28 speed fixes remain: same-road cache, MLK pending-same-25 no-blink continuity, warning-freshness separation, and the Philadelphia Street Centerline 650 m point+distance query with raw/speed/geometry/parsed diagnostics.
+
+See `docs/V90_29_HUD_GATE_ORIGINAL_FREERIDE.md`.
+
+## v90.28 — OBD gate reliability + original Freeride watchdog + MLK no-blink confirmation
+
+v90.28 keeps the simplified v90.27 ambient state machine: courtesy-light connections never animate before OBD, the first positive OBD session owns one strict Center + Door + Dashboard startup Breath, and later headlight-ON events animate only newly powered members (normally Center + Dashboard while an already-active Door is untouched). The field logs showed the logic itself worked, but the HUD could delay its positive `OBDConnectionEventPacket` for minutes. OBD auto-retry therefore stays active at a bounded 3/4/5/8-second cadence instead of backing off to 30 seconds, and a previously positive OBD session survives a transient HUD transport/session reset for a 15-second reacquisition grace. An explicit OBD-disconnected event or grace expiry still publishes OFF immediately to the ambient gate.
+
+The center Freeride/RPM presentation is now treated as firmware-managed display state that may silently drift even without a HUD reset event. v90.28 preserves the decompiled original Freeride packet semantics (`type=0`, `center=Simple`, user-selectable left/right SideWidget values) and reasserts that packet every 20 seconds while Navigation is inactive. The generic Dashboard `Freeride` preset also routes through the same original implementation rather than the older `center=Speedo` approximation. The unused **Minimize widgets** toggle is removed from the app UI; its persisted compatibility field and low-level protocol support remain harmlessly intact.
+
+Speed matching retains v90.27's same-road cache and v90.26 turn/corridor logic. The remaining MLK blink was a one-sample race: a strong explicit same-road 25-mph successor could be at speed-source confirmation 1/2 while the four-second stale timer cleared the already-correct 25 sign. A pending source with the same mph as the displayed sign now counts as display-only continuity until 2/2 confirmation completes; native overspeed warning freshness remains disabled during that interim sample. Philadelphia Street Centerline requests now use a 650-m **point + distance** ArcGIS query (`esriGeometryPoint`, WGS84 input/output) instead of the WGS84 envelope shape that returned `rawFeatures=0` throughout the field logs. Raw/speed/geometry/parsed feature diagnostics remain enabled.
+
+See `docs/V90_28_FIELD_RELIABILITY.md`.
+
 ## v90.27 — OBD-gated strict ambient sync + bounded same-road speed cache
 
 v90.27 simplifies automatic ambient animation ownership around the user's requested state machine. **OBD connection is now the sole ignition gate for automatic Breath.** Courtesy-light connections before OBD remain steady and do not animate. When OBD connects, the app opens one strict startup cohort for Center + Door + Dashboard and waits up to 10 seconds for all three to become ready; only a full 3/3 cohort receives a common T0. Missing members cause the startup Breath to be skipped rather than releasing a partial or late catch-up animation. HUD transport remains available for engine diagnostics but no longer arms ambient startup animation.

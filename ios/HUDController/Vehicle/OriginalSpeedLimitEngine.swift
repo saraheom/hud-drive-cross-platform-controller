@@ -1385,7 +1385,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             logger.log(
                 "PHILLY GIS QUERY",
                 String(
-                    format: "center=%.6f,%.6f envelope≈500m rawFeatures=%d featuresWithSpeed=%d featuresWithGeometry=%d parsedSegments=%d layersOK=1/1",
+                    format: "center=%.6f,%.6f pointRadius=650m rawFeatures=%d featuresWithSpeed=%d featuresWithGeometry=%d parsedSegments=%d layersOK=1/1",
                     location.coordinate.latitude,
                     location.coordinate.longitude,
                     result.rawFeatures,
@@ -1417,21 +1417,20 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         let latitude = location.coordinate.latitude
         let longitude = location.coordinate.longitude
-        let latDelta = 500.0 / 111_320.0
-        let lonScale = max(0.20, cos(latitude * .pi / 180.0))
-        let lonDelta = 500.0 / (111_320.0 * lonScale)
-        let envelope = String(
-            format: "%.7f,%.7f,%.7f,%.7f",
-            longitude - lonDelta, latitude - latDelta,
-            longitude + lonDelta, latitude + latDelta
-        )
 
+        // v90.28: use ArcGIS' point + distance query rather than a WGS84
+        // envelope against a layer whose native spatial reference is EPSG:2277.
+        // Field logs from v90.26/v90.27 showed successful HTTP responses but
+        // rawFeatures=0 for every envelope query. Point+distance lets ArcGIS do
+        // the projection internally and is the canonical proximity-query shape.
         comps.queryItems = [
             URLQueryItem(name: "f", value: "json"),
             URLQueryItem(name: "where", value: "BUILT_STATUS=2"),
-            URLQueryItem(name: "geometry", value: envelope),
-            URLQueryItem(name: "geometryType", value: "esriGeometryEnvelope"),
+            URLQueryItem(name: "geometry", value: String(format: "%.7f,%.7f", longitude, latitude)),
+            URLQueryItem(name: "geometryType", value: "esriGeometryPoint"),
             URLQueryItem(name: "inSR", value: "4326"),
+            URLQueryItem(name: "distance", value: "650"),
+            URLQueryItem(name: "units", value: "esriSRUnit_Meter"),
             URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
             URLQueryItem(name: "outFields", value: "OBJECTID,SEGMENT_ID,FULL_STREET_NAME,STREET_NAME,SPEED_LIMIT,POSTED_SPEED_LIMIT,ROAD_CLASS,BUILT_STATUS"),
             URLQueryItem(name: "returnGeometry", value: "true"),
@@ -2258,6 +2257,35 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             improvedPendingLimit = (key, mph, 1, source)
             logger.log("IMPROVED TRACE DECISION", "new pending \(mph) mph source=\(source) confirmation=1/2")
         }
+
+        // v90.28 field fix: a same-road successor can already be a strong,
+        // explicit candidate with exactly the currently displayed speed while the
+        // speed-source confirmation state is only 1/2. v90.27 allowed the four-
+        // second stale timer to blank the sign during that single confirmation
+        // sample (observed twice on MLK). Preserve *display* continuity only.
+        // Warning freshness remains unchanged until the normal 2/2 acceptance.
+        if currentSpeedLimitMph == mph {
+            improvedDisplayContinuityFresh = true
+            improvedDisplayContinuityReason = "pending same-limit source confirmation"
+            improvedLastResolutionWarningEligible = false
+            improvedResolutionSource = improvedDisplayContinuityReason
+            if currentLimitWarningEligible {
+                currentLimitWarningEligible = false
+                speedLimitAvailableForWarning = false
+                if showSpeedLimit, bluetooth.state == .connected {
+                    bluetooth.enqueue(
+                        HudCommands.speedWarningThreshold(0),
+                        label: "Pending same-limit confirmation — disable native warning threshold"
+                    )
+                }
+            }
+            logger.log(
+                "IMPROVED TRACE DECISION",
+                "pending same displayed limit \(mph) mph source=\(source); suppress stale display clear while confirmation completes warningFresh=0"
+            )
+            return mph
+        }
+
         improvedResolutionSource = "pending \(source)"
         return currentSpeedLimitMph > 0 ? currentSpeedLimitMph : nil
     }

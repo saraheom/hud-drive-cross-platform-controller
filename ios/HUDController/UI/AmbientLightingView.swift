@@ -82,7 +82,7 @@ struct AmbientLightingView: View {
                             }
                             .buttonStyle(.borderedProminent)
 
-                            Text("Automatic Breath is OBD-gated. Courtesy lights may connect before the engine starts, but they stay steady and do not animate while OBD is disconnected. When OBD connects, the app waits for Center + Door + Dashboard to become ready and then starts all three on one common animation clock; if all three are not ready within the startup window, the startup Breath is skipped rather than partially replayed. Later, while OBD remains connected, a headlight-ON transition animates only the newly powered cohort. For example, if Door is already on and Center + Dashboard turn on with the headlights, only Center + Dashboard wait for each other and Breath together. There is no late independent catch-up Breath.")
+                            Text("Automatic Breath is HUD-connection-gated. Courtesy lights may connect before the HUD transport is ready, but they stay steady and do not animate. When the HUD connects, the app waits for Center + Door + Dashboard to become ready and then starts all three on one common animation clock; if all three are not ready within the startup window, the startup Breath is skipped rather than partially replayed. Later, while the HUD remains connected, a headlight-ON transition animates only the newly powered cohort. For example, if Door is already on and Center + Dashboard turn on with the headlights, only Center + Dashboard wait for each other and Breath together. There is no late independent catch-up Breath.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
