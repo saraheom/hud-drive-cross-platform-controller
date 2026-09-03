@@ -7,7 +7,7 @@ SPEED = (ROOT / 'ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift').read
 
 def test_headlight_barrier_waits_for_admitted_live_member_preparation():
     barrier = MONITOR.split('private func beginHeadlightTransitionSyncCohort', 1)[1].split('private func registerPowerOnCohortMember', 1)[0]
-    assert 'headlightStrictReadyTimeoutSeconds: TimeInterval = 10.0' in MONITOR
+    assert 'headlightStrictReadyTimeoutSeconds: TimeInterval = 15.0' in MONITOR
     assert 'syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs)' in barrier
     assert 'HEADLIGHT STRICT-COHORT skipped' in barrier
     assert 'no partial/late Breath' in barrier
@@ -23,8 +23,8 @@ def test_absent_persistent_connect_request_is_not_physical_cohort_membership():
 
 def test_engine_start_keeps_post_crank_reacquisition_window_open():
     assert 'engineStartupMaxWaitSeconds: TimeInterval = 10.0' in MONITOR
-    assert 'HUD STARTUP armed' in MONITOR
-    assert 'courtesy-connected lights remain steady' in MONITOR
+    assert 'HUD STARTUP stabilization armed' in MONITOR
+    assert 'wait through crank/accessory disturbance' in MONITOR
     assert 'HUD STARTUP FULL-COHORT common T0 ready=3 late=0' in MONITOR
     assert 'strict all-three readiness not met' in MONITOR
 

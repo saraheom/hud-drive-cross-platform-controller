@@ -326,13 +326,28 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// the HUD is ready may become steady, but may not animate. The first HUD-connected
     /// opportunity waits for Center + Door + Dashboard and releases one common T0.
     /// Later headlight-ON events animate only their newly powered cohort.
-    private var engineStartupSyncCandidateActive = false // retained in flight-recorder schema; no longer driven by HUD transport
+    private var engineStartupSyncCandidateActive = false
     private var engineStartupSyncPending = false
     private var engineStartupSyncCompletedForCurrentEngineSession = false
     private var engineStartupSyncTask: Task<Void, Never>?
     private var gattControlReadyAtByID: [UUID: Date] = [:]
+    /// v90.30: HUD transport commonly becomes available before the accessory/headlight
+    /// rail has finished the engine-crank disturbance. The field log showed Dashboard
+    /// dropping about four seconds after HUD connect, after a nominal 3/3 T0 had already
+    /// been released. Hold the one-time startup cohort long enough for that power cycle
+    /// to occur, then perform the normal strict all-three readiness wait.
+    private let hudStartupStabilizationSeconds: TimeInterval = 5.0
     private let engineStartupMaxWaitSeconds: TimeInterval = 10.0
-    private let headlightStrictReadyTimeoutSeconds: TimeInterval = 10.0
+    /// A headlight-fed BLEDIM can take several seconds for CoreBluetooth to report its
+    /// physical OFF, reconnect, rediscover GATT, and finish boot settle. Strict sync is
+    /// more important than starting Center immediately, so allow the pair a wider wait.
+    private let headlightStrictReadyTimeoutSeconds: TimeInterval = 15.0
+    /// CoreBluetooth may leave Dashboard looking connected for seconds after Center has
+    /// already proved the headlight rail went OFF. Track connection generations so the
+    /// next headlight cohort can require a genuinely fresh Dashboard session.
+    private var ambientConnectionGenerationByID: [UUID: Int] = [:]
+    private var minimumFreshHeadlightConnectionGenerationByID: [UUID: Int] = [:]
+    private var loggedFreshHeadlightWaitIDs: Set<UUID> = []
     private var activeBreathIDs: Set<UUID> = []
     private var activeBreathStartBrightness: [UUID: Int] = [:]
     /// Final steady-state target for the last leg of the breath. Normally this is
@@ -601,7 +616,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.29 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,hudAnimationGate=1,startupWait=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s,headlightStrictWait=\(String(format: "%.1f", headlightStrictReadyTimeoutSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal,startupSync=HUD-gated-all-three,headlightSync=new-joiners-strict,noLateCatchup=1}"
+            "Flight recorder v90.30 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,hudAnimationGate=1,hudStartupStabilization=\(String(format: "%.1f", hudStartupStabilizationSeconds))s,startupWait=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s,headlightStrictWait=\(String(format: "%.1f", headlightStrictReadyTimeoutSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal,startupSync=HUD-gated-all-three,headlightSync=new-joiners-strict-fresh-dashboard,noLateCatchup=1}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -637,6 +652,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         engineStartupSyncPending = false
         engineStartupSyncCompletedForCurrentEngineSession = false
         gattControlReadyAtByID.removeAll()
+        ambientConnectionGenerationByID.removeAll()
+        minimumFreshHeadlightConnectionGenerationByID.removeAll()
+        loggedFreshHeadlightWaitIDs.removeAll()
         activeBreathStartBrightness.removeAll()
         activeBreathReturnBrightness.removeAll()
         activeBLEDIMAnimationStrategyByID.removeAll()
@@ -1869,6 +1887,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
               syncCohortExpectedIDs.contains(id),
               let device = pairedDevice(id),
               isControllable(id) else { return }
+        if let requiredGeneration = minimumFreshHeadlightConnectionGenerationByID[id],
+           (ambientConnectionGenerationByID[id] ?? 0) < requiredGeneration {
+            if loggedFreshHeadlightWaitIDs.insert(id).inserted {
+                logger.log(
+                    "AMBIENT ANIM",
+                    "Strict headlight cohort waiting for fresh physical reconnect: \(device.displayName) currentGeneration=\(ambientConnectionGenerationByID[id] ?? 0) requiredGeneration=\(requiredGeneration)"
+                )
+                ambientTrace("Headlight cohort waiting fresh reconnect role=\(device.role?.rawValue ?? "unassigned")")
+            }
+            return
+        }
         if synchronizedBreathIDs.contains(id) || breathPrepareTasks[id] != nil || bledimBootSettleTasks[id] != nil {
             return
         }
@@ -2674,11 +2703,21 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func removeFromActiveBreath(_ id: UUID) {
         let wasActive = activeBreathIDs.contains(id)
+        let preserveStrictExpectedMembership = syncHeadlightBarrierActive &&
+            synchronizedBreathTask == nil && syncCohortExpectedIDs.contains(id)
         animationTasks[id]?.cancel()
         animationTasks[id] = nil
         activeBreathIDs.remove(id)
         synchronizedBreathIDs.remove(id)
-        syncCohortExpectedIDs.remove(id)
+        if !preserveStrictExpectedMembership {
+            syncCohortExpectedIDs.remove(id)
+        } else {
+            logger.log(
+                "AMBIENT ANIM",
+                "Strict cohort member disconnected during preparation; preserving expected membership for reconnect: \(pairedDevice(id)?.displayName ?? id.uuidString)"
+            )
+            ambientTrace("Strict cohort preserving disconnected expected member role=\(pairedDevice(id)?.role?.rawValue ?? "unassigned")")
+        }
         syncLateCohortIDs.remove(id)
         activeBreathStartBrightness[id] = nil
         activeBreathReturnBrightness[id] = nil
@@ -2830,6 +2869,38 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    /// v90.30: Center is the authoritative headlight-power witness. When Center
+    /// proves the headlight rail went OFF during an active HUD session, Dashboard's
+    /// existing CoreBluetooth/GATT state can linger even though its physical light is
+    /// already dark. Arm Dashboard for a fresh connection generation and proactively
+    /// cancel the stale BLE session so the next headlight ON cannot misclassify it as
+    /// an already-active light.
+    private func armDashboardForFreshHeadlightCycle(reason: String) {
+        guard hudEnginePowerSignalPresent,
+              engineStartupSyncCompletedForCurrentEngineSession,
+              let dashboardID = deviceID(for: .dashboard),
+              let dashboard = pairedDevice(dashboardID),
+              dashboard.startupAnimationEnabled, dashboard.powerOn else { return }
+
+        let currentGeneration = ambientConnectionGenerationByID[dashboardID] ?? 0
+        minimumFreshHeadlightConnectionGenerationByID[dashboardID] = currentGeneration + 1
+        loggedFreshHeadlightWaitIDs.remove(dashboardID)
+        animatedConnectionSession.remove(dashboardID)
+        logger.log(
+            "AMBIENT ANIM",
+            "Center OFF invalidated Dashboard active session; next headlight Breath requires fresh Dashboard reconnect generation>\(currentGeneration) reason=\(reason)"
+        )
+        ambientTrace("Center OFF armed fresh Dashboard reconnect requiredGeneration=\(currentGeneration + 1)")
+
+        if let peripheral = peripheralsByID[dashboardID], peripheral.state == .connected {
+            logger.log(
+                "AMBIENT BG",
+                "Cancelling stale Dashboard BLE session after authoritative Center OFF; persistent reconnect remains armed"
+            )
+            central.cancelPeripheralConnection(peripheral)
+        }
+    }
+
     private func commitConfirmedHeadlightPower(_ on: Bool, reason: String) {
         guard headlightPowerSessionActive != on else { return }
         headlightPowerSessionActive = on
@@ -2842,8 +2913,16 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         )
         ambientTrace("Center-driven day/night \(on ? "night" : "day") reason=\(reason)")
 
-        // v90.29: headlight/day-night Breath is allowed only while the HUD transport
-        // is connected and only after the one-time HUD startup opportunity has
+        // v90.30: once Center proves the headlight rail went OFF during a running
+        // HUD session, Dashboard must prove a fresh physical reconnect before it can
+        // be treated as active on the next ON edge. This prevents stale CoreBluetooth
+        // state from shrinking a Center+Dashboard cohort to Center-only.
+        if !on {
+            armDashboardForFreshHeadlightCycle(reason: reason)
+        }
+
+        // Headlight/day-night Breath is allowed only while the HUD transport is
+        // connected and only after the one-time HUD startup opportunity has
         // completed/skipped. A courtesy headlight edge before HUD connection therefore
         // never consumes animation.
         if on, hudEnginePowerSignalPresent {
@@ -3044,9 +3123,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         ambientTrace("HUD animation gate changed")
 
         if present {
-            // HUD transport readiness is the v90.29 automatic-animation session edge.
-            // Courtesy-connected lights are recruited into one strict all-three startup
-            // cohort; subsequent headlight ON edges use new-joiners-only cohorts.
+            // HUD transport readiness is the automatic-animation session edge.
+            // v90.30 waits through a short post-connect crank/accessory stabilization
+            // window before recruiting Center + Door + Dashboard into the startup cohort.
             engineStartupSyncCandidateActive = false
             engineStartupSyncCompletedForCurrentEngineSession = false
             engineStartupSyncPending = false
@@ -3059,6 +3138,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             engineStartupSyncCandidateActive = false
             engineStartupSyncPending = false
             engineStartupSyncCompletedForCurrentEngineSession = false
+            minimumFreshHeadlightConnectionGenerationByID.removeAll()
+            loggedFreshHeadlightWaitIDs.removeAll()
             if syncHeadlightBarrierActive, synchronizedBreathTask == nil {
                 let pending = syncCohortExpectedIDs.union(synchronizedBreathIDs)
                 pendingBreathStartTask?.cancel()
@@ -3181,15 +3262,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// startup T0. This path runs once per confirmed engine session only.
     private func scheduleEngineStartupSynchronization(source: String) {
         guard synchronizePowerOnBreathEnabled else {
+            engineStartupSyncCandidateActive = false
             engineStartupSyncPending = false
             engineStartupSyncCompletedForCurrentEngineSession = true
             return
         }
         guard hudEnginePowerSignalPresent else { return }
-        guard !engineStartupSyncCompletedForCurrentEngineSession, !engineStartupSyncPending else { return }
+        guard !engineStartupSyncCompletedForCurrentEngineSession,
+              !engineStartupSyncPending,
+              engineStartupSyncTask == nil else { return }
         guard synchronizedBreathTask == nil else { return }
 
-        engineStartupSyncCandidateActive = false
         supersedePendingHeadlightBarrierForEngineStartup(reason: "HUD startup ownership")
 
         let requiredRoles: Set<AmbientLightRole> = [.centerConsole, .door, .dashboard]
@@ -3204,13 +3287,37 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
+        engineStartupSyncCandidateActive = true
         logger.log(
             "AMBIENT ANIM",
-            "HUD STARTUP armed; courtesy-connected lights remain steady until Center+Door+Dashboard are all ready timeout=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s source=\(source)"
+            "HUD STARTUP stabilization armed delay=\(String(format: "%.1f", hudStartupStabilizationSeconds))s; wait through crank/accessory disturbance before strict Center+Door+Dashboard cohort source=\(source)"
         )
-        ambientTrace("HUD startup armed source=\(source)")
-        beginEngineStartupFullSyncCohort(devices: devices, reason: source)
+        ambientTrace("HUD startup stabilization armed source=\(source)")
+
+        engineStartupSyncTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.hudStartupStabilizationSeconds))
+            guard !Task.isCancelled, self.hudEnginePowerSignalPresent,
+                  !self.engineStartupSyncCompletedForCurrentEngineSession else { return }
+            self.engineStartupSyncTask = nil
+            self.engineStartupSyncCandidateActive = false
+
+            // Re-resolve device models after the stabilization interval. Controllers
+            // may have physically rebooted during crank even though the persisted
+            // role/configuration is unchanged.
+            let stabilizedDevices = self.pairedDevices.filter {
+                guard let role = $0.role else { return false }
+                return requiredRoles.contains(role) && $0.startupAnimationEnabled && $0.powerOn
+            }
+            self.logger.log(
+                "AMBIENT ANIM",
+                "HUD STARTUP stabilization complete; opening strict all-three readiness cohort timeout=\(String(format: "%.1f", self.engineStartupMaxWaitSeconds))s"
+            )
+            self.ambientTrace("HUD startup stabilization complete")
+            self.beginEngineStartupFullSyncCohort(devices: stabilizedDevices, reason: "post-HUD-connect stabilization")
+        }
     }
+
 
 
     /// Force-all is intentionally scoped to the initial engine OFF→ON edge. Unlike
@@ -3308,9 +3415,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             engineStartupSyncCandidateActive = false
             logger.log(
                 "AMBIENT ENGINE",
-                "Engine diagnostic OFF→ON via \(source); ambient animation remains gated exclusively by HUD transport connection in v90.29"
+                "Engine diagnostic OFF→ON via \(source); ambient animation remains gated exclusively by HUD transport connection in v90.30"
             )
-            ambientTrace("Engine diagnostic ON source=\(source) ambientGate=OBD")
+            ambientTrace("Engine diagnostic ON source=\(source) ambientGate=HUD")
         }
     }
 
@@ -3383,6 +3490,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
               let door = pairedDevice(doorID) else { return }
 
         let target = doorTargetBrightness(night: headlightPowerSessionActive)
+        if hudEnginePowerSignalPresent && !engineStartupSyncCompletedForCurrentEngineSession &&
+            (engineStartupSyncTask != nil || engineStartupSyncPending) {
+            logger.log(
+                "AMBIENT AUTO",
+                "Door target updated to \(target)% while HUD startup stabilization/cohort owns lighting; no independent fade (\(reason))"
+            )
+            return
+        }
         if bledimBootSettleTasks[doorID] != nil || breathPrepareTasks[doorID] != nil {
             logger.log("AMBIENT AUTO", "Door target updated to \(target)% while power-on sequence is preparing; animation will use the latest target (\(reason))")
             return
@@ -4010,6 +4125,19 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             peripheral.delegate = self
             self.lastSeenByID[id] = Date()
             self.connectionStartedByID[id] = nil
+            let generation = (self.ambientConnectionGenerationByID[id] ?? 0) + 1
+            self.ambientConnectionGenerationByID[id] = generation
+            if let required = self.minimumFreshHeadlightConnectionGenerationByID[id], generation >= required {
+                self.minimumFreshHeadlightConnectionGenerationByID[id] = nil
+                self.loggedFreshHeadlightWaitIDs.remove(id)
+                if let device = self.pairedDevice(id) {
+                    self.logger.log(
+                        "AMBIENT ANIM",
+                        "Fresh physical reconnect requirement satisfied: \(device.displayName) generation=\(generation) required=\(required)"
+                    )
+                    self.ambientTrace("Fresh headlight reconnect satisfied role=\(device.role?.rawValue ?? "unassigned") generation=\(generation)")
+                }
+            }
             self.sessionResetTasks[id]?.cancel()
             self.sessionResetTasks[id] = nil
             // v90.17: every controller return is a brand-new power-on event.

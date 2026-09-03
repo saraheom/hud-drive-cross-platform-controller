@@ -51,7 +51,7 @@ def test_later_headlight_on_pairs_center_and_dashboard_but_leaves_active_door_ou
 
 def test_headlight_cohort_skips_instead_of_splitting_when_member_never_ready():
     barrier = block(MONITOR, 'private func beginHeadlightTransitionSyncCohort', 'private func registerPowerOnCohortMember')
-    assert 'headlightStrictReadyTimeoutSeconds: TimeInterval = 10.0' in MONITOR
+    assert 'headlightStrictReadyTimeoutSeconds: TimeInterval = 15.0' in MONITOR
     assert 'ready == expectedNow' in barrier
     assert 'HEADLIGHT STRICT-COHORT skipped' in barrier
     assert 'no partial/late Breath' in barrier

@@ -50,7 +50,7 @@ def test_v9022_sync_migration_is_retained_in_v9024():
     assert 'HUD.Ambient.v90_22.headlightBarrierSyncMigrated' in MONITOR
     assert 'd.set(true, forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
     assert 'self.synchronizePowerOnBreathEnabled = d.object(forKey: "HUD.Ambient.v90_17.syncPowerOnBreath")' in MONITOR
-    assert "Flight recorder v90.29 enabled" in MONITOR
+    assert "Flight recorder v90.30 enabled" in MONITOR
     assert 'startupSync=HUD-gated-all-three' in MONITOR
     assert 'headlightSync=new-joiners-strict' in MONITOR
 

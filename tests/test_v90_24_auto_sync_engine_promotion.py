@@ -58,7 +58,7 @@ def test_confirmed_engine_start_promotes_all_enabled_roles_after_crank_and_gatt_
     assert 'engineStartupMaxWaitSeconds: TimeInterval = 10.0' in m
     assert 'requiredRoles: Set<AmbientLightRole> = [.centerConsole, .door, .dashboard]' in schedule
     assert 'roles == requiredRoles' in schedule
-    assert 'HUD STARTUP armed' in schedule
+    assert 'HUD STARTUP stabilization armed' in schedule
     assert 'HUD STARTUP FULL-COHORT opened' in full
     assert 'ready.count == 3' in full
     assert 'no partial/late Breath' in full
@@ -83,7 +83,7 @@ def test_manual_preview_remains_separate_from_automatic_deferred_prep():
     assert "previewBreath(devices: devices)" in preview
     assert "queuePowerUpBreath(device.id, force: true)" in preview
     assert "deferVisualPreparationForSync" not in preview
-    assert "Flight recorder v90.29 enabled" in m
+    assert "Flight recorder v90.30 enabled" in m
     assert "hudAnimationGate=1" in m
     assert "noLateCatchup=1" in m
 

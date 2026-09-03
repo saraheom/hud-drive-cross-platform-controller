@@ -17,7 +17,7 @@ final class V9024AutomaticSyncEnginePromotionTests: XCTestCase {
     func testHUDTransportOwnsAmbientStartupAndOBDIsDiagnosticOnly() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("scheduleEngineStartupSynchronization(source: \"HUD connected\")"))
-        XCTAssertTrue(monitor.contains("HUD transport readiness is the v90.29 automatic-animation session edge"))
+        XCTAssertTrue(monitor.contains("HUD transport readiness is the automatic-animation session edge"))
         XCTAssertTrue(monitor.contains("OBD remains diagnostic/corroborating state only"))
     }
 

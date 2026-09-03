@@ -9,7 +9,7 @@ final class V9026AmbientSpeedAcquisitionTests: XCTestCase {
 
     func testHeadlightCohortWaitsStrictlyForEveryEnrolledMember() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("headlightStrictReadyTimeoutSeconds: TimeInterval = 10.0"))
+        XCTAssertTrue(monitor.contains("headlightStrictReadyTimeoutSeconds: TimeInterval = 15.0"))
         XCTAssertTrue(monitor.contains("syncCohortExpectedIDs.isSubset(of: self.synchronizedBreathIDs)"))
         XCTAssertTrue(monitor.contains("HEADLIGHT STRICT-COHORT skipped"))
         XCTAssertTrue(monitor.contains("HEADLIGHT STRICT-COHORT common T0"))

@@ -34,6 +34,27 @@ That is a separate external toolchain issue.
 
 
 
+## v90.30 — crank-stabilized HUD startup + fresh Dashboard headlight synchronization
+
+v90.30 is a narrow ambient-light reliability update based on the stationary September 2 field test. The startup coordinator already achieved a strict 3/3 common T0 in v90.29, but Dashboard disconnected during the first Breath while the vehicle was still in its crank/accessory transition. A later headlight OFF→ON then admitted Center alone because CoreBluetooth still reported Dashboard as an already-active connection even though the physical Dashboard light was dark.
+
+### Initial HUD-connected startup
+- HUD transport remains the sole automatic-animation gate. OBD does not own ambient animation.
+- After HUD transport becomes ready, startup now waits **5.0 seconds** before opening the strict Center + Door + Dashboard cohort. This lets the crank/accessory power disturbance finish before animation begins.
+- The startup release remains all-or-nothing: Center + Door + Dashboard must all be GATT/control ready; one common T0 is used; no partial startup Breath is launched.
+- Door's automatic day/night fade is suppressed while this startup stabilization/cohort owns the lights so it cannot inject independent writes before the shared T0.
+
+### Later headlight OFF→ON
+- Center/BLEDOM remains the authoritative headlight-power witness.
+- When Center confirms OFF during an active HUD session, Dashboard's current BLE session is explicitly invalidated for the *next* headlight Breath. If CoreBluetooth still reports the Dashboard peripheral connected, that stale session is cancelled proactively.
+- The next Center+Dashboard headlight cohort requires a **fresh Dashboard physical reconnect generation** before Dashboard can be prepared.
+- A Dashboard disconnect while the strict cohort is still preparing no longer removes Dashboard from expected membership. The cohort stays Center+Dashboard and waits through the reconnect instead of silently shrinking to Center-only.
+- The strict headlight readiness window is now **15 seconds**, bounded to cover the delayed Dashboard reconnect/GATT/boot-settle observed in the field log.
+
+The BLEDIM production strategy and Breath waveform are unchanged (`Already-On Minimal`). Manual Preview is unchanged. Freeride/navigation runtime and the accepted v90.28/v90.29 speed-limit behavior are unchanged.
+
+See `docs/V90_30_CRANK_AND_FRESH_DASHBOARD_SYNC.md` for the field failure and state-machine details.
+
 ## v90.29 — HUD-gated strict ambient sync + original Freeride mode restore
 
 v90.29 steps back from the v90.28 Freeride watchdog and OBD animation-gate workaround after the corrected afternoon-drive chronology. The Freeride center RPM/bar disappeared **mid-drive** during a HUD/session rehydration, and relaunching our app repeated the same state. The original JADX-derived dashboard protocol remains `HudWidgetCommandPacket` (2/111/0): type 0 Freeride uses `center=Simple`, type 1 Navigation uses `center=Navigation`, with original SideWidget dash names on the sides. Those packets configure the two profiles; the active mode is separate. After each phase-2/phase-3 profile rehydration v90.29 now explicitly restores `Navigation OFF` when navigation is inactive (or `Navigation ON` when it is active). There is **no periodic Freeride watchdog** and no fabricated phone-side RPM/orange-bar rendering. The unused Minimize-widgets UI stays removed.
