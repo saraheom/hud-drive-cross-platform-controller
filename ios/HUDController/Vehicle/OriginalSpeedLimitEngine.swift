@@ -1653,13 +1653,20 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             "hwy": "highway", "pkwy": "parkway", "ln": "lane",
             "ct": "court", "pl": "place", "ter": "terrace"
         ]
-        return raw
+        let normalized = raw
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .map { aliases[$0] ?? $0 }
             .joined(separator: " ")
+        // Apple commonly reports "Martin Luther King Dr" while OSM in
+        // Philadelphia uses "Martin Luther King Junior Drive". Canonicalize the
+        // optional honorific so Route Guidance can reinforce the same physical road.
+        return normalized.replacingOccurrences(
+            of: "martin luther king junior ",
+            with: "martin luther king "
+        )
     }
 
     /// OSM way IDs are implementation details, not road identities. Normalize the
@@ -1708,11 +1715,43 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// weighted hint rather than a hard filter: GPS trace/heading must still make
     /// the road geometrically plausible. During CarPlay rerouting the bonus is
     /// greatly reduced so stale route semantics cannot pin the matcher to an old road.
-    private func carPlayCurrentRoadScoreAdjustment(name: String?, reference: String?) -> Double {
+    private func carPlayCurrentRoadScoreAdjustment(
+        name: String?,
+        reference: String?,
+        match: TraceGeometryMatch,
+        location: CLLocation
+    ) -> Double {
         guard sourceMode == .improvedTracePhilly,
               let context = freshCarPlayRouteContext(),
               Self.routeRoadMatches(context.currentRoad, name: name, reference: reference) else { return 0 }
-        return context.isRouteTransition ? -0.15 : -1.25
+
+        // Route Guidance is semantic evidence, never permission to ignore GPS
+        // geometry. Course is noisy below walking speed, so low-speed matching is
+        // distance-gated. While moving, a nearly perpendicular candidate receives
+        // no semantic bonus even if CarPlay still reports its old road name.
+        let lowSpeed = location.speed >= 0 && location.speed < 2.0
+        let full = context.isRouteTransition ? -0.15 : -1.25
+        let reduced = context.isRouteTransition ? -0.07 : -0.55
+        if lowSpeed {
+            if match.currentDistance <= 35 { return full }
+            if match.currentDistance <= 50 { return reduced }
+            return 0
+        }
+        if match.currentDistance <= 40, match.currentAngle <= 45 { return full }
+        if match.currentDistance <= 50, match.currentAngle <= 70 { return reduced }
+        return 0
+    }
+
+    private static func applyingScoreAdjustment(_ match: TraceGeometryMatch, _ adjustment: Double) -> TraceGeometryMatch {
+        TraceGeometryMatch(
+            score: match.score + adjustment,
+            currentDistance: match.currentDistance,
+            currentAngle: match.currentAngle,
+            matchedPoints: match.matchedPoints,
+            forward: match.forward,
+            nearestStart: match.nearestStart,
+            nearestEnd: match.nearestEnd
+        )
     }
 
     /// Used only after geometry already indicates a completed turn. The upcoming
@@ -1806,17 +1845,19 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             } else {
                 continuity = 0
             }
-            let carPlayBonus = carPlayCurrentRoadScoreAdjustment(
-                name: segment.name,
-                reference: segment.reference
-            )
-            continuity += carPlayBonus
-            guard let match = traceGeometryMatch(
+            guard let baseMatch = traceGeometryMatch(
                 parts: segment.parts,
                 trace: trace,
                 location: location,
                 continuityBonus: continuity
             ) else { continue }
+            let carPlayBonus = carPlayCurrentRoadScoreAdjustment(
+                name: segment.name,
+                reference: segment.reference,
+                match: baseMatch,
+                location: location
+            )
+            let match = Self.applyingScoreAdjustment(baseMatch, carPlayBonus)
             let kmh = Self.resolvedKmh(for: segment, travelingForward: match.forward, at: location.timestamp)
             let mph = kmh.map { Int((Double($0) / 1.609344).rounded()) }
             osmScored.append(OSMScored(segment: segment, match: match, speedMph: mph, carPlayBonus: carPlayBonus))
@@ -1864,9 +1905,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                     item.segment.backwardKmh.map(String.init) ?? "-"
                 )
             }.joined(separator: " | ")
+            let routeRoad = freshCarPlayRouteContext()?.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             logger.log(
                 "IMPROVED TRACE OSM MATCH",
-                "currentWay=\(improvedCurrentRoadID.map(String.init) ?? "none") pending=\(improvedPendingRoad.map { "\($0.id)#\($0.count)" } ?? "none") top=[\(summary)]"
+                "rgdCurrent=\(routeRoad.isEmpty ? "-" : routeRoad) currentWay=\(improvedCurrentRoadID.map(String.init) ?? "none") pending=\(improvedPendingRoad.map { "\($0.id)#\($0.count)" } ?? "none") top=[\(summary)]"
             )
 
             if improvedCurrentRoadIdentity == nil, let currentID = improvedCurrentRoadID,
@@ -2105,7 +2147,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             }
         } else {
             improvedLastConfidenceMargin = 0
-            logger.log("IMPROVED TRACE OSM MATCH", "no drivable OSM road candidate")
+            let routeRoad = freshCarPlayRouteContext()?.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            logger.log("IMPROVED TRACE OSM MATCH", "rgdCurrent=\(routeRoad.isEmpty ? "-" : routeRoad) no drivable OSM road candidate")
         }
 
         struct GISScored {
@@ -2118,13 +2161,19 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             // Prefer explicit posted-speed segments when geometry is otherwise tied;
             // residential layer still provides a valuable 25-mph neighborhood fill.
             let layerPenalty = segment.residentialLayer ? 0.10 : 0.0
-            let carPlayBonus = carPlayCurrentRoadScoreAdjustment(name: segment.name, reference: nil)
-            if let match = traceGeometryMatch(
+            if let baseMatch = traceGeometryMatch(
                 parts: segment.parts,
                 trace: trace,
                 location: location,
-                continuityBonus: layerPenalty + carPlayBonus
+                continuityBonus: layerPenalty
             ) {
+                let carPlayBonus = carPlayCurrentRoadScoreAdjustment(
+                    name: segment.name,
+                    reference: nil,
+                    match: baseMatch,
+                    location: location
+                )
+                let match = Self.applyingScoreAdjustment(baseMatch, carPlayBonus)
                 gisScored.append(GISScored(segment: segment, match: match, carPlayBonus: carPlayBonus))
             }
         }
@@ -2158,9 +2207,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 return lhsCost < rhsCost
             }
         if let gisBest {
+            let routeRoad = freshCarPlayRouteContext()?.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             logger.log(
                 "PHILLY GIS MATCH",
-                String(
+                "rgdCurrent=\(routeRoad.isEmpty ? "-" : routeRoad) " + String(
                     format: "id=%d name=%@ limit=%d layer=%@ score=%.2f rgd=%.2f dist=%.1fm angle=%.1f matched=%d/%d seg=%.6f,%.6f>%.6f,%.6f",
                     gisBest.segment.objectID,
                     gisBest.segment.name ?? "-",
@@ -2179,7 +2229,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 )
             )
         } else if Self.isInsidePhiladelphiaCoverage(location.coordinate) {
-            logger.log("PHILLY GIS MATCH", "no nearby Philadelphia Street Centerline speed segment matched current trace")
+            let routeRoad = freshCarPlayRouteContext()?.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            logger.log("PHILLY GIS MATCH", "rgdCurrent=\(routeRoad.isEmpty ? "-" : routeRoad) no nearby Philadelphia Street Centerline speed segment matched current trace")
         }
 
         // Protect a confidently matched, explicitly tagged limited-access motorway.

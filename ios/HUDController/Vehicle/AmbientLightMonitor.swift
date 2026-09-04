@@ -166,9 +166,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
+    /// Daytime warning brightness. The original v90.12 key is retained so
+    /// existing users keep their configured warning intensity after upgrading.
     var overspeedWarningBrightness: Int {
         didSet {
-            UserDefaults.standard.set(max(10, min(100, overspeedWarningBrightness)), forKey: "HUD.Ambient.v90_12.overspeed.brightness")
+            UserDefaults.standard.set(max(5, min(100, overspeedWarningBrightness)), forKey: "HUD.Ambient.v90_12.overspeed.brightness")
+        }
+    }
+
+    var overspeedWarningNightBrightness: Int {
+        didSet {
+            UserDefaults.standard.set(max(5, min(100, overspeedWarningNightBrightness)), forKey: "HUD.Ambient.v90_33.overspeed.nightBrightness")
         }
     }
 
@@ -410,7 +418,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var overspeedCrossingBaselineValid = false
     private var overspeedLastLimitAvailable = false
     private var overspeedLastWarningTriggeredAt: Date?
+    private var overspeedWarningColorWasApplied = false
     private let overspeedWarningCooldownSeconds: TimeInterval = 60.0
+    private let overspeedRestoreTransitionSeconds: TimeInterval = 1.0
 
     /// UI deep-link token used by the persistent Ambient shortcut.
     private(set) var pairedLightsFocusRequest = 0
@@ -469,7 +479,9 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         self.overspeedWarningOffsetMph = d.object(forKey: "HUD.Ambient.v90_12.overspeed.offsetMph") == nil
             ? 5 : max(0, min(20, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.offsetMph")))
         self.overspeedWarningBrightness = d.object(forKey: "HUD.Ambient.v90_12.overspeed.brightness") == nil
-            ? 100 : max(10, min(100, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.brightness")))
+            ? 50 : max(5, min(100, d.integer(forKey: "HUD.Ambient.v90_12.overspeed.brightness")))
+        self.overspeedWarningNightBrightness = d.object(forKey: "HUD.Ambient.v90_33.overspeed.nightBrightness") == nil
+            ? 20 : max(5, min(100, d.integer(forKey: "HUD.Ambient.v90_33.overspeed.nightBrightness")))
         self.overspeedWarningColor = Self.decode(AmbientRGB.self, key: "HUD.Ambient.v90_13.overspeed.color")
             ?? AmbientRGB(red: 255, green: 0, blue: 0)
         self.overspeedWarningPulseCount = d.object(forKey: "HUD.Ambient.v90_12.overspeed.pulses") == nil
@@ -1088,7 +1100,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     }
 
     func setOverspeedWarningBrightness(_ percent: Int) {
-        overspeedWarningBrightness = max(10, min(100, percent))
+        overspeedWarningBrightness = max(5, min(100, percent))
+    }
+
+    func setOverspeedWarningNightBrightness(_ percent: Int) {
+        overspeedWarningNightBrightness = max(5, min(100, percent))
     }
 
     func setOverspeedWarningColor(_ color: AmbientRGB) {
@@ -3680,16 +3696,21 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         restoreTasks[id] = nil
         removeFromActiveBreath(id)
 
-        let highPercent = max(10, min(100, overspeedWarningBrightness))
+        let warningIsNight = headlightPowerSessionActive
+        let configuredWarningBrightness = warningIsNight
+            ? overspeedWarningNightBrightness
+            : overspeedWarningBrightness
+        let highPercent = max(5, min(100, configuredWarningBrightness))
         let cycles = max(2, min(3, overspeedWarningPulseCount))
         let configuredCycleDuration = max(0.0, min(5.0, overspeedWarningPulseDurationSeconds))
         let cycleDuration = max(0.05, configuredCycleDuration)
         let warningColor = overspeedWarningColor
+        overspeedWarningColorWasApplied = false
 
         overspeedWarningStatus = "Warning • \(gpsSpeedMph) > \(speedLimitMph) + \(overspeedWarningOffsetMph) mph"
         logger.log(
             "AMBIENT WARN",
-            "Overspeed crossing GPS=\(gpsSpeedMph) limit=\(speedLimitMph) threshold=\(thresholdMph) light=\(overspeedWarningLight.rawValue) pulses=\(cycles) brightness=\(highPercent)% color=\(warningColor.red),\(warningColor.green),\(warningColor.blue) cooldown=60s"
+            "Overspeed crossing GPS=\(gpsSpeedMph) limit=\(speedLimitMph) threshold=\(thresholdMph) light=\(overspeedWarningLight.rawValue) pulses=\(cycles) profile=\(warningIsNight ? "night" : "day") brightness=\(highPercent)% color=\(warningColor.red),\(warningColor.green),\(warningColor.blue) cooldown=60s"
         )
 
         overspeedWarningTask = Task { @MainActor [weak self] in
@@ -3723,6 +3744,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 self.abortOverspeedWarningTask(id, generation: generation, reason: "warning RGB prepare failed")
                 return
             }
+            self.overspeedWarningColorWasApplied = true
             guard stillValid() else {
                 self.abortOverspeedWarningTask(id, generation: generation, reason: "invalid after warning RGB")
                 return
@@ -3771,7 +3793,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             }
             self.overspeedWarningTask = nil
             self.overspeedWarningActiveID = nil
-            await self.restoreAfterOverspeedWarning(id, generation: generation, reason: "finite warning complete")
+            await self.restoreAfterOverspeedWarning(
+                id,
+                generation: generation,
+                reason: "finite warning complete",
+                smoothFromWarningColor: true
+            )
             guard generation == self.overspeedWarningGeneration else { return }
             self.overspeedWarningStatus = self.overspeedAboveThreshold
                 ? "Warning complete — fall below and recross to warn again"
@@ -3788,12 +3815,19 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
               overspeedWarningActiveID == id else { return }
         overspeedWarningTask = nil
         overspeedWarningActiveID = nil
+        let smoothRestore = overspeedWarningColorWasApplied
+        overspeedWarningColorWasApplied = false
         logger.log("AMBIENT WARN", "Overspeed warning aborted safely: \(reason)")
 
         overspeedRestoreTask?.cancel()
         overspeedRestoreTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.restoreAfterOverspeedWarning(id, generation: generation, reason: "aborted: \(reason)")
+            await self.restoreAfterOverspeedWarning(
+                id,
+                generation: generation,
+                reason: "aborted: \(reason)",
+                smoothFromWarningColor: smoothRestore
+            )
             guard generation == self.overspeedWarningGeneration else { return }
             self.overspeedRestoreTask = nil
             self.overspeedWarningStatus = self.overspeedAboveThreshold
@@ -3804,6 +3838,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func cancelOverspeedWarning(restoreIfPossible: Bool, reason: String) {
         let id = overspeedWarningActiveID
+        let smoothRestore = overspeedWarningColorWasApplied
+        overspeedWarningColorWasApplied = false
         overspeedWarningGeneration &+= 1
         let generation = overspeedWarningGeneration
         overspeedWarningTask?.cancel()
@@ -3816,7 +3852,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         guard restoreIfPossible, let id else { return }
         overspeedRestoreTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.restoreAfterOverspeedWarning(id, generation: generation, reason: reason)
+            await self.restoreAfterOverspeedWarning(
+                id,
+                generation: generation,
+                reason: reason,
+                smoothFromWarningColor: smoothRestore
+            )
             if generation == self.overspeedWarningGeneration {
                 self.overspeedRestoreTask = nil
             }
@@ -3828,27 +3869,84 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         return steadyBrightnessTarget(for: device)
     }
 
-    /// Restore exactly one v90.10 reliable steady-state sequence after a warning.
-    /// Do not add the v90.13 repeated safeguard rounds; the baseline transport's
-    /// send-when-ready path is retained intentionally.
-    private func restoreAfterOverspeedWarning(_ id: UUID, generation: Int, reason: String) async {
+    private static func interpolatedOverspeedColor(from: AmbientRGB, to: AmbientRGB, progress: Double) -> AmbientRGB {
+        let t = max(0.0, min(1.0, progress))
+        let eased = t * t * (3.0 - 2.0 * t)
+        func channel(_ a: Int, _ b: Int) -> Int {
+            Int((Double(a) + (Double(b - a) * eased)).rounded())
+        }
+        return AmbientRGB(
+            red: channel(from.red, to.red),
+            green: channel(from.green, to.green),
+            blue: channel(from.blue, to.blue)
+        )
+    }
+
+    /// Restore one field-proven Power ON terminal state, but when the warning
+    /// actually reached its RGB overlay, fade RGB and brightness together for one
+    /// second rather than snapping red directly back to the preferred color.
+    /// Commands alternate at 50 ms cadence so write-without-response backpressure
+    /// never receives a burst of RGB + brightness frames in the same instant.
+    private func restoreAfterOverspeedWarning(
+        _ id: UUID,
+        generation: Int,
+        reason: String,
+        smoothFromWarningColor: Bool
+    ) async {
         guard generation == overspeedWarningGeneration,
               overspeedWarningActiveID == nil,
               let device = pairedDevice(id),
               device.powerOn,
               isControllable(id) else { return }
 
-        let target = steadyBrightnessAfterWarning(for: id)
+        let targetBrightness = steadyBrightnessAfterWarning(for: id)
+        let targetColor = device.color
+        let startBrightness = max(0, min(100, device.lastAppliedBrightness ?? targetBrightness))
         guard await sendPowerWhenReady(id, on: true, reason: "overspeed restore \(reason)") else { return }
         guard generation == overspeedWarningGeneration, !Task.isCancelled else { return }
-        guard await sendColorWhenReady(id, color: device.color, reason: "overspeed restore \(reason)") else { return }
+
+        if smoothFromWarningColor {
+            let startColor = overspeedWarningColor
+            let startedAt = Date()
+            var frame = 0
+            logger.log(
+                "AMBIENT WARN",
+                "Smooth restore begin RGB=\(startColor.red),\(startColor.green),\(startColor.blue)@\(startBrightness)% → \(targetColor.red),\(targetColor.green),\(targetColor.blue)@\(targetBrightness)% duration=\(String(format: "%.1f", overspeedRestoreTransitionSeconds))s"
+            )
+            while true {
+                guard generation == overspeedWarningGeneration, !Task.isCancelled,
+                      overspeedWarningActiveID == nil, isControllable(id) else { return }
+                let t = min(1.0, Date().timeIntervalSince(startedAt) / overspeedRestoreTransitionSeconds)
+                let eased = t * t * (3.0 - 2.0 * t)
+                if frame.isMultiple(of: 2) {
+                    let color = Self.interpolatedOverspeedColor(from: startColor, to: targetColor, progress: t)
+                    _ = sendColor(id, color: color, reason: "overspeed smooth RGB restore")
+                } else {
+                    let brightness = Int((Double(startBrightness) + Double(targetBrightness - startBrightness) * eased).rounded())
+                    _ = applyRuntimeBrightness(
+                        id,
+                        percent: brightness,
+                        reason: "overspeed smooth brightness restore",
+                        persist: false,
+                        logPacket: false
+                    )
+                }
+                if t >= 1.0 { break }
+                frame += 1
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+
+        guard generation == overspeedWarningGeneration, !Task.isCancelled else { return }
+        guard await sendColorWhenReady(id, color: targetColor, reason: "overspeed restore final RGB \(reason)") else { return }
         guard generation == overspeedWarningGeneration, !Task.isCancelled else { return }
         _ = await applyRuntimeBrightnessWhenReady(
             id,
-            percent: target,
-            reason: "overspeed restore \(reason)",
+            percent: targetBrightness,
+            reason: "overspeed restore final brightness \(reason)",
             persist: true
         )
+        overspeedWarningColorWasApplied = false
     }
 
     // MARK: - Connection management

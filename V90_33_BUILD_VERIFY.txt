@@ -1,0 +1,21 @@
+HUD Controller v90.33 - field refinement verification
+
+Base:
+- HUD v90.32.1 full repository
+- U2W v8.5 unchanged
+
+Changes:
+- routeState=6 active pre-road freshness window: 20.0 s
+- normal active Route Guidance freshness remains 4.5 s
+- independent per-source sequence-progress timestamp prevents stale endpoint repeats from refreshing themselves
+- current-road CarPlay speed bonus gated by GPS distance/course geometry
+- raw rgdCurrent logged in Improved OSM / Philadelphia GIS matcher output
+- Martin Luther King Dr / Martin Luther King Junior Drive normalization
+- state 6 weakens speed semantic assistance as a route-transition phase
+- overspeed warning Day/Night brightness; Night default 20%
+- one-second eased RGB + brightness restore after warning
+
+Validation:
+- Python regression suite: 200 passed
+- Swift 6.2.1 parser: passed for all modified runtime files and V9033FieldRefinementTests.swift
+- no U2W firmware changes

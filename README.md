@@ -34,6 +34,14 @@ That is a separate external toolchain issue.
 
 
 
+## v90.33 — Apple pre-road hold + geometry-gated Route Guidance speed assist + night-safe overspeed warning
+
+v90.33 is a HUD-app-only update and continues using U2W v8.5 unchanged. The September 4 Apple Maps field capture showed a valid `routeState=6` pre-road/start-route phase with Route Guidance sequence gaps approaching 15 seconds before the vehicle joined the first routed road. v90.33 keeps the normal 4.5-second active-route freshness policy, but allows a genuine state-6 sequence to remain valid for up to 20 seconds. This prevents the physical HUD from bouncing Navigation → Freeride → Navigation while leaving a driveway/parking area. A truly dead/stuck state-6 sequence still expires after 20 seconds, and ordinary state 0 still exits Navigation immediately.
+
+The Improved + Philly speed matcher now gates CarPlay's current-road semantic bonus by live GPS geometry. At driving speed, the full bonus requires a candidate within 40 m and within 45° of the vehicle course; a reduced bonus is allowed only through 50 m/70°. More contradictory geometry receives no Route Guidance bonus. Low-speed matching is distance-gated because course is noisy. Logs now include the raw `rgdCurrent=` road on OSM/GIS matcher lines, and `Martin Luther King Dr` is canonicalized against OSM's `Martin Luther King Junior Drive`. State 6 joins states 3/5 as a weakened route-transition context for speed matching. Posted speed values still come only from OSM/Philadelphia GIS.
+
+Ambient overspeed warnings now have separate Day and Night brightness controls. Existing daytime brightness is migrated from the prior warning setting; Night defaults to 20%. Day/night selection uses the same confirmed Center/headlight state already used by Door brightness. After the finite warning pulses, RGB and brightness return to the preferred steady state through a one-second eased transition instead of snapping directly from warning red to the preferred color.
+
 ## v90.32.1 — CI XCTest alignment for restored original maneuver text
 
 v90.32.1 is runtime-identical to v90.32. The iOS simulator build itself succeeded, but the workflow failed because the legacy v77 XCTest still required the OCR-era duplicate distance suffix (for example `Turn right • 0.2 mi`) in the maneuver text. v90.32 intentionally removed that suffix and restored the original HUDWAY presentation.

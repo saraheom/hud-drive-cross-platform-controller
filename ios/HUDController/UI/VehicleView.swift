@@ -157,17 +157,32 @@ struct VehicleView: View {
                             )
                             .disabled(!state.ambientLight.overspeedWarningEnabled)
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Warning brightness: \(state.ambientLight.overspeedWarningBrightness)%")
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Day warning brightness: \(state.ambientLight.overspeedWarningBrightness)%")
                                     .font(.subheadline)
                                 Slider(
                                     value: Binding(
                                         get: { Double(state.ambientLight.overspeedWarningBrightness) },
                                         set: { state.ambientLight.setOverspeedWarningBrightness(Int($0.rounded())) }
                                     ),
-                                    in: 10...100,
+                                    in: 5...100,
                                     step: 5
                                 )
+
+                                Text("Night warning brightness: \(state.ambientLight.overspeedWarningNightBrightness)%")
+                                    .font(.subheadline)
+                                Slider(
+                                    value: Binding(
+                                        get: { Double(state.ambientLight.overspeedWarningNightBrightness) },
+                                        set: { state.ambientLight.setOverspeedWarningNightBrightness(Int($0.rounded())) }
+                                    ),
+                                    in: 5...100,
+                                    step: 5
+                                )
+
+                                Text("Night/day follows the same confirmed Center/headlight state used by Door brightness. Warning restore fades RGB + brightness smoothly for ~1 s.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                             .disabled(!state.ambientLight.overspeedWarningEnabled)
 

@@ -99,6 +99,8 @@ struct CarPlayRouteContext: Equatable {
 
     var isRerouting: Bool { routeState == 5 }
     /// State 3 was observed during route calculation/recalculation; state 5 is
-    /// explicit rerouting. Both should weaken semantic road assistance.
-    var isRouteTransition: Bool { routeState == 3 || routeState == 5 }
+    /// explicit rerouting. State 6 is Apple Maps' pre-road/start-route phase.
+    /// All three weaken semantic road assistance because the reported road may
+    /// legitimately precede the first stable public-road match.
+    var isRouteTransition: Bool { routeState == 3 || routeState == 5 || routeState == 6 }
 }

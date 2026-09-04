@@ -76,6 +76,12 @@ final class RouteGuidanceAdapterClient {
     private let navigation: HudNavigationController
     private let endpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wrgd-live.cgi")!
     private let staleInterval: TimeInterval = 4.5
+    /// Apple Maps can hold routeState=6 (pre-road/start-route guidance) while the
+    /// driver leaves a driveway/parking area. The September 4 field capture had
+    /// valid 0x5201 gaps near 15 seconds in this state, so keep the last genuine
+    /// Route Guidance sequence for 20 seconds instead of bouncing HUD Navigation
+    /// to Freeride every 4.5 seconds. Normal active state still uses 4.5 seconds.
+    private let preRoadStartupStaleInterval: TimeInterval = 20.0
     private let pollInterval: Duration = .milliseconds(750)
     private var pollTask: Task<Void, Never>?
     private var snapshots: [SourceKind: TimedSnapshot] = [:]
@@ -85,6 +91,8 @@ final class RouteGuidanceAdapterClient {
     private var requestCounter = 0
     private var successCounter = 0
     private var lastSequenceBySource: [SourceKind: Int] = [:]
+    private var lastSequenceProgressAtBySource: [SourceKind: Date] = [:]
+    private var startupHoldLoggedSequenceBySource: [SourceKind: Int] = [:]
     private var lastValidInstruction: NavigationInstruction?
     private var rerouteAwaitingFreshManeuver = false
     private var rerouteCandidateSignature: String?
@@ -133,6 +141,9 @@ final class RouteGuidanceAdapterClient {
         pollTask = nil
         running = false
         snapshots.removeAll()
+        lastSequenceBySource.removeAll()
+        lastSequenceProgressAtBySource.removeAll()
+        startupHoldLoggedSequenceBySource.removeAll()
         selectedKind = nil
         lastDeliveredSignature = ""
         lastEtaMilliseconds = nil
@@ -193,19 +204,40 @@ final class RouteGuidanceAdapterClient {
         }
         lastUpdateAt = now
         lastSequence = snapshot.sequence
-        let previous = snapshots[kind]
-        let progressed = previous?.snapshot.sequence != snapshot.sequence
+        let progressed = lastSequenceBySource[kind] != snapshot.sequence
+        if progressed || lastSequenceProgressAtBySource[kind] == nil {
+            lastSequenceProgressAtBySource[kind] = now
+            startupHoldLoggedSequenceBySource[kind] = nil
+        }
         lastSequenceBySource[kind] = snapshot.sequence
         snapshots[kind] = TimedSnapshot(
             snapshot: snapshot,
-            receivedAt: progressed ? now : (previous?.receivedAt ?? now)
+            receivedAt: lastSequenceProgressAtBySource[kind] ?? now
         )
         pruneAndSelect(now: now)
     }
 
+    private func freshnessInterval(for snapshot: Snapshot) -> TimeInterval {
+        if snapshot.active && snapshot.routeState == 6 {
+            return preRoadStartupStaleInterval
+        }
+        return staleInterval
+    }
+
     private func pruneAndSelect(now: Date) {
-        snapshots = snapshots.filter { _, timed in
-            now.timeIntervalSince(timed.receivedAt) <= staleInterval
+        snapshots = snapshots.filter { kind, timed in
+            let age = now.timeIntervalSince(timed.receivedAt)
+            let allowed = freshnessInterval(for: timed.snapshot)
+            if timed.snapshot.active, timed.snapshot.routeState == 6,
+               age > staleInterval, age <= allowed,
+               startupHoldLoggedSequenceBySource[kind] != timed.snapshot.sequence {
+                startupHoldLoggedSequenceBySource[kind] = timed.snapshot.sequence
+                logger.log(
+                    "CARPLAY RGD STARTUP",
+                    "Holding Apple/CarPlay pre-road state 6 seq=\(timed.snapshot.sequence) age=\(String(format: "%.1f", age))s instead of Freeride; startup freshness window=\(Int(preRoadStartupStaleInterval))s"
+                )
+            }
+            return age <= allowed
         }
 
         let candidates = snapshots.compactMap { kind, timed -> (SourceKind, TimedSnapshot)? in

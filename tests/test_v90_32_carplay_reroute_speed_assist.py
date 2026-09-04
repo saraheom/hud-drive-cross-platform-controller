@@ -46,7 +46,9 @@ def test_carplay_speed_assist_is_semantic_only_and_reroute_weakened():
     assert "currentRoad" in nav_models and "nextRoad" in nav_models
     assert "This intentionally contains no posted-speed value" in nav_models
     assert "carPlayCurrentRoadScoreAdjustment" in speed
-    assert "return context.isRouteTransition ? -0.15 : -1.25" in speed
+    assert "let full = context.isRouteTransition ? -0.15 : -1.25" in speed
+    assert "match.currentAngle <= 45" in speed
+    assert "match.currentAngle <= 70" in speed
     assert "sourceMode == .improvedTracePhilly" in speed
     assert "OSM/Philadelphia GIS remain the sole sources of posted-speed values" in speed
 
