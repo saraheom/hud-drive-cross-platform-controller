@@ -45,7 +45,6 @@ targets:
         UIBackgroundModes:
           - bluetooth-central
           - location
-          - screen-capture
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}

@@ -4,9 +4,9 @@ import Observation
 /// Live CarPlay Route Guidance feed exported by the patched Carlinkit U2W.
 ///
 /// The adapter exposes normalized JSON at 192.168.50.2.  We intentionally keep
-/// this client independent from ScreenCaptureKit/OCR: CarPlay RGD owns the HUD
-/// while it is fresh, and OCR remains the automatic fallback when the adapter
-/// feed disappears.
+/// this client independent from ScreenCaptureKit/OCR. CarPlay Route Guidance is
+/// the only automatic navigation source: when the adapter feed is stale or
+/// unavailable, the HUD returns to Freeride instead of falling back to OCR.
 @MainActor
 @Observable
 final class RouteGuidanceAdapterClient {
@@ -85,8 +85,18 @@ final class RouteGuidanceAdapterClient {
     private var requestCounter = 0
     private var successCounter = 0
     private var lastSequenceBySource: [SourceKind: Int] = [:]
+    private var lastValidInstruction: NavigationInstruction?
+    private var rerouteAwaitingFreshManeuver = false
+    private var rerouteCandidateSignature: String?
+    private var rerouteCandidateConfirmations = 0
+    private var rerouteCandidateLastSequence: Int?
+    private var lastRouteState: Int?
+    private var rerouteGraceSource: SourceKind?
+    private var rerouteGraceUntil: Date?
+    private let rerouteGraceInterval: TimeInterval = 3.0
 
     var onWillActivate: (() -> Void)?
+    var onRoadContextChanged: ((CarPlayRouteContext?) -> Void)?
 
     private(set) var running = false
     private(set) var status = "Adapter feed idle"
@@ -126,6 +136,15 @@ final class RouteGuidanceAdapterClient {
         selectedKind = nil
         lastDeliveredSignature = ""
         lastEtaMilliseconds = nil
+        lastValidInstruction = nil
+        rerouteAwaitingFreshManeuver = false
+        rerouteCandidateSignature = nil
+        rerouteCandidateConfirmations = 0
+        rerouteCandidateLastSequence = nil
+        lastRouteState = nil
+        rerouteGraceSource = nil
+        rerouteGraceUntil = nil
+        onRoadContextChanged?(nil)
         selectedSource = "—"
         currentRoad = "—"
         destination = "—"
@@ -158,7 +177,7 @@ final class RouteGuidanceAdapterClient {
             ingest(snapshot, at: Date())
         } catch {
             lastError = error.localizedDescription
-            status = "U2W feed unavailable — OCR fallback remains available"
+            status = "U2W feed unavailable — HUD returned to Freeride"
             pruneAndSelect(now: Date())
             if requestCounter <= 3 || requestCounter % 20 == 0 {
                 logger.log("CARPLAY RGD", "Poll failed request=\(requestCounter): \(error.localizedDescription)")
@@ -168,6 +187,10 @@ final class RouteGuidanceAdapterClient {
 
     private func ingest(_ snapshot: Snapshot, at now: Date) {
         let kind = SourceKind.classify(snapshot.source)
+        if snapshot.routeState == 5, kind != .other {
+            rerouteGraceSource = kind
+            rerouteGraceUntil = now.addingTimeInterval(rerouteGraceInterval)
+        }
         lastUpdateAt = now
         lastSequence = snapshot.sequence
         let previous = snapshots[kind]
@@ -186,7 +209,14 @@ final class RouteGuidanceAdapterClient {
         }
 
         let candidates = snapshots.compactMap { kind, timed -> (SourceKind, TimedSnapshot)? in
-            guard timed.snapshot.active, timed.snapshot.routeState != 0 else { return nil }
+            // Adapter-only policy: only the three requested CarPlay navigation
+            // sources are eligible for automatic HUD ownership. A brief routeState
+            // 0 is retained only when it follows an observed same-source state 5
+            // reroute; ordinary route teardown state 0 still exits Navigation.
+            let inRerouteGrace = rerouteGraceSource == kind &&
+                (rerouteGraceUntil.map { now <= $0 } ?? false)
+            guard kind != .other,
+                  (timed.snapshot.active && timed.snapshot.routeState != 0 || inRerouteGrace) else { return nil }
             return (kind, timed)
         }
         .sorted { lhs, rhs in
@@ -206,13 +236,23 @@ final class RouteGuidanceAdapterClient {
             distanceToManeuverText = "—"
             lastDeliveredSignature = ""
             lastEtaMilliseconds = nil
+            lastValidInstruction = nil
+            rerouteAwaitingFreshManeuver = false
+            rerouteCandidateSignature = nil
+            rerouteCandidateConfirmations = 0
+            rerouteCandidateLastSequence = nil
+            lastRouteState = nil
+            rerouteGraceSource = nil
+            rerouteGraceUntil = nil
+            onRoadContextChanged?(nil)
             navigation.navigationOff(owner: .carPlayAdapter)
-            status = lastError.isEmpty ? "Waiting for active CarPlay route" : "U2W feed unavailable — OCR fallback remains available"
+            status = lastError.isEmpty ? "Waiting for active CarPlay route — HUD stays in Freeride" : "U2W feed unavailable — HUD returned to Freeride"
             return
         }
 
         let kind = winner.0
-        let snapshot = winner.1.snapshot
+        let timed = winner.1
+        let snapshot = timed.snapshot
         let sourceChanged = selectedKind != kind
         if sourceChanged {
             logger.log(
@@ -222,6 +262,16 @@ final class RouteGuidanceAdapterClient {
             selectedKind = kind
             lastDeliveredSignature = ""
             lastEtaMilliseconds = nil
+            lastValidInstruction = nil
+            rerouteAwaitingFreshManeuver = false
+            rerouteCandidateSignature = nil
+            rerouteCandidateConfirmations = 0
+            rerouteCandidateLastSequence = nil
+            lastRouteState = nil
+            if rerouteGraceSource != kind {
+                rerouteGraceSource = nil
+                rerouteGraceUntil = nil
+            }
         }
 
         selectedSource = kind == .other ? (snapshot.source.isEmpty ? "Other" : snapshot.source) : kind.rawValue
@@ -229,6 +279,101 @@ final class RouteGuidanceAdapterClient {
         destination = snapshot.destination.isEmpty ? "—" : snapshot.destination
         distanceToManeuverText = displayDistance(snapshot)
         status = "Live Route Guidance • \(selectedSource) • seq \(snapshot.sequence)"
+
+        let primaryManeuver = primaryCurrentManeuver(in: snapshot)
+        let nextRoad = primaryManeuver?.afterRoad.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        onRoadContextChanged?(
+            CarPlayRouteContext(
+                source: selectedSource,
+                sequence: snapshot.sequence,
+                routeState: snapshot.routeState,
+                currentRoad: snapshot.currentRoad,
+                nextRoad: nextRoad,
+                distanceToManeuverMeters: max(0, snapshot.distanceToManeuverMeters),
+                receivedAt: timed.receivedAt
+            )
+        )
+
+        let enteredReroute = snapshot.routeState == 5 && lastRouteState != 5
+        let exitedReroute = snapshot.routeState != 5 && lastRouteState == 5
+        if enteredReroute {
+            rerouteGraceSource = kind
+            rerouteGraceUntil = now.addingTimeInterval(rerouteGraceInterval)
+            rerouteAwaitingFreshManeuver = true
+            rerouteCandidateSignature = nil
+            rerouteCandidateConfirmations = 0
+            rerouteCandidateLastSequence = nil
+            logger.log(
+                "CARPLAY RGD REROUTE",
+                "Entered rerouting state seq=\(snapshot.sequence); holding last valid HUD maneuver until a fresh current-maneuver record stabilizes"
+            )
+        }
+        if exitedReroute {
+            rerouteAwaitingFreshManeuver = true
+            rerouteCandidateSignature = nil
+            rerouteCandidateConfirmations = 0
+            rerouteCandidateLastSequence = nil
+            logger.log(
+                "CARPLAY RGD REROUTE",
+                "Left explicit rerouting state seq=\(snapshot.sequence) state=\(snapshot.routeState); preserving HUD through 5→0→3→1 transition while waiting for two progressive snapshots of the new current maneuver"
+            )
+        }
+        lastRouteState = snapshot.routeState
+
+        let resolvedInstruction = makeInstruction(snapshot)
+        let instruction: NavigationInstruction?
+        if snapshot.routeState == 5 {
+            // During rerouting, 0x5201 and the most recent 0x5202 table can be
+            // temporarily out of phase. Never jump to an old/future table entry.
+            instruction = lastValidInstruction
+        } else if rerouteAwaitingFreshManeuver {
+            if snapshot.routeState == 0 || snapshot.routeState == 3 {
+                instruction = lastValidInstruction
+            } else if let resolvedInstruction {
+                let candidateSignature = instructionIdentity(resolvedInstruction, snapshot: snapshot)
+                if rerouteCandidateLastSequence != snapshot.sequence {
+                    if rerouteCandidateSignature == candidateSignature {
+                        rerouteCandidateConfirmations += 1
+                    } else {
+                        rerouteCandidateSignature = candidateSignature
+                        rerouteCandidateConfirmations = 1
+                    }
+                    rerouteCandidateLastSequence = snapshot.sequence
+                }
+                if rerouteCandidateConfirmations >= 2 {
+                    rerouteAwaitingFreshManeuver = false
+                    rerouteGraceSource = nil
+                    rerouteGraceUntil = nil
+                    lastValidInstruction = resolvedInstruction
+                    instruction = resolvedInstruction
+                    logger.log(
+                        "CARPLAY RGD REROUTE",
+                        "Accepted recalculated current maneuver after \(rerouteCandidateConfirmations) progressive snapshots seq=\(snapshot.sequence) signature=\(candidateSignature)"
+                    )
+                } else {
+                    instruction = lastValidInstruction
+                }
+            } else {
+                instruction = lastValidInstruction
+            }
+        } else if let resolvedInstruction {
+            lastValidInstruction = resolvedInstruction
+            instruction = resolvedInstruction
+        } else {
+            // Missing/0xFFFF current index means the route table is in a short
+            // transitional state. Hold the last valid maneuver instead of falling
+            // back to maneuver[0], which can belong to the previous route.
+            instruction = lastValidInstruction
+        }
+
+        guard let instruction else {
+            status = "Live Route Guidance • \(selectedSource) • waiting for current maneuver"
+            logger.log(
+                "CARPLAY RGD HUD",
+                "No valid first current maneuver for seq=\(snapshot.sequence) currentIndex=\(snapshot.currentManeuverIndex.map(String.init) ?? "nil") secondCurrent=\(snapshot.nextManeuverIndex.map(String.init) ?? "nil"); HUD remains Freeride until a valid maneuver arrives"
+            )
+            return
+        }
 
         if !navigation.navigationActive || navigation.feedOwner != .carPlayAdapter || sourceChanged {
             onWillActivate?()
@@ -246,7 +391,6 @@ final class RouteGuidanceAdapterClient {
             etaText = "—"
         }
 
-        let instruction = makeInstruction(snapshot)
         let signature = [
             selectedSource,
             "\(snapshot.sequence)",
@@ -257,7 +401,7 @@ final class RouteGuidanceAdapterClient {
             instruction.displayDistanceText
         ].joined(separator: "|")
 
-        // RouteGuidanceUpdate is normally ~1 Hz.  Sequence changes are useful for
+        // RouteGuidanceUpdate is normally ~1 Hz. Sequence changes are useful for
         // freshness, but avoid spending BLE bandwidth if every HUD-visible field
         // is identical to the previous instruction.
         let visibleSignature = [
@@ -266,7 +410,6 @@ final class RouteGuidanceAdapterClient {
             "\(instruction.distanceMeters)",
             instruction.primaryText,
             instruction.streetName,
-            instruction.displayDistanceText,
             instruction.currentStreet
         ].joined(separator: "|")
 
@@ -276,30 +419,52 @@ final class RouteGuidanceAdapterClient {
             lastDeliveredSignature = visibleSignature
             logger.log(
                 "CARPLAY RGD HUD",
-                "source=\(selectedSource) seq=\(snapshot.sequence) maneuver=\(instruction.maneuver.label) distance=\(instruction.distanceMeters)m display=\(instruction.displayDistanceText) street=\(instruction.streetName) eta=\(etaText) signature=\(signature)"
+                "source=\(selectedSource) seq=\(snapshot.sequence) routeState=\(snapshot.routeState) currentIndex=\(snapshot.currentManeuverIndex.map(String.init) ?? "nil") secondCurrent=\(snapshot.nextManeuverIndex.map(String.init) ?? "nil") maneuver=\(instruction.maneuver.label) distance=\(instruction.distanceMeters)m display=\(instruction.displayDistanceText) street=\(instruction.streetName) eta=\(etaText) signature=\(signature)"
             )
         }
     }
 
-    private func makeInstruction(_ snapshot: Snapshot) -> NavigationInstruction {
-        let targetIndex = snapshot.nextManeuverIndex ?? snapshot.currentManeuverIndex
-        let maneuver = targetIndex.flatMap { idx in snapshot.maneuvers.first(where: { $0.index == idx }) }
-            ?? snapshot.maneuvers.first
+    private func sanitizedCurrentIndex(_ index: Int?) -> Int? {
+        guard let index, index >= 0, index < 0xFFFF else { return nil }
+        return index
+    }
 
-        let mapped = Self.mapManeuverType(maneuver?.type ?? 0)
-        let street = (maneuver?.afterRoad.isEmpty == false ? maneuver?.afterRoad : nil)
-            ?? (maneuver?.description.isEmpty == false ? maneuver?.description : nil)
-            ?? snapshot.currentRoad
-        let primary = Self.primaryText(for: maneuver?.type ?? 0, description: maneuver?.description ?? "", street: street)
+    /// v90.32: the two exported index fields came from CarPlay's current-maneuver
+    /// index list. The first index is the HUD's primary/current instruction; the
+    /// second can be a simultaneously relevant following instruction. Never prefer
+    /// the second index for the primary HUD maneuver.
+    private func primaryCurrentManeuver(in snapshot: Snapshot) -> ManeuverSnapshot? {
+        guard let index = sanitizedCurrentIndex(snapshot.currentManeuverIndex) else { return nil }
+        return snapshot.maneuvers.first(where: { $0.index == index })
+    }
+
+    private func instructionIdentity(_ instruction: NavigationInstruction, snapshot: Snapshot) -> String {
+        [
+            sanitizedCurrentIndex(snapshot.currentManeuverIndex).map(String.init) ?? "nil",
+            instruction.maneuver.rawValue,
+            instruction.primaryText,
+            instruction.streetName,
+            instruction.currentStreet
+        ].joined(separator: "|")
+    }
+
+    private func makeInstruction(_ snapshot: Snapshot) -> NavigationInstruction? {
+        guard let maneuver = primaryCurrentManeuver(in: snapshot) else { return nil }
+
+        let mapped = Self.mapManeuverType(maneuver.type)
+        let street = !maneuver.afterRoad.isEmpty
+            ? maneuver.afterRoad
+            : (!maneuver.description.isEmpty ? maneuver.description : snapshot.currentRoad)
+        let primary = Self.primaryText(for: maneuver.type, description: maneuver.description, street: street)
 
         return NavigationInstruction(
             maneuver: mapped,
-            distanceMeters: max(0, snapshot.distanceToManeuverMeters > 0 ? snapshot.distanceToManeuverMeters : (maneuver?.distanceMeters ?? 0)),
+            distanceMeters: max(0, snapshot.distanceToManeuverMeters > 0 ? snapshot.distanceToManeuverMeters : maneuver.distanceMeters),
             primaryText: primary,
             streetName: street,
             displayDistanceText: displayDistance(snapshot),
             currentStreet: snapshot.currentRoad,
-            exitNumber: Self.roundaboutExit(for: maneuver?.type ?? 0)
+            exitNumber: Self.roundaboutExit(for: maneuver.type)
         )
     }
 

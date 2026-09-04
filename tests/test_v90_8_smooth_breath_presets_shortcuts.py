@@ -75,8 +75,11 @@ def test_persistent_quick_shortcuts_cover_navigation_music_ambient_except_logs()
     assert "state.quickStartNavigation()" in root
     assert "state.quickReconnectSpotify()" in root
     assert "state.ambientLight.requestPairedLightsFocus()" in root
-    assert "navigation.navigationOn()" in app
-    assert "capture.presentFullDisplayPicker()" in app
+    # v90.31 shortcut refreshes the adapter feed; Navigation ON is allowed only after a fresh active Route Guidance snapshot.
+    assert 'routeGuidance.start(reason: \"Navigation shortcut\")' in app
+    assert "routeGuidance.refreshNow()" in app
+    assert "navigation.navigationOn()" not in app.split("func quickStartNavigation()", 1)[1].split("func quickReconnectSpotify", 1)[0]
+    assert "capture.presentFullDisplayPicker()" not in app.split("func quickStartNavigation()", 1)[1].split("func quickReconnectSpotify", 1)[0]
     assert "spotify.connectOrAuthorize()" in app
     assert "spotify.openSpotifyAndResumeConnection()" in app
     assert 'path = [.ambient(focusPairedLights: true)]' in vehicle

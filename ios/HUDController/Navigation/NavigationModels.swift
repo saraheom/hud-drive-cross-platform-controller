@@ -81,3 +81,24 @@ protocol NavigationSource {
     func start() async
     func stop() async
 }
+
+/// Fresh semantic route context from the CarPlay Route Guidance exporter.
+///
+/// This intentionally contains no posted-speed value. The speed-limit engine
+/// may use it only to decide which nearby OSM/Philadelphia road is most likely
+/// to be the vehicle's current road; the legal limit still comes from map/GIS
+/// speed data.
+struct CarPlayRouteContext: Equatable {
+    var source: String
+    var sequence: Int
+    var routeState: Int
+    var currentRoad: String
+    var nextRoad: String
+    var distanceToManeuverMeters: Int
+    var receivedAt: Date
+
+    var isRerouting: Bool { routeState == 5 }
+    /// State 3 was observed during route calculation/recalculation; state 5 is
+    /// explicit rerouting. Both should weaken semantic road assistance.
+    var isRouteTransition: Bool { routeState == 3 || routeState == 5 }
+}

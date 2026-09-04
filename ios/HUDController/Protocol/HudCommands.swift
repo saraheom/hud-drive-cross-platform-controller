@@ -131,54 +131,14 @@ enum HudCommands {
         return HudProtocol.frame(command: 2, p1: 111, p2: 0, payload: payload)
     }
 
-    private static func normalizedSourceDistanceText(
-        _ raw: String
-    ) -> String {
-        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Google commonly gives us "In 2.4 mi"; Apple gives "2.4 mi".
-        // The HUD line should show only the compact distance.
-        if value.lowercased().hasPrefix("in ") {
-            value = String(value.dropFirst(3))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        // Normalize spelling while preserving the exact numeric token.
-        value = value
-            .replacingOccurrences(
-                of: #"(?i)\bfeet\b"#,
-                with: "ft",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"(?i)\bmiles?\b"#,
-                with: "mi",
-                options: .regularExpression
-            )
-
-        return value
-    }
-
     static func maneuver(_ instruction: NavigationInstruction) -> Data {
-        let exactDistance = normalizedSourceDistanceText(
-            instruction.displayDistanceText
-        )
-
-        // HudManeuverCommandPacket exposes only an Int32 meter distance. The
-        // physical firmware formats that field into coarse imperial buckets
-        // (e.g. 2.4 mi may render as 2 mi; 150 ft as 100 ft). Preserve the
-        // correct native meter value, but also surface the exact Maps text in
-        // the first maneuver-text line so the driver sees the exact source
-        // distance without depending on firmware rounding.
-        let primaryWithDistance: String
-        if exactDistance.isEmpty {
-            primaryWithDistance = instruction.primaryText
-        } else {
-            primaryWithDistance = "\(instruction.primaryText) • \(exactDistance)"
-        }
-
+        // v90.32 restores the original HUDWAY presentation. The native maneuver
+        // packet already carries distanceMeters as its dedicated Int32 distance
+        // field, so do not duplicate the source distance in the first text line.
+        // `displayDistanceText` remains available to diagnostics and source
+        // comparison, but the physical HUD text is simply e.g. "Turn right".
         let text = [
-            primaryWithDistance,
+            instruction.primaryText,
             instruction.streetName,
             instruction.currentStreet
         ]

@@ -22,6 +22,13 @@ final class V9031CarPlayRouteGuidanceTests: XCTestCase {
         )
     }
 
+    func testUnknownSourceNeverOutranksSupportedSources() {
+        XCTAssertLessThan(
+            RouteGuidanceAdapterClient.SourceKind.other.priority,
+            RouteGuidanceAdapterClient.SourceKind.waze.priority
+        )
+    }
+
     func testSourceClassification() {
         XCTAssertEqual(RouteGuidanceAdapterClient.SourceKind.classify("Google Maps"), .googleMaps)
         XCTAssertEqual(RouteGuidanceAdapterClient.SourceKind.classify("Apple Maps"), .appleMaps)

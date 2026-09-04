@@ -63,10 +63,6 @@ struct RootView: View {
                 // allowed only while HUD or OBD is actually connected.
                 state.updateSpotifyVehicleWakeGate(reason: "app became active")
                 state.spotify.appBecameActive()
-                if #available(iOS 27.0, *),
-                   let capture = state.externalCapture27 as? ExternalNavigationCapture {
-                    capture.appBecameActive()
-                }
             case .background:
                 state.spotify.appEnteredBackground()
             default:

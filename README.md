@@ -34,14 +34,29 @@ That is a separate external toolchain issue.
 
 
 
-## v90.31 — live CarPlay Route Guidance + native ETA
+## v90.32 — reroute-correct CarPlay maneuvers + route-assisted speed matching
 
-v90.31 connects the HUD app directly to the matched U2W v8.5 live Route Guidance exporter at `192.168.50.2`. Structured iAP2 `0x5201/0x5202/0x5204` data now becomes the preferred navigation source; the existing ScreenCaptureKit/OCR pipeline remains a fallback. The app keeps fresh per-source snapshots and enforces **Google Maps > Apple Maps > Waze** priority without allowing a stale higher-priority source to suppress a current lower-priority route.
+v90.32 keeps the v90.31 adapter-only U2W v8.5 navigation pipeline and does not change Waze source priority. The physical HUD maneuver text returns to the original presentation (`Turn right`, `Turn left`, etc.) by removing the OCR-era duplicate distance suffix; the native maneuver distance field remains unchanged.
 
-CarPlay `CPManeuverType` values map directly into the existing HUD maneuver arrows. Destination/current-road/next-distance data feed the existing `NavigationInstruction` path, while ETA uses the original decompiled HUDWAY `HudEtaPacket` (`2/114/0`, Int64 absolute milliseconds). The default Navigation dashboard is migrated from the legacy `Speed | Navigation | Time` combination to **`Speed | Navigation | ETA`**; the speed-limit sign remains independently managed by the existing speed engine. Local adapter polling starts with the HUD BLE session and releases ownership automatically if its Route Guidance sequence becomes stale, allowing OCR to recover.
+The Route Guidance client now interprets the exported maneuver cursor correctly: the **first valid current maneuver index** is the primary HUD instruction. `0xFFFF` is ignored, the client never falls back to maneuver 0, and the observed Google reroute sequence `5→0→3→1` keeps the last valid maneuver through a short same-source grace, and a new current maneuver must stabilize across two progressive Route Guidance snapshots before takeover. This addresses the field-observed N 33rd St reroute where v90.31 incorrectly displayed the second/future N 34th St maneuver instead of the current Mantua Ave turn.
+
+The `Improved + Philly GIS` speed-limit matcher now accepts fresh CarPlay road context as a weighted road-selection hint. `currentRoad` strongly favors a matching but still geometrically plausible OSM/GIS candidate; the bonus is weakened during rerouting. The maneuver's after-road is used only as a post-turn tie-breaker once GPS geometry already proves the vehicle has rotated onto that road. **CarPlay never supplies the legal speed value**: OSM/Philadelphia GIS remain the sole posted-speed sources. Without an active/fresh CarPlay route, the existing GPS matcher behaves exactly as before.
+
+See `docs/V90_32_REROUTE_AND_CARPLAY_SPEED_MATCHING.md`.
+
+## v90.31 — adapter-only CarPlay Route Guidance + native ETA
+
+v90.31 connects HUD Controller directly to the matched U2W v8.5 live Route Guidance exporter at `http://192.168.50.2/cgi-bin/u2wrgd-live.cgi`. Structured iAP2 `0x5201/0x5202/0x5204` data is now the **only automatic navigation source**. There is no OCR fallback: if the adapter endpoint is unreachable, reports no active route, or its Route Guidance sequence stops advancing for 4.5 seconds, HUD Controller sends Navigation OFF and the physical HUD returns to Freeride. A fresh adapter route automatically re-enters Navigation.
+
+The app maintains fresh per-source leases and applies the requested priority **Google Maps > Apple Maps > Waze**. A higher-priority source wins only while its own stream is fresh, so an old Google Maps snapshot cannot suppress a currently updating Apple Maps or Waze route. Unknown sources are diagnostic-only and do not automatically take HUD ownership.
+
+CarPlay `CPManeuverType` values map into the existing native HUD maneuver-arrow protocol. Current road, destination, next-maneuver distance, maneuver description/type, and maneuver table come from the adapter feed. ETA uses the original decompiled HUDWAY `HudEtaPacket` (`2/114/0`, signed 64-bit big-endian absolute arrival time in milliseconds). The client uses CarPlay's absolute ETA when available and otherwise computes `current time + TimeRemainingToDestination`.
+
+The default Navigation dashboard is **`Speedo | Navigation | ETA`**. A one-time migration changes the legacy v90.30 `Time` default to `ETA` while preserving other explicit widget customizations. The existing speed/speed-limit pipeline remains independent and continues to own the left-side Speedo and legal speed-limit sign.
+
+For locked-phone driving, ScreenCaptureKit is no longer a background dependency or automatic recovery path. The project retains its legacy OCR implementation only as diagnostic/source-history code; `.ocr` is rejected as a physical-HUD navigation owner. The live adapter poll starts with the HUD BLE session, while the existing continuous driving-location/background modes keep the app's vehicle session alive.
 
 See `docs/V90_31_CARPLAY_ROUTE_GUIDANCE.md`.
-
 
 ## v90.30 — crank-stabilized HUD startup + fresh Dashboard headlight synchronization
 

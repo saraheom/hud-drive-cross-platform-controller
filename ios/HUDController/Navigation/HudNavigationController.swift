@@ -30,6 +30,10 @@ final class HudNavigationController {
     }
 
     private func canTakeOwnership(_ owner: NavigationFeedOwner) -> Bool {
+        // v90.31: automatic navigation is adapter-only. ScreenCaptureKit/OCR may
+        // still exist as a diagnostic tool, but it is never allowed to enter
+        // Navigation mode or send maneuver data to the physical HUD.
+        if owner == .ocr { return false }
         if feedOwner == .carPlayAdapter && owner != .carPlayAdapter { return false }
         return true
     }
@@ -49,9 +53,12 @@ final class HudNavigationController {
     }
 
     func navigationOff(owner: NavigationFeedOwner = .manual) {
-        // A stale OCR frame or capture-health watchdog must never knock the HUD
-        // out of live CarPlay navigation.  The adapter releases its own lease
-        // when no fresh RGD source remains.
+        // OCR is never an automatic owner in v90.31, so OCR watchdog/capture
+        // state changes must never toggle the physical HUD mode.
+        if owner == .ocr {
+            logger.log("NAV SOURCE", "Ignored Navigation OFF from OCR; adapter-only navigation policy")
+            return
+        }
         if feedOwner == .carPlayAdapter && owner != .carPlayAdapter {
             logger.log("NAV SOURCE", "Ignored Navigation OFF from \(owner.rawValue); live CarPlay adapter owns HUD")
             return

@@ -1,0 +1,39 @@
+HUD Controller v90.32 - reroute correctness + CarPlay-assisted speed matching
+
+Base:
+- HUD v90.31 AdapterOnly LockedDrive full repository
+- U2W firmware remains v8.5 LiveExporter; no adapter firmware change required
+
+Implemented:
+- Removed OCR-era exact-distance suffix from physical HUD maneuver text.
+- First CarPlay current-maneuver index is primary; second current index is never preferred.
+- 0xFFFF/no-index is rejected.
+- Removed maneuver[0] fallback on missing current 0x5202 record.
+- Physical Google reroute transition 5→0→3→1 is preserved through a 3-second same-source grace; ordinary route-end state 0 is unchanged.
+- Rerouting/calculation transition holds last valid instruction.
+- Post-reroute maneuver requires two progressive stable snapshots before takeover.
+- Expanded Route Guidance reroute/index diagnostics.
+- Fresh CarPlay currentRoad biases Improved + Philly OSM/GIS road selection only.
+- CarPlay semantic bonus = -1.25 normally, -0.15 during route states 3/5.
+- Upcoming/afterRoad is used only as a completed-turn geometry tie-breaker (<=20 m, <=25 deg, <=180 m maneuver distance).
+- N/S/E/W and common street suffix normalization added for provider/OSM road-name matching.
+- Posted speed values remain exclusively OSM/Philadelphia GIS derived.
+- Waze behavior/priority unchanged.
+
+Validation:
+- pytest: 194 passed
+- new v90.32 targeted tests: 7 passed as part of the suite
+- swiftc -parse: NavigationModels.swift PASS
+- swiftc -parse: RouteGuidanceAdapterClient.swift PASS
+- swiftc -parse: HudCommands.swift PASS
+- swiftc -parse: OriginalSpeedLimitEngine.swift PASS
+- swiftc -parse: AppState.swift PASS
+
+Environment limitation:
+- Full signed iOS/TestFlight archive cannot be produced in the Linux build container; repository retains the existing GitHub/Xcode TestFlight workflow.
+
+Physical v8.5 dump cross-check (September 3 drive):
+- 1,584 RouteGuidanceUpdate (0x5201) records inspected.
+- route-state counts included active=1, calculating=3, rerouting=5 and transient state 0; repeated Google reroutes followed 5→0→3→1.
+- 505 active 0x5201 updates contained two valid current-maneuver indexes whose referenced maneuver records differed, confirming that blindly preferring the second index can routinely select a future maneuver.
+- Common cursor examples included [1,2], [2,3], [2,0xFFFF], [3,0xFFFF].

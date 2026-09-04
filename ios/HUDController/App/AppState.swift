@@ -37,6 +37,9 @@ final class AppState {
         }
         let speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)
         self.speedEngine = speedEngine
+        routeGuidance.onRoadContextChanged = { [weak speedEngine] context in
+            speedEngine?.updateCarPlayRouteContext(context)
+        }
         let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
         self.ambientLight = ambientLight
         if #available(iOS 27.0, *) {
@@ -70,10 +73,6 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
 
-            if #available(iOS 27.0, *),
-               let capture = self.externalCapture27 as? ExternalNavigationCapture {
-                capture.hudTransportReady(reason: "BLE transport ready")
-            }
 
             self.scheduleHUDRehydration(reason: "BLE transport ready")
         }
@@ -97,15 +96,9 @@ final class AppState {
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.updateSpotifyVehicleWakeGate(reason: "HUD disconnected")
-            if #available(iOS 27.0, *),
-               let capture = self.externalCapture27 as? ExternalNavigationCapture {
-                capture.hudTransportDisconnected(
-                    reason: "HUD BLE transport disconnected"
-                )
-            }
             self.logger.log(
                 "HUD SESSION",
-                "BLE transport disconnected; capture transport suspended while preserving explicit user intent"
+                "BLE transport disconnected; Route Guidance polling stopped and HUD returned to Freeride"
             )
         }
 
@@ -124,9 +117,8 @@ final class AppState {
                 HudCommands.navigationState(true),
                 label: "Restore dashboard mode → Navigation ON"
             )
-            // The active navigation source owns maneuver re-delivery. ScreenCaptureKit
-            // and future CarPlay-adapter navigation each already retain their own last
-            // validated instruction; do not fabricate/resend the controller's default.
+            // The CarPlay adapter feed owns maneuver re-delivery. Do not
+            // fabricate/resend the controller's default instruction.
             logger.log("DASHBOARD MODE", "Restored Navigation ON after profile rehydration reason=\(reason)")
         } else {
             bluetooth.enqueue(
@@ -150,19 +142,13 @@ final class AppState {
         bluetooth.initializeHUD()
     }
 
-    /// Persistent top-bar shortcut: arm HUD navigation and, in the normal iOS 27
-    /// build, present Apple's full-display capture picker immediately. The
-    /// temporary iOS 26 ambient-test flavor keeps navigation mode available but
-    /// intentionally has no ScreenCaptureKit picker.
+    /// Persistent top-bar shortcut for adapter-only CarPlay Route Guidance.
+    /// It never starts ScreenCaptureKit and never forces Navigation ON without
+    /// a fresh active adapter route. If the feed is absent, HUD remains Freeride.
     func quickStartNavigation() {
-        logger.log("QUICK ACTION", "Navigation shortcut tapped")
-        navigation.navigationOn()
-        if #available(iOS 27.0, *),
-           let capture = externalCapture27 as? ExternalNavigationCapture {
-            capture.presentFullDisplayPicker()
-        } else {
-            logger.log("QUICK ACTION", "Screen capture picker unavailable in this build/OS")
-        }
+        logger.log("QUICK ACTION", "Navigation shortcut tapped — adapter-only Route Guidance refresh")
+        routeGuidance.start(reason: "Navigation shortcut")
+        routeGuidance.refreshNow()
     }
 
     /// Persistent top-bar shortcut: recover the Spotify App Remote connection in
@@ -392,11 +378,6 @@ final class AppState {
         speedEngine.primeRectangularStyle()
         speedEngine.rehydrateHUDState()
 
-        if #available(iOS 27.0, *),
-           let capture = externalCapture27 as? ExternalNavigationCapture {
-            capture.hudSessionDidReset(reason: reason)
-            capture.requestAutomaticStartIfDesired()
-        }
 
         musicFilterInitialized = false
         pushSpotifyMetadataToHUD()
@@ -424,10 +405,6 @@ final class AppState {
         ambientLight.rehydrateHUDState()
         speedEngine.rehydrateHUDState()
 
-        if #available(iOS 27.0, *),
-           let capture = externalCapture27 as? ExternalNavigationCapture {
-            capture.hudSessionDidReset(reason: "phase 3 display reassert")
-        }
 
         logger.log("HUD REHYDRATE", "PHASE 3 display reassert END")
     }

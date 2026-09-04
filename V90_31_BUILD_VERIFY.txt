@@ -1,22 +1,24 @@
-HUD Controller v90.31 build verification
+HUD Controller v90.31 - Adapter-only CarPlay Route Guidance verification
+Date: 2026-09-03
+Base: user-provided HUD v90.30 full repo
 
-Source basis: HUD v90.30 full repo supplied by user.
-
-Implemented:
-- U2W live endpoint: http://192.168.50.2/cgi-bin/u2wrgd-live.cgi
-- fresh-source arbitration: Google Maps > Apple Maps > Waze > Other
-- CarPlay CPManeuverType 0-53 mapping into HudManeuver
-- adapter feed owns navigation while fresh; OCR is fallback
-- original HudEtaPacket protocol: command 2 / p1 114 / p2 0 / Int64 big-endian ms
-- Navigation default migration: Speedo | Navigation | ETA
-- local-network permission + HTTP transport allowance
-- Navigation UI live-feed diagnostics
+Behavior verified in source/tests:
+- Automatic navigation source is adapter-only; HudNavigationController rejects OCR ownership.
+- No AppState/foreground auto-resume of ScreenCaptureKit.
+- Adapter endpoint: http://192.168.50.2/cgi-bin/u2wrgd-live.cgi
+- Freshness timeout: 4.5 seconds; stale/unavailable/inactive feed sends Navigation OFF -> Freeride.
+- Fresh active feed automatically reapplies Navigation profile and sends Navigation ON.
+- Source priority: Google Maps > Apple Maps > Waze; unknown sources cannot automatically own HUD.
+- Native HUD ETA packet implemented: command 2 / p1 114 / p2 0 / Int64 big-endian absolute milliseconds.
+- ETA prefers CarPlay absolute ETA, with current-time + TimeRemainingToDestination fallback.
+- Navigation dashboard default/migration: Speedo | Navigation | ETA; other explicit widget customizations preserved.
+- Existing speed/speed-limit engine remains independent.
+- ScreenCaptureKit removed from UIBackgroundModes; bluetooth-central + location retained.
+- Driving location manager uses pausesLocationUpdatesAutomatically=false and allowsBackgroundLocationUpdates=true.
+- Local network privacy description and HTTP allowance present in both normal and iOS26 project files.
 
 Validation:
-- 187 Python regression tests: PASS
-- v90.31 static regression: PASS
-- all HUDController + HUDControllerTests Swift files: swift frontend parse PASS
-- both XcodeGen YAML project files: parse PASS
-- actual v8.4 physical replay JSON matches Swift Snapshot schema: PASS
-
-Note: an iOS device/TestFlight archive requires Xcode/macOS and is built by the existing repository workflow; this Linux build environment validates source/regressions but does not produce an iOS IPA.
+- Python/source regression suite: 187 passed.
+- v90.31 targeted static tests: included in the 187-pass suite.
+- Modified Swift files parsed successfully with Swift 6.2.1 frontend.
+- No local signed iOS archive was produced in this Linux environment; repository retains the existing GitHub/TestFlight workflows and secret names.
