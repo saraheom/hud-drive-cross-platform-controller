@@ -1,0 +1,18 @@
+HUD Controller v90.32.1 CI Fix verification
+
+Cause of uploaded workflow failure:
+- App/simulator build: PASSED
+- XCTest suite: FAILED only in legacy V77DistanceAndSpeedWarningTests.testHudManeuverTextCarriesExactSourceDistance
+- Three failed assertions belonged to one obsolete OCR-era source-string test.
+
+Fix:
+- Replaced that stale test with a packet-level test for v90.32 behavior.
+- Maneuver text must NOT duplicate displayDistanceText or the bullet separator.
+- Native maneuver distance Int32 remains present and is verified as 321 m in the regression test.
+- Runtime application source is unchanged from v90.32.
+
+Local validation in this environment:
+- Python/source regression suite: 199 passed
+- Modified XCTest Swift source: swiftc -parse passed
+
+The macOS/Xcode simulator XCTest run must execute in GitHub Actions; the uploaded failure was not a compile/signing problem.

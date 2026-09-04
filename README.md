@@ -34,6 +34,14 @@ That is a separate external toolchain issue.
 
 
 
+## v90.32.1 — CI XCTest alignment for restored original maneuver text
+
+v90.32.1 is runtime-identical to v90.32. The iOS simulator build itself succeeded, but the workflow failed because the legacy v77 XCTest still required the OCR-era duplicate distance suffix (for example `Turn right • 0.2 mi`) in the maneuver text. v90.32 intentionally removed that suffix and restored the original HUDWAY presentation.
+
+The stale XCTest is replaced with a packet-level regression test that verifies both intended invariants at once: the rendered maneuver text contains only the maneuver/street/current-road lines and does **not** contain the source distance or bullet, while the native HUD maneuver packet still carries the exact distance separately as the big-endian Int32 meter field. No application runtime code changed from v90.32.
+
+See `docs/V90_32_1_CI_XCTEST_ALIGNMENT.md`.
+
 ## v90.32 — reroute-correct CarPlay maneuvers + route-assisted speed matching
 
 v90.32 keeps the v90.31 adapter-only U2W v8.5 navigation pipeline and does not change Waze source priority. The physical HUD maneuver text returns to the original presentation (`Turn right`, `Turn left`, etc.) by removing the OCR-era duplicate distance suffix; the native maneuver distance field remains unchanged.
