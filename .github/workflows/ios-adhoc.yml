@@ -9,7 +9,6 @@ jobs:
     env:
       HUD_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
       DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
-      SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +29,6 @@ jobs:
           set -euo pipefail
           xcodegen generate
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" HUDController/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :SPOTIFY_CLIENT_ID $SPOTIFY_CLIENT_ID" HUDController/Info.plist
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" HUDController/Info.plist
 
       - name: Create temporary keychain

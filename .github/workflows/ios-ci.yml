@@ -98,11 +98,6 @@ jobs:
           echo "SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
           echo "Using simulator UDID: $UDID"
 
-      - name: Validate Spotify observable internals
-        run: |
-          grep -A1 "@ObservationIgnored" ios/HUDController/Media/SpotifyMediaController.swift | grep -q "private lazy var"
-          echo "Spotify lazy internals are excluded from Observation."
-
       - name: Build ambient test for iOS Simulator
         working-directory: ios
         run: |

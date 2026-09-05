@@ -34,4 +34,5 @@ def test_overspeed_ui_and_fresh_limit_wiring_are_retained():
 def test_spotify_vehicle_gate_is_retained():
     assert 'automaticVehicleWakeAllowed' in SPOTIFY
     assert 'guard automaticVehicleWakeAllowed else' in SPOTIFY
-    assert 'let allowed = bluetooth.state == .connected || obd.connected' in APP
+    assert 'let nowPlaying: CarPlayNowPlayingClient' in APP
+    assert 'updateSpotifyVehicleWakeGate' not in APP

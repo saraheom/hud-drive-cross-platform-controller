@@ -37,7 +37,8 @@ def test_spotify_automatically_wakes_after_repeated_failures_without_clearing_to
     assert "SpotifyTokenStore.clear()" not in auto
     assert "accessToken = nil" not in auto
     assert "automaticWakeCooldown" in SPOTIFY
-    assert "you should not need to keep Spotify open" in MEDIA
+    assert "CarPlay Now Playing" in MEDIA
+    assert "Authorize Spotify" not in MEDIA
 
 
 def test_speed_limit_source_selector_has_current_trace_and_improved_philly_only():

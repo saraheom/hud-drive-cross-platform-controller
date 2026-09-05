@@ -32,7 +32,7 @@ struct RootView: View {
                     },
                     musicAction: {
                         selectedTab = .media
-                        state.quickReconnectSpotify()
+                        state.quickRefreshNowPlaying()
                     },
                     ambientAction: {
                         selectedTab = .vehicle
@@ -45,26 +45,15 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             consumePendingShortcut()
-            state.updateSpotifyVehicleWakeGate(reason: "root view appeared")
-            state.spotify.autoConnectIfPossible()
-        }
-        .onOpenURL { url in
-            if state.spotify.handleCallback(url) {
-                state.logger.log("MEDIA", "Handled Spotify callback URL")
-            }
         }
         .onChange(of: scenePhase) { _, phase in
             state.logger.log("APP LIFECYCLE", "Scene phase \(String(describing: phase))")
             switch phase {
             case .active:
                 consumePendingShortcut()
-                // Refresh the vehicle evidence immediately before Spotify recovery.
-                // Silent connect attempts may run anywhere, but app-switch/wake is
-                // allowed only while HUD or OBD is actually connected.
-                state.updateSpotifyVehicleWakeGate(reason: "app became active")
-                state.spotify.appBecameActive()
+                state.nowPlaying.refreshNow()
             case .background:
-                state.spotify.appEnteredBackground()
+                break
             default:
                 break
             }

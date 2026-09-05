@@ -219,6 +219,24 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var carPlayRouteContext: CarPlayRouteContext?
     private let carPlayRouteFreshnessSeconds: TimeInterval = 5.0
 
+    // v90.34: when Route Guidance has already identified the current road but
+    // the local 500 m OSM slice contains only untagged pieces, perform one
+    // bounded same-road query farther ahead. Only the geometrically connected
+    // component containing the current way participates; unanimous explicit
+    // speed tags may fill the otherwise blank sign. CarPlay never supplies the
+    // legal speed itself.
+    private struct RouteCorridorSpeedConsensus {
+        let identity: String
+        let mph: Int
+        let explicitWayCount: Int
+        let queriedAt: Date
+        let radiusMeters: Int
+    }
+    private var routeCorridorConsensus: RouteCorridorSpeedConsensus?
+    private var routeCorridorRequestKey: String?
+    private var routeCorridorRequestInFlight = false
+    private var routeCorridorLastAttemptAt: [String: Date] = [:]
+
     private let improvedRoadLimitCacheMaxAgeSeconds: TimeInterval = 90.0
     private let improvedRoadLimitCacheMaxDistanceMeters: CLLocationDistance = 1_200
     private let improvedRoadLimitCacheMaxCourseDeltaDegrees: Double = 35.0
@@ -502,6 +520,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         improvedResolutionSource = "none"
         improvedPendingLimit = nil
         improvedSameRoadContinuityArmed = true
+        routeCorridorConsensus = nil
+        routeCorridorRequestKey = nil
+        routeCorridorRequestInFlight = false
+        routeCorridorLastAttemptAt.removeAll()
         philadelphiaSpeedSegments.removeAll()
         philadelphiaLastQueryLocation = nil
         philadelphiaRequestInFlight = false
@@ -1820,6 +1842,134 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         return (mph, observations.count, observations.map(\.distance).min() ?? 999)
     }
 
+
+    private static func overpassEscaped(_ value: String) -> String {
+        value.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private static func corridorWaysConnected(_ a: ImprovedOSMSegment, _ b: ImprovedOSMSegment) -> Bool {
+        guard let af = a.parts.first, let al = a.parts.last,
+              let bf = b.parts.first, let bl = b.parts.last else { return false }
+        let ae = [af.start, al.end]
+        let be = [bf.start, bl.end]
+        for x in ae {
+            let lx = CLLocation(latitude: x.latitude, longitude: x.longitude)
+            for y in be {
+                if lx.distance(from: CLLocation(latitude: y.latitude, longitude: y.longitude)) <= 28 {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private func scheduleRouteCorridorLookup(for seed: ImprovedOSMSegment, at location: CLLocation) {
+        guard sourceMode == .improvedTracePhilly,
+              let name = seed.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty,
+              let identity = Self.normalizedRoadIdentity(name: seed.name, reference: seed.reference),
+              let context = freshCarPlayRouteContext(),
+              Self.routeRoadMatches(context.currentRoad, name: seed.name, reference: seed.reference),
+              !context.isRouteTransition else { return }
+
+        if let cached = routeCorridorConsensus,
+           cached.identity == identity,
+           Date().timeIntervalSince(cached.queriedAt) < 300 { return }
+        if routeCorridorRequestInFlight, routeCorridorRequestKey == identity { return }
+        if let last = routeCorridorLastAttemptAt[identity],
+           Date().timeIntervalSince(last) < 45 { return }
+
+        routeCorridorRequestInFlight = true
+        routeCorridorRequestKey = identity
+        routeCorridorLastAttemptAt[identity] = Date()
+        let maneuverBound = max(1_500, min(3_000, context.distanceToManeuverMeters + 600))
+        logger.log("SPEED ROUTE CORRIDOR", "query scheduled identity=\(identity) name=\(name) radius=\(maneuverBound)m seedWay=\(seed.elementID)")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.routeCorridorRequestInFlight = false
+                self.routeCorridorRequestKey = nil
+            }
+            let lat = location.coordinate.latitude
+            let lon = location.coordinate.longitude
+            let escaped = Self.overpassEscaped(name)
+            let query = """
+            [out:json];
+            way[highway][name="\(escaped)"](around:\(maneuverBound),\(lat),\(lon));
+            out tags geom;
+            """
+            guard var comps = URLComponents(string: "https://overpass-api.de/api/interpreter") else { return }
+            comps.queryItems = [URLQueryItem(name: "data", value: query)]
+            guard let url = comps.url else { return }
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    throw URLError(.badServerResponse)
+                }
+                let decoded = try JSONDecoder().decode(Response.self, from: data)
+                let roads = decoded.elements.compactMap(Self.makeImprovedSegment).filter {
+                    Self.normalizedRoadIdentity(name: $0.name, reference: $0.reference) == identity
+                }
+                guard !roads.isEmpty else {
+                    self.logger.log("SPEED ROUTE CORRIDOR", "no same-road ways returned identity=\(identity)")
+                    return
+                }
+
+                let seedIndex: Int
+                if let exact = roads.firstIndex(where: { $0.elementID == seed.elementID }) {
+                    seedIndex = exact
+                } else if let nearest = roads.indices.min(by: {
+                    Self.minimumDistance(from: location.coordinate, to: roads[$0].parts) <
+                    Self.minimumDistance(from: location.coordinate, to: roads[$1].parts)
+                }) {
+                    seedIndex = nearest
+                } else { return }
+
+                var connected = Set<Int>([seedIndex])
+                var frontier = [seedIndex]
+                while let current = frontier.popLast() {
+                    for idx in roads.indices where !connected.contains(idx) {
+                        if Self.corridorWaysConnected(roads[current], roads[idx]) {
+                            connected.insert(idx)
+                            frontier.append(idx)
+                        }
+                    }
+                }
+
+                let observations: [(Int, Int64)] = connected.compactMap { idx in
+                    guard let mph = Self.unambiguousStaticOSMSpeedMph(roads[idx]) else { return nil }
+                    return (mph, roads[idx].elementID)
+                }
+                let speeds = Set(observations.map { $0.0 })
+                guard observations.count >= 2, speeds.count == 1, let mph = speeds.first else {
+                    self.routeCorridorConsensus = nil
+                    let summary = speeds.sorted().map(String.init).joined(separator: ",")
+                    self.logger.log(
+                        "SPEED ROUTE CORRIDOR",
+                        "consensus withheld identity=\(identity) connectedWays=\(connected.count) explicitWays=\(observations.count) speeds=\(summary.isEmpty ? "-" : summary)"
+                    )
+                    return
+                }
+                self.routeCorridorConsensus = RouteCorridorSpeedConsensus(
+                    identity: identity,
+                    mph: mph,
+                    explicitWayCount: observations.count,
+                    queriedAt: Date(),
+                    radiusMeters: maneuverBound
+                )
+                self.logger.log(
+                    "SPEED ROUTE CORRIDOR",
+                    "consensus identity=\(identity) limit=\(mph) explicitConnectedWays=\(observations.count)/\(connected.count) radius=\(maneuverBound)m"
+                )
+                if self.enabled { self.refreshNow() }
+            } catch {
+                self.logger.log("SPEED ROUTE CORRIDOR", "query failed identity=\(identity): \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func bestImprovedTraceSpeedLimit(at location: CLLocation) -> Int? {
         improvedLatestLocation = location
         improvedLastResolutionFresh = false
@@ -2323,6 +2473,37 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 source: "OSM same-road corridor consensus",
                 warningEligible: false
             )
+        }
+
+        if let confirmedOSM,
+           confirmedOSM.speedMph == nil,
+           confirmedOSM.match.currentDistance <= 20,
+           confirmedOSM.match.currentAngle <= 30,
+           let identity = Self.normalizedRoadIdentity(
+                name: confirmedOSM.segment.name,
+                reference: confirmedOSM.segment.reference
+           ),
+           let context = freshCarPlayRouteContext(),
+           Self.routeRoadMatches(
+                context.currentRoad,
+                name: confirmedOSM.segment.name,
+                reference: confirmedOSM.segment.reference
+           ) {
+            scheduleRouteCorridorLookup(for: confirmedOSM.segment, at: location)
+            if let corridor = routeCorridorConsensus,
+               corridor.identity == identity,
+               Date().timeIntervalSince(corridor.queriedAt) <= 300 {
+                logger.log(
+                    "IMPROVED TRACE DECISION",
+                    "route-corridor consensus identity=\(identity) limit=\(corridor.mph) explicitConnectedWays=\(corridor.explicitWayCount) radius=\(corridor.radiusMeters)m warningFresh=0"
+                )
+                return acceptImprovedLimit(
+                    corridor.mph,
+                    key: "osm-route-corridor:\(identity):\(corridor.mph)",
+                    source: "OSM Route Guidance corridor consensus",
+                    warningEligible: false
+                )
+            }
         }
 
         if improvedDisplayContinuityFresh, currentSpeedLimitMph > 0 {

@@ -9,7 +9,6 @@ jobs:
     env:
       HUD_BUNDLE_ID: ${{ secrets.IOS_BUNDLE_ID }}
       DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
-      SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +60,6 @@ jobs:
           set -euo pipefail
           xcodegen generate
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $IOS_BUILD_NUMBER" HUDController/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :SPOTIFY_CLIENT_ID $SPOTIFY_CLIENT_ID" HUDController/Info.plist
           echo "Generated bundle version:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" HUDController/Info.plist
 
@@ -104,11 +102,6 @@ jobs:
 
           security find-identity -v -p codesigning | grep -q "Apple Distribution"
           echo "Apple Distribution identity is available."
-
-      - name: Validate Spotify observable internals
-        run: |
-          grep -A1 "@ObservationIgnored" ios/HUDController/Media/SpotifyMediaController.swift | grep -q "private lazy var"
-          echo "Spotify lazy internals are excluded from Observation."
 
       - name: Verify App Store build environment
         run: |

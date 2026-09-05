@@ -21,12 +21,16 @@ final class V9014IndependentFeaturesTests: XCTestCase {
         XCTAssertTrue(view.contains("Repeat cooldown"))
     }
 
-    func testSpotifyVehicleGateAndOSMSourcesRemain() throws {
+    func testCarPlayNowPlayingRuntimeAndOSMSourcesRemain() throws {
         let app = try source("HUDController/App/AppState.swift")
-        let spotify = try source("HUDController/Media/SpotifyMediaController.swift")
+        let media = try source("HUDController/Media/CarPlayNowPlayingClient.swift")
+        let project = try source("project.yml")
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
-        XCTAssertTrue(spotify.contains("guard automaticVehicleWakeAllowed else"))
-        XCTAssertTrue(app.contains("bluetooth.state == .connected || obd.connected"))
+        XCTAssertTrue(app.contains("let nowPlaying: CarPlayNowPlayingClient"))
+        XCTAssertTrue(app.contains("pushNowPlayingMetadataToHUD"))
+        XCTAssertTrue(media.contains("u2wmedia-live.cgi"))
+        XCTAssertTrue(project.contains("Media/SpotifyMediaController.swift")) // excluded legacy source
+        XCTAssertFalse(project.contains("package: SpotifyiOS"))
         XCTAssertTrue(speed.contains("case traceOSM = \"OSM Trace\""))
         XCTAssertTrue(speed.contains("case improvedTracePhilly = \"Improved + Philly GIS\""))
     }

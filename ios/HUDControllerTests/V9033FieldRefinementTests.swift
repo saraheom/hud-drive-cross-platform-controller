@@ -9,13 +9,13 @@ final class V9033FieldRefinementTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testApplePreRoadRouteStateSixGetsLongerFreshnessWithoutChangingNormalTimeout() throws {
+    func testRouteLivenessUsesReachableEndpointNotSequenceProgression() throws {
         let route = try source("HUDController/Navigation/RouteGuidanceAdapterClient.swift")
-        XCTAssertTrue(route.contains("staleInterval: TimeInterval = 4.5"))
-        XCTAssertTrue(route.contains("preRoadStartupStaleInterval: TimeInterval = 20.0"))
-        XCTAssertTrue(route.contains("snapshot.active && snapshot.routeState == 6"))
-        XCTAssertTrue(route.contains("lastSequenceProgressAtBySource"))
-        XCTAssertTrue(route.contains("CARPLAY RGD STARTUP"))
+        XCTAssertTrue(route.contains("endpointStaleInterval: TimeInterval = 4.5"))
+        XCTAssertTrue(route.contains("Every successful HTTP response proves that the adapter/runtime is alive"))
+        XCTAssertTrue(route.contains("TimedSnapshot(snapshot: snapshot, receivedAt: now)"))
+        XCTAssertFalse(route.contains("preRoadStartupStaleInterval"))
+        XCTAssertFalse(route.contains("freshnessInterval(for snapshot"))
     }
 
     func testCarPlaySpeedAssistCannotOverrideContradictoryGeometry() throws {

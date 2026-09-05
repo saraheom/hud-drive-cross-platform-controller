@@ -9,7 +9,7 @@ final class AppState {
     let bluetooth: HudBluetoothManager
     let navigation: HudNavigationController
     let routeGuidance: RouteGuidanceAdapterClient
-    let spotify: SpotifyMediaController
+    let nowPlaying: CarPlayNowPlayingClient
     let obd: HudOBDController
     let speedEngine: OriginalSpeedLimitEngine
     let ambientLight: AmbientLightMonitor
@@ -28,8 +28,8 @@ final class AppState {
         self.navigation = navigation
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
-        let spotify = SpotifyMediaController(logger: logger)
-        self.spotify = spotify
+        let nowPlaying = CarPlayNowPlayingClient(logger: logger)
+        self.nowPlaying = nowPlaying
         let obd = HudOBDController(bluetooth: bluetooth, logger: logger)
         self.obd = obd
         routeGuidance.onWillActivate = { [weak obd] in
@@ -51,7 +51,6 @@ final class AppState {
             // uses it as permission for ambient animation. HUD transport readiness
             // is the reliable automatic-animation session gate.
             ambientLight?.obdPowerSignal(connected)
-            self?.updateSpotifyVehicleWakeGate(reason: connected ? "OBD connected" : "OBD disconnected")
         }
 
         speedEngine.onSpeedStateChanged = { [weak ambientLight] speedMph, limitMph, available in
@@ -62,16 +61,16 @@ final class AppState {
             )
         }
 
-        spotify.onTrackChanged = { [weak self] artist, track in
-            self?.pushSpotifyMetadataToHUD(artist: artist, track: track)
+        nowPlaying.onTrackChanged = { [weak self] artist, track in
+            self?.pushNowPlayingMetadataToHUD(artist: artist, track: track)
         }
 
         bluetooth.onTransportReady = { [weak self] in
             guard let self else { return }
             self.ambientLight.hudTransportPowerSignal(true)
-            self.updateSpotifyVehicleWakeGate(reason: "HUD connected")
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
+            self.nowPlaying.start(reason: "HUD BLE transport ready")
 
 
             self.scheduleHUDRehydration(reason: "BLE transport ready")
@@ -95,7 +94,7 @@ final class AppState {
             self.hudReassertTask = nil
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
-            self.updateSpotifyVehicleWakeGate(reason: "HUD disconnected")
+            self.nowPlaying.stop(reason: "HUD BLE transport disconnected")
             self.logger.log(
                 "HUD SESSION",
                 "BLE transport disconnected; Route Guidance polling stopped and HUD returned to Freeride"
@@ -132,10 +131,6 @@ final class AppState {
         }
     }
 
-    func updateSpotifyVehicleWakeGate(reason: String) {
-        let allowed = bluetooth.state == .connected || obd.connected
-        spotify.setAutomaticVehicleWakeAllowed(allowed, reason: reason)
-    }
 
     func initializeHUD() {
         logger.log("APP", "Initialize HUD requested")
@@ -151,16 +146,11 @@ final class AppState {
         routeGuidance.refreshNow()
     }
 
-    /// Persistent top-bar shortcut: recover the Spotify App Remote connection in
-    /// one tap. If authorization is missing, start authorization; otherwise wake
-    /// Spotify and resume the connection without discarding the saved Keychain token.
-    func quickReconnectSpotify() {
-        logger.log("QUICK ACTION", "Music shortcut tapped")
-        if spotify.authorizationRequired || !spotify.authorized {
-            spotify.connectOrAuthorize()
-        } else {
-            spotify.openSpotifyAndResumeConnection()
-        }
+    /// Persistent top-bar shortcut: refresh the passive CarPlay Now Playing feed.
+    /// No media-app authorization or app switching is required.
+    func quickRefreshNowPlaying() {
+        logger.log("QUICK ACTION", "Music shortcut tapped — CarPlay Now Playing refresh")
+        nowPlaying.refreshNow()
     }
 
     func applyBrightness() {
@@ -275,21 +265,21 @@ final class AppState {
     }
 
     func sendNativeMusicTest() {
-        pushSpotifyMetadataToHUD(
-            artist: spotify.artistName.isEmpty ? "Kenshi Yonezu" : spotify.artistName,
-            track: spotify.trackTitle == "No Spotify track" ? "Flamingo" : spotify.trackTitle
+        pushNowPlayingMetadataToHUD(
+            artist: nowPlaying.artist.isEmpty ? "Kenshi Yonezu" : nowPlaying.artist,
+            track: nowPlaying.title == "No CarPlay media" ? "Flamingo" : nowPlaying.title
         )
     }
 
 
-    func pushSpotifyMetadataToHUD(artist: String? = nil, track: String? = nil) {
+    func pushNowPlayingMetadataToHUD(artist: String? = nil, track: String? = nil) {
         guard bluetooth.state == .connected else { return }
 
-        let resolvedArtist = artist ?? spotify.artistName
-        let resolvedTrack = track ?? spotify.trackTitle
+        let resolvedArtist = artist ?? nowPlaying.artist
+        let resolvedTrack = track ?? nowPlaying.title
         guard !resolvedArtist.isEmpty,
               !resolvedTrack.isEmpty,
-              resolvedTrack != "No Spotify track" else { return }
+              resolvedTrack != "No CarPlay media" else { return }
 
         guard settings.notifyMusic else {
             if musicFilterInitialized {
@@ -380,7 +370,7 @@ final class AppState {
 
 
         musicFilterInitialized = false
-        pushSpotifyMetadataToHUD()
+        pushNowPlayingMetadataToHUD()
 
         logger.log(
             "HUD REHYDRATE",

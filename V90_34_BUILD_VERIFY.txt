@@ -1,0 +1,26 @@
+HUD Controller v90.34 - CarPlay data integration verification
+Date: 2026-09-04
+Base: HUD v90.33 full repository
+Paired adapter: U2W CarPlay Data Exporter v8.6
+
+Runtime changes:
+- Route Guidance liveness is based on successful endpoint refresh, not sequence progression.
+- Active same-sequence Apple Maps snapshots stay in Navigation while U2W remains reachable.
+- Existing routeState=0 teardown and reroute grace/stabilization remain.
+- Route Guidance-assisted connected-corridor OSM lookup added for untagged current road segments.
+- Corridor inference requires graph connectivity, >=2 explicit speed ways, and unanimous speed agreement.
+- Route-corridor inferred speed is display-only / warningEligible=false.
+- CarPlayNowPlayingClient polls U2W v8.6 media JSON and artwork endpoints.
+- Media page shows source/title/artist/album/playback/progress/artwork.
+- Physical HUD native Music popup is now fed by CarPlay Now Playing track changes.
+- Spotify SDK/package/client-ID/callback runtime integration removed from app target and workflows.
+- Legacy Spotify source files retained but explicitly excluded from compilation.
+- No speculative Waze force-enable is included.
+
+Validation:
+- Python source/regression suite: 204 passed.
+- Swift 6.2.1 parser: passed for all 128 Swift files under HUDController + HUDControllerTests.
+- ios/project.yml and ios/project-ios26-ambient.yml parsed successfully as YAML.
+- All GitHub workflow YAML files parsed successfully.
+- Project/workflows contain no active Spotify package or SPOTIFY_CLIENT_ID requirement.
+- Linux environment has no Xcode/xcodebuild; signed IPA/TestFlight archive is therefore left to the included GitHub Actions workflows.

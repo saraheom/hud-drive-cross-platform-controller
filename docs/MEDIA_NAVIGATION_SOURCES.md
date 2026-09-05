@@ -1,43 +1,30 @@
-# Media and navigation sources
+# Media and navigation sources — v90.34
 
-Physical iPhone testing established that the accessory notification path works
-for normal Notification Center events such as Messages and KakaoTalk. Spotify
-current-track metadata and live turn-by-turn guidance do not reliably arrive
-through ANCS, so media/navigation remain separate source classes.
+The **CarPlay adapter** is the structured source for both Route Guidance and Now Playing in the current architecture.
 
-## Preferred path: CarPlay adapter metadata
+## Navigation
 
-The current development priority is the CarPlay adapter rather than further
-iOS 27 ScreenCaptureKit work.
+Automatic physical-HUD navigation comes from the U2W Route Guidance exporter (`0x5201/0x5202/0x5204`) at `u2wrgd-live.cgi`.
 
-The tested Carlinkit U2W stock firmware already exchanges Now Playing message
-IDs `0x5000/0x5001`. Experimental Route Guidance support is being tested by
-advertising the Route Guidance component `0x001E` and exposing the `0x5200`–
-`0x5204` family:
+- Priority: Google Maps > Apple Maps > Waze.
+- Liveness: successful U2W endpoint responses + explicit active route state.
+- Sequence progression is **not** a heartbeat; unchanged active Apple Maps state is valid at stoplights.
+- OCR/ScreenCaptureKit does not automatically own physical-HUD Navigation.
 
-- `0x5200` — route-guidance start
-- `0x5201` — route-guidance update
-- `0x5202` — maneuver
-- `0x5203` — route-guidance stop
-- `0x5204` — lane guidance
+## Media / Now Playing
 
-The adapter test remains intentionally separate from the production HUD app
-until the field capture verifies that iPhone/CarPlay actually sends the desired
-Now Playing and live route-guidance payloads. Once verified, the preferred HUD
-architecture is to ingest/export those adapter messages directly and feed the
-existing media/navigation UI from structured metadata rather than screen pixels.
+The current media source is the U2W v8.6 passive CarPlay Now Playing exporter (`0x5001`) at `u2wmedia-live.cgi`, with JPEG artwork from `u2wmedia-artwork.cgi`.
 
-## Other sources
+The active app runtime does not depend on Spotify authorization or a Spotify SDK token. Compatible CarPlay media apps can supply the active Now Playing state.
 
-- ANCS notifications: Messages, calls, mail, social/messaging notifications.
-- Media / Now Playing: prefer CarPlay adapter `0x5000/0x5001` metadata once the
-  exporter is field-verified.
-- Navigation: prefer CarPlay adapter Route Guidance `0x5200`–`0x5204` once the
-  experimental Identify/registration patch is field-verified.
-- ScreenCaptureKit: retain only as an experimental fallback/reference path; do
-  not make additional iOS 27 beta capture work the primary integration plan
-  while the adapter metadata path is being validated.
+## Notifications
 
-This keeps the working notification pipeline separate from future structured
-CarPlay media/navigation integration while avoiding unnecessary dependence on
-screen capture.
+ANCS remains the separate iPhone-notification path for ordinary notifications/calls supported by the HUD firmware. It is not used as the structured navigation or Now Playing source.
+
+## Physical HUD rendering
+
+Structured CarPlay data can be richer than the physical HUD firmware. The app can always use it in the iPhone UI, but persistent left/right physical-HUD widgets are limited to widget/rendering commands implemented by the HUD firmware. Track changes continue to use the known transient native Music notification packet.
+
+## Protocol reference / legacy fallback
+
+The adapter's media negotiation uses the `0x5000/0x5001` Now Playing family. Route Guidance uses the `0x5200`–`0x5204` family. ScreenCaptureKit remains in the repository only as a legacy diagnostic/fallback reference; it is not the automatic physical-HUD navigation source in v90.34.

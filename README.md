@@ -1,3 +1,15 @@
+# HUD Controller v90.34 — CarPlay data integration
+
+v90.34 pairs with **U2W CarPlay Data Exporter v8.6**. It keeps the proven adapter-only Route Guidance architecture, changes navigation liveness to successful endpoint reachability rather than Route Guidance sequence progression, adds a conservative Route Guidance connected-corridor OSM speed-limit inference for untagged road segments, and replaces the active Spotify SDK/token path with passive CarPlay Now Playing metadata + artwork from the U2W.
+
+Current iOS/TestFlight workflows **do not require `SPOTIFY_CLIENT_ID`**. Legacy Spotify source files remain in the repository only for historical regression archaeology and are explicitly excluded from the app target. The current Music/Media runtime does not authorize Spotify, store a Spotify token, invoke the Spotify callback, or automatically launch Spotify.
+
+See `docs/V90_34_CARPLAY_DATA_INTEGRATION.md` and `V90_34_BUILD_VERIFY.txt`.
+
+---
+
+> Historical release notes below describe older builds and may mention Spotify-era setup that is no longer required by v90.34.
+
 # v88 TestFlight — restore existing GitHub secrets
 
 The previous replacement workflow accidentally referenced a new secret naming

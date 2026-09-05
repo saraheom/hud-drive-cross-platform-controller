@@ -6,21 +6,18 @@ def read(rel):
     return (ROOT / rel).read_text()
 
 
-def test_apple_preroad_state6_uses_20_second_sequence_freshness_window():
+def test_route_liveness_is_endpoint_reachability_not_sequence_freshness():
     rg = read("ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift")
-    assert "preRoadStartupStaleInterval: TimeInterval = 20.0" in rg
-    assert "snapshot.active && snapshot.routeState == 6" in rg
-    assert "freshnessInterval(for snapshot" in rg
-    assert "lastSequenceProgressAtBySource" in rg
-    assert "CARPLAY RGD STARTUP" in rg
-    assert "return staleInterval" in rg
+    assert "endpointStaleInterval: TimeInterval = 4.5" in rg
+    assert "TimedSnapshot(snapshot: snapshot, receivedAt: now)" in rg
+    assert "preRoadStartupStaleInterval" not in rg
+    assert "freshnessInterval(for snapshot" not in rg
 
 
-def test_normal_routes_still_keep_45_second_stale_policy_and_no_ocr_fallback():
+def test_route_policy_still_has_no_ocr_fallback():
     rg = read("ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift")
     nav = read("ios/HUDController/Navigation/HudNavigationController.swift")
-    assert "staleInterval: TimeInterval = 4.5" in rg
-    assert "preRoadStartupStaleInterval" in rg
+    assert "endpointStaleInterval: TimeInterval = 4.5" in rg
     assert "navigation.navigationOff(owner: .carPlayAdapter)" in rg
     assert "if owner == .ocr { return false }" in nav
 
