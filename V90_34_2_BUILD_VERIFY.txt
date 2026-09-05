@@ -1,0 +1,29 @@
+HUD Controller v90.34.2 - iOS CI regression-test alignment
+
+Base: v90.34.1 NavigationCursor + RoadSpeedContinuity
+Runtime behavior changes: NONE
+Adapter compatibility: U2W v8.6 (no reflash required)
+
+GitHub Actions failure analyzed:
+- iOS 26 Simulator application build: SUCCEEDED
+- XCTest stage failed with exactly two stale source-inspection assertions:
+  1) V9028FreerideOBDSpeedReliabilityTests.testPendingSameDisplayedLimitIsDisplayOnlyContinuity
+  2) V9029HUDGateOriginalFreerideTests.testSpeedNoBlinkAndPhiladelphiaPointQueryAreRetained
+
+Root cause:
+- Both tests still required the old literal:
+  "Pending same-limit confirmation — disable native warning threshold"
+- v90.34.1 intentionally removed that blanket behavior.
+- Trusted explicit same-speed handoffs now preserve currentLimitWarningEligible to avoid a 50 -> 0 -> 50 threshold blink.
+- Inferred/display-only same-speed handoffs still disable warning trust using:
+  "Pending inferred same-limit confirmation — disable native warning threshold"
+
+Fix:
+- Updated only the two stale XCTest assertions to require:
+  * improvedLastResolutionWarningEligible = currentLimitWarningEligible
+  * Pending inferred same-limit confirmation — disable native warning threshold
+- Existing display continuity and warning-disabled inferred-path assertions remain intact.
+- No production Swift source changed.
+
+Validation performed:
+- python -m pytest -q tests tests_v9031_static.py: 214 passed

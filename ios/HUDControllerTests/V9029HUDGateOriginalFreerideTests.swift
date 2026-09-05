@@ -42,7 +42,8 @@ final class V9029HUDGateOriginalFreerideTests: XCTestCase {
     func testSpeedNoBlinkAndPhiladelphiaPointQueryAreRetained() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         XCTAssertTrue(speed.contains("pending same-limit source confirmation"))
-        XCTAssertTrue(speed.contains("Pending same-limit confirmation — disable native warning threshold"))
+        XCTAssertTrue(speed.contains("improvedLastResolutionWarningEligible = currentLimitWarningEligible"))
+        XCTAssertTrue(speed.contains("Pending inferred same-limit confirmation — disable native warning threshold"))
         XCTAssertTrue(speed.contains("geometryType\", value: \"esriGeometryPoint\""))
         XCTAssertTrue(speed.contains("URLQueryItem(name: \"distance\", value: \"650\")"))
         XCTAssertTrue(speed.contains("pointRadius=650m rawFeatures=%d"))

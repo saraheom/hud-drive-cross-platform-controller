@@ -30,7 +30,8 @@ final class V9028FreerideOBDSpeedReliabilityTests: XCTestCase {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
         XCTAssertTrue(speed.contains("pending same-limit source confirmation"))
         XCTAssertTrue(speed.contains("pending same displayed limit"))
-        XCTAssertTrue(speed.contains("Pending same-limit confirmation — disable native warning threshold"))
+        XCTAssertTrue(speed.contains("improvedLastResolutionWarningEligible = currentLimitWarningEligible"))
+        XCTAssertTrue(speed.contains("Pending inferred same-limit confirmation — disable native warning threshold"))
         XCTAssertTrue(speed.contains("improvedLastResolutionWarningEligible = false"))
     }
 

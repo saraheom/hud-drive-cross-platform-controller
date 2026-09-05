@@ -1,3 +1,11 @@
+# HUD Controller v90.34.2 — iOS CI regression-test alignment
+
+v90.34.2 is a CI-only correction on top of v90.34.1. Runtime navigation, CarPlay, speed-limit, HUD, OBD, and ambient-light behavior are unchanged. Two older Swift source-inspection tests still expected the pre-v90.34.1 behavior where every pending same-limit handoff disabled the native warning threshold. v90.34.1 intentionally changed that invariant: a trusted explicit same-speed handoff preserves the established threshold, while inferred/display-only continuity still disables warning trust. The Swift tests now assert that intended behavior, matching the already-updated Python regression tests.
+
+Validation: 214 Python/static tests passed. The supplied GitHub Actions log showed the simulator app build itself succeeded; only the two stale XCTest assertions failed.
+
+---
+
 # HUD Controller v90.34.1 — Route Guidance cursor compatibility + persistent road speed continuity
 
 v90.34.1 is a focused field-fix release on top of v90.34 and continues using **U2W CarPlay Data Exporter v8.6**. No adapter reflash is required for this app-side compatibility build.
