@@ -67,7 +67,7 @@ def test_no_periodic_freeride_hammer_and_no_unused_minimize_ui():
 
 def test_v9028_speed_fixes_are_retained():
     assert 'pending same-limit source confirmation' in SPEED
-    assert 'Pending same-limit confirmation — disable native warning threshold' in SPEED
+    assert 'Pending inferred same-limit confirmation — disable native warning threshold' in SPEED
     assert 'geometryType", value: "esriGeometryPoint"' in SPEED
     assert 'URLQueryItem(name: "distance", value: "650")' in SPEED
     assert 'pointRadius=650m rawFeatures=%d featuresWithSpeed=%d featuresWithGeometry=%d parsedSegments=%d' in SPEED

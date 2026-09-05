@@ -62,6 +62,12 @@ final class RouteGuidanceAdapterClient {
         var distanceToManeuverUnits: Int
         var currentManeuverIndex: Int?
         var nextManeuverIndex: Int?
+        // v90.34.1 accepts the corrected exporter schema when available while
+        // remaining compatible with U2W v8.6. In v8.6 a *single* 0x000D list
+        // member was accidentally exported as nextManeuverIndex instead of the
+        // primary/current index.
+        var currentManeuverIndices: [Int]?
+        var secondaryCurrentManeuverIndex: Int?
         var maneuverCount: Int
         var laneGuidanceShowing: Bool
         var maneuvers: [ManeuverSnapshot]
@@ -381,7 +387,7 @@ final class RouteGuidanceAdapterClient {
             status = "Live Route Guidance • \(selectedSource) • waiting for current maneuver"
             logger.log(
                 "CARPLAY RGD HUD",
-                "No valid first current maneuver for seq=\(snapshot.sequence) currentIndex=\(snapshot.currentManeuverIndex.map(String.init) ?? "nil") secondCurrent=\(snapshot.nextManeuverIndex.map(String.init) ?? "nil"); HUD remains Freeride until a valid maneuver arrives"
+                "No usable current maneuver for seq=\(snapshot.sequence) primary=\(primaryCurrentIndex(in: snapshot).map(String.init) ?? "nil") exportedCurrent=\(snapshot.currentManeuverIndex.map(String.init) ?? "nil") exportedSecond=\(snapshot.nextManeuverIndex.map(String.init) ?? "nil"); HUD remains Freeride until a valid maneuver arrives"
             )
             return
         }
@@ -430,7 +436,7 @@ final class RouteGuidanceAdapterClient {
             lastDeliveredSignature = visibleSignature
             logger.log(
                 "CARPLAY RGD HUD",
-                "source=\(selectedSource) seq=\(snapshot.sequence) routeState=\(snapshot.routeState) currentIndex=\(snapshot.currentManeuverIndex.map(String.init) ?? "nil") secondCurrent=\(snapshot.nextManeuverIndex.map(String.init) ?? "nil") maneuver=\(instruction.maneuver.label) distance=\(instruction.distanceMeters)m display=\(instruction.displayDistanceText) street=\(instruction.streetName) eta=\(etaText) signature=\(signature)"
+                "source=\(selectedSource) seq=\(snapshot.sequence) routeState=\(snapshot.routeState) primary=\(primaryCurrentIndex(in: snapshot).map(String.init) ?? "nil") exportedCurrent=\(snapshot.currentManeuverIndex.map(String.init) ?? "nil") exportedSecond=\(snapshot.nextManeuverIndex.map(String.init) ?? "nil") maneuver=\(instruction.maneuver.label) distance=\(instruction.distanceMeters)m display=\(instruction.displayDistanceText) street=\(instruction.streetName) eta=\(etaText) signature=\(signature)"
             )
         }
     }
@@ -440,18 +446,43 @@ final class RouteGuidanceAdapterClient {
         return index
     }
 
-    /// v90.32: the two exported index fields came from CarPlay's current-maneuver
-    /// index list. The first index is the HUD's primary/current instruction; the
-    /// second can be a simultaneously relevant following instruction. Never prefer
-    /// the second index for the primary HUD maneuver.
+    /// CarPlay field 0x000D is a *list of currently relevant maneuver indexes*.
+    /// The first valid element is the primary HUD maneuver. U2W v8.6 contains one
+    /// exporter bug: when that list contains exactly one UInt16, it is written to
+    /// `nextManeuverIndex` and `currentManeuverIndex` is null. That is the dominant
+    /// normal shape for both Google Maps and Apple Maps, so refusing the second
+    /// field in that one specific schema shape made Google stay in Freeride and
+    /// made Apple hold an old maneuver indefinitely.
+    ///
+    /// Prefer the corrected array schema when a future exporter supplies it, then
+    /// the legacy primary field, and finally apply the v8.6 single-index compatibility
+    /// shim only when the exported primary is absent. If both legacy fields exist,
+    /// the second remains secondary and is never promoted.
+    private func primaryCurrentIndex(in snapshot: Snapshot) -> Int? {
+        if let indexes = snapshot.currentManeuverIndices {
+            for index in indexes {
+                if let valid = sanitizedCurrentIndex(index) { return valid }
+            }
+        }
+        if let current = sanitizedCurrentIndex(snapshot.currentManeuverIndex) {
+            return current
+        }
+        guard snapshot.currentManeuverIndex == nil,
+              let legacySingle = sanitizedCurrentIndex(snapshot.nextManeuverIndex),
+              snapshot.maneuvers.contains(where: { $0.index == legacySingle }) else {
+            return nil
+        }
+        return legacySingle
+    }
+
     private func primaryCurrentManeuver(in snapshot: Snapshot) -> ManeuverSnapshot? {
-        guard let index = sanitizedCurrentIndex(snapshot.currentManeuverIndex) else { return nil }
+        guard let index = primaryCurrentIndex(in: snapshot) else { return nil }
         return snapshot.maneuvers.first(where: { $0.index == index })
     }
 
     private func instructionIdentity(_ instruction: NavigationInstruction, snapshot: Snapshot) -> String {
         [
-            sanitizedCurrentIndex(snapshot.currentManeuverIndex).map(String.init) ?? "nil",
+            primaryCurrentIndex(in: snapshot).map(String.init) ?? "nil",
             instruction.maneuver.rawValue,
             instruction.primaryText,
             instruction.streetName,

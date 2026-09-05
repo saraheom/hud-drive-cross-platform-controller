@@ -1706,6 +1706,28 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         return nil
     }
 
+    /// v90.34.1 road-episode continuity. OSM can represent one physical corridor as
+    /// a named mainline way followed by an unnamed `_link` way that retains only
+    /// the route ref (for example Roosevelt Expressway / US 1 -> unnamed US 1
+    /// motorway_link -> Roosevelt Expressway / US 1). A name-first identity changes
+    /// across that boundary even though the car never left the route. Compare both
+    /// name and ref aliases, and treat mainline/link variants of the same highway
+    /// class as one corridor family.
+    private static func corridorHighwayFamily(_ raw: String) -> String {
+        raw.lowercased().replacingOccurrences(of: "_link", with: "")
+    }
+
+    private static func sameRoadCorridor(_ lhs: ImprovedOSMSegment, _ rhs: ImprovedOSMSegment) -> Bool {
+        let lhsName = normalizedRoadPhrase(lhs.name ?? "")
+        let rhsName = normalizedRoadPhrase(rhs.name ?? "")
+        let lhsRef = normalizedRoadPhrase(lhs.reference ?? "")
+        let rhsRef = normalizedRoadPhrase(rhs.reference ?? "")
+        let sharesName = !lhsName.isEmpty && lhsName == rhsName
+        let sharesRef = !lhsRef.isEmpty && lhsRef == rhsRef
+        guard sharesName || sharesRef else { return false }
+        return corridorHighwayFamily(lhs.highway) == corridorHighwayFamily(rhs.highway)
+    }
+
     private func freshCarPlayRouteContext(now: Date = Date()) -> CarPlayRouteContext? {
         guard let context = carPlayRouteContext,
               now.timeIntervalSince(context.receivedAt) >= -1.0,
@@ -1970,6 +1992,41 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
     }
 
+    /// Preserve the displayed legal speed across a strongly matched, untagged OSM
+    /// bridge that still belongs to the same physical road/ref corridor. This is
+    /// display continuity only: the inherited value never refreshes overspeed
+    /// warning trust. The next explicit conflicting tag (e.g. Roosevelt 50 -> 40)
+    /// still takes over through the normal two-sample confirmation path.
+    private func bridgeImprovedRoadEpisode(
+        to nextIdentity: String?,
+        at location: CLLocation,
+        reason: String
+    ) {
+        guard let nextIdentity, currentSpeedLimitMph > 0 else { return }
+        improvedRoadLimitCacheIdentity = nextIdentity
+        improvedRoadLimitCacheMph = currentSpeedLimitMph
+        improvedRoadLimitCacheSupportedAt = Date()
+        improvedRoadLimitCacheLocation = location
+        improvedRoadLimitCacheCourse = location.course
+        improvedSameRoadContinuityArmed = true
+        improvedDisplayContinuityFresh = true
+        improvedDisplayContinuityReason = reason
+        improvedLastResolutionWarningEligible = false
+
+        if currentLimitWarningEligible {
+            currentLimitWarningEligible = false
+            speedLimitAvailableForWarning = false
+            if showSpeedLimit, bluetooth.state == .connected {
+                bluetooth.enqueue(
+                    HudCommands.speedWarningThreshold(0),
+                    label: "Road-corridor inherited display hold — disable native warning threshold"
+                )
+            }
+        } else {
+            speedLimitAvailableForWarning = false
+        }
+    }
+
     private func bestImprovedTraceSpeedLimit(at location: CLLocation) -> Int? {
         improvedLatestLocation = location
         improvedLastResolutionFresh = false
@@ -2114,38 +2171,70 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             if let takeover = hardRoadTakeover {
                 let previousID = improvedCurrentRoadID
                 let previousIdentity = improvedCurrentRoadIdentity ?? "none"
-                improvedCurrentRoadID = takeover.segment.elementID
-                improvedCurrentRoadIdentity = Self.normalizedRoadIdentity(
+                let previousSegment = previousID.flatMap { id in
+                    improvedSegments.first(where: { $0.elementID == id })
+                }
+                let nextIdentity = Self.normalizedRoadIdentity(
                     name: takeover.segment.name,
                     reference: takeover.segment.reference
                 )
-                if improvedRoadLimitCacheIdentity != improvedCurrentRoadIdentity {
-                    improvedRoadLimitCacheIdentity = nil
-                    improvedRoadLimitCacheMph = 0
-                    improvedRoadLimitCacheSupportedAt = nil
-                    improvedRoadLimitCacheLocation = nil
-                    improvedRoadLimitCacheCourse = -1
-                }
+                let corridorBridge = currentSpeedLimitMph > 0 &&
+                    takeover.speedMph == nil &&
+                    previousSegment.map { Self.sameRoadCorridor($0, takeover.segment) } == true
+
+                improvedCurrentRoadID = takeover.segment.elementID
+                improvedCurrentRoadIdentity = nextIdentity
                 improvedPendingRoad = nil
                 improvedPendingLimit = nil
-                improvedSameRoadContinuityArmed = false
-                currentLimitWarningEligible = false
-                speedLimitAvailableForWarning = false
                 confirmedOSM = takeover
-                logger.log(
-                    "IMPROVED TRACE DECISION",
-                    String(
-                        format: "completed-turn road takeover %lld(%@) → %lld(%@) dist=%.1fm angle=%.1f matched=%d/%d; inherited continuity disarmed",
-                        previousID ?? 0,
-                        previousIdentity,
-                        takeover.segment.elementID,
-                        improvedCurrentRoadIdentity ?? "-",
-                        takeover.match.currentDistance,
-                        takeover.match.currentAngle,
-                        takeover.match.matchedPoints,
-                        trace.count
+
+                if corridorBridge {
+                    bridgeImprovedRoadEpisode(
+                        to: nextIdentity,
+                        at: location,
+                        reason: "OSM connected road/ref corridor bridge"
                     )
-                )
+                    logger.log(
+                        "IMPROVED TRACE DECISION",
+                        String(
+                            format: "corridor bridge takeover %lld(%@) → %lld(%@) dist=%.1fm angle=%.1f matched=%d/%d; preserve displayed %d mph via shared name/ref, warningFresh=0",
+                            previousID ?? 0,
+                            previousIdentity,
+                            takeover.segment.elementID,
+                            nextIdentity ?? "-",
+                            takeover.match.currentDistance,
+                            takeover.match.currentAngle,
+                            takeover.match.matchedPoints,
+                            trace.count,
+                            currentSpeedLimitMph
+                        )
+                    )
+                } else {
+                    if improvedRoadLimitCacheIdentity != improvedCurrentRoadIdentity {
+                        improvedRoadLimitCacheIdentity = nil
+                        improvedRoadLimitCacheMph = 0
+                        improvedRoadLimitCacheSupportedAt = nil
+                        improvedRoadLimitCacheLocation = nil
+                        improvedRoadLimitCacheCourse = -1
+                    }
+                    improvedSameRoadContinuityArmed = false
+                    currentLimitWarningEligible = false
+                    speedLimitAvailableForWarning = false
+                    logger.log(
+                        "IMPROVED TRACE DECISION",
+                        String(
+                            format: "completed-turn road takeover %lld(%@) → %lld(%@) dist=%.1fm angle=%.1f matched=%d/%d; inherited continuity disarmed",
+                            previousID ?? 0,
+                            previousIdentity,
+                            takeover.segment.elementID,
+                            improvedCurrentRoadIdentity ?? "-",
+                            takeover.match.currentDistance,
+                            takeover.match.currentAngle,
+                            takeover.match.matchedPoints,
+                            trace.count
+                        )
+                    )
+                }
             }
 
             // v90.22 same-road fast handoff. A single physical street such as
@@ -2255,23 +2344,43 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                     let next = pending.count + 1
                     improvedPendingRoad = (best.segment.elementID, next)
                     if next >= 2 {
+                        let previousID = improvedCurrentRoadID
                         let previousIdentity = improvedCurrentRoadIdentity
+                        let previousSegment = previousID.flatMap { id in
+                            improvedSegments.first(where: { $0.elementID == id })
+                        }
                         let nextIdentity = Self.normalizedRoadIdentity(
                             name: best.segment.name,
                             reference: best.segment.reference
                         )
+                        let corridorBridge = currentSpeedLimitMph > 0 &&
+                            best.speedMph == nil &&
+                            previousSegment.map { Self.sameRoadCorridor($0, best.segment) } == true
+
                         improvedCurrentRoadID = best.segment.elementID
                         improvedCurrentRoadIdentity = nextIdentity
                         if previousIdentity != nil, nextIdentity != previousIdentity {
-                            improvedRoadLimitCacheIdentity = nil
-                            improvedRoadLimitCacheMph = 0
-                            improvedRoadLimitCacheSupportedAt = nil
-                            improvedRoadLimitCacheLocation = nil
-                            improvedRoadLimitCacheCourse = -1
-                            improvedSameRoadContinuityArmed = false
-                            improvedPendingLimit = nil
-                            currentLimitWarningEligible = false
-                            speedLimitAvailableForWarning = false
+                            if corridorBridge {
+                                bridgeImprovedRoadEpisode(
+                                    to: nextIdentity,
+                                    at: location,
+                                    reason: "OSM confirmed road/ref corridor bridge"
+                                )
+                                logger.log(
+                                    "IMPROVED TRACE DECISION",
+                                    "confirmed corridor bridge \(previousID.map(String.init) ?? "none") → \(best.segment.elementID) \(previousIdentity ?? "-") → \(nextIdentity ?? "-"); preserve displayed \(currentSpeedLimitMph) mph warningFresh=0"
+                                )
+                            } else {
+                                improvedRoadLimitCacheIdentity = nil
+                                improvedRoadLimitCacheMph = 0
+                                improvedRoadLimitCacheSupportedAt = nil
+                                improvedRoadLimitCacheLocation = nil
+                                improvedRoadLimitCacheCourse = -1
+                                improvedSameRoadContinuityArmed = false
+                                improvedPendingLimit = nil
+                                currentLimitWarningEligible = false
+                                speedLimitAvailableForWarning = false
+                            }
                         }
                         improvedPendingRoad = nil
                         confirmedOSM = best
@@ -2633,21 +2742,31 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         if currentSpeedLimitMph == mph {
             improvedDisplayContinuityFresh = true
             improvedDisplayContinuityReason = "pending same-limit source confirmation"
-            improvedLastResolutionWarningEligible = false
             improvedResolutionSource = improvedDisplayContinuityReason
-            if currentLimitWarningEligible {
-                currentLimitWarningEligible = false
-                speedLimitAvailableForWarning = false
-                if showSpeedLimit, bluetooth.state == .connected {
-                    bluetooth.enqueue(
-                        HudCommands.speedWarningThreshold(0),
-                        label: "Pending same-limit confirmation — disable native warning threshold"
-                    )
+
+            // A strong local source that is merely reconfirming the *same* posted
+            // number should not bounce the native threshold 50→0→50 on every OSM
+            // way boundary. Preserve the already-established warning trust during
+            // that one-sample handoff. Lower-confidence/inferred sources still
+            // disable warning trust immediately.
+            if warningEligible {
+                improvedLastResolutionWarningEligible = currentLimitWarningEligible
+            } else {
+                improvedLastResolutionWarningEligible = false
+                if currentLimitWarningEligible {
+                    currentLimitWarningEligible = false
+                    speedLimitAvailableForWarning = false
+                    if showSpeedLimit, bluetooth.state == .connected {
+                        bluetooth.enqueue(
+                            HudCommands.speedWarningThreshold(0),
+                            label: "Pending inferred same-limit confirmation — disable native warning threshold"
+                        )
+                    }
                 }
             }
             logger.log(
                 "IMPROVED TRACE DECISION",
-                "pending same displayed limit \(mph) mph source=\(source); suppress stale display clear while confirmation completes warningFresh=0"
+                "pending same displayed limit \(mph) mph source=\(source); preserve sign continuity warningEligible=\(warningEligible ? 1 : 0)"
             )
             return mph
         }

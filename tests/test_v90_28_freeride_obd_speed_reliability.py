@@ -48,8 +48,12 @@ def test_same_displayed_speed_pending_confirmation_prevents_one_sample_mlk_blank
     assert 'if currentSpeedLimitMph == mph {' in accept
     assert 'improvedDisplayContinuityFresh = true' in accept
     assert 'pending same-limit source confirmation' in accept
-    assert 'improvedLastResolutionWarningEligible = false' in accept
-    assert 'Pending same-limit confirmation — disable native warning threshold' in accept
+    # v90.34.1 keeps an already-trusted native warning threshold through a
+    # strong local same-limit handoff, but inferred/display-only sources still
+    # disable warning trust immediately.
+    assert 'if warningEligible {' in accept
+    assert 'improvedLastResolutionWarningEligible = currentLimitWarningEligible' in accept
+    assert 'Pending inferred same-limit confirmation — disable native warning threshold' in accept
     assert 'pending same displayed limit' in accept
 
 

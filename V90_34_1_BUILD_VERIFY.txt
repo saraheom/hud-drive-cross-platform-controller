@@ -1,0 +1,19 @@
+HUD Controller v90.34.1 - navigation cursor + road speed continuity verification
+
+Base: v90.34 CarPlay data integration
+Adapter compatibility: U2W v8.6 (no reflash required)
+
+Implemented:
+- U2W v8.6 single-element 0x000D compatibility without promoting the secondary index when a real current index exists.
+- Optional forward-compatible currentManeuverIndices[] decoding.
+- Persistent display continuity across strongly matched untagged same-name/ref OSM corridor bridges.
+- Mainline/_link highway-family continuity for cases such as Roosevelt Expressway / US 1.
+- Explicit conflicting speed still supersedes inherited display value through normal confirmation.
+- Same-number trusted explicit handoffs no longer toggle native warning threshold off/on.
+- Now Playing and v90.34 endpoint-liveness architecture unchanged.
+
+Validation performed in build environment:
+- python -m pytest -q tests tests_v9031_static.py: 214 passed
+- swiftc -parse ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift: PASS
+- swiftc -parse ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift: PASS
+- ios/project.yml and all .github/workflows/*.yml parsed with PyYAML: PASS

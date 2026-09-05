@@ -1,4 +1,18 @@
-# HUD Controller v90.34 — CarPlay data integration
+# HUD Controller v90.34.1 — Route Guidance cursor compatibility + persistent road speed continuity
+
+v90.34.1 is a focused field-fix release on top of v90.34 and continues using **U2W CarPlay Data Exporter v8.6**. No adapter reflash is required for this app-side compatibility build.
+
+The Route Guidance client now handles the v8.6 exporter's single-element `0x000D` quirk: if `currentManeuverIndex` is absent but the legacy `nextManeuverIndex` contains a valid maneuver table entry, that value is treated as the sole current maneuver. When both legacy fields are present, the first/current field still wins, preserving the v90.32 protection against selecting Apple Maps' secondary/future maneuver. A future corrected exporter may also provide `currentManeuverIndices[]`, which v90.34.1 prefers directly. Endpoint-response liveness remains unchanged, so stoplights do not return the HUD to Freeride.
+
+The Improved + Philly speed matcher now keeps a confirmed displayed limit across strongly matched **untagged pieces of the same physical road/ref corridor**, including name↔ref transitions such as `Roosevelt Expressway / US 1` → unnamed `US 1 motorway_link`. This is display-only inheritance: overspeed warning trust is disabled while the value is inherited, and a new explicit conflicting speed (for example 50→40) still takes over through normal confirmation. Same-number explicit handoffs no longer unnecessarily toggle the native warning threshold off and back on.
+
+CarPlay Now Playing, album artwork, ambient lighting, Google > Apple > Waze source priority, reroute stabilization, and the no-OCR locked-phone navigation architecture are otherwise unchanged from v90.34.
+
+See `docs/V90_34_1_NAVIGATION_SPEED_CONTINUITY.md` and `V90_34_1_BUILD_VERIFY.txt`.
+
+---
+
+## v90.34 — CarPlay data integration
 
 v90.34 pairs with **U2W CarPlay Data Exporter v8.6**. It keeps the proven adapter-only Route Guidance architecture, changes navigation liveness to successful endpoint reachability rather than Route Guidance sequence progression, adds a conservative Route Guidance connected-corridor OSM speed-limit inference for untagged road segments, and replaces the active Spotify SDK/token path with passive CarPlay Now Playing metadata + artwork from the U2W.
 
@@ -8,7 +22,7 @@ See `docs/V90_34_CARPLAY_DATA_INTEGRATION.md` and `V90_34_BUILD_VERIFY.txt`.
 
 ---
 
-> Historical release notes below describe older builds and may mention Spotify-era setup that is no longer required by v90.34.
+> Historical release notes below describe older builds and may mention Spotify-era setup that is no longer required by v90.34.1.
 
 # v88 TestFlight — restore existing GitHub secrets
 

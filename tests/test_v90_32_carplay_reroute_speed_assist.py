@@ -24,7 +24,7 @@ def test_first_current_maneuver_wins_and_no_maneuver_zero_fallback():
     assert "snapshot.nextManeuverIndex ?? snapshot.currentManeuverIndex" not in rg
     assert "?? snapshot.maneuvers.first" not in rg
     assert "index < 0xFFFF" in rg
-    assert "The first index is the HUD's primary/current instruction" in rg
+    assert 'The first valid element is the primary HUD maneuver' in rg
 
 
 def test_reroute_holds_last_valid_until_new_current_maneuver_stabilizes():
