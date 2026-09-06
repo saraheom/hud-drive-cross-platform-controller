@@ -1,3 +1,11 @@
+# HUD Controller v90.34.4 — Recorded CarPlay lane replay
+
+v90.34.4 is a **zero-firmware-write parked diagnostic** on top of v90.34.3. The Navigation page can replay real Apple Maps and Google Maps `0x5204 LaneGuidanceInformation` events recovered from earlier physical U2W captures. Each step shows the original signed CarPlay lane angles, normalizes them to the five stock HudLauncher lane shapes, sends the captured maneuver context, and then sends the native `HudLanesManueverCommandPacket`. Previous / Next / 4-second Auto Replay controls let the physical renderer be validated at home before live lane integration is enabled. The v90.34.3 manual lane presets and mini-Music experiment remain available. No ADB, HUD filesystem, updater, APK, boot-animation, or live-adapter changes are made by this release.
+
+See `docs/V90_34_4_RECORDED_CARPLAY_LANE_REPLAY.md` and `V90_34_4_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.34.3 — firmware-native lanes + mini Music diagnostics
 
 v90.34.3 is a **no-firmware-write** diagnostic release on top of v90.34.2. Reverse engineering of the stock HUDWAY Drive `HudLauncher.apk` confirmed the exact `HudLanesManueverCommandPacket` encoding (`command=2, p1=113, p2=0`; signed lane values where positive=active and negative=inactive) and the stock mini-Music path (`MusicNotificationPacket` + `HudHUDWidgetsMiniState`). The iOS app now exposes controlled physical-HUD tests for both features without ADB, APK changes, remounting, updater commands, or firmware flashing.

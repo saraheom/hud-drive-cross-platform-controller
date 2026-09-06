@@ -341,6 +341,24 @@ final class AppState {
         logger.log("HUD NATIVE LANES", "clear")
     }
 
+    func sendRecordedCarPlayLaneReplayStep(_ step: RecordedCarPlayLaneReplay.Step) {
+        guard bluetooth.state == .connected else { return }
+
+        // Parked diagnostic replay: send the captured maneuver through the same
+        // native HUDWAY path, immediately followed by the captured 0x5204 lane
+        // topology normalized to HudLanesManueverCommandPacket values.
+        navigation.navigationOn()
+        navigation.send(step.instruction)
+        bluetooth.enqueue(
+            HudCommands.laneGuidance(step.nativeLanes),
+            label: "Recorded \(step.source) lanes → rec \(step.captureRecord) group \(step.laneGroupIndex)"
+        )
+        logger.log(
+            "HUD LANE REPLAY",
+            "source=\(step.source) rec=\(step.captureRecord) group=\(step.laneGroupIndex) road=\(step.currentRoad) maneuver=\(step.maneuverDescription) angles=\(step.laneAngleSummary) hud=\(step.hudValueSummary)"
+        )
+    }
+
     func sendNativeMusicMiniTest(artist: String? = nil, track: String? = nil) {
         guard bluetooth.state == .connected else { return }
 

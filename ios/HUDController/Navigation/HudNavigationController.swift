@@ -73,17 +73,25 @@ final class HudNavigationController {
     }
 
     func sendCurrent(owner: NavigationFeedOwner = .manual) {
+        send(current, owner: owner)
+    }
+
+    /// Send an explicit instruction through the same native maneuver path used
+    /// by the live controller. This is useful for parked/replay diagnostics and
+    /// also keeps the controller's visible current instruction synchronized.
+    func send(_ instruction: NavigationInstruction, owner: NavigationFeedOwner = .manual) {
         guard canTakeOwnership(owner) else {
             logger.log("NAV SOURCE", "Suppressed maneuver from \(owner.rawValue); live CarPlay adapter owns HUD")
             return
         }
+        current = instruction
         feedOwner = owner
-        logger.log("NAV", "owner=\(owner.rawValue) \(current.maneuver.label), \(current.distanceMeters)m, \(current.streetName)")
+        logger.log("NAV", "owner=\(owner.rawValue) \(instruction.maneuver.label), \(instruction.distanceMeters)m, \(instruction.streetName)")
         // The stock Android app applies DisplaySpeedUintsCommandPacket as part
         // of HUD settings. Reassert it here so a physical HUD reboot cannot
         // format a correct meter distance using a stale/default unit mode.
         bluetooth.enqueue(HudCommands.imperialUnits(), label: "Navigation → imperial units")
-        bluetooth.enqueue(HudCommands.maneuver(current), label: "Maneuver (\(owner.rawValue))")
+        bluetooth.enqueue(HudCommands.maneuver(instruction), label: "Maneuver (\(owner.rawValue))")
     }
 
     func sendETA(arrivalTimeMilliseconds: Int64, owner: NavigationFeedOwner = .manual) {

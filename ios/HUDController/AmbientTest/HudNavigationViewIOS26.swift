@@ -7,6 +7,16 @@ import SwiftUI
 struct HudNavigationView: View {
     @Bindable var state: AppState
     @State private var lanePreset: AppState.NativeLaneTestPreset = .fourStraightUseThird
+    @State private var replayRoute: RecordedCarPlayLaneReplay.Route = .appleMaps
+    @State private var replayStepIndex = 0
+    @State private var replayAutoRunning = false
+    @State private var replayTask: Task<Void, Never>?
+
+    private var replaySteps: [RecordedCarPlayLaneReplay.Step] { replayRoute.steps }
+
+    private var currentReplayStep: RecordedCarPlayLaneReplay.Step {
+        replaySteps[min(max(0, replayStepIndex), max(0, replaySteps.count - 1))]
+    }
 
     var body: some View {
         NavigationStack {
@@ -72,7 +82,6 @@ struct HudNavigationView: View {
                         }
                     }
 
-
                     HudCard {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Firmware-native lane guidance")
@@ -105,12 +114,145 @@ struct HudNavigationView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    HudCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Recorded CarPlay lane replay")
+                                .font(.headline)
+
+                            Text("Parked diagnostic. Replays real 0x5204 lane-guidance messages recovered from earlier physical Apple Maps / Google Maps U2W captures, paired with the captured maneuver context. No adapter connection, OCR, ADB, or HUD firmware write is used.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Picker("Capture", selection: Binding(
+                                get: { replayRoute },
+                                set: { route in
+                                    stopAutoReplay()
+                                    replayRoute = route
+                                    replayStepIndex = 0
+                                }
+                            )) {
+                                ForEach(RecordedCarPlayLaneReplay.Route.allCases) { route in
+                                    Text(route.title).tag(route)
+                                }
+                            }
+                            .disabled(replayAutoRunning)
+
+                            Text(replayRoute.captureLabel)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+
+                            Divider()
+
+                            Text("Step \(replayStepIndex + 1) of \(replaySteps.count) • \(currentReplayStep.displayTitle)")
+                                .font(.subheadline.bold())
+
+                            LabeledContent("Road", value: currentReplayStep.currentRoad)
+                            LabeledContent("Maneuver", value: currentReplayStep.maneuverDescription)
+                            LabeledContent("CP type", value: String(currentReplayStep.carPlayManeuverType))
+                            LabeledContent("Distance", value: currentReplayStep.instruction.displayDistanceText)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Raw CarPlay lane angles")
+                                    .font(.caption.bold())
+                                Text(currentReplayStep.laneAngleSummary)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Native HUD signed values")
+                                    .font(.caption.bold())
+                                Text(currentReplayStep.hudValueSummary)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+
+                            Button("Send This Recorded Step") {
+                                sendReplayStep(replayStepIndex)
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            HStack {
+                                Button("◀ Previous") {
+                                    let next = max(0, replayStepIndex - 1)
+                                    replayStepIndex = next
+                                    sendReplayStep(next)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(replayStepIndex == 0 || replayAutoRunning)
+
+                                Button("Next ▶") {
+                                    let next = min(replaySteps.count - 1, replayStepIndex + 1)
+                                    replayStepIndex = next
+                                    sendReplayStep(next)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(replayStepIndex >= replaySteps.count - 1 || replayAutoRunning)
+                            }
+
+                            if replayAutoRunning {
+                                Button("Stop Auto Replay", role: .destructive) {
+                                    stopAutoReplay()
+                                }
+                            } else {
+                                Button("Auto Replay • 4 s/step") {
+                                    startAutoReplay()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            Button("Clear Replayed Lanes") {
+                                state.clearNativeLaneTest()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Text("The replay intentionally sends the normal native maneuver packet first, then the firmware-native lane packet. This lets us see whether lane graphics supplement/replace the maneuver, how recommended lanes are highlighted, and whether the stock HUD clears prior lane state correctly.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .padding()
             }
             .background(HudTheme.background.ignoresSafeArea())
             .navigationTitle("Navigation")
+            .onDisappear { stopAutoReplay() }
         }
+    }
+
+    private func sendReplayStep(_ index: Int) {
+        guard replaySteps.indices.contains(index) else { return }
+        state.sendRecordedCarPlayLaneReplayStep(replaySteps[index])
+    }
+
+    private func startAutoReplay() {
+        guard !replayAutoRunning else { return }
+        replayAutoRunning = true
+        let route = replayRoute
+        let startIndex = replayStepIndex
+
+        replayTask = Task { @MainActor in
+            let steps = route.steps
+            for index in startIndex..<steps.count {
+                if Task.isCancelled { break }
+                replayStepIndex = index
+                state.sendRecordedCarPlayLaneReplayStep(steps[index])
+                if index < steps.count - 1 {
+                    try? await Task.sleep(for: .seconds(4))
+                }
+            }
+            if !Task.isCancelled {
+                replayAutoRunning = false
+                replayTask = nil
+            }
+        }
+    }
+
+    private func stopAutoReplay() {
+        replayTask?.cancel()
+        replayTask = nil
+        replayAutoRunning = false
     }
 }
 #endif

@@ -1,0 +1,19 @@
+HUD Controller v90.34.4 — Recorded CarPlay lane replay
+
+Scope:
+- Based on v90.34.3.
+- Zero HUD firmware writes.
+- Adds physical-capture Apple Maps and Google Maps lane replay fixtures.
+- Sends the existing native maneuver packet followed by HudLanesManueverCommandPacket.
+- Retains v90.34.3 manual lane presets and mini Music diagnostics.
+- Does NOT inject lanes into the live RouteGuidanceAdapterClient yet.
+
+Physical capture fixtures:
+- Apple Maps 0x5204 records: 170,171,172,173,174,175,278
+- Google Maps 0x5204 records: 115,116,117,118,132,133,134
+
+Validation:
+- `python -m pytest -q tests tests_v9031_static.py`: 221 passed.
+- Swift 6.2.1 `swiftc -parse` passed for all v90.34.4 changed Swift/XCTest files.
+- `ios/project.yml`, `ios/project-ios26-ambient.yml`, and every `.github/workflows/*.yml` file parsed successfully as YAML.
+- macOS/Xcode CI has not been claimed until separately run.
