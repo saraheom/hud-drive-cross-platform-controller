@@ -29,11 +29,14 @@ final class AppState {
     private var activeLaneContext = ""
     private var activeLaneIsLive = false
     private var activeLiveLaneManeuverIndex: Int?
+    private var activeLiveLaneGuidanceIndex: Int?
+    private var activeLiveLaneEventIndex: Int?
     private let laneGuidanceRefreshInterval: Duration = .milliseconds(1500)
 
-    // U2W v8.7 live 0x5204 cache. Lane information may arrive slightly before
-    // the matching 0x5201 current-maneuver cursor advances, so cache by CarPlay
-    // maneuver index and activate only when that index becomes current.
+    // Legacy U2W v8.7 fallback cache. v8.7 incorrectly labeled the 0x5204
+    // composed-guidance-event id as a route maneuver index and retained only the
+    // last event in a pre-cache burst. U2W v8.8 does not use this cache: it
+    // resolves the active event on the adapter via 0x5201 InfoType 16.
     private struct LiveLaneCacheEntry: Equatable {
         var laneSequence: Int
         var lanes: [HudCommands.NativeLane]
@@ -44,6 +47,7 @@ final class AppState {
     private var liveLaneSource: String?
     private var liveLaneLastRouteState: Int?
     private var liveLaneSessionActive = false
+    private var loggedLegacyV87LaneSchema = false
 
     // HUD Wi-Fi/AP exposure. This uses only stock BLE HUD-mode/hotspot packets;
     // it never sends the SoftwareUpdate start packet or any bytes to TCP/7980.
@@ -80,6 +84,9 @@ final class AppState {
         self.ambientLight = ambientLight
         routeGuidance.onLaneGuidanceChanged = { [weak self] state in
             self?.receiveLiveLaneGuidance(state)
+        }
+        routeGuidance.onManeuverDelivered = { [weak self] maneuverIndex in
+            self?.reassertLiveLaneAfterManeuverDelivery(maneuverIndex: maneuverIndex)
         }
         if #available(iOS 27.0, *) {
             self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
@@ -331,12 +338,14 @@ final class AppState {
     func receiveLiveLaneGuidance(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState?) {
         guard let state else {
             guard liveLaneSessionActive else { return }
-            logger.log("CARPLAY LANE", "Live Route Guidance ended; clearing maneuver-index lane cache")
+            logger.log("CARPLAY LANE", "Live Route Guidance ended; clearing live lane state")
             liveLaneSessionActive = false
             liveLaneCacheByManeuver.removeAll()
             liveLaneCurrentManeuverIndex = nil
             liveLaneSource = nil
             liveLaneLastRouteState = nil
+            activeLiveLaneGuidanceIndex = nil
+            activeLiveLaneEventIndex = nil
             if activeLaneIsLive {
                 clearLaneGuidancePolicy(reason: "live Route Guidance inactive")
             }
@@ -347,10 +356,12 @@ final class AppState {
 
         if liveLaneSource != state.source {
             if let previous = liveLaneSource {
-                logger.log("CARPLAY LANE", "Source changed \(previous) → \(state.source); dropping cached lane topology")
+                logger.log("CARPLAY LANE", "Source changed \(previous) → \(state.source); dropping old live lane state")
             }
             liveLaneCacheByManeuver.removeAll()
             liveLaneCurrentManeuverIndex = nil
+            activeLiveLaneGuidanceIndex = nil
+            activeLiveLaneEventIndex = nil
             if activeLaneIsLive {
                 clearLaneGuidancePolicy(reason: "CarPlay source changed")
             }
@@ -361,16 +372,175 @@ final class AppState {
         if enteredReroute {
             liveLaneCacheByManeuver.removeAll()
             liveLaneCurrentManeuverIndex = nil
+            activeLiveLaneGuidanceIndex = nil
+            activeLiveLaneEventIndex = nil
             if activeLaneIsLive {
                 clearLaneGuidancePolicy(reason: "CarPlay reroute started")
             }
-            logger.log("CARPLAY LANE", "Reroute state 5 entered; old maneuver-index lane cache cleared")
+            logger.log("CARPLAY LANE", "Reroute state 5 entered; old lane state cleared")
         }
         liveLaneLastRouteState = state.routeState
 
-        // 0x5204 carries its own maneuver index. If an exporter ever omits it,
-        // associate the lane topology with the currently selected maneuver rather
-        // than discarding otherwise valid data.
+        // Google Maps can transiently move the exported maneuver cursor backward
+        // while its route table stabilizes. v90.34.6 treated every backward move
+        // as a new route and repeatedly deleted valid lane data. Cursor movement
+        // is now diagnostic only; explicit source/reroute/session evidence owns
+        // lane-session resets.
+        if let currentIndex = state.currentManeuverIndex,
+           liveLaneCurrentManeuverIndex != currentIndex {
+            let previous = liveLaneCurrentManeuverIndex.map(String.init) ?? "nil"
+            liveLaneCurrentManeuverIndex = currentIndex
+            logger.log(
+                "CARPLAY LANE CURSOR",
+                "current maneuver \(previous) → \(currentIndex) routeSeq=\(state.routeSequence) distance=\(state.distanceToManeuverMeters)m (no cache reset on cursor wobble)"
+            )
+        }
+
+        if state.schemaVersion >= 2 {
+            receiveResolvedV88LaneGuidance(state)
+        } else {
+            receiveLegacyV87LaneGuidance(state)
+        }
+    }
+
+    /// U2W v8.8 resolves the protocol correctly on the adapter:
+    /// 0x5204 TLV1 is a composedGuidanceEventIndex and 0x5201 InfoType 16
+    /// selects the active event from that cache. The iPhone therefore consumes
+    /// the already-resolved current lane event instead of guessing a mapping to
+    /// the independently moving route-maneuver cursor.
+    private func receiveResolvedV88LaneGuidance(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState) {
+        // The physical Google Maps capture establishes two distinct concepts:
+        //   * 0x5204 events may be pre-cached well before they are needed.
+        //   * 0x5201 InfoType 16 selects an event, while InfoType 18 says whether
+        //     CarPlay is actively presenting that event right now.
+        // A selector value of 0 is both a valid event id and the value observed
+        // when Google Maps hides lane guidance. Therefore laneGuidanceShowing is
+        // the activation edge; Persistent/Near-turn policy may keep an already
+        // activated event after that flag falls, but a hidden selector must never
+        // replace the latched event with cached event 0.
+        let currentIndex = state.currentManeuverIndex
+
+        if state.routeState == 0 {
+            if activeLaneIsLive {
+                clearLaneGuidancePolicy(reason: "v8.8 route ended")
+            }
+            return
+        }
+
+        if state.laneGuidanceShowing {
+            guard let currentIndex else {
+                logger.log(
+                    "CARPLAY LANE RESOLVE",
+                    "showing=1 but current route maneuver is unresolved routeSeq=\(state.routeSequence); waiting before latching lanes"
+                )
+                return
+            }
+            guard let selectedIndex = state.laneGuidanceIndex else {
+                logger.log(
+                    "CARPLAY LANE RESOLVE",
+                    "showing=1 but v8.8 selector missing routeSeq=\(state.routeSequence) current=\(String(currentIndex))"
+                )
+                if activeLaneIsLive,
+                   let activeManeuver = activeLiveLaneManeuverIndex,
+                   activeManeuver != currentIndex {
+                    clearLaneGuidancePolicy(reason: "new maneuver has no resolved v8.8 selector")
+                }
+                return
+            }
+
+            guard !state.lanes.isEmpty,
+                  let laneSequence = state.laneSequence else {
+                // The selector can precede its matching pre-cached 0x5204 packet.
+                // Never substitute another cached event. If the route cursor has
+                // already advanced, remove the old maneuver's lanes while waiting.
+                if activeLaneIsLive,
+                   let activeManeuver = activeLiveLaneManeuverIndex,
+                   activeManeuver != currentIndex {
+                    clearLaneGuidancePolicy(reason: "v8.8 selected event not resolved for new maneuver")
+                }
+                logger.log(
+                    "CARPLAY LANE RESOLVE",
+                    "showing=1 selector=\(selectedIndex) unresolved routeSeq=\(state.routeSequence) current=\(String(currentIndex))"
+                )
+                return
+            }
+
+            let eventIndex = state.laneGuidanceEventIndex ?? selectedIndex
+            if eventIndex != selectedIndex {
+                logger.log(
+                    "CARPLAY LANE RESOLVE",
+                    "selector/event mismatch selector=\(selectedIndex) event=\(eventIndex); accepting exporter-resolved event"
+                )
+            }
+
+            let context = "Live U2W v8.8 \(state.source) guidance=\(selectedIndex) event=\(eventIndex) laneSeq=\(laneSequence)"
+            let changed = !activeLaneIsLive ||
+                activeLiveLaneGuidanceIndex != selectedIndex ||
+                activeLiveLaneEventIndex != eventIndex ||
+                activeLiveLaneManeuverIndex != currentIndex ||
+                activeLaneGuidance != state.lanes
+
+            activeLiveLaneGuidanceIndex = selectedIndex
+            activeLiveLaneEventIndex = eventIndex
+            activeLiveLaneManeuverIndex = currentIndex
+
+            if changed {
+                setLaneGuidanceForCurrentManeuver(
+                    state.lanes,
+                    distanceMeters: state.distanceToManeuverMeters,
+                    context: context,
+                    isLive: true
+                )
+                // setLaneGuidanceForCurrentManeuver intentionally preserves the
+                // live maneuver binding populated above.
+                activeLiveLaneManeuverIndex = currentIndex
+                logger.log(
+                    "CARPLAY LANE ACTIVATE",
+                    "v8.8 selector=\(selectedIndex) event=\(eventIndex) maneuver=\(String(currentIndex)) laneSeq=\(laneSequence) distance=\(state.distanceToManeuverMeters)m policy=\(settings.laneGuidanceMode.title) showingFlag=1 values=[\(state.lanes.map { String($0.wireValue) }.joined(separator: ","))]"
+                )
+            } else {
+                updateActiveLaneDistanceMeters(state.distanceToManeuverMeters, context: context)
+            }
+            return
+        }
+
+        // CarPlay hid its stock lane layer. For custom Persistent/Near-turn
+        // behavior, retain the last event only while we are still on the same
+        // route maneuver. This is what makes Persistent actually persist without
+        // allowing Google Maps' hidden selector=0 to overwrite the active event.
+        if activeLaneIsLive {
+            if let activeManeuver = activeLiveLaneManeuverIndex,
+               let currentIndex,
+               activeManeuver != currentIndex {
+                logger.log(
+                    "CARPLAY LANE LIFETIME",
+                    "maneuver advanced \(activeManeuver) → \(currentIndex) while showing=0; clearing latched event guidance=\(activeLiveLaneGuidanceIndex.map(String.init) ?? "nil")"
+                )
+                clearLaneGuidancePolicy(reason: "live lane maneuver completed")
+            } else {
+                updateActiveLaneDistanceMeters(
+                    state.distanceToManeuverMeters,
+                    context: activeLaneContext
+                )
+                logger.log(
+                    "CARPLAY LANE LATCH",
+                    "showing=0 selector=\(state.laneGuidanceIndex.map(String.init) ?? "nil") ignored; keeping event=\(activeLiveLaneEventIndex.map(String.init) ?? "nil") maneuver=\(activeLiveLaneManeuverIndex.map(String.init) ?? "nil") policy=\(settings.laneGuidanceMode.title)"
+                )
+            }
+        }
+    }
+
+    /// Backward-compatible fallback for U2W v8.7. That exporter incorrectly
+    /// labeled the 0x5204 composed event id as maneuverIndex and retained only
+    /// the last event of a burst, so complete live lane behavior is impossible
+    /// with v8.7. Keep the old best-effort mapping without allowing transient
+    /// backward cursor movement to wipe the cache.
+    private func receiveLegacyV87LaneGuidance(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState) {
+        if !loggedLegacyV87LaneSchema {
+            loggedLegacyV87LaneSchema = true
+            logger.log("CARPLAY LANE", "U2W v8.7 lane schema detected; best-effort only — install v8.8 for active-event resolution")
+        }
+
         if !state.lanes.isEmpty,
            let laneSequence = state.laneSequence,
            let laneIndex = state.laneManeuverIndex ?? state.currentManeuverIndex {
@@ -383,63 +553,16 @@ final class AppState {
                 liveLaneCacheByManeuver[laneIndex] = entry
                 logger.log(
                     "CARPLAY LANE CACHE",
-                    "source=\(state.source) routeSeq=\(state.routeSequence) laneSeq=\(laneSequence) maneuver=\(laneIndex) showing=\(state.laneGuidanceShowing) values=[\(state.lanes.map { String($0.wireValue) }.joined(separator: ","))] raw=\(state.rawSummary)"
+                    "legacy-v8.7 routeSeq=\(state.routeSequence) laneSeq=\(laneSequence) legacyIndex=\(laneIndex) values=[\(state.lanes.map { String($0.wireValue) }.joined(separator: ","))]"
                 )
             }
         }
 
-        // During 5→0→3 reroute transitions the current index may temporarily be
-        // absent. Preserve whatever was visible until the normal route client has
-        // accepted a new current maneuver instead of flashing stale/future lanes.
-        guard let currentIndex = state.currentManeuverIndex else {
-            return
-        }
+        guard let currentIndex = state.currentManeuverIndex,
+              let cached = liveLaneCacheByManeuver[currentIndex] else { return }
 
-        let previousCurrentIndex = liveLaneCurrentManeuverIndex
-        let maneuverChanged = previousCurrentIndex != currentIndex
-        if maneuverChanged {
-            // A same-source route can be replaced without a long inactive gap.
-            // Maneuver indexes are route-local, so a backwards cursor jump is a
-            // strong route-table reset signal; discard any same-index topology
-            // left from the old route before activating the new cursor.
-            if let previousCurrentIndex, currentIndex < previousCurrentIndex {
-                liveLaneCacheByManeuver.removeAll()
-                if activeLaneIsLive {
-                    clearLaneGuidancePolicy(reason: "CarPlay maneuver index reset")
-                }
-                logger.log(
-                    "CARPLAY LANE",
-                    "Maneuver cursor reset \(previousCurrentIndex) → \(currentIndex); cached topology cleared for new route table"
-                )
-            }
-            let previous = previousCurrentIndex.map(String.init) ?? "nil"
-            liveLaneCurrentManeuverIndex = currentIndex
-            logger.log(
-                "CARPLAY LANE CURSOR",
-                "current maneuver \(previous) → \(currentIndex) routeSeq=\(state.routeSequence) distance=\(state.distanceToManeuverMeters)m"
-            )
-            // The old maneuver's topology must never leak across the turn.
-            if activeLaneIsLive, activeLiveLaneManeuverIndex != currentIndex {
-                clearLaneGuidancePolicy(reason: "current maneuver changed")
-            }
-            // Keep memory bounded while preserving future entries already sent by
-            // CarPlay. Real tables are small, but this also protects long routes.
-            if liveLaneCacheByManeuver.count > 32 {
-                liveLaneCacheByManeuver = liveLaneCacheByManeuver.filter { $0.key >= currentIndex }
-            }
-        }
-
-        guard let cached = liveLaneCacheByManeuver[currentIndex] else {
-            if maneuverChanged {
-                logger.log("CARPLAY LANE", "No cached 0x5204 for current maneuver=\(currentIndex); normal maneuver UI remains active")
-            }
-            return
-        }
-
-        let context = "Live U2W v8.7 \(state.source) maneuver=\(currentIndex) laneSeq=\(cached.laneSequence)"
-        if !activeLaneIsLive ||
-            activeLiveLaneManeuverIndex != currentIndex ||
-            activeLaneGuidance != cached.lanes {
+        let context = "Legacy U2W v8.7 \(state.source) index=\(currentIndex) laneSeq=\(cached.laneSequence)"
+        if !activeLaneIsLive || activeLiveLaneManeuverIndex != currentIndex || activeLaneGuidance != cached.lanes {
             activeLiveLaneManeuverIndex = currentIndex
             setLaneGuidanceForCurrentManeuver(
                 cached.lanes,
@@ -447,16 +570,27 @@ final class AppState {
                 context: context,
                 isLive: true
             )
-            logger.log(
-                "CARPLAY LANE ACTIVATE",
-                "maneuver=\(currentIndex) laneSeq=\(cached.laneSequence) distance=\(state.distanceToManeuverMeters)m policy=\(settings.laneGuidanceMode.title) showingFlag=\(state.laneGuidanceShowing)"
-            )
         } else {
-            updateActiveLaneDistanceMeters(
-                state.distanceToManeuverMeters,
-                context: context
-            )
+            updateActiveLaneDistanceMeters(state.distanceToManeuverMeters, context: context)
         }
+    }
+
+    private func reassertLiveLaneAfterManeuverDelivery(maneuverIndex: Int?) {
+        guard bluetooth.state == .connected,
+              activeLaneIsLive,
+              shouldDisplayActiveLanes(),
+              let activeManeuver = activeLiveLaneManeuverIndex,
+              let maneuverIndex,
+              activeManeuver == maneuverIndex else { return }
+        // The stock firmware can clear the lane layer when the maneuver packet
+        // redraws. Re-send lanes in the same BLE queue immediately after every
+        // delivery of the *same* maneuver that owns the latched lane event. A
+        // newly advanced maneuver must never receive the previous turn's lanes.
+        sendActiveLaneGuidance(label: "Lane policy → post-maneuver reassert")
+        logger.log(
+            "CARPLAY LANE REASSERT",
+            "after maneuver delivery index=\(maneuverIndex) guidance=\(activeLiveLaneGuidanceIndex.map(String.init) ?? "nil")"
+        )
     }
 
     private func updateActiveLaneDistanceMeters(_ distanceMeters: Int, context: String) {
@@ -560,6 +694,8 @@ final class AppState {
         activeLaneContext = ""
         activeLaneIsLive = false
         activeLiveLaneManeuverIndex = nil
+        activeLiveLaneGuidanceIndex = nil
+        activeLiveLaneEventIndex = nil
         guard bluetooth.state == .connected else { return }
         bluetooth.enqueue(HudCommands.clearLaneGuidance(), label: "Lane guidance clear")
         logger.log("HUD LANE POLICY", "clear reason=\(reason)")
@@ -579,90 +715,83 @@ final class AppState {
 
         hudWiFiExposureTask?.cancel()
         hudWiFiExposureActive = true
-        hudWiFiExposureStatus = "Starting iOS HUDWAY AP…"
+        hudWiFiExposureStatus = "Starting stock 5-GHz HUDWAY AP…"
         UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
 
-        // HudLauncher firmware modes recovered from KivicModeCommandPacket:
-        // 4 = IOS_HUD_MODE, 5 = IOS_KIVICCAST_MODE.
-        // Mode 5 is the path that runs doIOSKiviccastNow / SoftAP setup. We
-        // briefly enter it to initialize hostapd/dnsmasq, then return to mode 4
-        // while keeping HudHotspotBaseband forceEnable asserted so the local
-        // HUD renderer (navigation/lanes) remains usable. No firmware write.
+        // Physical stock-app log, HUD FW 1.1.27:
+        //   HudHotspotBaseband(is5G:true, forceEnable:false)
+        //   KivicMode(5)
+        // Then HudLauncher itself starts WifiApEnabler ~2.6 s later, hostapd,
+        // tethering/dnsmasq, and wlan0=192.168.43.1. Do NOT return to mode 4
+        // during this bootstrap; v90.34.5.2 did so at 1.8 s and aborted it.
         logger.log(
             "HUD WIFI",
-            "Enable 2.4GHz HUD AP: force hotspot ON → IOS_KIVICCAST_MODE(5) bootstrap → IOS_HUD_MODE(4); no SoftwareUpdate/TCP firmware transfer"
+            "Stock AP bootstrap: 5GHz force=false → IOS_KIVICCAST_MODE(5); hold mode 5 for full SoftAP/DHCP startup"
         )
-
         bluetooth.enqueue(
-            HudCommands.hudHotspotBaseband(is5G: false, forceEnable: true),
-            label: "HUD Wi-Fi → force 2.4GHz AP ON"
+            HudCommands.hudHotspotBaseband(is5G: true, forceEnable: false),
+            label: "HUD Wi-Fi → stock 5GHz baseband (force OFF)"
         )
+        bluetooth.enqueue(HudCommands.kivicMode(5), label: "HUD Wi-Fi → stock iOS KivicCast mode 5")
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → bootstrap KeepAlive")
 
         hudWiFiExposureTask = Task { @MainActor [weak self] in
             guard let self else { return }
-
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: .milliseconds(5000))
             guard !Task.isCancelled, self.hudWiFiExposureActive,
                   self.bluetooth.state == .connected else { return }
-
-            self.bluetooth.enqueue(
-                HudCommands.kivicMode(5),
-                label: "HUD Wi-Fi → iOS KivicCast bootstrap mode 5"
-            )
-            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → bootstrap KeepAlive")
-            self.hudWiFiExposureStatus = "Initializing HUDWAY DHCP/AP…"
-
-            // Give the old Android 5.1 firmware time to run the iOS KivicCast
-            // SoftAP path before restoring the normal iOS HUD renderer.
-            try? await Task.sleep(for: .milliseconds(1800))
-            guard !Task.isCancelled, self.hudWiFiExposureActive,
-                  self.bluetooth.state == .connected else { return }
-
-            self.bluetooth.enqueue(
-                HudCommands.kivicMode(4),
-                label: "HUD Wi-Fi → return iOS HUD mode 4 (AP remains forced)"
-            )
-            self.bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi → native HUD full screen")
-            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → final KeepAlive")
-            self.hudWiFiExposureStatus = "HUD Wi-Fi exposed — join SSID, then test 192.168.43.1"
+            // Stay in mode 5. A separate explicit button below tests whether a
+            // forced hotspot can survive the mode-4 renderer restoration.
+            self.hudWiFiExposureStatus = "Stock AP startup complete — join HUDWAY Wi-Fi; mode 5 held"
+            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → post-bootstrap KeepAlive")
             self.hudWiFiExposureTask = nil
         }
     }
 
-    /// Diagnostic fallback: keep the firmware in IOS_KIVICCAST_MODE(5) instead
-    /// of returning to IOS_HUD_MODE(4). Useful only to determine whether mode 4
-    /// tears the AP down on this firmware. The local HUD renderer may be hidden
-    /// while this is active. Still BLE-only and performs no firmware write.
+    /// Re-run the exact stock AP bootstrap and remain in IOS_KIVICCAST_MODE(5).
     func holdHUDWiFiCastingModeForDiagnostics() {
         guard bluetooth.state == .connected else {
             hudWiFiExposureStatus = "Connect the HUD over BLE first"
             return
         }
         hudWiFiExposureTask?.cancel()
-        hudWiFiExposureTask = nil
         hudWiFiExposureActive = true
         UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
-        logger.log("HUD WIFI", "Diagnostic: hold IOS_KIVICCAST_MODE(5) with 2.4GHz hotspot forced ON")
+        logger.log("HUD WIFI", "Diagnostic: restart exact stock 5GHz force=false + IOS_KIVICCAST_MODE(5)")
         bluetooth.enqueue(
-            HudCommands.hudHotspotBaseband(is5G: false, forceEnable: true),
-            label: "HUD Wi-Fi diagnostic → force 2.4GHz AP ON"
+            HudCommands.hudHotspotBaseband(is5G: true, forceEnable: false),
+            label: "HUD Wi-Fi diagnostic → stock 5GHz baseband"
         )
         bluetooth.enqueue(HudCommands.kivicMode(5), label: "HUD Wi-Fi diagnostic → hold iOS KivicCast mode 5")
         bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi diagnostic → KeepAlive")
-        hudWiFiExposureStatus = "Diagnostic casting mode 5 held — check DHCP/192.168.43.1"
+        hudWiFiExposureStatus = "Stock cast mode 5 held — allow ~5 s, then reconnect laptop"
+        hudWiFiExposureTask = nil
     }
 
-    /// Return to the normal iOS HUD renderer without releasing the forced AP.
-    /// This lets a stationary test determine whether the AP survives mode 5→4.
+    /// Experimental coexistence step. Only use after the laptop has already
+    /// received a 192.168.43.x lease in stock mode 5. Pin the hotspot with the
+    /// recovered forceEnable flag, then restore IOS_HUD_MODE(4) and test whether
+    /// the AP remains reachable while native navigation/lane rendering returns.
     func returnHUDRendererKeepingWiFi() {
         guard bluetooth.state == .connected, hudWiFiExposureActive else { return }
         hudWiFiExposureTask?.cancel()
-        hudWiFiExposureTask = nil
-        logger.log("HUD WIFI", "Diagnostic: return IOS_HUD_MODE(4) while keeping forced AP")
-        bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD Wi-Fi diagnostic → return iOS HUD mode 4")
-        bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi diagnostic → native HUD full screen")
-        bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi diagnostic → KeepAlive")
-        hudWiFiExposureStatus = "iOS HUD mode 4 restored — AP still requested"
+        logger.log("HUD WIFI", "Diagnostic: pin 5GHz AP force=true, then return IOS_HUD_MODE(4)")
+        hudWiFiExposureStatus = "Pinning AP before native HUD restore…"
+        bluetooth.enqueue(
+            HudCommands.hudHotspotBaseband(is5G: true, forceEnable: true),
+            label: "HUD Wi-Fi diagnostic → pin active 5GHz AP"
+        )
+        hudWiFiExposureTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, self.hudWiFiExposureActive,
+                  self.bluetooth.state == .connected else { return }
+            self.bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD Wi-Fi diagnostic → return iOS HUD mode 4")
+            self.bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi diagnostic → native HUD full screen")
+            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi diagnostic → KeepAlive")
+            self.hudWiFiExposureStatus = "Native HUD mode 4 restored; verify the AP is still reachable"
+            self.hudWiFiExposureTask = nil
+        }
     }
 
     func disableHUDWiFiExposure(reason: String = "manual") {
@@ -674,16 +803,17 @@ final class AppState {
             UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
             return
         }
-        logger.log("HUD WIFI", "Disable forced HUD AP reason=\(reason); restore IOS_HUD_MODE(4)")
+        // Match the stock OFF transition captured from the original HUDWAY app.
+        logger.log("HUD WIFI", "Disable HUD AP reason=\(reason): stock 5GHz force=false + IOS_HUD_MODE(4)")
         bluetooth.enqueue(
-            HudCommands.hudHotspotBaseband(is5G: false, forceEnable: false),
-            label: "HUD Wi-Fi → release forced AP"
+            HudCommands.hudHotspotBaseband(is5G: true, forceEnable: false),
+            label: "HUD Wi-Fi → stock AP release"
         )
         bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD Wi-Fi → restore iOS HUD mode 4")
         bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi → full screen ON")
         bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → KeepAlive")
         UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
-        hudWiFiExposureStatus = "HUD Wi-Fi force released"
+        hudWiFiExposureStatus = "HUD Wi-Fi released"
     }
 
 

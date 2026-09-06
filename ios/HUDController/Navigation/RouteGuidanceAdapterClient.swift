@@ -57,6 +57,10 @@ final class RouteGuidanceAdapterClient {
 
     struct LaneGuidanceSnapshot: Codable, Equatable {
         var sequence: Int
+        // U2W v8.8: 0x5204 TLV1 is a composed guidance-event id, not a
+        // route-maneuver index. v8.7 called it maneuverIndex; keep that optional
+        // legacy field so older exporters still decode without breaking nav.
+        var guidanceEventIndex: Int?
         var maneuverIndex: Int?
         var lanes: [LaneSnapshot]
     }
@@ -66,13 +70,19 @@ final class RouteGuidanceAdapterClient {
     /// for a future maneuver, allowing AppState to cache first and activate only
     /// when that maneuver actually becomes current.
     struct LiveLaneGuidanceState: Equatable {
+        var schemaVersion: Int
         var source: String
         var routeSequence: Int
         var routeState: Int
         var currentManeuverIndex: Int?
         var distanceToManeuverMeters: Int
         var laneGuidanceShowing: Bool
+        // U2W v8.8 resolves RouteGuidanceUpdate InfoType 16 against its cached
+        // 0x5204 composedGuidanceEventIndex table and publishes the selected id.
+        var laneGuidanceIndex: Int?
         var laneSequence: Int?
+        var laneGuidanceEventIndex: Int?
+        // Legacy v8.7 field retained only for best-effort compatibility.
         var laneManeuverIndex: Int?
         var lanes: [HudCommands.NativeLane]
         var rawSummary: String
@@ -104,6 +114,9 @@ final class RouteGuidanceAdapterClient {
         var secondaryCurrentManeuverIndex: Int?
         var maneuverCount: Int
         var laneGuidanceShowing: Bool
+        // U2W v8.8: current lane guidance event selected by 0x5201 InfoType 16.
+        // Optional so v8.6/v8.7 JSON remains decodable.
+        var laneGuidanceIndex: Int?
         // Optional for backwards compatibility with U2W v8.6. JSONDecoder will
         // decode this as nil when the old exporter omits the key entirely.
         var laneGuidance: LaneGuidanceSnapshot?
@@ -147,6 +160,10 @@ final class RouteGuidanceAdapterClient {
     var onWillActivate: (() -> Void)?
     var onRoadContextChanged: ((CarPlayRouteContext?) -> Void)?
     var onLaneGuidanceChanged: ((LiveLaneGuidanceState?) -> Void)?
+    // Fired immediately after a native HUD maneuver packet is enqueued. Lane
+    // graphics are a separate firmware layer and can be cleared by a maneuver
+    // redraw, so AppState reasserts an eligible active lane packet right after.
+    var onManeuverDelivered: ((Int?) -> Void)?
 
     private(set) var running = false
     private(set) var status = "Adapter feed idle"
@@ -481,6 +498,7 @@ final class RouteGuidanceAdapterClient {
         if visibleSignature != lastDeliveredSignature {
             navigation.current = instruction
             navigation.sendCurrent(owner: .carPlayAdapter)
+            onManeuverDelivered?(primaryCurrentIndex(in: snapshot))
             lastDeliveredSignature = visibleSignature
             logger.log(
                 "CARPLAY RGD HUD",
@@ -501,13 +519,16 @@ final class RouteGuidanceAdapterClient {
             .joined(separator: " ") ?? "none"
 
         let state = LiveLaneGuidanceState(
+            schemaVersion: snapshot.version,
             source: source,
             routeSequence: snapshot.sequence,
             routeState: snapshot.routeState,
             currentManeuverIndex: primaryCurrentIndex(in: snapshot),
             distanceToManeuverMeters: max(0, snapshot.distanceToManeuverMeters),
             laneGuidanceShowing: snapshot.laneGuidanceShowing,
+            laneGuidanceIndex: snapshot.laneGuidanceIndex,
             laneSequence: lane?.sequence,
+            laneGuidanceEventIndex: lane?.guidanceEventIndex,
             laneManeuverIndex: lane?.maneuverIndex,
             lanes: native,
             rawSummary: rawSummary
@@ -519,15 +540,17 @@ final class RouteGuidanceAdapterClient {
             "route=\(snapshot.sequence)",
             "current=\(state.currentManeuverIndex.map(String.init) ?? "nil")",
             "showing=\(snapshot.laneGuidanceShowing ? 1 : 0)",
+            "laneIndex=\(snapshot.laneGuidanceIndex.map(String.init) ?? "nil")",
             "laneSeq=\(lane?.sequence ?? -1)",
-            "laneManeuver=\(lane?.maneuverIndex.map(String.init) ?? "nil")",
+            "laneEvent=\(lane.flatMap(\.guidanceEventIndex).map(String.init) ?? "nil")",
+            "laneManeuverLegacy=\(lane.flatMap(\.maneuverIndex).map(String.init) ?? "nil")",
             "native=\(native.map { String($0.wireValue) }.joined(separator: ","))"
         ].joined(separator: "|")
         if telemetrySignature != lastLaneTelemetrySignature {
             lastLaneTelemetrySignature = telemetrySignature
             logger.log(
                 "CARPLAY LANE RX",
-                "source=\(source) routeSeq=\(snapshot.sequence) routeState=\(snapshot.routeState) current=\(state.currentManeuverIndex.map(String.init) ?? "nil") distance=\(state.distanceToManeuverMeters)m showing=\(snapshot.laneGuidanceShowing) laneSeq=\(lane.map { String($0.sequence) } ?? "nil") laneManeuver=\(lane?.maneuverIndex.map(String.init) ?? "nil") native=[\(native.map { String($0.wireValue) }.joined(separator: ","))] raw=\(rawSummary)"
+                "schema=\(snapshot.version) source=\(source) routeSeq=\(snapshot.sequence) routeState=\(snapshot.routeState) current=\(state.currentManeuverIndex.map(String.init) ?? "nil") distance=\(state.distanceToManeuverMeters)m showing=\(snapshot.laneGuidanceShowing) laneIndex=\(snapshot.laneGuidanceIndex.map(String.init) ?? "nil") laneSeq=\(lane.map { String($0.sequence) } ?? "nil") laneEvent=\(lane.flatMap(\.guidanceEventIndex).map(String.init) ?? "nil") laneManeuverLegacy=\(lane.flatMap(\.maneuverIndex).map(String.init) ?? "nil") native=[\(native.map { String($0.wireValue) }.joined(separator: ","))] raw=\(rawSummary)"
             )
         }
     }

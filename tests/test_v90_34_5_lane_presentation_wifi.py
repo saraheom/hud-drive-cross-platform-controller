@@ -14,7 +14,7 @@ def test_navigation_presentation_persists_three_lane_modes_and_threshold():
     assert "case persistent" in SETTINGS
     assert "navigationShowCurrentStreet" in SETTINGS
     assert "laneGuidanceDistanceMiles" in SETTINGS
-    assert 'default: 0.5' in SETTINGS
+    assert "default: 0.5" in SETTINGS
 
 
 def test_current_street_is_suppressed_only_on_wire_copy():
@@ -40,18 +40,17 @@ def test_recorded_replay_is_retained_and_routes_through_policy():
     assert "setLaneGuidanceForCurrentManeuver" in block
 
 
-def test_custom_app_can_force_hud_wifi_ap_without_ota_start():
+def test_custom_app_uses_stock_softap_bootstrap_without_ota_start():
     assert "static func hudHotspotBaseband" in COMMANDS
     assert "static func kivicMode" in COMMANDS
     assert "HUD Wi-Fi / casting network" in UI26
     assert "Expose HUD Wi-Fi" in UI26
-    assert "Hold Cast Mode 5" in UI26
-    assert "Return HUD Mode 4" in UI26
+    assert "Pin AP + Return HUD Mode 4" in UI26
     start = APP.index("func enableHUDWiFiExposure")
-    end = APP.index("func disableHUDWiFiExposure", start)
+    end = APP.index("func holdHUDWiFiCastingModeForDiagnostics", start)
     block = APP[start:end]
-    assert "hudHotspotBaseband(is5G: false, forceEnable: true)" in block
+    assert "hudHotspotBaseband(is5G: true, forceEnable: false)" in block
     assert "HudCommands.kivicMode(5)" in block
-    assert "HudCommands.kivicMode(4)" in block
-    assert ".milliseconds(1800)" in block
+    assert "HudCommands.kivicMode(4)" not in block
+    assert ".milliseconds(5000)" in block
     assert "softwareUpdate" not in block

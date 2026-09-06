@@ -5,9 +5,11 @@ ROUTE = (ROOT / "ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift")
 APP = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
 
 
-def test_v87_schema_is_optional_and_v86_compatible():
+def test_lane_schema_remains_optional_and_old_exporters_decode():
     assert "var laneGuidance: LaneGuidanceSnapshot?" in ROUTE
     assert "var laneGuidanceShowing: Bool" in ROUTE
+    assert "var laneGuidanceIndex: Int?" in ROUTE
+    assert "var guidanceEventIndex: Int?" in ROUTE
 
 
 def test_live_lane_normalization_covers_stock_five_shapes():
@@ -17,11 +19,13 @@ def test_live_lane_normalization_covers_stock_five_shapes():
     assert "lane.recommended || lane.status == 2" in ROUTE
 
 
-def test_live_lanes_are_cached_by_maneuver_index_before_activation():
-    assert "liveLaneCacheByManeuver" in APP
-    assert "state.laneManeuverIndex ?? state.currentManeuverIndex" in APP
-    assert "liveLaneCacheByManeuver[currentIndex]" in APP
-    assert "current maneuver" in APP
+def test_v88_uses_active_guidance_selector_not_5204_event_as_route_maneuver():
+    assert "receiveResolvedV88LaneGuidance" in APP
+    assert "state.laneGuidanceIndex" in APP
+    assert "state.laneGuidanceEventIndex" in APP
+    assert "laneGuidanceShowing" in APP
+    assert "hidden selector must never" in APP
+    assert "liveLaneCacheByManeuver[currentIndex]" not in APP[APP.index("private func receiveResolvedV88LaneGuidance"):APP.index("private func receiveLegacyV87LaneGuidance")]
 
 
 def test_live_lane_distance_drives_existing_near_turn_policy_without_restarting_every_poll():
@@ -32,6 +36,16 @@ def test_live_lane_distance_drives_existing_near_turn_policy_without_restarting_
     assert "laneGuidanceRefreshInterval" in APP
 
 
+def test_maneuver_delivery_immediately_reasserts_same_maneuvers_lanes():
+    assert "onManeuverDelivered" in ROUTE
+    send = ROUTE.index("navigation.sendCurrent(owner: .carPlayAdapter)")
+    callback = ROUTE.index("onManeuverDelivered?", send)
+    assert send < callback
+    assert "reassertLiveLaneAfterManeuverDelivery" in APP
+    assert "activeManeuver == maneuverIndex" in APP
+    assert "post-maneuver reassert" in APP
+
+
 def test_live_lane_observability_is_explicit():
-    for token in ["CARPLAY LANE RX", "CARPLAY LANE CACHE", "CARPLAY LANE CURSOR", "CARPLAY LANE ACTIVATE"]:
+    for token in ["CARPLAY LANE RX", "CARPLAY LANE CURSOR", "CARPLAY LANE ACTIVATE", "CARPLAY LANE LATCH", "CARPLAY LANE REASSERT"]:
         assert token in ROUTE or token in APP

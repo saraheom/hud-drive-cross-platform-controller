@@ -86,7 +86,7 @@ struct HudNavigationView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Text("Live U2W v8.7 0x5204 lane arrays are enabled in this build. The Apple/Google recorded replay remains below for one final comparison test.")
+                            Text("Live U2W v8.8 active lane-event resolution is enabled in this build. The Apple/Google recorded replay remains below for one final comparison test.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -118,17 +118,17 @@ struct HudNavigationView: View {
                                     }
                                     .buttonStyle(.bordered)
 
-                                    Button("Return HUD Mode 4") {
+                                    Button("Pin AP + Return HUD Mode 4") {
                                         state.returnHUDRendererKeepingWiFi()
                                     }
                                     .buttonStyle(.bordered)
                                 }
-                                Text("Diagnostic fallback: if automatic exposure still gives a 169.254.x.x address, hold mode 5 and reconnect the laptop. If DHCP works there, Return HUD Mode 4 tests whether the AP survives while restoring native navigation/lane rendering.")
+                                Text("Stock test: Expose HUD Wi-Fi now uses the captured 5-GHz/force=false mode-5 sequence and stays in mode 5 for the full SoftAP/DHCP startup. After the laptop receives 192.168.43.x, Pin AP + Return HUD Mode 4 experimentally sets force=true before restoring native navigation/lane rendering; then verify 192.168.43.1/ADB remains reachable.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
 
-                            Text("This reproduces only the HUD's stock 2.4-GHz Wi-Fi/AP exposure over BLE so your laptop can connect while this custom app remains open. It does not start iOS Screen Recording/Drive Broadcast, does not enter the software-update writer, and does not write HUD firmware.")
+                            Text("This reproduces the captured stock 5-GHz HUDWAY SoftAP bootstrap over BLE. It does not start iOS Screen Recording/Drive Broadcast, does not enter the software-update writer, and does not write HUD firmware.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

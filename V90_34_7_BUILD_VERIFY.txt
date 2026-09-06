@@ -1,0 +1,57 @@
+HUD Controller v90.34.7 - U2W v8.8 Resolved Lanes + Stock HUD Wi-Fi
+Date: 2026-09-06
+Baseline: v90.34.6.2
+
+Physical-field findings addressed
+===============================
+1. U2W v8.7 Google Maps dump:
+   - 0x5204 TLV 1 is a composed guidance-event id, not a route maneuver id.
+   - Google Maps pre-caches multiple 0x5204 events.
+   - 0x5201 InfoType 0x0010 selects the active cached event.
+   - Companion exporter must resolve event selector -> lane topology.
+
+2. HUD app log packet ordering:
+   - v90.34.6 could queue LaneGuidance, then a Maneuver packet immediately after.
+   - The physical HUD maneuver redraw can clear the separate lane layer.
+   - This explains field reports that Persistent disappeared and Near Turn did
+     not appear reliably even though HUD LANE POLICY logged a send.
+
+3. Original HUDWAY Wi-Fi OFF->ON ADB capture:
+   - stock ON = 5 GHz, forceEnable=false, mode 5.
+   - HudLauncher starts WifiApEnabler only ~2.6 s later and then hostapd,
+     tethering and dnsmasq.
+   - v90.34.5.2 returned to mode 4 at 1.8 s and therefore aborted stock startup.
+
+Runtime changes
+===============
+- Accept U2W JSON schema v2 laneGuidanceIndex + guidanceEventIndex.
+- Use adapter-resolved v8.8 current lane event; do not map event id to route
+  maneuver index.
+- Preserve legacy v8.7 decoding only as a best-effort compatibility fallback.
+- Do not delete active v8.8 lane state on transient Google maneuver-cursor wobble.
+- Reassert eligible lane packet immediately after every native CarPlay maneuver
+  packet is queued for the same maneuver.
+- Keep 1.5-second lane persistence loop as a backup.
+- Presentation setting changes queue maneuver first, then lane reevaluation.
+- Near Turn uses current distance-to-maneuver and does not require the stock
+  showing flag to remain true after an event has been activated.
+- HUD Wi-Fi bootstrap now exactly begins with 5 GHz + force=false + mode 5 and
+  remains in mode 5 for the full SoftAP/DHCP startup.
+- Explicit Pin AP + Return HUD Mode 4 experiment: force=true, 350 ms, then mode 4.
+- Disable matches captured stock OFF transition: 5 GHz + force=false + mode 4.
+- No HUD firmware writer, ADB write, filesystem write, updater command or
+  TCP/7980 transfer was added.
+
+Validation
+==========
+- 244/244 Python/static tests PASS.
+- 156 Swift source files parsed successfully with swiftc -parse.
+- 10 YAML workflow/project files parsed successfully.
+- New XCTest source covers v8.8 selector semantics, post-maneuver lane order,
+  presentation-setting order, exact stock Wi-Fi bootstrap and AP pin separation.
+- Existing Apple/Google recorded lane replay retained.
+
+Important validation boundary
+=============================
+Linux/local validation cannot run the macOS Xcode simulator build. The GitHub
+Actions iOS CI workflow still needs to be run before TestFlight installation.

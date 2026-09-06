@@ -1,3 +1,29 @@
+# HUD Controller v90.34.7 — U2W v8.8 resolved live lanes + stock HUD Wi-Fi bootstrap
+
+v90.34.7 is the combined field-fix release for the user's Google Maps live-lane test and the original HUDWAY Wi-Fi OFF→ON capture.
+
+### Live lane guidance
+
+The supplied U2W v8.7 raw dump proved that `0x5204` TLV 1 is a composed guidance-event id, not the Route Guidance maneuver index. Google Maps pre-caches multiple `0x5204` events and later selects the active event with `0x5201` InfoType `0x0010`. This app therefore pairs with **U2W CarPlay Data Exporter v8.8**, which resolves the active cached event on the adapter and exports JSON schema v2 (`laneGuidanceIndex` + `guidanceEventIndex`). The v8.7 interpretation remains only as a best-effort backward-compatible fallback.
+
+The same field log also showed why **Persistent** and **Near Turn** could fail visibly even when the app logged a lane send: the HUD maneuver packet was often queued immediately after the lane packet and the firmware redraw cleared the separate lane layer. v90.34.7 reasserts eligible live lanes immediately **after every native CarPlay maneuver delivery**. The 1.5-second persistence refresh remains as a backup. Presentation-setting changes also resend the maneuver first and lanes second.
+
+Near Turn continues to use live `distanceToManeuverMeters`; after a v8.8 lane event is activated, custom Persistent/Near Turn behavior can retain it even when the stock CarPlay `laneGuidanceShowing` flag falls, until the route maneuver advances or the route/source/session resets.
+
+### HUD Wi-Fi
+
+The original HUDWAY log established the exact working SoftAP bootstrap: `HudHotspotBaseband(is5G:true, forceEnable:false)` followed by `IOS_KIVICCAST_MODE(5)`, then remaining in mode 5 long enough for HudLauncher to start `WifiApEnabler`, `hostapd`, tethering and `dnsmasq`. v90.34.5.2 had used 2.4 GHz, force=true, and returned to mode 4 at 1.8 seconds—before the stock SoftAP startup began.
+
+**Expose HUD Wi-Fi** now uses the captured stock 5-GHz/force=false sequence and stays in mode 5. Once the laptop receives `192.168.43.x`, **Pin AP + Return HUD Mode 4** is a separate experiment: it sets force=true, waits 350 ms, then restores native HUD mode 4/full-screen so we can determine whether ADB/Wi-Fi and native lane rendering can coexist.
+
+This release still performs **no HUD firmware/filesystem write** and does not invoke the software-update/TCP-7980 writer. Establishing reliable Wi-Fi/ADB is the prerequisite for a separately reviewed in-app firmware workflow later.
+
+The Apple/Google recorded replay remains available for one final comparison cycle.
+
+See `docs/V90_34_7_V88_RESOLVED_LANES_STOCK_WIFI.md` and `V90_34_7_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.6.2 — AppState initialization-order compile fix
 
 The v90.34.6.1 GitHub Actions run failed during the iOS simulator build with `AppState.swift:79:55: error: variable 'self.ambientLight' used before being initialized`. The new live-lane callback captured `self` before the final stored `let ambientLight` property had been assigned. v90.34.6.2 moves only the `routeGuidance.onLaneGuidanceChanged` callback registration to immediately after `self.ambientLight = ambientLight`. Live U2W v8.7 lane decoding, maneuver-index caching, Off/Near Turn/Persistent presentation, Wi-Fi diagnostics, and all other runtime behavior are unchanged.

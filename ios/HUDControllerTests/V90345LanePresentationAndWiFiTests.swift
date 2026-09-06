@@ -14,16 +14,16 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testHUDWiFiPacketsMatchStockWireShape() throws {
+    func testHUDWiFiPacketsMatchCapturedStockAndPinWireShapes() throws {
         XCTAssertEqual(try body(HudCommands.kivicMode(4)), Data([2, 7, 0, 0, 0, 0, 4]))
         XCTAssertEqual(try body(HudCommands.kivicMode(5)), Data([2, 7, 0, 0, 0, 0, 5]))
         XCTAssertEqual(
-            try body(HudCommands.hudHotspotBaseband(is5G: false, forceEnable: true)),
-            Data([2, 21, 0, 0, 1])
+            try body(HudCommands.hudHotspotBaseband(is5G: true, forceEnable: false)),
+            Data([2, 21, 0, 1, 0])
         )
         XCTAssertEqual(
-            try body(HudCommands.hudHotspotBaseband(is5G: false, forceEnable: false)),
-            Data([2, 21, 0, 0, 0])
+            try body(HudCommands.hudHotspotBaseband(is5G: true, forceEnable: true)),
+            Data([2, 21, 0, 1, 1])
         )
     }
 
@@ -61,7 +61,7 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
         XCTAssertTrue(ui.contains("HUD Wi-Fi / casting network"))
         XCTAssertTrue(ui.contains("Expose HUD Wi-Fi"))
         XCTAssertTrue(ui.contains("Hold Cast Mode 5"))
-        XCTAssertTrue(ui.contains("Return HUD Mode 4"))
+        XCTAssertTrue(ui.contains("Pin AP + Return HUD Mode 4"))
         XCTAssertTrue(ui.contains("87654321"))
         XCTAssertTrue(ui.contains("192.168.43.1"))
     }
@@ -69,15 +69,15 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
     func testWiFiExposureNeverEntersFirmwareWriter() throws {
         let app = try source("HUDController/App/AppState.swift")
         guard let start = app.range(of: "func enableHUDWiFiExposure()")?.lowerBound,
-              let end = app.range(of: "func disableHUDWiFiExposure", range: start..<app.endIndex)?.lowerBound else {
+              let end = app.range(of: "func holdHUDWiFiCastingModeForDiagnostics", range: start..<app.endIndex)?.lowerBound else {
             XCTFail("Wi-Fi exposure methods missing")
             return
         }
         let enter = String(app[start..<end])
-        XCTAssertTrue(enter.contains("hudHotspotBaseband(is5G: false, forceEnable: true)"))
+        XCTAssertTrue(enter.contains("hudHotspotBaseband(is5G: true, forceEnable: false)"))
         XCTAssertTrue(enter.contains("HudCommands.kivicMode(5)"))
-        XCTAssertTrue(enter.contains("HudCommands.kivicMode(4)"))
-        XCTAssertTrue(enter.contains(".milliseconds(1800)"))
+        XCTAssertFalse(enter.contains("HudCommands.kivicMode(4)"))
+        XCTAssertTrue(enter.contains(".milliseconds(5000)"))
         XCTAssertFalse(enter.contains("HudCommands.softwareUpdate"))
         XCTAssertFalse(enter.contains("URLSession"))
     }
