@@ -42,11 +42,10 @@ def test_replay_ui_is_parked_manual_and_not_live_route_integration():
 
 
 def test_no_firmware_write_commands_added_to_replay_path():
-    paths = [
-        "ios/HUDController/Navigation/RecordedCarPlayLaneReplay.swift",
-        "ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift",
-        "ios/HUDController/App/AppState.swift",
-    ]
-    merged = "\n".join(text(p).lower() for p in paths)
+    replay = text("ios/HUDController/Navigation/RecordedCarPlayLaneReplay.swift").lower()
+    app = text("ios/HUDController/App/AppState.swift")
+    start = app.index("func sendRecordedCarPlayLaneReplayStep")
+    end = app.index("func sendNativeMusicMiniTest", start)
+    replay += "\n" + app[start:end].lower()
     for forbidden in ("adb push", "adb root", "remount", "bootanimation.zip", "system/media"):
-        assert forbidden not in merged
+        assert forbidden not in replay

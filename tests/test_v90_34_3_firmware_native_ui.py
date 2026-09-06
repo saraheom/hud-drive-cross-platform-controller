@@ -32,5 +32,8 @@ def test_mini_music_uses_stock_ble_packets_and_has_restore():
     assert "HudCommands.musicNotification(" in app
     assert "Mini Music ON + Send" in media
     assert "Restore Normal UI" in media
+    start = app.index("func sendNativeMusicMiniTest")
+    end = app.index("func sendNativeMusicTest", start)
+    music_block = app[start:end].lower()
     for forbidden in ("adb ", "remount", "system/media/bootanimation.zip"):
-        assert forbidden not in app.lower()
+        assert forbidden not in music_block

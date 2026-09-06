@@ -50,10 +50,11 @@ final class V90347FieldLaneAndStockWiFiTests: XCTestCase {
         XCTAssertFalse(block.contains("HudCommands.kivicMode(4)"))
     }
 
-    func testAPPinIsExplicitAndStillNoFirmwareWriter() throws {
+    func testFailedAPPinExperimentIsRetiredAndNoOTAPacketIsUsed() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("hudHotspotBaseband(is5G: true, forceEnable: true)"))
-        XCTAssertTrue(app.contains("HudCommands.kivicMode(4)"))
+        XCTAssertFalse(app.contains("returnHUDRendererKeepingWiFi"))
+        XCTAssertFalse(app.contains("hudHotspotBaseband(is5G: true, forceEnable: true)"))
+        XCTAssertTrue(app.contains("startFirmwareMaintenance"))
         XCTAssertFalse(app.contains("HudCommands.softwareUpdate"))
     }
 }

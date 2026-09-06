@@ -1,3 +1,31 @@
+# HUD Controller v90.34.8 — reversible boot-animation maintenance over HUD Wi-Fi/ADB
+
+v90.34.8 builds directly on v90.34.7 and keeps the U2W v8.8 live-lane fixes. Its new writable feature is intentionally narrow: a user-confirmed **boot-animation override** at `/data/local/bootanimation/bootanimation.zip`. The original `/system/media/bootanimation.zip` is never remounted, overwritten, renamed, or deleted.
+
+### Physical-HUD maintenance path
+
+The custom app now uses the stock-proven HUD SoftAP sequence (`5 GHz`, `forceEnable=false`, `IOS_KIVICCAST_MODE(5)`) and holds mode 5 for maintenance. The user joins `HUDWAY Drive(<BLE ID>)` in iPhone Wi-Fi Settings (this unit: `HUDWAY Drive(7612)`, WPA2 password `87654321`) and taps **Reconnect ADB**. The app's minimal ADB-over-TCP client connects to `192.168.43.1:5555`; the measured HUD has `ro.adb.secure=0`, so no RSA AUTH path is used. Before any write, the app re-verifies `ro.kivic.model=HUDWAY Drive`, firmware `1.1.27`, and `ro.adb.secure=0`; this first field build refuses writes to any other target/version.
+
+The failed **Pin AP + Return HUD Mode 4** experiment is removed. Physical logcat proved that `forceEnable=true` immediately begins untethering/stopping the SoftAP. Maintenance therefore stays in mode 5 and returns to normal mode 4 only when the user exits maintenance. U2W Route Guidance and Now Playing polling are paused during the HUD Wi-Fi session and resumed after exit.
+
+### Boot animation workflow
+
+The Navigation tab's **HUD Firmware Maintenance** card can select either a short MP4/MOV/M4V video or an already-prepared `bootanimation.zip`. Video is converted locally on the iPhone to the physical HUD's stock format: **480×240 pixels, 24 fps, ZIP STORE/no compression, `part0` once + final-frame `part1` loop**. This first field build limits video to 12 seconds and the archive to 100 MB. Generated PNGs explicitly use renderer scale 1.0 so their actual pixel dimensions remain 480×240. Imported ZIPs are rejected unless their descriptor, storage method, and PNG dimensions match the HUD.
+
+Install is deliberately transactional:
+
+1. verify `/data/local/bootanimation` exists and is writable by the ADB shell;
+2. upload to `bootanimation.zip.pending`;
+3. read the complete staged file back over ADB and compare byte count + SHA-256 with the iPhone copy;
+4. atomically rename the verified pending file to `bootanimation.zip` and `chmod 0644`;
+5. read the final installed override back and verify SHA-256 again.
+
+**Restore Stock** deletes only the `/data/local` override/pending files, causing the unchanged system animation to be used on the next boot. **Reboot HUD to Test Animation** is separately user-confirmed. This build does not invoke KivicSystemUpdater, flash partitions, write `/cache/update.zip`, or modify `/system`.
+
+See `docs/V90_34_8_BOOT_ANIMATION_MAINTENANCE.md` and `V90_34_8_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.34.7 — U2W v8.8 resolved live lanes + stock HUD Wi-Fi bootstrap
 
 v90.34.7 is the combined field-fix release for the user's Google Maps live-lane test and the original HUDWAY Wi-Fi OFF→ON capture.

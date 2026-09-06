@@ -1,0 +1,68 @@
+HUD Controller v90.34.8 — Boot Animation Maintenance build verification
+======================================================================
+
+Scope
+-----
+- Based on v90.34.7 / U2W v8.8 live-lane release.
+- Retains resolved live-lane event selection and post-maneuver lane reassert behavior.
+- Removes the failed forceEnable=true "Pin AP + Return HUD Mode 4" runtime path.
+- Adds one explicit, reversible HUD filesystem write:
+    /data/local/bootanimation/bootanimation.zip
+- Never remounts or writes /system and never invokes KivicSystemUpdater/OTA/recovery flashing.
+
+Physical-HUD facts used by this build
+-------------------------------------
+- HUD model: HUDWAY Drive
+- HUD firmware: 1.1.27
+- Maintenance AP: stock 5 GHz, forceEnable=false, Kivic mode 5
+- HUD IP: 192.168.43.1/24
+- ADB: TCP 5555
+- ro.adb.secure=0
+- WPA2 SSID observed: HUDWAY Drive(7612), password 87654321
+- ADB shell push/read/delete to /mnt/internal_sd was physically verified before this build.
+
+Boot animation evidence
+-----------------------
+Recovered /system/bin/bootanimation strings include:
+  /data/local/bootanimation/bootanimation.zip
+  /system/media/bootanimation.zip
+
+Recovered stock /system/media/bootanimation.zip:
+  size:   289469 bytes
+  SHA256: 0dada1f56564e68de0a96ec04e29a551840d0d01c15b24ddbc568167127b590c
+  desc.txt:
+    480 240 24
+    p 1 0 part0
+    p 0 0 part1
+  ZIP entries verified STORE/no compression.
+
+Implementation safety gates
+---------------------------
+- Minimal native ADB transport; AUTH is rejected rather than bypassed.
+- Before connection is accepted and immediately before write, device identity must be:
+    ro.kivic.model=HUDWAY Drive
+    ro.kivic.firmware.version=1.1.27
+    ro.adb.secure=0
+- Runtime write preflight requires /data/local/bootanimation to already exist and be writable.
+- Selected video is converted to actual 480x240 pixels at 24 fps; renderer scale is forced to 1.0.
+- Generated/imported boot animation archive limit: 100 MB.
+- Imported ZIPs require STORE/no compression, matching desc.txt, and exact 480x240 PNG dimensions.
+- Upload target is bootanimation.zip.pending.
+- Complete ADB RECV read-back verifies byte count + SHA-256 before commit.
+- Commit is same-directory mv to bootanimation.zip + chmod 0644.
+- Final committed file is read back and SHA-256 verified again.
+- Failure before commit removes only the pending file.
+- Restore Stock removes only data/local override/pending files.
+- Reboot is a separate user-confirmed action.
+
+Local validation
+----------------
+- Python/static regression suite: 250 passed.
+- Swift syntax parse: 160 Swift files passed with swiftc -parse.
+- YAML parse: 10 files passed with PyYAML.
+- No HotspotConfiguration/NetworkExtension entitlement added; existing signing profile assumptions are preserved.
+
+Caveat
+------
+Linux swiftc -parse does not perform the complete iOS SDK semantic compile/link performed by Xcode.
+This file does NOT claim that GitHub Actions/Xcode/TestFlight CI has passed. Run the normal macOS CI before installing through TestFlight.

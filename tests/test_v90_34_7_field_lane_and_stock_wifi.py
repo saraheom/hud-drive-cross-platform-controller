@@ -54,11 +54,13 @@ def test_stock_wifi_bootstrap_matches_captured_original_app_and_does_not_auto_re
     assert "softwareUpdate" not in block
 
 
-def test_pin_ap_is_explicit_and_precedes_mode4_restore():
-    block = _block(APP, "func returnHUDRendererKeepingWiFi", "func disableHUDWiFiExposure")
-    assert block.index("hudHotspotBaseband(is5G: true, forceEnable: true)") < block.index("HudCommands.kivicMode(4)")
-    assert ".milliseconds(350)" in block
-    assert "Pin AP + Return HUD Mode 4" in UI
+def test_failed_pin_ap_experiment_is_removed_and_maintenance_uses_stock_mode5():
+    assert "returnHUDRendererKeepingWiFi" not in APP
+    assert "hudHotspotBaseband(is5G: true, forceEnable: true)" not in APP
+    assert "Pin AP + Return HUD Mode 4" not in UI
+    maintenance = _block(APP, "func startFirmwareMaintenance", "func reconnectFirmwareMaintenanceADB")
+    assert "enableHUDWiFiExposure()" in maintenance
+    assert "Start Firmware Maintenance" in UI
 
 
 def test_no_firmware_writer_was_added_to_this_wifi_lane_build():

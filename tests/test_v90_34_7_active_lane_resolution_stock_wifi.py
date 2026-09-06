@@ -31,11 +31,11 @@ def test_stock_wifi_sequence_uses_physical_capture_parameters():
     assert "Starting stock 5-GHz HUDWAY AP" in block
 
 
-def test_ap_pin_mode4_is_explicit_experiment_not_automatic_bootstrap():
-    block = APP[APP.index("func returnHUDRendererKeepingWiFi"):APP.index("func disableHUDWiFiExposure")]
-    assert "hudHotspotBaseband(is5G: true, forceEnable: true)" in block
-    assert "HudCommands.kivicMode(4)" in block
-    assert "Pin AP + Return HUD Mode 4" in UI
+def test_failed_ap_pin_mode4_experiment_is_retired_after_physical_test():
+    assert "returnHUDRendererKeepingWiFi" not in APP
+    assert "hudHotspotBaseband(is5G: true, forceEnable: true)" not in APP
+    assert "Pin AP + Return HUD Mode 4" not in UI
+    assert "Start Firmware Maintenance" in UI
 
 
 def test_v88_json_fields_are_optional_for_v87_compatibility():

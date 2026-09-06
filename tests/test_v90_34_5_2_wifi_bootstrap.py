@@ -27,11 +27,9 @@ def test_disable_matches_captured_stock_off_transition():
     assert "HudCommands.kivicMode(0)" not in block
 
 
-def test_wifi_diagnostic_buttons_separate_stock_bootstrap_from_ap_pin_mode4_test():
-    assert "Hold Cast Mode 5" in UI
-    assert "Pin AP + Return HUD Mode 4" in UI
-    start = APP.index("func returnHUDRendererKeepingWiFi")
-    end = APP.index("func disableHUDWiFiExposure", start)
-    block = APP[start:end]
-    assert block.index("hudHotspotBaseband(is5G: true, forceEnable: true)") < block.index("HudCommands.kivicMode(4)")
+def test_failed_ap_pin_experiment_is_removed_from_current_ui_and_runtime():
+    assert "Pin AP + Return HUD Mode 4" not in UI
+    assert "returnHUDRendererKeepingWiFi" not in APP
+    assert "hudHotspotBaseband(is5G: true, forceEnable: true)" not in APP
+    assert "Start Firmware Maintenance" in UI
     assert "softwareUpdate" not in APP[APP.index("func enableHUDWiFiExposure"):APP.index("enum NativeLaneTestPreset")]

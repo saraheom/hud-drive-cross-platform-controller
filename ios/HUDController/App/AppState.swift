@@ -13,12 +13,14 @@ final class AppState {
     let obd: HudOBDController
     let speedEngine: OriginalSpeedLimitEngine
     let ambientLight: AmbientLightMonitor
+    let maintenance: HudMaintenanceManager
     let settings = HudSettings()
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
     private var hudRehydrateTask: Task<Void, Never>?
     private var hudReassertTask: Task<Void, Never>?
     private var hudWiFiExposureTask: Task<Void, Never>?
+    private var firmwareMaintenanceTask: Task<Void, Never>?
 
     // v90.34.5 lane-presentation coordinator. The stock HUD auto-hides lane
     // graphics, so active lanes are reasserted while the selected policy says
@@ -54,10 +56,13 @@ final class AppState {
     private let hudWiFiRecoveryKey = "HUD.WiFiExposureRecoveryNeeded"
     private(set) var hudWiFiExposureActive = false
     private(set) var hudWiFiExposureStatus = "HUD Wi-Fi not forced"
+    private(set) var firmwareMaintenanceActive = false
 
     init() {
         let logger = LogManager()
         self.logger = logger
+        let maintenance = HudMaintenanceManager(logger: logger)
+        self.maintenance = maintenance
         let bluetooth = HudBluetoothManager(logger: logger)
         self.bluetooth = bluetooth
         let navigation = HudNavigationController(bluetooth: bluetooth, logger: logger)
@@ -150,6 +155,12 @@ final class AppState {
             self.laneGuidanceRefreshTask = nil
             self.hudWiFiExposureTask?.cancel()
             self.hudWiFiExposureTask = nil
+            self.firmwareMaintenanceTask?.cancel()
+            self.firmwareMaintenanceTask = nil
+            if self.firmwareMaintenanceActive {
+                self.firmwareMaintenanceActive = false
+                self.maintenance.disconnectADB()
+            }
             if self.hudWiFiExposureActive {
                 self.hudWiFiExposureActive = false
                 self.hudWiFiExposureStatus = "BLE lost — Wi-Fi release armed for reconnect"
@@ -740,8 +751,8 @@ final class AppState {
             try? await Task.sleep(for: .milliseconds(5000))
             guard !Task.isCancelled, self.hudWiFiExposureActive,
                   self.bluetooth.state == .connected else { return }
-            // Stay in mode 5. A separate explicit button below tests whether a
-            // forced hotspot can survive the mode-4 renderer restoration.
+            // Stay in mode 5 for the whole maintenance session. Physical testing
+            // proved forceEnable=true tears the SoftAP down, so that experiment is retired.
             self.hudWiFiExposureStatus = "Stock AP startup complete — join HUDWAY Wi-Fi; mode 5 held"
             self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → post-bootstrap KeepAlive")
             self.hudWiFiExposureTask = nil
@@ -768,32 +779,6 @@ final class AppState {
         hudWiFiExposureTask = nil
     }
 
-    /// Experimental coexistence step. Only use after the laptop has already
-    /// received a 192.168.43.x lease in stock mode 5. Pin the hotspot with the
-    /// recovered forceEnable flag, then restore IOS_HUD_MODE(4) and test whether
-    /// the AP remains reachable while native navigation/lane rendering returns.
-    func returnHUDRendererKeepingWiFi() {
-        guard bluetooth.state == .connected, hudWiFiExposureActive else { return }
-        hudWiFiExposureTask?.cancel()
-        logger.log("HUD WIFI", "Diagnostic: pin 5GHz AP force=true, then return IOS_HUD_MODE(4)")
-        hudWiFiExposureStatus = "Pinning AP before native HUD restore…"
-        bluetooth.enqueue(
-            HudCommands.hudHotspotBaseband(is5G: true, forceEnable: true),
-            label: "HUD Wi-Fi diagnostic → pin active 5GHz AP"
-        )
-        hudWiFiExposureTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled, self.hudWiFiExposureActive,
-                  self.bluetooth.state == .connected else { return }
-            self.bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD Wi-Fi diagnostic → return iOS HUD mode 4")
-            self.bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi diagnostic → native HUD full screen")
-            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi diagnostic → KeepAlive")
-            self.hudWiFiExposureStatus = "Native HUD mode 4 restored; verify the AP is still reachable"
-            self.hudWiFiExposureTask = nil
-        }
-    }
-
     func disableHUDWiFiExposure(reason: String = "manual") {
         hudWiFiExposureTask?.cancel()
         hudWiFiExposureTask = nil
@@ -816,6 +801,69 @@ final class AppState {
         hudWiFiExposureStatus = "HUD Wi-Fi released"
     }
 
+    // MARK: - HUD firmware maintenance / boot animation override
+
+    func startFirmwareMaintenance() {
+        guard bluetooth.state == .connected else {
+            maintenance.status = "Connect the HUD over BLE first"
+            return
+        }
+        firmwareMaintenanceTask?.cancel()
+        firmwareMaintenanceActive = true
+        routeGuidance.stop(reason: "HUD firmware maintenance Wi-Fi")
+        nowPlaying.stop(reason: "HUD firmware maintenance Wi-Fi")
+        enableHUDWiFiExposure()
+        logger.log("HUD MAINT", "Starting boot-animation maintenance: stock 5GHz force=false mode 5")
+
+        let ssid = hudWiFiExpectedSSID
+        firmwareMaintenanceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(5400))
+            guard !Task.isCancelled, self.firmwareMaintenanceActive,
+                  self.bluetooth.state == .connected else { return }
+            self.maintenance.status = "HUD AP ready. Join \(ssid) (password 87654321) in iPhone Wi-Fi Settings, then return and tap Reconnect ADB."
+            // Try ADB once in case iOS already re-associated with the remembered HUD network.
+            do {
+                try await self.maintenance.connectADB(retries: 2)
+            } catch {
+                self.maintenance.lastError = nil
+                self.maintenance.status = "HUD AP ready. Join \(ssid) (password 87654321) in iPhone Wi-Fi Settings, then return and tap Reconnect ADB."
+                self.logger.log("HUD MAINT", "Initial ADB probe waiting for manual HUD Wi-Fi join")
+            }
+            self.firmwareMaintenanceTask = nil
+        }
+    }
+
+    func reconnectFirmwareMaintenanceADB() {
+        guard firmwareMaintenanceActive else { return }
+        firmwareMaintenanceTask?.cancel()
+        firmwareMaintenanceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.maintenance.connectADB(retries: 4)
+            } catch {
+                self.maintenance.lastError = error.localizedDescription
+                self.maintenance.status = "ADB reconnect failed: \(error.localizedDescription)"
+                self.logger.log("HUD MAINT", "Reconnect failed: \(error.localizedDescription)")
+            }
+            self.firmwareMaintenanceTask = nil
+        }
+    }
+
+    func exitFirmwareMaintenance() {
+        firmwareMaintenanceTask?.cancel()
+        firmwareMaintenanceTask = nil
+        maintenance.disconnectADB()
+        firmwareMaintenanceActive = false
+        disableHUDWiFiExposure(reason: "exit firmware maintenance")
+        logger.log("HUD MAINT", "Exited maintenance; restoring normal HUD mode and U2W polling")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(1800))
+            guard let self, self.bluetooth.state == .connected, !self.firmwareMaintenanceActive else { return }
+            self.routeGuidance.start(reason: "firmware maintenance ended")
+            self.nowPlaying.start(reason: "firmware maintenance ended")
+        }
+    }
 
     enum NativeLaneTestPreset: String, CaseIterable, Identifiable {
         case fourStraightUseThird

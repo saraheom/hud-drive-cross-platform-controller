@@ -28,7 +28,7 @@ final class V90347ActiveLaneResolutionStockWiFiTests: XCTestCase {
         XCTAssertTrue(block.contains("live lane maneuver completed"))
     }
 
-    func testStockWiFiBootstrapAndExperimentalPinAreDistinct() throws {
+    func testStockWiFiBootstrapAndMaintenanceAreDistinct() throws {
         let app = try source("HUDController/App/AppState.swift")
         let ui = try source("HUDController/AmbientTest/HudNavigationViewIOS26.swift")
         let enableStart = try XCTUnwrap(app.range(of: "func enableHUDWiFiExposure()"))
@@ -39,11 +39,10 @@ final class V90347ActiveLaneResolutionStockWiFiTests: XCTestCase {
         XCTAssertTrue(enable.contains(".milliseconds(5000)"))
         XCTAssertFalse(enable.contains("HudCommands.kivicMode(4)"))
 
-        let pinStart = try XCTUnwrap(app.range(of: "func returnHUDRendererKeepingWiFi"))
-        let disableStart = try XCTUnwrap(app.range(of: "func disableHUDWiFiExposure", range: pinStart.lowerBound..<app.endIndex))
-        let pin = String(app[pinStart.lowerBound..<disableStart.lowerBound])
-        XCTAssertTrue(pin.contains("hudHotspotBaseband(is5G: true, forceEnable: true)"))
-        XCTAssertTrue(pin.contains("HudCommands.kivicMode(4)"))
-        XCTAssertTrue(ui.contains("Pin AP + Return HUD Mode 4"))
+        XCTAssertFalse(app.contains("returnHUDRendererKeepingWiFi"))
+        XCTAssertFalse(app.contains("hudHotspotBaseband(is5G: true, forceEnable: true)"))
+        XCTAssertTrue(app.contains("func startFirmwareMaintenance"))
+        XCTAssertTrue(ui.contains("Start Firmware Maintenance"))
+        XCTAssertFalse(ui.contains("Pin AP + Return HUD Mode 4"))
     }
 }

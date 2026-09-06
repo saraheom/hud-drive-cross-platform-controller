@@ -28,7 +28,7 @@ targets:
         NSBluetoothAlwaysUsageDescription: HUD Controller uses Bluetooth to communicate with your HUD and nearby BLE vehicle accessories.
         NSLocationWhenInUseUsageDescription: HUD Controller uses GPS speed and road position to reproduce the original HUD speed and speed-limit behavior.
         NSLocationAlwaysAndWhenInUseUsageDescription: HUD Controller uses location while driving so HUD speed and posted speed limits can continue updating in the background.
-        NSLocalNetworkUsageDescription: HUD Controller connects to your CarPlay adapter on the local vehicle Wi-Fi network to receive live route guidance and Now Playing media.
+        NSLocalNetworkUsageDescription: HUD Controller uses local vehicle Wi-Fi for CarPlay route/media data and, in explicit Firmware Maintenance mode, to connect to the HUD over ADB for reversible boot-animation management.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         UIBackgroundModes:

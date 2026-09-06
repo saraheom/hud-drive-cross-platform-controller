@@ -1,11 +1,16 @@
 import SwiftUI
 import Foundation
 import PhotosUI
+import UniformTypeIdentifiers
 
 struct HudNavigationView: View {
     @Bindable var state: AppState
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var photoStatus = ""
+    @State private var showBootAnimationImporter = false
+    @State private var confirmBootInstall = false
+    @State private var confirmBootRestore = false
+    @State private var confirmHUDReboot = false
 
     var body: some View {
         NavigationStack {
@@ -53,33 +58,55 @@ struct HudNavigationView: View {
                     }
 
                     HudCard {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("HUD Wi-Fi / casting network").font(.headline)
-                            Toggle("Expose HUD Wi-Fi", isOn: Binding(
-                                get: { state.hudWiFiExposureActive },
-                                set: { $0 ? state.enableHUDWiFiExposure() : state.disableHUDWiFiExposure() }
-                            ))
-                            .disabled(state.bluetooth.state != .connected)
-                            LabeledContent("Status", value: state.hudWiFiExposureStatus)
-                            LabeledContent("HUD IP", value: "192.168.43.1")
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("HUD Firmware Maintenance").font(.headline)
+                            LabeledContent("HUD Wi-Fi", value: state.hudWiFiExpectedSSID)
+                            LabeledContent("Password", value: "87654321")
+                            LabeledContent("HUD IP / ADB", value: "192.168.43.1:5555")
+                            LabeledContent("ADB", value: state.maintenance.adbState.rawValue)
+                            LabeledContent("HUD", value: state.maintenance.hudIdentity)
+                            LabeledContent("Boot animation", value: state.maintenance.overrideStatus)
 
-                            if state.hudWiFiExposureActive {
+                            if !state.firmwareMaintenanceActive {
+                                Button("Start Firmware Maintenance") { state.startFirmwareMaintenance() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(state.bluetooth.state != .connected)
+                            } else {
                                 HStack {
-                                    Button("Hold Cast Mode 5") {
-                                        state.holdHUDWiFiCastingModeForDiagnostics()
-                                    }
-                                    .buttonStyle(.bordered)
-
-                                    Button("Pin AP + Return HUD Mode 4") {
-                                        state.returnHUDRendererKeepingWiFi()
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                                Text("Stock test: Expose HUD Wi-Fi now uses the captured 5-GHz/force=false mode-5 sequence and stays in mode 5 for the full SoftAP/DHCP startup. After the laptop receives 192.168.43.x, Pin AP + Return HUD Mode 4 experimentally sets force=true before restoring native navigation/lane rendering; then verify 192.168.43.1/ADB remains reachable.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    Button("Reconnect ADB") { state.reconnectFirmwareMaintenanceADB() }
+                                    Button("Exit Maintenance Mode") { state.exitFirmwareMaintenance() }
+                                }.buttonStyle(.bordered)
                             }
-                            Text("Stock 5-GHz SoftAP exposure only; no Screen Recording broadcast and no firmware/update write.")
+                            Text(state.maintenance.status).font(.caption).foregroundStyle(.secondary)
+                            Divider()
+                            Text("Boot Animation Override").font(.subheadline.bold())
+                            Button("Select Video or bootanimation.zip") { showBootAnimationImporter = true }
+                                .buttonStyle(.bordered)
+                                .disabled(state.maintenance.busy)
+                            LabeledContent("Prepared", value: state.maintenance.preparedSummary)
+                            LabeledContent("SHA-256", value: state.maintenance.preparedHashShort)
+                            if state.maintenance.preparationProgress > 0 && state.maintenance.preparationProgress < 1 {
+                                ProgressView(value: state.maintenance.preparationProgress)
+                            }
+                            if state.maintenance.transferProgress > 0 && state.maintenance.transferProgress < 1 {
+                                ProgressView("Uploading / verifying…", value: state.maintenance.transferProgress)
+                            }
+                            HStack {
+                                Button("Install Custom Boot Animation") { confirmBootInstall = true }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(state.maintenance.adbState != .connected || state.maintenance.prepared == nil || state.maintenance.busy)
+                                Button("Restore Stock") { confirmBootRestore = true }
+                                    .buttonStyle(.bordered)
+                                    .disabled(state.maintenance.adbState != .connected || state.maintenance.busy)
+                            }
+                            Button("Reboot HUD to Test Animation") { confirmHUDReboot = true }
+                                .buttonStyle(.bordered)
+                                .disabled(state.maintenance.adbState != .connected || state.maintenance.busy)
+                            if let error = state.maintenance.lastError {
+                                Label(error, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
+                            Text("Writes only /data/local/bootanimation/bootanimation.zip and verifies it by ADB read-back SHA-256. Restore Stock deletes that override; /system/media/bootanimation.zip is never changed.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -237,6 +264,38 @@ struct HudNavigationView: View {
             }
             .background(HudTheme.background.ignoresSafeArea())
             .navigationTitle("Navigation")
+        }
+        .fileImporter(
+            isPresented: $showBootAnimationImporter,
+            allowedContentTypes: [.mpeg4Movie, .quickTimeMovie, .movie, .zip],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task { await state.maintenance.prepareAnimation(from: url) }
+            case .failure(let error):
+                state.maintenance.lastError = error.localizedDescription
+                state.maintenance.status = "File selection failed: \(error.localizedDescription)"
+            }
+        }
+        .alert("Install custom boot animation?", isPresented: $confirmBootInstall) {
+            Button("Cancel", role: .cancel) {}
+            Button("Install") { Task { await state.maintenance.installPreparedOverride() } }
+        } message: {
+            Text("Writes only the data/local override after complete ADB read-back verification; the stock system animation is untouched.")
+        }
+        .alert("Restore stock boot animation?", isPresented: $confirmBootRestore) {
+            Button("Cancel", role: .cancel) {}
+            Button("Restore", role: .destructive) { Task { await state.maintenance.restoreStockFallback() } }
+        } message: {
+            Text("Deletes only the custom data/local override.")
+        }
+        .alert("Reboot HUD now?", isPresented: $confirmHUDReboot) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reboot", role: .destructive) { Task { await state.maintenance.rebootHUD() } }
+        } message: {
+            Text("Keep HUD power stable until startup completes.")
         }
     }
 

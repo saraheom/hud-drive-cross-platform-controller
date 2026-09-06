@@ -43,9 +43,9 @@ def test_recorded_replay_is_retained_and_routes_through_policy():
 def test_custom_app_uses_stock_softap_bootstrap_without_ota_start():
     assert "static func hudHotspotBaseband" in COMMANDS
     assert "static func kivicMode" in COMMANDS
-    assert "HUD Wi-Fi / casting network" in UI26
-    assert "Expose HUD Wi-Fi" in UI26
-    assert "Pin AP + Return HUD Mode 4" in UI26
+    assert "HUD Firmware Maintenance" in UI26
+    assert "Start Firmware Maintenance" in UI26
+    assert "Pin AP + Return HUD Mode 4" not in UI26
     start = APP.index("func enableHUDWiFiExposure")
     end = APP.index("func holdHUDWiFiCastingModeForDiagnostics", start)
     block = APP[start:end]
