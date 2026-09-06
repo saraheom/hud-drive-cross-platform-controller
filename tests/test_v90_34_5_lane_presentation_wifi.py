@@ -45,9 +45,13 @@ def test_custom_app_can_force_hud_wifi_ap_without_ota_start():
     assert "static func kivicMode" in COMMANDS
     assert "HUD Wi-Fi / casting network" in UI26
     assert "Expose HUD Wi-Fi" in UI26
+    assert "Hold Cast Mode 5" in UI26
+    assert "Return HUD Mode 4" in UI26
     start = APP.index("func enableHUDWiFiExposure")
     end = APP.index("func disableHUDWiFiExposure", start)
     block = APP[start:end]
     assert "hudHotspotBaseband(is5G: false, forceEnable: true)" in block
-    assert "HudCommands.kivicMode(0)" in block
+    assert "HudCommands.kivicMode(5)" in block
+    assert "HudCommands.kivicMode(4)" in block
+    assert ".milliseconds(1800)" in block
     assert "softwareUpdate" not in block

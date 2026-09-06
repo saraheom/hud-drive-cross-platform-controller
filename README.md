@@ -1,3 +1,17 @@
+# v90.34.5.2 — iOS KivicCast AP bootstrap / HUD Wi-Fi exposure fix
+
+This focused build corrects the HUD Wi-Fi exposure mode discovered from the physical HUD log. v90.34.5.1 sent `KivicMode(0)`, which the recovered HudLauncher constants identify as `ANDROID_HUD_MODE`; the SSID could appear but Windows fell back to a `169.254.x.x` APIPA address because the iOS KivicCast SoftAP/DHCP path was not initialized.
+
+The new exposure sequence remains BLE-only and performs **no HUD firmware/filesystem write**:
+
+1. force the stock 2.4-GHz hotspot/baseband ON;
+2. enter `IOS_KIVICCAST_MODE (5)` for 1.8 s so the old Android firmware can run the iOS casting AP/SoftAP path;
+3. return to `IOS_HUD_MODE (4)` while leaving the hotspot forced on, preserving native navigation/lane rendering.
+
+Temporary diagnostic buttons **Hold Cast Mode 5** and **Return HUD Mode 4** are included so the user can determine whether this particular firmware tears the AP down on the 5→4 transition. The configurable lane-guidance implementation, Apple/Google recorded replay, mini-Music diagnostic, CarPlay, speed limit, OBD, and ambient-light runtime are otherwise unchanged from v90.34.5.1.
+
+---
+
 ## v90.34.5.1 — CI replay-regression alignment
 
 v90.34.5.1 is a **test-only correction** on top of v90.34.5. The supplied GitHub Actions run confirmed that the iOS 26 simulator app target built successfully and 209 of 210 XCTest cases passed. The sole failure was the older `V90344RecordedCarPlayLaneReplayTests.testReplayRemainsBLEOnlyDiagnostic`, which still required the pre-v90.34.5 direct replay call `HudCommands.laneGuidance(step.nativeLanes)`. v90.34.5 intentionally removed that direct send so recorded Apple/Google replay passes through `setLaneGuidanceForCurrentManeuver(...)`, the same configurable Off/Near turn/Persistent lane coordinator used by the new Navigation presentation settings.

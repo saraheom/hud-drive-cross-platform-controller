@@ -59,6 +59,23 @@ struct HudNavigationView: View {
                             .disabled(state.bluetooth.state != .connected)
                             LabeledContent("Status", value: state.hudWiFiExposureStatus)
                             LabeledContent("HUD IP", value: "192.168.43.1")
+
+                            if state.hudWiFiExposureActive {
+                                HStack {
+                                    Button("Hold Cast Mode 5") {
+                                        state.holdHUDWiFiCastingModeForDiagnostics()
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    Button("Return HUD Mode 4") {
+                                        state.returnHUDRendererKeepingWiFi()
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                                Text("Diagnostic fallback: if automatic exposure still gives a 169.254.x.x address, hold mode 5 and reconnect the laptop. If DHCP works there, Return HUD Mode 4 tests whether the AP survives while restoring native navigation/lane rendering.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             Text("AP exposure only; no Screen Recording broadcast and no firmware/update write.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }

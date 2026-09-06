@@ -15,7 +15,8 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
     }
 
     func testHUDWiFiPacketsMatchStockWireShape() throws {
-        XCTAssertEqual(try body(HudCommands.kivicMode(0)), Data([2, 7, 0, 0, 0, 0, 0]))
+        XCTAssertEqual(try body(HudCommands.kivicMode(4)), Data([2, 7, 0, 0, 0, 0, 4]))
+        XCTAssertEqual(try body(HudCommands.kivicMode(5)), Data([2, 7, 0, 0, 0, 0, 5]))
         XCTAssertEqual(
             try body(HudCommands.hudHotspotBaseband(is5G: false, forceEnable: true)),
             Data([2, 21, 0, 0, 1])
@@ -59,6 +60,8 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
         XCTAssertTrue(ui.contains("Recorded CarPlay lane replay"))
         XCTAssertTrue(ui.contains("HUD Wi-Fi / casting network"))
         XCTAssertTrue(ui.contains("Expose HUD Wi-Fi"))
+        XCTAssertTrue(ui.contains("Hold Cast Mode 5"))
+        XCTAssertTrue(ui.contains("Return HUD Mode 4"))
         XCTAssertTrue(ui.contains("87654321"))
         XCTAssertTrue(ui.contains("192.168.43.1"))
     }
@@ -72,7 +75,9 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
         }
         let enter = String(app[start..<end])
         XCTAssertTrue(enter.contains("hudHotspotBaseband(is5G: false, forceEnable: true)"))
-        XCTAssertTrue(enter.contains("HudCommands.kivicMode(0)"))
+        XCTAssertTrue(enter.contains("HudCommands.kivicMode(5)"))
+        XCTAssertTrue(enter.contains("HudCommands.kivicMode(4)"))
+        XCTAssertTrue(enter.contains(".milliseconds(1800)"))
         XCTAssertFalse(enter.contains("HudCommands.softwareUpdate"))
         XCTAssertFalse(enter.contains("URLSession"))
     }

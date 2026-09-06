@@ -26,7 +26,10 @@ enum HudCommands {
     // MARK: - HUD Wi-Fi / casting network exposure (no firmware writer)
 
     /// Stock KivicModeCommandPacket: p1=7, p2=0, int32 mode.
-    /// Mode 0 keeps the normal HUD renderer active while the hotspot is exposed.
+    /// Firmware constants recovered from HudLauncher:
+    /// 4 = IOS_HUD_MODE, 5 = IOS_KIVICCAST_MODE.
+    /// Wi-Fi exposure bootstraps mode 5 to initialize the iOS casting AP, then
+    /// returns to mode 4 so the native HUD renderer can continue showing lanes.
     static func kivicMode(_ mode: Int32) -> Data {
         HudProtocol.frame(command: 2, p1: 7, p2: 0, payload: HudProtocol.int32(mode))
     }

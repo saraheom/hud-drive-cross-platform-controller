@@ -1,0 +1,11 @@
+HUD Controller v90.34.5.2 build verification
+
+Runtime change scope:
+- Wi-Fi/AP exposure only.
+- Replace incorrect ANDROID_HUD_MODE(0) path with iOS AP bootstrap: hotspot force ON -> IOS_KIVICCAST_MODE(5) -> 1.8 s settle -> IOS_HUD_MODE(4).
+- Disable/recovery restores IOS_HUD_MODE(4).
+- Add temporary Hold Cast Mode 5 / Return HUD Mode 4 diagnostics.
+- No SoftwareUpdate command, no TCP/7980 transfer, no ADB/filesystem write.
+- Navigation lane policy/replay and all unrelated runtime remain unchanged.
+
+Validation is recorded in the release response after local static/syntax checks.

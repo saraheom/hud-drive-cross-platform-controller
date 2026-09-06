@@ -107,6 +107,23 @@ struct HudNavigationView: View {
                             LabeledContent("Password", value: "87654321")
                             LabeledContent("HUD IP", value: "192.168.43.1")
 
+                            if state.hudWiFiExposureActive {
+                                HStack {
+                                    Button("Hold Cast Mode 5") {
+                                        state.holdHUDWiFiCastingModeForDiagnostics()
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    Button("Return HUD Mode 4") {
+                                        state.returnHUDRendererKeepingWiFi()
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                                Text("Diagnostic fallback: if automatic exposure still gives a 169.254.x.x address, hold mode 5 and reconnect the laptop. If DHCP works there, Return HUD Mode 4 tests whether the AP survives while restoring native navigation/lane rendering.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
                             Text("This reproduces only the HUD's stock 2.4-GHz Wi-Fi/AP exposure over BLE so your laptop can connect while this custom app remains open. It does not start iOS Screen Recording/Drive Broadcast, does not enter the software-update writer, and does not write HUD firmware.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

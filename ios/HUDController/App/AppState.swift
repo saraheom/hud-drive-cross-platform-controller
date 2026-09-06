@@ -18,6 +18,7 @@ final class AppState {
     private var musicFilterInitialized = false
     private var hudRehydrateTask: Task<Void, Never>?
     private var hudReassertTask: Task<Void, Never>?
+    private var hudWiFiExposureTask: Task<Void, Never>?
 
     // v90.34.5 lane-presentation coordinator. The stock HUD auto-hides lane
     // graphics, so active lanes are reasserted while the selected policy says
@@ -121,6 +122,8 @@ final class AppState {
             self.hudReassertTask = nil
             self.laneGuidanceRefreshTask?.cancel()
             self.laneGuidanceRefreshTask = nil
+            self.hudWiFiExposureTask?.cancel()
+            self.hudWiFiExposureTask = nil
             if self.hudWiFiExposureActive {
                 self.hudWiFiExposureActive = false
                 self.hudWiFiExposureStatus = "BLE lost — Wi-Fi release armed for reconnect"
@@ -402,34 +405,110 @@ final class AppState {
             hudWiFiExposureStatus = "Connect the HUD over BLE first"
             return
         }
+
+        hudWiFiExposureTask?.cancel()
         hudWiFiExposureActive = true
-        hudWiFiExposureStatus = "HUD Wi-Fi requested — connect laptop to HUDWAY network"
+        hudWiFiExposureStatus = "Starting iOS HUDWAY AP…"
         UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
+
+        // HudLauncher firmware modes recovered from KivicModeCommandPacket:
+        // 4 = IOS_HUD_MODE, 5 = IOS_KIVICCAST_MODE.
+        // Mode 5 is the path that runs doIOSKiviccastNow / SoftAP setup. We
+        // briefly enter it to initialize hostapd/dnsmasq, then return to mode 4
+        // while keeping HudHotspotBaseband forceEnable asserted so the local
+        // HUD renderer (navigation/lanes) remains usable. No firmware write.
         logger.log(
             "HUD WIFI",
-            "Enable 2.4GHz HUD AP: Kivic mode 0 + hotspot forceEnable=1; no SoftwareUpdate start and no TCP firmware transfer"
+            "Enable 2.4GHz HUD AP: force hotspot ON → IOS_KIVICCAST_MODE(5) bootstrap → IOS_HUD_MODE(4); no SoftwareUpdate/TCP firmware transfer"
         )
-        bluetooth.enqueue(HudCommands.kivicMode(0), label: "HUD Wi-Fi → normal Kivic mode 0")
+
         bluetooth.enqueue(
             HudCommands.hudHotspotBaseband(is5G: false, forceEnable: true),
             label: "HUD Wi-Fi → force 2.4GHz AP ON"
         )
-        bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → KeepAlive")
+
+        hudWiFiExposureTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, self.hudWiFiExposureActive,
+                  self.bluetooth.state == .connected else { return }
+
+            self.bluetooth.enqueue(
+                HudCommands.kivicMode(5),
+                label: "HUD Wi-Fi → iOS KivicCast bootstrap mode 5"
+            )
+            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → bootstrap KeepAlive")
+            self.hudWiFiExposureStatus = "Initializing HUDWAY DHCP/AP…"
+
+            // Give the old Android 5.1 firmware time to run the iOS KivicCast
+            // SoftAP path before restoring the normal iOS HUD renderer.
+            try? await Task.sleep(for: .milliseconds(1800))
+            guard !Task.isCancelled, self.hudWiFiExposureActive,
+                  self.bluetooth.state == .connected else { return }
+
+            self.bluetooth.enqueue(
+                HudCommands.kivicMode(4),
+                label: "HUD Wi-Fi → return iOS HUD mode 4 (AP remains forced)"
+            )
+            self.bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi → native HUD full screen")
+            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → final KeepAlive")
+            self.hudWiFiExposureStatus = "HUD Wi-Fi exposed — join SSID, then test 192.168.43.1"
+            self.hudWiFiExposureTask = nil
+        }
+    }
+
+    /// Diagnostic fallback: keep the firmware in IOS_KIVICCAST_MODE(5) instead
+    /// of returning to IOS_HUD_MODE(4). Useful only to determine whether mode 4
+    /// tears the AP down on this firmware. The local HUD renderer may be hidden
+    /// while this is active. Still BLE-only and performs no firmware write.
+    func holdHUDWiFiCastingModeForDiagnostics() {
+        guard bluetooth.state == .connected else {
+            hudWiFiExposureStatus = "Connect the HUD over BLE first"
+            return
+        }
+        hudWiFiExposureTask?.cancel()
+        hudWiFiExposureTask = nil
+        hudWiFiExposureActive = true
+        UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
+        logger.log("HUD WIFI", "Diagnostic: hold IOS_KIVICCAST_MODE(5) with 2.4GHz hotspot forced ON")
+        bluetooth.enqueue(
+            HudCommands.hudHotspotBaseband(is5G: false, forceEnable: true),
+            label: "HUD Wi-Fi diagnostic → force 2.4GHz AP ON"
+        )
+        bluetooth.enqueue(HudCommands.kivicMode(5), label: "HUD Wi-Fi diagnostic → hold iOS KivicCast mode 5")
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi diagnostic → KeepAlive")
+        hudWiFiExposureStatus = "Diagnostic casting mode 5 held — check DHCP/192.168.43.1"
+    }
+
+    /// Return to the normal iOS HUD renderer without releasing the forced AP.
+    /// This lets a stationary test determine whether the AP survives mode 5→4.
+    func returnHUDRendererKeepingWiFi() {
+        guard bluetooth.state == .connected, hudWiFiExposureActive else { return }
+        hudWiFiExposureTask?.cancel()
+        hudWiFiExposureTask = nil
+        logger.log("HUD WIFI", "Diagnostic: return IOS_HUD_MODE(4) while keeping forced AP")
+        bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD Wi-Fi diagnostic → return iOS HUD mode 4")
+        bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi diagnostic → native HUD full screen")
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi diagnostic → KeepAlive")
+        hudWiFiExposureStatus = "iOS HUD mode 4 restored — AP still requested"
     }
 
     func disableHUDWiFiExposure(reason: String = "manual") {
+        hudWiFiExposureTask?.cancel()
+        hudWiFiExposureTask = nil
         hudWiFiExposureActive = false
         guard bluetooth.state == .connected else {
             hudWiFiExposureStatus = "HUD disconnected — Wi-Fi release armed for reconnect"
             UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
             return
         }
-        logger.log("HUD WIFI", "Disable forced HUD AP reason=\(reason)")
+        logger.log("HUD WIFI", "Disable forced HUD AP reason=\(reason); restore IOS_HUD_MODE(4)")
         bluetooth.enqueue(
             HudCommands.hudHotspotBaseband(is5G: false, forceEnable: false),
             label: "HUD Wi-Fi → release forced AP"
         )
-        bluetooth.enqueue(HudCommands.kivicMode(0), label: "HUD Wi-Fi → normal Kivic mode 0")
+        bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD Wi-Fi → restore iOS HUD mode 4")
         bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi → full screen ON")
         bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → KeepAlive")
         UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
