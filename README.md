@@ -1,3 +1,13 @@
+
+## v90.34.5 — configurable native lane guidance + HUD Wi-Fi exposure
+
+v90.34.5 keeps the v90.34.4 recorded Apple/Google `0x5204` replay and adds persisted Navigation presentation controls: Show Current Street, Lane Guidance Off/Near turn/Persistent, and a 0.1–1.0 mi near-turn threshold (0.5 mi default). Eligible lane packets are reasserted every 1.5 seconds to counter the stock HUD renderer's auto-hide behavior.
+
+The iOS 26 Navigation screen also gains **Expose HUD Wi-Fi**, using only the stock Kivic-mode/hotspot BLE packets so a laptop can join the HUDWAY network at `192.168.43.1` while this custom app remains open and continues sending navigation commands. This does not start the firmware writer and performs no HUD filesystem write.
+
+U2W v8.6 still exports only the lane-guidance-present flag rather than the decoded live lane array, so the recorded real-world fixtures remain the validation source for this build. See `docs/V90_34_5_CONFIGURABLE_LANES_HUD_WIFI.md`.
+
+---
 # HUD Controller v90.34.4.1 — CI regression alignment
 
 v90.34.4.1 is a **CI-only correction** on top of v90.34.4. The supplied GitHub Actions run confirmed that the simulator app built successfully and all four new `V90344RecordedCarPlayLaneReplayTests` passed. The only failure was the older `V70ImperialUnitsAndUS1Tests.testNavigationReassertsImperialUnitsBeforeManeuver`, whose source-inspection assertion still searched for the pre-v90.34.4 literal `HudCommands.maneuver(current)`. v90.34.4 intentionally generalized that native send path to `HudCommands.maneuver(instruction)` so recorded CarPlay fixtures and live/manual navigation share the same sender. The runtime ordering remains unchanged: `HudCommands.imperialUnits()` is enqueued before the maneuver packet.

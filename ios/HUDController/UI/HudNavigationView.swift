@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 import PhotosUI
 
 struct HudNavigationView: View {
@@ -13,6 +14,55 @@ struct HudNavigationView: View {
                     ConnectionCard(state: state)
 
                     RouteGuidanceStatusCard(state: state)
+
+                    HudCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Navigation presentation").font(.headline)
+                            Toggle("Show Current Street", isOn: Binding(
+                                get: { state.settings.navigationShowCurrentStreet },
+                                set: { value in
+                                    state.settings.navigationShowCurrentStreet = value
+                                    state.applyNavigationPresentationSettings()
+                                }
+                            ))
+                            Picker("Lane Guidance", selection: Binding(
+                                get: { state.settings.laneGuidanceMode },
+                                set: { value in
+                                    state.settings.laneGuidanceMode = value
+                                    state.applyNavigationPresentationSettings()
+                                }
+                            )) {
+                                ForEach(HudLaneGuidanceMode.allCases) { mode in Text(mode.title).tag(mode) }
+                            }
+                            .pickerStyle(.segmented)
+                            if state.settings.laneGuidanceMode == .nearTurn {
+                                Text(String(format: "Show lanes within %.1f mi (~%d ft)", state.settings.laneGuidanceDistanceMiles, Int((state.settings.laneGuidanceDistanceMiles * 5280).rounded())))
+                                    .font(.subheadline)
+                                Slider(value: Binding(
+                                    get: { state.settings.laneGuidanceDistanceMiles },
+                                    set: { value in
+                                        state.settings.laneGuidanceDistanceMiles = value
+                                        state.applyNavigationPresentationSettings()
+                                    }
+                                ), in: 0.1...1.0, step: 0.1)
+                            }
+                        }
+                    }
+
+                    HudCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("HUD Wi-Fi / casting network").font(.headline)
+                            Toggle("Expose HUD Wi-Fi", isOn: Binding(
+                                get: { state.hudWiFiExposureActive },
+                                set: { $0 ? state.enableHUDWiFiExposure() : state.disableHUDWiFiExposure() }
+                            ))
+                            .disabled(state.bluetooth.state != .connected)
+                            LabeledContent("Status", value: state.hudWiFiExposureStatus)
+                            LabeledContent("HUD IP", value: "192.168.43.1")
+                            Text("AP exposure only; no Screen Recording broadcast and no firmware/update write.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
 
                     HudCard {
                         VStack(spacing: 14) {

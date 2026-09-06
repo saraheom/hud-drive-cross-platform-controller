@@ -19,12 +19,31 @@ final class AppState {
     private var hudRehydrateTask: Task<Void, Never>?
     private var hudReassertTask: Task<Void, Never>?
 
+    // v90.34.5 lane-presentation coordinator. The stock HUD auto-hides lane
+    // graphics, so active lanes are reasserted while the selected policy says
+    // they should remain visible. No HUD firmware write is involved.
+    private var laneGuidanceRefreshTask: Task<Void, Never>?
+    private var activeLaneGuidance: [HudCommands.NativeLane] = []
+    private var activeLaneDistanceMeters = 0
+    private var activeLaneContext = ""
+    private let laneGuidanceRefreshInterval: Duration = .milliseconds(1500)
+
+    // HUD Wi-Fi/AP exposure. This uses only stock BLE HUD-mode/hotspot packets;
+    // it never sends the SoftwareUpdate start packet or any bytes to TCP/7980.
+    private let hudWiFiRecoveryKey = "HUD.WiFiExposureRecoveryNeeded"
+    private(set) var hudWiFiExposureActive = false
+    private(set) var hudWiFiExposureStatus = "HUD Wi-Fi not forced"
+
     init() {
         let logger = LogManager()
         self.logger = logger
         let bluetooth = HudBluetoothManager(logger: logger)
         self.bluetooth = bluetooth
         let navigation = HudNavigationController(bluetooth: bluetooth, logger: logger)
+        let showCurrentStreetKey = "HUD.Settings.navigationShowCurrentStreet"
+        navigation.showCurrentStreet = UserDefaults.standard.object(forKey: showCurrentStreetKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: showCurrentStreetKey)
         self.navigation = navigation
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
@@ -44,6 +63,10 @@ final class AppState {
         self.ambientLight = ambientLight
         if #available(iOS 27.0, *) {
             self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
+        }
+
+        if UserDefaults.standard.bool(forKey: hudWiFiRecoveryKey) {
+            hudWiFiExposureStatus = "Wi-Fi release armed for next HUD BLE connection"
         }
 
         obd.onConnectionChanged = { [weak self, weak ambientLight] connected in
@@ -72,6 +95,10 @@ final class AppState {
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
 
+            if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
+               !self.hudWiFiExposureActive {
+                self.disableHUDWiFiExposure(reason: "BLE transport recovery")
+            }
 
             self.scheduleHUDRehydration(reason: "BLE transport ready")
         }
@@ -92,6 +119,13 @@ final class AppState {
             self.hudRehydrateTask = nil
             self.hudReassertTask?.cancel()
             self.hudReassertTask = nil
+            self.laneGuidanceRefreshTask?.cancel()
+            self.laneGuidanceRefreshTask = nil
+            if self.hudWiFiExposureActive {
+                self.hudWiFiExposureActive = false
+                self.hudWiFiExposureStatus = "BLE lost — Wi-Fi release armed for reconnect"
+                UserDefaults.standard.set(true, forKey: self.hudWiFiRecoveryKey)
+            }
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.nowPlaying.stop(reason: "HUD BLE transport disconnected")
@@ -265,6 +299,144 @@ final class AppState {
     }
 
 
+
+    // MARK: - Navigation presentation / lane guidance
+
+    var laneGuidanceThresholdMeters: Int {
+        Int((settings.laneGuidanceDistanceMiles * 1609.344).rounded())
+    }
+
+    func applyNavigationPresentationSettings() {
+        navigation.showCurrentStreet = settings.navigationShowCurrentStreet
+        logger.log(
+            "NAV PRESENTATION",
+            "currentStreet=\(settings.navigationShowCurrentStreet ? "ON" : "OFF") lanes=\(settings.laneGuidanceMode.title) threshold=\(String(format: "%.1f", settings.laneGuidanceDistanceMiles))mi"
+        )
+
+        // Re-send the currently visible maneuver so the current-street toggle is
+        // immediately observable during parked replay and normal navigation.
+        if bluetooth.state == .connected, navigation.navigationActive {
+            navigation.sendCurrent(owner: navigation.feedOwner)
+        }
+        reevaluateActiveLaneGuidance(reason: "settings changed")
+    }
+
+    private func shouldDisplayActiveLanes() -> Bool {
+        guard !activeLaneGuidance.isEmpty else { return false }
+        switch settings.laneGuidanceMode {
+        case .off:
+            return false
+        case .persistent:
+            return true
+        case .nearTurn:
+            return activeLaneDistanceMeters <= laneGuidanceThresholdMeters
+        }
+    }
+
+    private func reevaluateActiveLaneGuidance(reason: String) {
+        laneGuidanceRefreshTask?.cancel()
+        laneGuidanceRefreshTask = nil
+
+        guard bluetooth.state == .connected else { return }
+        guard shouldDisplayActiveLanes() else {
+            bluetooth.enqueue(HudCommands.clearLaneGuidance(), label: "Lane policy → clear (\(reason))")
+            logger.log(
+                "HUD LANE POLICY",
+                "hidden reason=\(reason) mode=\(settings.laneGuidanceMode.title) distance=\(activeLaneDistanceMeters)m threshold=\(laneGuidanceThresholdMeters)m"
+            )
+            return
+        }
+
+        sendActiveLaneGuidance(label: "Lane policy → show (\(reason))")
+        laneGuidanceRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: self.laneGuidanceRefreshInterval)
+                guard !Task.isCancelled,
+                      self.bluetooth.state == .connected,
+                      self.navigation.navigationActive,
+                      self.shouldDisplayActiveLanes() else { break }
+                self.sendActiveLaneGuidance(label: "Lane policy → persistence refresh")
+            }
+        }
+    }
+
+    private func sendActiveLaneGuidance(label: String) {
+        bluetooth.enqueue(HudCommands.laneGuidance(activeLaneGuidance), label: label)
+        logger.log(
+            "HUD LANE POLICY",
+            "show context=\(activeLaneContext) mode=\(settings.laneGuidanceMode.title) distance=\(activeLaneDistanceMeters)m values=\(activeLaneGuidance.map { String($0.wireValue) }.joined(separator: ","))"
+        )
+    }
+
+    func setLaneGuidanceForCurrentManeuver(
+        _ lanes: [HudCommands.NativeLane],
+        distanceMeters: Int,
+        context: String
+    ) {
+        activeLaneGuidance = lanes
+        activeLaneDistanceMeters = max(0, distanceMeters)
+        activeLaneContext = context
+        reevaluateActiveLaneGuidance(reason: "new lane data")
+    }
+
+    func clearLaneGuidancePolicy(reason: String = "manual clear") {
+        laneGuidanceRefreshTask?.cancel()
+        laneGuidanceRefreshTask = nil
+        activeLaneGuidance = []
+        activeLaneDistanceMeters = 0
+        activeLaneContext = ""
+        guard bluetooth.state == .connected else { return }
+        bluetooth.enqueue(HudCommands.clearLaneGuidance(), label: "Lane guidance clear")
+        logger.log("HUD LANE POLICY", "clear reason=\(reason)")
+    }
+
+    // MARK: - HUD Wi-Fi / casting network exposure
+
+    var hudWiFiExpectedSSID: String {
+        bluetooth.connectedName ?? bluetooth.savedHUDName ?? "HUDWAY Drive"
+    }
+
+    func enableHUDWiFiExposure() {
+        guard bluetooth.state == .connected else {
+            hudWiFiExposureStatus = "Connect the HUD over BLE first"
+            return
+        }
+        hudWiFiExposureActive = true
+        hudWiFiExposureStatus = "HUD Wi-Fi requested — connect laptop to HUDWAY network"
+        UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
+        logger.log(
+            "HUD WIFI",
+            "Enable 2.4GHz HUD AP: Kivic mode 0 + hotspot forceEnable=1; no SoftwareUpdate start and no TCP firmware transfer"
+        )
+        bluetooth.enqueue(HudCommands.kivicMode(0), label: "HUD Wi-Fi → normal Kivic mode 0")
+        bluetooth.enqueue(
+            HudCommands.hudHotspotBaseband(is5G: false, forceEnable: true),
+            label: "HUD Wi-Fi → force 2.4GHz AP ON"
+        )
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → KeepAlive")
+    }
+
+    func disableHUDWiFiExposure(reason: String = "manual") {
+        hudWiFiExposureActive = false
+        guard bluetooth.state == .connected else {
+            hudWiFiExposureStatus = "HUD disconnected — Wi-Fi release armed for reconnect"
+            UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
+            return
+        }
+        logger.log("HUD WIFI", "Disable forced HUD AP reason=\(reason)")
+        bluetooth.enqueue(
+            HudCommands.hudHotspotBaseband(is5G: false, forceEnable: false),
+            label: "HUD Wi-Fi → release forced AP"
+        )
+        bluetooth.enqueue(HudCommands.kivicMode(0), label: "HUD Wi-Fi → normal Kivic mode 0")
+        bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD Wi-Fi → full screen ON")
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD Wi-Fi → KeepAlive")
+        UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
+        hudWiFiExposureStatus = "HUD Wi-Fi force released"
+    }
+
+
     enum NativeLaneTestPreset: String, CaseIterable, Identifiable {
         case fourStraightUseThird
         case fourStraightUseMiddleTwo
@@ -333,11 +505,7 @@ final class AppState {
     }
 
     func clearNativeLaneTest() {
-        guard bluetooth.state == .connected else { return }
-        bluetooth.enqueue(
-            HudCommands.clearLaneGuidance(),
-            label: "Native lane guidance clear"
-        )
+        clearLaneGuidancePolicy(reason: "native/replay test clear")
         logger.log("HUD NATIVE LANES", "clear")
     }
 
@@ -347,11 +515,13 @@ final class AppState {
         // Parked diagnostic replay: send the captured maneuver through the same
         // native HUDWAY path, immediately followed by the captured 0x5204 lane
         // topology normalized to HudLanesManueverCommandPacket values.
+        navigation.showCurrentStreet = settings.navigationShowCurrentStreet
         navigation.navigationOn()
         navigation.send(step.instruction)
-        bluetooth.enqueue(
-            HudCommands.laneGuidance(step.nativeLanes),
-            label: "Recorded \(step.source) lanes → rec \(step.captureRecord) group \(step.laneGroupIndex)"
+        setLaneGuidanceForCurrentManeuver(
+            step.nativeLanes,
+            distanceMeters: step.instruction.distanceMeters,
+            context: "Recorded \(step.source) rec \(step.captureRecord) group \(step.laneGroupIndex)"
         )
         logger.log(
             "HUD LANE REPLAY",

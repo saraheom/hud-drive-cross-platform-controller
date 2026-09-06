@@ -23,6 +23,25 @@ enum HudCommands {
         HudProtocol.frame(command: 2, p1: 8, p2: 1, payload: Data([enabled ? 1 : 0]))
     }
 
+    // MARK: - HUD Wi-Fi / casting network exposure (no firmware writer)
+
+    /// Stock KivicModeCommandPacket: p1=7, p2=0, int32 mode.
+    /// Mode 0 keeps the normal HUD renderer active while the hotspot is exposed.
+    static func kivicMode(_ mode: Int32) -> Data {
+        HudProtocol.frame(command: 2, p1: 7, p2: 0, payload: HudProtocol.int32(mode))
+    }
+
+    /// Stock HudHotspotBasebandCommandPacket: p1=21, p2=0,
+    /// payload = boolean is5G + boolean forceEnable.
+    static func hudHotspotBaseband(is5G: Bool, forceEnable: Bool) -> Data {
+        HudProtocol.frame(
+            command: 2,
+            p1: 21,
+            p2: 0,
+            payload: Data([is5G ? 1 : 0, forceEnable ? 1 : 0])
+        )
+    }
+
     /// Original HUDWAY `HudBaseColorCommandPacket`:
     /// CommandPacket(p1=120, p2=0), payload = DataOutputStream.writeUTF(color).
     static func baseColor(_ theme: HudColorTheme) -> Data {

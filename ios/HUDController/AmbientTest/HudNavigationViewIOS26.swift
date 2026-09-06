@@ -38,6 +38,83 @@ struct HudNavigationView: View {
 
                     HudCard {
                         VStack(alignment: .leading, spacing: 12) {
+                            Text("Navigation presentation")
+                                .font(.headline)
+
+                            Toggle("Show Current Street", isOn: Binding(
+                                get: { state.settings.navigationShowCurrentStreet },
+                                set: { value in
+                                    state.settings.navigationShowCurrentStreet = value
+                                    state.applyNavigationPresentationSettings()
+                                }
+                            ))
+
+                            Picker("Lane Guidance", selection: Binding(
+                                get: { state.settings.laneGuidanceMode },
+                                set: { value in
+                                    state.settings.laneGuidanceMode = value
+                                    state.applyNavigationPresentationSettings()
+                                }
+                            )) {
+                                ForEach(HudLaneGuidanceMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            if state.settings.laneGuidanceMode == .nearTurn {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(String(format: "Show lanes within %.1f mi (~%d ft)",
+                                                state.settings.laneGuidanceDistanceMiles,
+                                                Int((state.settings.laneGuidanceDistanceMiles * 5280).rounded())))
+                                        .font(.subheadline)
+                                    Slider(
+                                        value: Binding(
+                                            get: { state.settings.laneGuidanceDistanceMiles },
+                                            set: { value in
+                                                state.settings.laneGuidanceDistanceMiles = value
+                                                state.applyNavigationPresentationSettings()
+                                            }
+                                        ),
+                                        in: 0.1...1.0,
+                                        step: 0.1
+                                    )
+                                }
+                            }
+
+                            Text("Persistent keeps the latest lane guidance visible for the maneuver by reasserting the stock lane packet. Near turn caches the lane data but displays it only inside the selected distance. Off clears lane graphics. Current Street controls only the current-road text; the upcoming road/maneuver stays available.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    HudCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("HUD Wi-Fi / casting network")
+                                .font(.headline)
+
+                            Toggle("Expose HUD Wi-Fi", isOn: Binding(
+                                get: { state.hudWiFiExposureActive },
+                                set: { enabled in
+                                    if enabled { state.enableHUDWiFiExposure() }
+                                    else { state.disableHUDWiFiExposure() }
+                                }
+                            ))
+                            .disabled(state.bluetooth.state != .connected)
+
+                            LabeledContent("Status", value: state.hudWiFiExposureStatus)
+                            LabeledContent("Expected SSID", value: state.hudWiFiExpectedSSID)
+                            LabeledContent("Password", value: "87654321")
+                            LabeledContent("HUD IP", value: "192.168.43.1")
+
+                            Text("This reproduces only the HUD's stock 2.4-GHz Wi-Fi/AP exposure over BLE so your laptop can connect while this custom app remains open. It does not start iOS Screen Recording/Drive Broadcast, does not enter the software-update writer, and does not write HUD firmware.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    HudCard {
+                        VStack(alignment: .leading, spacing: 12) {
                             Text("Manual navigation diagnostics")
                                 .font(.headline)
 
@@ -207,7 +284,7 @@ struct HudNavigationView: View {
                             }
                             .buttonStyle(.bordered)
 
-                            Text("The replay intentionally sends the normal native maneuver packet first, then the firmware-native lane packet. This lets us see whether lane graphics supplement/replace the maneuver, how recommended lanes are highlighted, and whether the stock HUD clears prior lane state correctly.")
+                            Text("The replay uses the Navigation presentation settings above. Try Current Street ON/OFF and Lane Guidance Off/Near turn/Persistent; Persistent and eligible Near-turn lanes are reasserted every 1.5 seconds because the stock HUD can auto-hide the lane layer.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

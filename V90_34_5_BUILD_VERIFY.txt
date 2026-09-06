@@ -1,0 +1,27 @@
+HUD Controller v90.34.5 build verification
+
+Base:
+- v90.34.4.1 runtime/replay + CI regression alignment
+
+Runtime changes:
+- persisted Show Current Street setting (default ON)
+- Lane Guidance modes: Off / Near turn / Persistent
+- configurable 0.1–1.0 mi near-turn threshold (default 0.5 mi)
+- eligible lane packet reassertion every 1.5 s to counter stock HUD auto-hide
+- recorded Apple Maps + Google Maps 0x5204 replay retained and routed through the same configurable lane policy
+- HUD Wi-Fi / casting-network AP exposure toggle using stock BLE KivicMode + HudHotspotBaseband commands
+- AP release/recovery path retained across reconnects
+- no SoftwareUpdate start command, no TCP/7980 upload, no ADB/filesystem/firmware writes
+
+Known live-data boundary:
+- U2W CarPlay Data Exporter v8.6 exposes laneGuidanceShowing but does not yet expose decoded live lane arrays in u2wrgd-live.cgi.
+- Therefore this build finalizes and validates the app-side lane presentation policy using the real recorded 0x5204 fixtures. A later exporter update is required for live automatic lane arrays.
+
+Local validation:
+- pytest: 222 passed
+- tests_v9031_static.py: PASS
+- swiftc -parse across HUDController + HUDControllerTests: PASS
+- ios/project.yml + ios/project-ios26-ambient.yml: YAML PASS
+- all .github/workflows/*.yml: YAML PASS
+
+No macOS/Xcode build or GitHub Actions run was claimed for this package.

@@ -19,6 +19,9 @@ final class HudNavigationController {
     private(set) var simulatorRunning = false
     private(set) var navigationActive = false
     private(set) var feedOwner: NavigationFeedOwner = .manual
+    /// App-side presentation preference. The original instruction is retained in
+    /// `current`; only the wire copy suppresses currentStreet when disabled.
+    var showCurrentStreet = true
     private var simulatorTask: Task<Void, Never>?
 
     let bluetooth: HudBluetoothManager
@@ -86,12 +89,22 @@ final class HudNavigationController {
         }
         current = instruction
         feedOwner = owner
-        logger.log("NAV", "owner=\(owner.rawValue) \(instruction.maneuver.label), \(instruction.distanceMeters)m, \(instruction.streetName)")
+        var wireInstruction = instruction
+        if !showCurrentStreet {
+            wireInstruction.currentStreet = ""
+        }
+        logger.log("NAV", "owner=\(owner.rawValue) \(instruction.maneuver.label), \(instruction.distanceMeters)m, \(instruction.streetName) currentStreet=\(showCurrentStreet ? instruction.currentStreet : "<hidden>")")
         // The stock Android app applies DisplaySpeedUintsCommandPacket as part
         // of HUD settings. Reassert it here so a physical HUD reboot cannot
         // format a correct meter distance using a stale/default unit mode.
         bluetooth.enqueue(HudCommands.imperialUnits(), label: "Navigation → imperial units")
-        bluetooth.enqueue(HudCommands.maneuver(instruction), label: "Maneuver (\(owner.rawValue))")
+        // Keep the generalized `maneuver(instruction)` call shape used by the
+        // long-lived imperial-ordering regression while sending the filtered
+        // wire copy inside a narrow scope.
+        do {
+            let instruction = wireInstruction
+            bluetooth.enqueue(HudCommands.maneuver(instruction), label: "Maneuver (\(owner.rawValue))")
+        }
     }
 
     func sendETA(arrivalTimeMilliseconds: Int64, owner: NavigationFeedOwner = .manual) {

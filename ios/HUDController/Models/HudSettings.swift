@@ -17,6 +17,23 @@ struct DashboardPreset: Identifiable, Hashable {
     ]
 }
 
+
+enum HudLaneGuidanceMode: String, CaseIterable, Identifiable {
+    case off
+    case nearTurn
+    case persistent
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .nearTurn: return "Near turn"
+        case .persistent: return "Persistent"
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class HudSettings {
@@ -46,6 +63,9 @@ final class HudSettings {
     var navigationGoogleMapsEnabled: Bool { didSet { defaults.set(navigationGoogleMapsEnabled, forKey: "HUD.Settings.navigationGoogleMapsEnabled") } }
     var navigationAppleMapsEnabled: Bool { didSet { defaults.set(navigationAppleMapsEnabled, forKey: "HUD.Settings.navigationAppleMapsEnabled") } }
     var navigationWazeEnabled: Bool { didSet { defaults.set(navigationWazeEnabled, forKey: "HUD.Settings.navigationWazeEnabled") } }
+    var navigationShowCurrentStreet: Bool { didSet { defaults.set(navigationShowCurrentStreet, forKey: "HUD.Settings.navigationShowCurrentStreet") } }
+    var laneGuidanceMode: HudLaneGuidanceMode { didSet { defaults.set(laneGuidanceMode.rawValue, forKey: "HUD.Settings.laneGuidanceMode") } }
+    var laneGuidanceDistanceMiles: Double { didSet { defaults.set(laneGuidanceDistanceMiles, forKey: "HUD.Settings.laneGuidanceDistanceMiles") } }
 
     var notificationExposureSeconds: Int { didSet { defaults.set(notificationExposureSeconds, forKey: "HUD.Settings.notificationExposureSeconds") } }
     var notificationLines: Int { didSet { defaults.set(notificationLines, forKey: "HUD.Settings.notificationLines") } }
@@ -62,6 +82,9 @@ final class HudSettings {
         }
         func integer(_ key: String, default fallback: Int) -> Int {
             store.object(forKey: key) == nil ? fallback : store.integer(forKey: key)
+        }
+        func double(_ key: String, default fallback: Double) -> Double {
+            store.object(forKey: key) == nil ? fallback : store.double(forKey: key)
         }
 
         autoBrightness = bool("HUD.Settings.autoBrightness", default: false)
@@ -88,6 +111,10 @@ final class HudSettings {
         navigationGoogleMapsEnabled = bool("HUD.Settings.navigationGoogleMapsEnabled", default: false)
         navigationAppleMapsEnabled = bool("HUD.Settings.navigationAppleMapsEnabled", default: false)
         navigationWazeEnabled = bool("HUD.Settings.navigationWazeEnabled", default: false)
+        navigationShowCurrentStreet = bool("HUD.Settings.navigationShowCurrentStreet", default: true)
+        let laneModeRaw = store.string(forKey: "HUD.Settings.laneGuidanceMode") ?? HudLaneGuidanceMode.nearTurn.rawValue
+        laneGuidanceMode = HudLaneGuidanceMode(rawValue: laneModeRaw) ?? .nearTurn
+        laneGuidanceDistanceMiles = min(1.0, max(0.1, double("HUD.Settings.laneGuidanceDistanceMiles", default: 0.5)))
 
         notificationExposureSeconds = integer("HUD.Settings.notificationExposureSeconds", default: 10)
         notificationLines = integer("HUD.Settings.notificationLines", default: 5)
