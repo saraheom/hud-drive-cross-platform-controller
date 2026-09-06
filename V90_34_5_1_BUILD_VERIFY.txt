@@ -1,0 +1,23 @@
+HUD Controller v90.34.5.1 — CI Replay Regression Alignment
+
+Scope
+-----
+- CI/test-only correction on top of v90.34.5.
+- No runtime Swift source changed.
+- Updates V90344RecordedCarPlayLaneReplayTests to assert the v90.34.5 architecture:
+  recorded replay -> navigation.send(step.instruction) -> setLaneGuidanceForCurrentManeuver(...).
+- The old direct HudCommands.laneGuidance(step.nativeLanes) replay path must remain absent.
+
+Supplied GitHub Actions evidence
+--------------------------------
+- iOS 26 simulator BUILD SUCCEEDED.
+- 210 XCTest cases executed.
+- 209 passed; one stale v90.34.4 source-inspection assertion failed.
+- The newer V90345LanePresentationAndWiFiTests already asserted the intended configurable coordinator and passed.
+
+Local validation for this archive
+---------------------------------
+- Full Python/static suite: 222 passed in 0.61 s.
+- Swift syntax parsing: 152 Swift source/test files parsed successfully with swiftc -parse.
+- YAML parsing: 10 YAML files parsed successfully.
+- Runtime Swift tree is byte-identical to v90.34.5; only XCTest/release-note files changed.

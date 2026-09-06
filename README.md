@@ -1,3 +1,12 @@
+## v90.34.5.1 — CI replay-regression alignment
+
+v90.34.5.1 is a **test-only correction** on top of v90.34.5. The supplied GitHub Actions run confirmed that the iOS 26 simulator app target built successfully and 209 of 210 XCTest cases passed. The sole failure was the older `V90344RecordedCarPlayLaneReplayTests.testReplayRemainsBLEOnlyDiagnostic`, which still required the pre-v90.34.5 direct replay call `HudCommands.laneGuidance(step.nativeLanes)`. v90.34.5 intentionally removed that direct send so recorded Apple/Google replay passes through `setLaneGuidanceForCurrentManeuver(...)`, the same configurable Off/Near turn/Persistent lane coordinator used by the new Navigation presentation settings.
+
+**No runtime Swift source is changed in v90.34.5.1.** Configurable lane guidance, current-street suppression, HUD Wi-Fi exposure, recorded replay, mini Music diagnostics, CarPlay, speed limits, OBD, ambient lighting, and the zero-firmware-write boundary are identical to v90.34.5.
+
+See `V90_34_5_1_BUILD_VERIFY.txt`.
+
+---
 
 ## v90.34.5 — configurable native lane guidance + HUD Wi-Fi exposure
 

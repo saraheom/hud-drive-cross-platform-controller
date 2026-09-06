@@ -43,8 +43,9 @@ final class V90344RecordedCarPlayLaneReplayTests: XCTestCase {
         let source = try String(contentsOf: appStateURL, encoding: .utf8)
 
         XCTAssertTrue(source.contains("sendRecordedCarPlayLaneReplayStep"))
-        XCTAssertTrue(source.contains("HudCommands.laneGuidance(step.nativeLanes)"))
         XCTAssertTrue(source.contains("navigation.send(step.instruction)"))
+        XCTAssertTrue(source.contains("setLaneGuidanceForCurrentManeuver("))
+        XCTAssertFalse(source.contains("HudCommands.laneGuidance(step.nativeLanes)"))
         XCTAssertFalse(source.lowercased().contains("adb push"))
         XCTAssertFalse(source.lowercased().contains("remount"))
     }
