@@ -264,6 +264,124 @@ final class AppState {
         )
     }
 
+
+    enum NativeLaneTestPreset: String, CaseIterable, Identifiable {
+        case fourStraightUseThird
+        case fourStraightUseMiddleTwo
+        case fourMixedUseLeftTurn
+        case fourMixedUseRightBranch
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .fourStraightUseThird:
+                return "4 straight • use lane 3"
+            case .fourStraightUseMiddleTwo:
+                return "4 straight • use lanes 2–3"
+            case .fourMixedUseLeftTurn:
+                return "4 mixed • use straight+left"
+            case .fourMixedUseRightBranch:
+                return "4 mixed • use straight+right"
+            }
+        }
+
+        var lanes: [HudCommands.NativeLane] {
+            switch self {
+            case .fourStraightUseThird:
+                return [
+                    .init(type: .straight, recommended: false),
+                    .init(type: .straight, recommended: false),
+                    .init(type: .straight, recommended: true),
+                    .init(type: .straight, recommended: false),
+                ]
+            case .fourStraightUseMiddleTwo:
+                return [
+                    .init(type: .straight, recommended: false),
+                    .init(type: .straight, recommended: true),
+                    .init(type: .straight, recommended: true),
+                    .init(type: .straight, recommended: false),
+                ]
+            case .fourMixedUseLeftTurn:
+                return [
+                    .init(type: .left, recommended: false),
+                    .init(type: .straightLeft, recommended: true),
+                    .init(type: .straight, recommended: false),
+                    .init(type: .right, recommended: false),
+                ]
+            case .fourMixedUseRightBranch:
+                return [
+                    .init(type: .left, recommended: false),
+                    .init(type: .straight, recommended: false),
+                    .init(type: .straightRight, recommended: true),
+                    .init(type: .right, recommended: false),
+                ]
+            }
+        }
+    }
+
+    func sendNativeLaneTest(_ preset: NativeLaneTestPreset) {
+        guard bluetooth.state == .connected else { return }
+        bluetooth.enqueue(
+            HudCommands.laneGuidance(preset.lanes),
+            label: "Native lane test → \(preset.title)"
+        )
+        logger.log(
+            "HUD NATIVE LANES",
+            "preset=\(preset.title) values=\(preset.lanes.map { String($0.wireValue) }.joined(separator: ","))"
+        )
+    }
+
+    func clearNativeLaneTest() {
+        guard bluetooth.state == .connected else { return }
+        bluetooth.enqueue(
+            HudCommands.clearLaneGuidance(),
+            label: "Native lane guidance clear"
+        )
+        logger.log("HUD NATIVE LANES", "clear")
+    }
+
+    func sendNativeMusicMiniTest(artist: String? = nil, track: String? = nil) {
+        guard bluetooth.state == .connected else { return }
+
+        let resolvedArtist = artist ?? (nowPlaying.artist.isEmpty ? "Kenshi Yonezu" : nowPlaying.artist)
+        let resolvedTrack = track ?? (nowPlaying.title == "No CarPlay media" ? "Flamingo" : nowPlaying.title)
+
+        // Diagnostic-only firmware-native path. These are BLE commands only:
+        // no ADB, filesystem, updater, or firmware writes are involved.
+        bluetooth.enqueue(
+            HudCommands.musicNotificationFilter(enabled: true),
+            label: "Mini music test → native filter ON"
+        )
+        bluetooth.enqueue(
+            HudCommands.widgetsMiniState(true),
+            label: "Mini music test → HUD mini state ON"
+        )
+        bluetooth.enqueue(
+            HudCommands.musicNotification(
+                artist: resolvedArtist,
+                track: resolvedTrack
+            ),
+            label: "Mini music test → \(resolvedArtist) — \(resolvedTrack)"
+        )
+        logger.log("HUD MINI MUSIC", "enabled artist=\(resolvedArtist) track=\(resolvedTrack)")
+    }
+
+    func restoreFromNativeMusicMiniTest() {
+        guard bluetooth.state == .connected else { return }
+        bluetooth.enqueue(
+            HudCommands.widgetsMiniState(false),
+            label: "Mini music test → HUD mini state OFF"
+        )
+        bluetooth.enqueue(
+            HudCommands.musicNotificationFilter(enabled: settings.notifyMusic),
+            label: "Mini music test → restore Music filter \(settings.notifyMusic ? "ON" : "OFF")"
+        )
+        musicFilterInitialized = settings.notifyMusic
+        logger.log("HUD MINI MUSIC", "restored normal state")
+    }
+
+
     func sendNativeMusicTest() {
         pushNowPlayingMetadataToHUD(
             artist: nowPlaying.artist.isEmpty ? "Kenshi Yonezu" : nowPlaying.artist,

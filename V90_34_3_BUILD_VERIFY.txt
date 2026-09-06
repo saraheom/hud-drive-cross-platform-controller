@@ -1,0 +1,19 @@
+HUD Controller v90.34.3 - firmware-native lane + mini Music diagnostics
+
+Base: v90.34.2 CI regression-test alignment
+
+Runtime additions:
+- HudLanesManueverCommandPacket encoder: command=2, p1=113, p2=0
+- Signed lane values: + recommended / - inactive
+- Native lane value mapping: 1 straight, 2 right, 3 straight+right, 4 left, 5 straight+left
+- Four manual lane-guidance presets and lane clear control
+- Stock HudHUDWidgetsMiniState diagnostic controls
+- Existing CarPlay Now Playing -> MusicNotificationPacket used for mini Music test
+- Explicit restore-normal-UI action
+
+Safety:
+- no ADB
+- no firmware writes
+- no filesystem writes to HUD
+- no APK/system modification
+- no updater/remount/root commands

@@ -1,3 +1,11 @@
+# HUD Controller v90.34.3 — firmware-native lanes + mini Music diagnostics
+
+v90.34.3 is a **no-firmware-write** diagnostic release on top of v90.34.2. Reverse engineering of the stock HUDWAY Drive `HudLauncher.apk` confirmed the exact `HudLanesManueverCommandPacket` encoding (`command=2, p1=113, p2=0`; signed lane values where positive=active and negative=inactive) and the stock mini-Music path (`MusicNotificationPacket` + `HudHUDWidgetsMiniState`). The iOS app now exposes controlled physical-HUD tests for both features without ADB, APK changes, remounting, updater commands, or firmware flashing.
+
+Lane testing is deliberately manual first: four-lane presets can be sent from the Navigation diagnostics screen after entering Navigation mode. CarPlay lane metadata is **not** auto-injected yet. The Media screen can enter the stock firmware's mini state, send the current CarPlay Now Playing title/artist through the existing Music notification packet, and restore the normal UI. Automatic persistence/left-right placement is deferred until the physical renderer behavior is observed.
+
+See `docs/V90_34_3_FIRMWARE_NATIVE_LANES_MINI_MUSIC.md`.
+
 # HUD Controller v90.34.2 — iOS CI regression-test alignment
 
 v90.34.2 is a CI-only correction on top of v90.34.1. Runtime navigation, CarPlay, speed-limit, HUD, OBD, and ambient-light behavior are unchanged. Two older Swift source-inspection tests still expected the pre-v90.34.1 behavior where every pending same-limit handoff disabled the native warning threshold. v90.34.1 intentionally changed that invariant: a trusted explicit same-speed handoff preserves the established threshold, while inferred/display-only continuity still disables warning trust. The Swift tests now assert that intended behavior, matching the already-updated Python regression tests.

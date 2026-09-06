@@ -6,6 +6,7 @@ import SwiftUI
 // ScreenCaptureKit/OCR controls are removed from the compiled UI.
 struct HudNavigationView: View {
     @Bindable var state: AppState
+    @State private var lanePreset: AppState.NativeLaneTestPreset = .fourStraightUseThird
 
     var body: some View {
         NavigationStack {
@@ -68,6 +69,40 @@ struct HudNavigationView: View {
                             Button("Navigation OFF", role: .destructive) {
                                 state.navigation.navigationOff()
                             }
+                        }
+                    }
+
+
+                    HudCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Firmware-native lane guidance")
+                                .font(.headline)
+
+                            Text("Diagnostic only. Sends the stock HudLanesManueverCommandPacket over the existing HUD BLE link; it does not modify the HUD firmware. Lane values use the firmware's signed active/inactive encoding.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Picker("Lane preset", selection: $lanePreset) {
+                                ForEach(AppState.NativeLaneTestPreset.allCases) { preset in
+                                    Text(preset.title).tag(preset)
+                                }
+                            }
+
+                            HStack {
+                                Button("Send Lane Test") {
+                                    state.sendNativeLaneTest(lanePreset)
+                                }
+                                .buttonStyle(.borderedProminent)
+
+                                Button("Clear Lanes") {
+                                    state.clearNativeLaneTest()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            Text("For the clearest first test: turn Navigation ON, send a normal maneuver above, then send a lane preset. Positive lanes are the firmware's recommended/active lanes; negative lanes are dim/inactive.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }

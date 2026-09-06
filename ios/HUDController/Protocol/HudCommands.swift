@@ -156,6 +156,53 @@ enum HudCommands {
         return HudProtocol.frame(command: 2, p1: 100, p2: 1, payload: payload)
     }
 
+
+    // MARK: - Firmware-native lane guidance (HudLanesManueverCommandPacket)
+
+    /// Decompiled HUDWAY `ManeuverLaneInstructionModel` network values.
+    ///
+    /// The sign is the stock firmware's recommendation flag:
+    ///   positive = active/recommended lane
+    ///   negative = inactive/non-recommended lane
+    ///
+    /// Absolute values:
+    ///   1 = straight
+    ///   2 = right
+    ///   3 = straight + right
+    ///   4 = left
+    ///   5 = straight + left
+    enum NativeLaneType: Int32, CaseIterable {
+        case straight = 1
+        case right = 2
+        case straightRight = 3
+        case left = 4
+        case straightLeft = 5
+    }
+
+    struct NativeLane: Equatable {
+        var type: NativeLaneType
+        var recommended: Bool
+
+        var wireValue: Int32 {
+            recommended ? type.rawValue : -type.rawValue
+        }
+    }
+
+    /// Decompiled `HudLanesManueverCommandPacket`:
+    /// CommandPacket(p1=113, p2=0)
+    /// payload = int32 laneCount + one signed int32 network lane value per lane.
+    static func laneGuidance(_ lanes: [NativeLane]) -> Data {
+        var payload = HudProtocol.int32(Int32(lanes.count))
+        for lane in lanes {
+            payload.append(HudProtocol.int32(lane.wireValue))
+        }
+        return HudProtocol.frame(command: 2, p1: 113, p2: 0, payload: payload)
+    }
+
+    static func clearLaneGuidance() -> Data {
+        laneGuidance([])
+    }
+
     // MARK: - Original vehicle integration packets
 
     /// Decompiled Android OBDIIInternalPacket:

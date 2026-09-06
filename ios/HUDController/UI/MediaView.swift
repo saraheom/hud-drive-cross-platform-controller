@@ -86,9 +86,40 @@ struct MediaView: View {
                     }
 
                     HudCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Firmware-native mini music test").font(.headline)
+
+                            Text("HudLauncher contains both full and mini Music notification renderers. This diagnostic uses only the existing BLE MusicNotificationPacket plus HudHUDWidgetsMiniState; it performs no ADB or firmware write.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            HStack {
+                                Button("Mini Music ON + Send") {
+                                    state.sendNativeMusicMiniTest()
+                                }
+                                .buttonStyle(.borderedProminent)
+
+                                Button("Restore Normal UI") {
+                                    state.restoreFromNativeMusicMiniTest()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            Button("Re-send Current Track") {
+                                state.sendNativeMusicMiniTest()
+                            }
+                            .buttonStyle(.bordered)
+
+                            Text("The mini-state command is global to the stock HUD renderer, so this first build intentionally does not auto-refresh it or force a left/right position. We want to observe exactly where and how the original firmware renders it before adding persistence logic.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    HudCard {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Physical HUD behavior").font(.headline)
-                            Text("Track changes continue to use the HUD firmware's native transient Music notification packet. Persistent album/track widgets on the physical left/right dashboard remain limited by the HUD firmware's built-in widget set.")
+                            Text("CarPlay Now Playing feeds the stock Music notification renderer. v90.34.3 adds a controlled mini-state experiment; no custom HUD graphics or firmware files are changed.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
