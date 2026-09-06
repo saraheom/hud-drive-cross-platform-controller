@@ -1,0 +1,21 @@
+HUD Controller v90.34.4.1 — CI regression alignment
+
+Supplied GitHub Actions run 92244609513:
+- iOS Simulator application build: SUCCEEDED.
+- New V90344RecordedCarPlayLaneReplayTests: 4/4 PASSED.
+- Total XCTest result: 205 tests, 1 failure.
+- Sole failure: V70ImperialUnitsAndUS1Tests.testNavigationReassertsImperialUnitsBeforeManeuver.
+- Cause: stale source-inspection literal expected HudCommands.maneuver(current), while v90.34.4 generalized the sender to HudCommands.maneuver(instruction).
+
+Changes in v90.34.4.1:
+- Update V70ImperialUnitsAndUS1Tests to inspect the current generalized instruction sender.
+- Preserve the original regression invariant that HudCommands.imperialUnits() precedes the maneuver packet.
+- Add a Python/static regression guard for this XCTest/source alignment.
+- No HUDController runtime Swift file changed.
+- No firmware writes or boot-animation writes.
+
+Validation performed locally after patch:
+- Python/static suite: 222 passed.
+- Swift syntax parsing: PASS for the updated V70 XCTest and unchanged HudNavigationController.
+- YAML parsing: PASS for ios/project.yml, ios/project-ios26-ambient.yml, and all GitHub workflow YAML files (10 files total).
+- macOS/Xcode CI has not been claimed until the corrected repository is run there.

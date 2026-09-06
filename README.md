@@ -1,3 +1,13 @@
+# HUD Controller v90.34.4.1 — CI regression alignment
+
+v90.34.4.1 is a **CI-only correction** on top of v90.34.4. The supplied GitHub Actions run confirmed that the simulator app built successfully and all four new `V90344RecordedCarPlayLaneReplayTests` passed. The only failure was the older `V70ImperialUnitsAndUS1Tests.testNavigationReassertsImperialUnitsBeforeManeuver`, whose source-inspection assertion still searched for the pre-v90.34.4 literal `HudCommands.maneuver(current)`. v90.34.4 intentionally generalized that native send path to `HudCommands.maneuver(instruction)` so recorded CarPlay fixtures and live/manual navigation share the same sender. The runtime ordering remains unchanged: `HudCommands.imperialUnits()` is enqueued before the maneuver packet.
+
+**No runtime Swift source is changed in v90.34.4.1.** Lane replay, mini Music, CarPlay, navigation, speed limits, OBD, ambient lighting, BLE protocol behavior, and the zero-firmware-write boundary are identical to v90.34.4.
+
+See `V90_34_4_1_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.34.4 — Recorded CarPlay lane replay
 
 v90.34.4 is a **zero-firmware-write parked diagnostic** on top of v90.34.3. The Navigation page can replay real Apple Maps and Google Maps `0x5204 LaneGuidanceInformation` events recovered from earlier physical U2W captures. Each step shows the original signed CarPlay lane angles, normalizes them to the five stock HudLauncher lane shapes, sends the captured maneuver context, and then sends the native `HudLanesManueverCommandPacket`. Previous / Next / 4-second Auto Replay controls let the physical renderer be validated at home before live lane integration is enabled. The v90.34.3 manual lane presets and mini-Music experiment remain available. No ADB, HUD filesystem, updater, APK, boot-animation, or live-adapter changes are made by this release.

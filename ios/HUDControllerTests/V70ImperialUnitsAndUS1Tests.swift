@@ -27,12 +27,17 @@ final class V70ImperialUnitsAndUS1Tests: XCTestCase {
         )
 
         guard let unit = source.range(of: "HudCommands.imperialUnits()"),
-              let maneuver = source.range(of: "HudCommands.maneuver(current)")
+              let maneuver = source.range(of: "HudCommands.maneuver(instruction)")
         else {
             XCTFail("Expected unit/maneuver commands not found")
             return
         }
 
+        // v90.34.4 generalized the maneuver sender from the controller's
+        // `current` property to an explicit `instruction` parameter so recorded
+        // CarPlay replay can use the exact same native path. The invariant this
+        // regression protects is unchanged: imperial units must be enqueued
+        // before the maneuver packet.
         XCTAssertLessThan(unit.lowerBound, maneuver.lowerBound)
     }
 
