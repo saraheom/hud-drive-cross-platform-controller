@@ -1,3 +1,15 @@
+# HUD Controller v90.34.6 — U2W v8.7 live 0x5204 lane guidance
+
+v90.34.6 connects the validated v90.34.5 configurable native-lane renderer to **U2W CarPlay Data Exporter v8.7**. `RouteGuidanceAdapterClient` now decodes the optional `laneGuidance` object from `u2wrgd-live.cgi`, preserves v8.6 compatibility, normalizes signed CarPlay lane angles to the five stock HudLauncher lane shapes, caches lane topology by CarPlay maneuver index, and activates it only when that maneuver becomes current. Future-maneuver lane packets therefore cannot overwrite the current maneuver.
+
+The existing **Off / Near turn / Persistent** policy remains the single presentation owner. Near-turn mode receives live distance updates without restarting the 1.5-second persistence task on every 750-ms U2W poll. Source changes, reroutes, maneuver changes, route teardown, and HUD disconnect clear stale live-lane state conservatively. Lane parsing is diagnostic/presentation-only and cannot disable the normal maneuver/ETA feed.
+
+The Apple/Google recorded replay block remains for one more field-validation cycle. New logs (`CARPLAY LANE RX`, `CACHE`, `CURSOR`, `ACTIVATE`) expose raw angles, source status/recommended bits, normalized HUD values, lane sequence, associated maneuver index, and distance. The v90.34.5.2 HUD Wi-Fi diagnostic remains unchanged.
+
+See `docs/V90_34_6_U2W_V87_LIVE_LANES.md`.
+
+---
+
 # v90.34.5.2 — iOS KivicCast AP bootstrap / HUD Wi-Fi exposure fix
 
 This focused build corrects the HUD Wi-Fi exposure mode discovered from the physical HUD log. v90.34.5.1 sent `KivicMode(0)`, which the recovered HudLauncher constants identify as `ANDROID_HUD_MODE`; the SSID could appear but Windows fell back to a `169.254.x.x` APIPA address because the iOS KivicCast SoftAP/DHCP path was not initialized.

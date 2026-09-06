@@ -27,7 +27,23 @@ final class AppState {
     private var activeLaneGuidance: [HudCommands.NativeLane] = []
     private var activeLaneDistanceMeters = 0
     private var activeLaneContext = ""
+    private var activeLaneIsLive = false
+    private var activeLiveLaneManeuverIndex: Int?
     private let laneGuidanceRefreshInterval: Duration = .milliseconds(1500)
+
+    // U2W v8.7 live 0x5204 cache. Lane information may arrive slightly before
+    // the matching 0x5201 current-maneuver cursor advances, so cache by CarPlay
+    // maneuver index and activate only when that index becomes current.
+    private struct LiveLaneCacheEntry: Equatable {
+        var laneSequence: Int
+        var lanes: [HudCommands.NativeLane]
+        var rawSummary: String
+    }
+    private var liveLaneCacheByManeuver: [Int: LiveLaneCacheEntry] = [:]
+    private var liveLaneCurrentManeuverIndex: Int?
+    private var liveLaneSource: String?
+    private var liveLaneLastRouteState: Int?
+    private var liveLaneSessionActive = false
 
     // HUD Wi-Fi/AP exposure. This uses only stock BLE HUD-mode/hotspot packets;
     // it never sends the SoftwareUpdate start packet or any bytes to TCP/7980.
@@ -59,6 +75,9 @@ final class AppState {
         self.speedEngine = speedEngine
         routeGuidance.onRoadContextChanged = { [weak speedEngine] context in
             speedEngine?.updateCarPlayRouteContext(context)
+        }
+        routeGuidance.onLaneGuidanceChanged = { [weak self] state in
+            self?.receiveLiveLaneGuidance(state)
         }
         let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
         self.ambientLight = ambientLight
@@ -309,6 +328,151 @@ final class AppState {
         Int((settings.laneGuidanceDistanceMiles * 1609.344).rounded())
     }
 
+    func receiveLiveLaneGuidance(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState?) {
+        guard let state else {
+            guard liveLaneSessionActive else { return }
+            logger.log("CARPLAY LANE", "Live Route Guidance ended; clearing maneuver-index lane cache")
+            liveLaneSessionActive = false
+            liveLaneCacheByManeuver.removeAll()
+            liveLaneCurrentManeuverIndex = nil
+            liveLaneSource = nil
+            liveLaneLastRouteState = nil
+            if activeLaneIsLive {
+                clearLaneGuidancePolicy(reason: "live Route Guidance inactive")
+            }
+            return
+        }
+
+        liveLaneSessionActive = true
+
+        if liveLaneSource != state.source {
+            if let previous = liveLaneSource {
+                logger.log("CARPLAY LANE", "Source changed \(previous) → \(state.source); dropping cached lane topology")
+            }
+            liveLaneCacheByManeuver.removeAll()
+            liveLaneCurrentManeuverIndex = nil
+            if activeLaneIsLive {
+                clearLaneGuidancePolicy(reason: "CarPlay source changed")
+            }
+            liveLaneSource = state.source
+        }
+
+        let enteredReroute = state.routeState == 5 && liveLaneLastRouteState != 5
+        if enteredReroute {
+            liveLaneCacheByManeuver.removeAll()
+            liveLaneCurrentManeuverIndex = nil
+            if activeLaneIsLive {
+                clearLaneGuidancePolicy(reason: "CarPlay reroute started")
+            }
+            logger.log("CARPLAY LANE", "Reroute state 5 entered; old maneuver-index lane cache cleared")
+        }
+        liveLaneLastRouteState = state.routeState
+
+        // 0x5204 carries its own maneuver index. If an exporter ever omits it,
+        // associate the lane topology with the currently selected maneuver rather
+        // than discarding otherwise valid data.
+        if !state.lanes.isEmpty,
+           let laneSequence = state.laneSequence,
+           let laneIndex = state.laneManeuverIndex ?? state.currentManeuverIndex {
+            let entry = LiveLaneCacheEntry(
+                laneSequence: laneSequence,
+                lanes: state.lanes,
+                rawSummary: state.rawSummary
+            )
+            if liveLaneCacheByManeuver[laneIndex] != entry {
+                liveLaneCacheByManeuver[laneIndex] = entry
+                logger.log(
+                    "CARPLAY LANE CACHE",
+                    "source=\(state.source) routeSeq=\(state.routeSequence) laneSeq=\(laneSequence) maneuver=\(laneIndex) showing=\(state.laneGuidanceShowing) values=[\(state.lanes.map { String($0.wireValue) }.joined(separator: ","))] raw=\(state.rawSummary)"
+                )
+            }
+        }
+
+        // During 5→0→3 reroute transitions the current index may temporarily be
+        // absent. Preserve whatever was visible until the normal route client has
+        // accepted a new current maneuver instead of flashing stale/future lanes.
+        guard let currentIndex = state.currentManeuverIndex else {
+            return
+        }
+
+        let previousCurrentIndex = liveLaneCurrentManeuverIndex
+        let maneuverChanged = previousCurrentIndex != currentIndex
+        if maneuverChanged {
+            // A same-source route can be replaced without a long inactive gap.
+            // Maneuver indexes are route-local, so a backwards cursor jump is a
+            // strong route-table reset signal; discard any same-index topology
+            // left from the old route before activating the new cursor.
+            if let previousCurrentIndex, currentIndex < previousCurrentIndex {
+                liveLaneCacheByManeuver.removeAll()
+                if activeLaneIsLive {
+                    clearLaneGuidancePolicy(reason: "CarPlay maneuver index reset")
+                }
+                logger.log(
+                    "CARPLAY LANE",
+                    "Maneuver cursor reset \(previousCurrentIndex) → \(currentIndex); cached topology cleared for new route table"
+                )
+            }
+            let previous = previousCurrentIndex.map(String.init) ?? "nil"
+            liveLaneCurrentManeuverIndex = currentIndex
+            logger.log(
+                "CARPLAY LANE CURSOR",
+                "current maneuver \(previous) → \(currentIndex) routeSeq=\(state.routeSequence) distance=\(state.distanceToManeuverMeters)m"
+            )
+            // The old maneuver's topology must never leak across the turn.
+            if activeLaneIsLive, activeLiveLaneManeuverIndex != currentIndex {
+                clearLaneGuidancePolicy(reason: "current maneuver changed")
+            }
+            // Keep memory bounded while preserving future entries already sent by
+            // CarPlay. Real tables are small, but this also protects long routes.
+            if liveLaneCacheByManeuver.count > 32 {
+                liveLaneCacheByManeuver = liveLaneCacheByManeuver.filter { $0.key >= currentIndex }
+            }
+        }
+
+        guard let cached = liveLaneCacheByManeuver[currentIndex] else {
+            if maneuverChanged {
+                logger.log("CARPLAY LANE", "No cached 0x5204 for current maneuver=\(currentIndex); normal maneuver UI remains active")
+            }
+            return
+        }
+
+        let context = "Live U2W v8.7 \(state.source) maneuver=\(currentIndex) laneSeq=\(cached.laneSequence)"
+        if !activeLaneIsLive ||
+            activeLiveLaneManeuverIndex != currentIndex ||
+            activeLaneGuidance != cached.lanes {
+            activeLiveLaneManeuverIndex = currentIndex
+            setLaneGuidanceForCurrentManeuver(
+                cached.lanes,
+                distanceMeters: state.distanceToManeuverMeters,
+                context: context,
+                isLive: true
+            )
+            logger.log(
+                "CARPLAY LANE ACTIVATE",
+                "maneuver=\(currentIndex) laneSeq=\(cached.laneSequence) distance=\(state.distanceToManeuverMeters)m policy=\(settings.laneGuidanceMode.title) showingFlag=\(state.laneGuidanceShowing)"
+            )
+        } else {
+            updateActiveLaneDistanceMeters(
+                state.distanceToManeuverMeters,
+                context: context
+            )
+        }
+    }
+
+    private func updateActiveLaneDistanceMeters(_ distanceMeters: Int, context: String) {
+        let wasVisible = shouldDisplayActiveLanes()
+        activeLaneDistanceMeters = max(0, distanceMeters)
+        activeLaneContext = context
+        let isVisible = shouldDisplayActiveLanes()
+        if wasVisible != isVisible {
+            logger.log(
+                "HUD LANE POLICY",
+                "distance gate crossed distance=\(activeLaneDistanceMeters)m threshold=\(laneGuidanceThresholdMeters)m visible=\(isVisible)"
+            )
+            reevaluateActiveLaneGuidance(reason: "live distance threshold crossed")
+        }
+    }
+
     func applyNavigationPresentationSettings() {
         navigation.showCurrentStreet = settings.navigationShowCurrentStreet
         logger.log(
@@ -375,11 +539,16 @@ final class AppState {
     func setLaneGuidanceForCurrentManeuver(
         _ lanes: [HudCommands.NativeLane],
         distanceMeters: Int,
-        context: String
+        context: String,
+        isLive: Bool = false
     ) {
         activeLaneGuidance = lanes
         activeLaneDistanceMeters = max(0, distanceMeters)
         activeLaneContext = context
+        activeLaneIsLive = isLive
+        if !isLive {
+            activeLiveLaneManeuverIndex = nil
+        }
         reevaluateActiveLaneGuidance(reason: "new lane data")
     }
 
@@ -389,6 +558,8 @@ final class AppState {
         activeLaneGuidance = []
         activeLaneDistanceMeters = 0
         activeLaneContext = ""
+        activeLaneIsLive = false
+        activeLiveLaneManeuverIndex = nil
         guard bluetooth.state == .connected else { return }
         bluetooth.enqueue(HudCommands.clearLaneGuidance(), label: "Lane guidance clear")
         logger.log("HUD LANE POLICY", "clear reason=\(reason)")

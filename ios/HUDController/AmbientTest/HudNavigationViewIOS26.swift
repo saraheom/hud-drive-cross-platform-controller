@@ -85,6 +85,10 @@ struct HudNavigationView: View {
                             Text("Persistent keeps the latest lane guidance visible for the maneuver by reasserting the stock lane packet. Near turn caches the lane data but displays it only inside the selected distance. Off clears lane graphics. Current Street controls only the current-road text; the upcoming road/maneuver stays available.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+
+                            Text("Live U2W v8.7 0x5204 lane arrays are enabled in this build. The Apple/Google recorded replay remains below for one final comparison test.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
 

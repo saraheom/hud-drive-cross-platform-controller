@@ -44,6 +44,40 @@ final class RouteGuidanceAdapterClient {
         var drivingSide: Int
     }
 
+    /// U2W v8.7 decoded iAP2 0x5204 LaneGuidanceInformation lane record.
+    /// Angles remain source-faithful signed degrees so the app can log exactly
+    /// what Apple Maps / Google Maps supplied before normalizing to the five
+    /// native HudLauncher lane shapes.
+    struct LaneSnapshot: Codable, Equatable {
+        var index: Int
+        var status: Int
+        var recommended: Bool
+        var angles: [Int]
+    }
+
+    struct LaneGuidanceSnapshot: Codable, Equatable {
+        var sequence: Int
+        var maneuverIndex: Int?
+        var lanes: [LaneSnapshot]
+    }
+
+    /// Per-poll lane state delivered to AppState. This intentionally includes
+    /// the current Route Guidance maneuver index even when the 0x5204 payload is
+    /// for a future maneuver, allowing AppState to cache first and activate only
+    /// when that maneuver actually becomes current.
+    struct LiveLaneGuidanceState: Equatable {
+        var source: String
+        var routeSequence: Int
+        var routeState: Int
+        var currentManeuverIndex: Int?
+        var distanceToManeuverMeters: Int
+        var laneGuidanceShowing: Bool
+        var laneSequence: Int?
+        var laneManeuverIndex: Int?
+        var lanes: [HudCommands.NativeLane]
+        var rawSummary: String
+    }
+
     struct Snapshot: Codable, Equatable {
         var version: Int
         var sequence: Int
@@ -70,6 +104,9 @@ final class RouteGuidanceAdapterClient {
         var secondaryCurrentManeuverIndex: Int?
         var maneuverCount: Int
         var laneGuidanceShowing: Bool
+        // Optional for backwards compatibility with U2W v8.6. JSONDecoder will
+        // decode this as nil when the old exporter omits the key entirely.
+        var laneGuidance: LaneGuidanceSnapshot?
         var maneuvers: [ManeuverSnapshot]
     }
 
@@ -105,9 +142,11 @@ final class RouteGuidanceAdapterClient {
     private var rerouteGraceSource: SourceKind?
     private var rerouteGraceUntil: Date?
     private let rerouteGraceInterval: TimeInterval = 3.0
+    private var lastLaneTelemetrySignature = ""
 
     var onWillActivate: (() -> Void)?
     var onRoadContextChanged: ((CarPlayRouteContext?) -> Void)?
+    var onLaneGuidanceChanged: ((LiveLaneGuidanceState?) -> Void)?
 
     private(set) var running = false
     private(set) var status = "Adapter feed idle"
@@ -158,7 +197,9 @@ final class RouteGuidanceAdapterClient {
         lastRouteState = nil
         rerouteGraceSource = nil
         rerouteGraceUntil = nil
+        lastLaneTelemetrySignature = ""
         onRoadContextChanged?(nil)
+        onLaneGuidanceChanged?(nil)
         selectedSource = "—"
         currentRoad = "—"
         destination = "—"
@@ -261,7 +302,9 @@ final class RouteGuidanceAdapterClient {
             lastRouteState = nil
             rerouteGraceSource = nil
             rerouteGraceUntil = nil
+            lastLaneTelemetrySignature = ""
             onRoadContextChanged?(nil)
+            onLaneGuidanceChanged?(nil)
             navigation.navigationOff(owner: .carPlayAdapter)
             status = lastError.isEmpty ? "Waiting for active CarPlay route — HUD stays in Freeride" : "U2W feed unavailable — HUD returned to Freeride"
             return
@@ -310,6 +353,11 @@ final class RouteGuidanceAdapterClient {
                 receivedAt: timed.receivedAt
             )
         )
+
+        // Publish lane telemetry on every selected-source poll. AppState uses the
+        // repeated distance value to implement the configurable Near-turn gate,
+        // while lane sequence/signature deduping prevents unnecessary BLE resets.
+        publishLiveLaneGuidance(snapshot, source: selectedSource)
 
         let enteredReroute = snapshot.routeState == 5 && lastRouteState != 5
         let exitedReroute = snapshot.routeState != 5 && lastRouteState == 5
@@ -439,6 +487,87 @@ final class RouteGuidanceAdapterClient {
                 "source=\(selectedSource) seq=\(snapshot.sequence) routeState=\(snapshot.routeState) primary=\(primaryCurrentIndex(in: snapshot).map(String.init) ?? "nil") exportedCurrent=\(snapshot.currentManeuverIndex.map(String.init) ?? "nil") exportedSecond=\(snapshot.nextManeuverIndex.map(String.init) ?? "nil") maneuver=\(instruction.maneuver.label) distance=\(instruction.distanceMeters)m display=\(instruction.displayDistanceText) street=\(instruction.streetName) eta=\(etaText) signature=\(signature)"
             )
         }
+    }
+
+    private func publishLiveLaneGuidance(_ snapshot: Snapshot, source: String) {
+        let lane = snapshot.laneGuidance
+        let native = lane.map(Self.normalizedNativeLanes) ?? []
+        let rawSummary = lane?.lanes
+            .sorted(by: { $0.index < $1.index })
+            .map { item in
+                let angles = item.angles.map(String.init).joined(separator: ",")
+                return "#\(item.index){status=\(item.status),recommended=\(item.recommended ? 1 : 0),angles=[\(angles)]}"
+            }
+            .joined(separator: " ") ?? "none"
+
+        let state = LiveLaneGuidanceState(
+            source: source,
+            routeSequence: snapshot.sequence,
+            routeState: snapshot.routeState,
+            currentManeuverIndex: primaryCurrentIndex(in: snapshot),
+            distanceToManeuverMeters: max(0, snapshot.distanceToManeuverMeters),
+            laneGuidanceShowing: snapshot.laneGuidanceShowing,
+            laneSequence: lane?.sequence,
+            laneManeuverIndex: lane?.maneuverIndex,
+            lanes: native,
+            rawSummary: rawSummary
+        )
+        onLaneGuidanceChanged?(state)
+
+        let telemetrySignature = [
+            source,
+            "route=\(snapshot.sequence)",
+            "current=\(state.currentManeuverIndex.map(String.init) ?? "nil")",
+            "showing=\(snapshot.laneGuidanceShowing ? 1 : 0)",
+            "laneSeq=\(lane?.sequence ?? -1)",
+            "laneManeuver=\(lane?.maneuverIndex.map(String.init) ?? "nil")",
+            "native=\(native.map { String($0.wireValue) }.joined(separator: ","))"
+        ].joined(separator: "|")
+        if telemetrySignature != lastLaneTelemetrySignature {
+            lastLaneTelemetrySignature = telemetrySignature
+            logger.log(
+                "CARPLAY LANE RX",
+                "source=\(source) routeSeq=\(snapshot.sequence) routeState=\(snapshot.routeState) current=\(state.currentManeuverIndex.map(String.init) ?? "nil") distance=\(state.distanceToManeuverMeters)m showing=\(snapshot.laneGuidanceShowing) laneSeq=\(lane?.sequence.map(String.init) ?? "nil") laneManeuver=\(lane?.maneuverIndex.map(String.init) ?? "nil") native=[\(native.map { String($0.wireValue) }.joined(separator: ","))] raw=\(rawSummary)"
+            )
+        }
+    }
+
+    /// Normalize a CarPlay lane's one-or-more signed direction angles into the
+    /// five shapes implemented by stock HudLauncher. The physical v8.4-v8.6
+    /// captures use -90/-45/0/+45/+90; wider future values are conservatively
+    /// bucketed by direction and can never disrupt the normal maneuver feed.
+    nonisolated static func nativeLaneType(for angles: [Int]) -> HudCommands.NativeLaneType? {
+        guard !angles.isEmpty else { return nil }
+        var hasLeft = false
+        var hasStraight = false
+        var hasRight = false
+        for angle in angles {
+            if angle <= -23 { hasLeft = true }
+            else if angle >= 23 { hasRight = true }
+            else { hasStraight = true }
+        }
+
+        // Stock firmware has no left+right/fork glyph. Straight is the safest
+        // neutral representation for that theoretical shape.
+        if hasLeft && hasRight { return .straight }
+        if hasLeft && hasStraight { return .straightLeft }
+        if hasRight && hasStraight { return .straightRight }
+        if hasLeft { return .left }
+        if hasRight { return .right }
+        if hasStraight { return .straight }
+        return nil
+    }
+
+    nonisolated static func normalizedNativeLanes(_ guidance: LaneGuidanceSnapshot) -> [HudCommands.NativeLane] {
+        guidance.lanes
+            .sorted(by: { $0.index < $1.index })
+            .compactMap { lane in
+                guard let type = nativeLaneType(for: lane.angles) else { return nil }
+                return HudCommands.NativeLane(
+                    type: type,
+                    recommended: lane.recommended || lane.status == 2
+                )
+            }
     }
 
     private func sanitizedCurrentIndex(_ index: Int?) -> Int? {

@@ -1,0 +1,18 @@
+HUD Controller v90.34.6 build verification
+
+Runtime scope:
+- Add U2W v8.7 optional live laneGuidance JSON decoding.
+- Normalize physical CarPlay 0x5204 angles into stock HUD lane shapes.
+- Cache by maneuver index and activate only on current-cursor match.
+- Feed existing Off / Near turn / Persistent policy with live distance updates.
+- Retain Apple/Google recorded replay for one more validation cycle.
+- Retain v90.34.5.2 HUD Wi-Fi diagnostics unchanged.
+- No HUD firmware/filesystem write.
+
+Validation results are recorded in the release response after local tests/syntax checks.
+
+Local validation:
+- 230/230 Python/static tests passed.
+- 154 Swift files passed swiftc -parse individually.
+- 10 YAML files parsed successfully.
+- Full repository ZIP integrity verified after packaging.

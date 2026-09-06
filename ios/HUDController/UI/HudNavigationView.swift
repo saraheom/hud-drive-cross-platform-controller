@@ -46,6 +46,9 @@ struct HudNavigationView: View {
                                     }
                                 ), in: 0.1...1.0, step: 0.1)
                             }
+                            Text("Live U2W v8.7 0x5204 lane arrays are enabled in this build. The Apple/Google recorded replay remains available for one final comparison test.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
 
