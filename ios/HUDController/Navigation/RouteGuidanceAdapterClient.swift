@@ -527,7 +527,7 @@ final class RouteGuidanceAdapterClient {
             lastLaneTelemetrySignature = telemetrySignature
             logger.log(
                 "CARPLAY LANE RX",
-                "source=\(source) routeSeq=\(snapshot.sequence) routeState=\(snapshot.routeState) current=\(state.currentManeuverIndex.map(String.init) ?? "nil") distance=\(state.distanceToManeuverMeters)m showing=\(snapshot.laneGuidanceShowing) laneSeq=\(lane?.sequence.map(String.init) ?? "nil") laneManeuver=\(lane?.maneuverIndex.map(String.init) ?? "nil") native=[\(native.map { String($0.wireValue) }.joined(separator: ","))] raw=\(rawSummary)"
+                "source=\(source) routeSeq=\(snapshot.sequence) routeState=\(snapshot.routeState) current=\(state.currentManeuverIndex.map(String.init) ?? "nil") distance=\(state.distanceToManeuverMeters)m showing=\(snapshot.laneGuidanceShowing) laneSeq=\(lane.map { String($0.sequence) } ?? "nil") laneManeuver=\(lane?.maneuverIndex.map(String.init) ?? "nil") native=[\(native.map { String($0.wireValue) }.joined(separator: ","))] raw=\(rawSummary)"
             )
         }
     }

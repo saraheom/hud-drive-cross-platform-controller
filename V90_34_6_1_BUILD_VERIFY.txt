@@ -1,0 +1,16 @@
+HUD Controller v90.34.6.1 — Swift compile correction
+
+Source: v90.34.6 U2W v8.7 Live Lane Guidance
+
+GitHub Actions run 92264903489 reached Swift compilation and failed with one compiler error:
+  RouteGuidanceAdapterClient.swift:530:272
+  value of type 'Int' has no member 'map'
+
+Root cause:
+  The diagnostic interpolation used lane?.sequence.map(String.init). LaneGuidanceSnapshot.sequence is a non-optional Int, so Swift optional-chaining precedence attempted to resolve map on Int.
+
+Correction:
+  lane?.sequence.map(String.init)
+  -> lane.map { String($0.sequence) }
+
+This changes diagnostic string formatting only. No Route Guidance JSON model, polling, maneuver-index cache, native lane mapping, Off/Near turn/Persistent policy, Wi-Fi bootstrap, CarPlay behavior, ambient behavior, OBD behavior, or HUD packet behavior changed from v90.34.6.

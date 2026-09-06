@@ -1,3 +1,9 @@
+# v90.34.6.1 — live-lane Swift compile correction
+
+The first v90.34.6 GitHub Actions run reached the iOS Swift compile stage and failed on one diagnostic interpolation in `RouteGuidanceAdapterClient.swift`: `lane?.sequence.map(String.init)` attempted to call `map` on the non-optional `Int` property `sequence`. v90.34.6.1 changes that diagnostic-only expression to `lane.map { String($0.sequence) }`. The U2W v8.7 live lane decoder, maneuver-index cache, native lane normalization, Off/Near turn/Persistent presentation policy, recorded replay, Wi-Fi diagnostics, and all other runtime behavior are unchanged.
+
+---
+
 # HUD Controller v90.34.6 — U2W v8.7 live 0x5204 lane guidance
 
 v90.34.6 connects the validated v90.34.5 configurable native-lane renderer to **U2W CarPlay Data Exporter v8.7**. `RouteGuidanceAdapterClient` now decodes the optional `laneGuidance` object from `u2wrgd-live.cgi`, preserves v8.6 compatibility, normalizes signed CarPlay lane angles to the five stock HudLauncher lane shapes, caches lane topology by CarPlay maneuver index, and activates it only when that maneuver becomes current. Future-maneuver lane packets therefore cannot overwrite the current maneuver.
