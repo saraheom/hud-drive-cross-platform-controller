@@ -76,11 +76,11 @@ final class AppState {
         routeGuidance.onRoadContextChanged = { [weak speedEngine] context in
             speedEngine?.updateCarPlayRouteContext(context)
         }
+        let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
+        self.ambientLight = ambientLight
         routeGuidance.onLaneGuidanceChanged = { [weak self] state in
             self?.receiveLiveLaneGuidance(state)
         }
-        let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
-        self.ambientLight = ambientLight
         if #available(iOS 27.0, *) {
             self.externalCapture27 = ExternalNavigationCapture(logger: logger, navigation: self.navigation)
         }

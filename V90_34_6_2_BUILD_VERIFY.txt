@@ -1,0 +1,26 @@
+HUD Controller v90.34.6.2 — AppState initialization-order compile correction
+
+Source: v90.34.6.1 U2W v8.7 Live Lane Guidance compile fix
+
+GitHub Actions run 92265596292 reached Swift compilation and failed with one source error:
+  AppState.swift:79:55
+  variable 'self.ambientLight' used before being initialized
+
+Root cause:
+  The new routeGuidance.onLaneGuidanceChanged closure captured self before the final stored let property ambientLight had been assigned in AppState.init(). Swift forbids escaping/capturing self until all stored properties are initialized.
+
+Correction:
+  Instantiate and assign AmbientLightMonitor first:
+    let ambientLight = AmbientLightMonitor(...)
+    self.ambientLight = ambientLight
+  Then register:
+    routeGuidance.onLaneGuidanceChanged = { [weak self] state in
+        self?.receiveLiveLaneGuidance(state)
+    }
+
+This is an initialization-order correction only. U2W v8.7 JSON decoding, lane normalization, maneuver-index cache, live lane activation/clearing, Off/Near turn/Persistent policy, current-street setting, Wi-Fi diagnostics, CarPlay, OBD, speed-limit, ambient-light, and HUD packet behavior are unchanged from v90.34.6.1.
+
+Local validation:
+  231/231 pytest/static regression tests PASS
+  154 Swift source files swiftc -parse PASS
+  10 YAML files parse PASS

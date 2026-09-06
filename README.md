@@ -1,3 +1,9 @@
+# v90.34.6.2 — AppState initialization-order compile fix
+
+The v90.34.6.1 GitHub Actions run failed during the iOS simulator build with `AppState.swift:79:55: error: variable 'self.ambientLight' used before being initialized`. The new live-lane callback captured `self` before the final stored `let ambientLight` property had been assigned. v90.34.6.2 moves only the `routeGuidance.onLaneGuidanceChanged` callback registration to immediately after `self.ambientLight = ambientLight`. Live U2W v8.7 lane decoding, maneuver-index caching, Off/Near Turn/Persistent presentation, Wi-Fi diagnostics, and all other runtime behavior are unchanged.
+
+---
+
 # v90.34.6.1 — live-lane Swift compile correction
 
 The first v90.34.6 GitHub Actions run reached the iOS Swift compile stage and failed on one diagnostic interpolation in `RouteGuidanceAdapterClient.swift`: `lane?.sequence.map(String.init)` attempted to call `map` on the non-optional `Int` property `sequence`. v90.34.6.1 changes that diagnostic-only expression to `lane.map { String($0.sequence) }`. The U2W v8.7 live lane decoder, maneuver-index cache, native lane normalization, Off/Near turn/Persistent presentation policy, recorded replay, Wi-Fi diagnostics, and all other runtime behavior are unchanged.
