@@ -1,0 +1,30 @@
+v90.34.9.1 local verification
+
+Scope
+-----
+CI-only XCTest correction on top of v90.34.9.
+No HUDController runtime source changed.
+
+GitHub Actions failure diagnosed from user-provided workflow logs
+---------------------------------------------------------------
+- iOS Simulator app build: PASS
+- XCTest total: 234
+- Passed: 233
+- Failed: 1
+- Failing test: V90349PersistentMusicAndUICleanupTests.testPersistentMusicUsesExistingNativeRendererOnly
+- Failure line: XCTAssertTrue(section.contains(".seconds(5)"))
+- Cause: persistentMusicRefreshInterval = .seconds(5) is declared above the source slice selected by the test.
+
+Correction
+----------
+The test now checks the AppState-wide declaration:
+  private let persistentMusicRefreshInterval: Duration = .seconds(5)
+and separately verifies the persistent renderer loop uses:
+  Task.sleep(for: self.persistentMusicRefreshInterval)
+
+Local validation
+----------------
+- pytest: 259 passed
+- Swift syntax parse: 162 files passed
+- YAML parse: 10 files passed
+- Runtime source parity with v90.34.9: expected byte-identical HUDController runtime sources

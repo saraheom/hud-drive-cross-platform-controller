@@ -1,4 +1,6 @@
-# v90.34.9 — Persistent stock Music renderer experiment + Navigation UI cleanup
+# v90.34.9.1 — Persistent Music CI test correction
+
+v90.34.9.1 is a CI-only correction to v90.34.9. The app/runtime sources are unchanged. The Xcode simulator build passed in the v90.34.9 workflow, but one source-inspection XCTest incorrectly searched the persistent-music method slice for the `.seconds(5)` interval even though that constant is declared as an AppState property above the slice. The test now validates the property declaration and verifies that the persistent loop sleeps using that property.
 
 v90.34.9 builds on the physically validated v90.34.8.3 boot-animation maintenance release. The Media screen adds an explicit BLE-only persistent Music experiment that reuses the stock HudLauncher full/mini Music views and refreshes the existing `MusicNotificationPacket` every five seconds instead of patching the signed system launcher. Static inspection shows the stock Music packet handler writes directly into `HwDriveCoreView`'s full and mini Music views and does not publish parsed metadata through a public Android broadcast. `Start Mini` is therefore the first physical candidate for a persistent side-widget-style renderer; because the stock mini-state command is global to the HUD UI, it remains opt-in and must be evaluated with live Navigation.
 

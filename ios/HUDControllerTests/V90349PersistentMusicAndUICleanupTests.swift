@@ -15,7 +15,8 @@ final class V90349PersistentMusicAndUICleanupTests: XCTestCase {
             return
         }
         let section = String(app[start..<end])
-        XCTAssertTrue(section.contains(".seconds(5)"))
+        XCTAssertTrue(app.contains("private let persistentMusicRefreshInterval: Duration = .seconds(5)"))
+        XCTAssertTrue(section.contains("Task.sleep(for: self.persistentMusicRefreshInterval)"))
         XCTAssertTrue(section.contains("HudCommands.musicNotification"))
         XCTAssertTrue(section.contains("HudCommands.widgetsMiniState(true)"))
         XCTAssertFalse(section.contains("adb."))
