@@ -1,0 +1,19 @@
+v90.34.10.2 local verification
+
+Purpose
+- Fix parked right-side lane probe candidate switching discovered in the v90.34.10.1 physical replay log.
+- `Right probe: Navigation` was physically observed to replace ETA with a blank right slot while native lane guidance remained in the center/bottom renderer.
+- v90.34.10.1 did NOT actually transmit NaviMini when the selector changed while a probe was already active; this build tracks the active candidate and reconfigures immediately.
+
+Runtime diff vs v90.34.10.1
+- ios/HUDController/App/AppState.swift only.
+- No boot-animation, ADB transport, U2W v8.8 parsing, ambient-light, navigation packet encoding, or persistent-music runtime source was changed.
+
+Local checks
+- pytest: 269 passed
+- Swift syntax parse: 165 files, 0 failures
+- YAML parse: 10 files PASS
+- Runtime source diff check: only AppState.swift differs from v90.34.10.1
+
+CI caveat
+- Full Xcode/macOS simulator compilation and XCTest were not run in this container. GitHub iOS CI remains authoritative.

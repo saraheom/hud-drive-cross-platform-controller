@@ -52,6 +52,7 @@ final class AppState {
     // side-widget factory probe so a lane packet can reveal whether the stock
     // launcher has any hidden right-side lane-capable renderer.
     private var laneRightSideProbeActive = false
+    private var laneRightSideProbeWidget: String?
 
     // Legacy U2W v8.7 fallback cache. v8.7 incorrectly labeled the 0x5204
     // composed-guidance-event id as a route maneuver index and retained only the
@@ -172,6 +173,7 @@ final class AppState {
             self.laneGuidanceRefreshTask?.cancel()
             self.laneGuidanceRefreshTask = nil
             self.laneRightSideProbeActive = false
+            self.laneRightSideProbeWidget = nil
             self.hudWiFiExposureTask?.cancel()
             self.hudWiFiExposureTask = nil
             self.firmwareMaintenanceTask?.cancel()
@@ -701,11 +703,19 @@ final class AppState {
     }
 
     private func activateRightLaneWidgetProbeIfNeeded(reason: String) {
-        guard !laneRightSideProbeActive,
-              navigation.navigationActive,
+        guard navigation.navigationActive,
               let rightWidget = settings.lanePlacementMode.rightWidgetName else { return }
 
+        // v90.34.10.1 latched only a Boolean. If the user changed from the
+        // Navigation probe to NaviMini while lanes were already visible, the
+        // guard returned early and the HUD never received the new right-widget
+        // dashboard packet. Track the active candidate so a placement change
+        // reconfigures the right side immediately during parked replay.
+        let reconfiguring = laneRightSideProbeActive && laneRightSideProbeWidget != rightWidget
+        if laneRightSideProbeActive && !reconfiguring { return }
+
         laneRightSideProbeActive = true
+        laneRightSideProbeWidget = rightWidget
         // Static firmware inspection shows setLaneInstructions() fans the same
         // lane list to center/left/right widgets. Keep the proven center
         // Navigation widget in place for a safe road test, while temporarily
@@ -724,7 +734,7 @@ final class AppState {
         )
         logger.log(
             "HUD LANE PROBE",
-            "activate right=\(rightWidget) replaces ETA center=Navigation reason=\(reason); stock-only/no filesystem write"
+            "\(reconfiguring ? "reconfigure" : "activate") right=\(rightWidget) replaces ETA center=Navigation reason=\(reason); stock-only/no filesystem write"
         )
 
         // setWidgets() creates a fresh widget and hydrates cached values, but
@@ -736,6 +746,7 @@ final class AppState {
     private func restoreNormalNavigationAfterLaneProbeIfNeeded(reason: String) {
         guard laneRightSideProbeActive else { return }
         laneRightSideProbeActive = false
+        laneRightSideProbeWidget = nil
         guard bluetooth.state == .connected else { return }
         obd.applyNavigationWidgets()
         if navigation.navigationActive {
@@ -783,6 +794,7 @@ final class AppState {
         activeLiveLaneEventIndex = nil
         guard bluetooth.state == .connected else {
             laneRightSideProbeActive = false
+            laneRightSideProbeWidget = nil
             return
         }
         bluetooth.enqueue(HudCommands.clearLaneGuidance(), label: "Lane guidance clear")
