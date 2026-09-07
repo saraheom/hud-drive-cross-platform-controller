@@ -29,9 +29,11 @@ def test_obsolete_navigation_diagnostic_cards_are_removed_from_ios26_ui():
         "Ambient-light test build",
         "Manual navigation diagnostics",
         "Firmware-native lane guidance",
-        "Recorded CarPlay lane replay",
     ):
         assert text not in NAV26
+    # v90.34.10.1 intentionally restores only the parked CarPlay lane replay
+    # card so the right-side lane renderer can be tested at home.
+    assert "Recorded CarPlay lane replay" in NAV26
     assert "Navigation presentation" in NAV26
     assert "HUD Firmware Maintenance" in NAV26
 

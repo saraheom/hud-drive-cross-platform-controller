@@ -1,0 +1,29 @@
+v90.34.10.1 local verification
+
+Scope
+-----
+Restore only the recorded CarPlay lane replay card to the iOS 26 Navigation UI so v90.34.10 right-side lane placement can be tested while parked.
+
+Runtime behavior
+----------------
+- AppState lane placement/probe logic is unchanged from v90.34.10.
+- Recorded replay sender is unchanged and continues through setLaneGuidanceForCurrentManeuver(...).
+- No direct lane bypass is added.
+- No ADB, firmware/APK, /system, updater, or filesystem write is added by replay.
+- Ambient-light test build, Manual navigation diagnostics, and Firmware-native lane guidance cards remain absent.
+
+Bench-test recommendation
+-------------------------
+1. BLE-connect the HUD.
+2. Lane Guidance = Persistent.
+3. Lane placement = Right probe: Navigation.
+4. Send a recorded step and observe the ETA/right region.
+5. Clear Replayed Lanes.
+6. Repeat with Right probe: NaviMini.
+
+Local validation
+----------------
+- pytest: 267 passed
+- Swift syntax parse: 164 files passed
+- YAML parse: 10 files passed
+- full Xcode/macOS simulator CI: not run locally; GitHub Actions remains authoritative

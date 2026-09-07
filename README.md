@@ -1,3 +1,17 @@
+# v90.34.10.1 — Parked CarPlay replay restored for right-side lane probe
+
+v90.34.10.1 is a focused diagnostic-UI follow-up to v90.34.10. It restores **only** the recorded Apple Maps / Google Maps CarPlay lane replay card in the iOS 26 Navigation screen so the new `Right probe: Navigation` and `Right probe: NaviMini` lane-placement modes can be exercised while parked at home. The previously removed `Ambient-light test build`, `Manual navigation diagnostics`, and `Firmware-native lane guidance` cards remain removed.
+
+Each replay step still uses the existing BLE-only sender (`sendRecordedCarPlayLaneReplayStep`), which turns native Navigation on, sends the captured maneuver, then routes the captured lane topology through `setLaneGuidanceForCurrentManeuver(...)`. Therefore selecting a right-side placement probe above the replay card exercises the same probe state machine as live U2W v8.8 guidance. No U2W adapter, ADB session, filesystem write, APK modification, or firmware update is involved in replay.
+
+For the fastest bench test: connect the HUD over BLE, set **Lane Guidance = Persistent**, choose **Right probe: Navigation**, send one recorded step, observe the ETA region, then repeat with **Right probe: NaviMini**. Use **Clear Replayed Lanes** between tests to restore the normal ETA layout.
+
+See `docs/V90_34_10_1_REPLAY_RIGHT_SIDE_PROBE.md` and `V90_34_10_1_BUILD_VERIFY.txt`.
+
+# v90.34.10 — Lane right-side stock probe + gray-background research
+
+v90.34.10 builds on v90.34.9.1 and adds one focused, reversible lane-presentation experiment. Firmware inspection confirms the stock center lane renderer hard-codes its rounded background as `#252525`, so there is no BLE color/transparency field to toggle. The new Navigation **Lane placement** picker can probe the stock right-side widget factory with either `Navigation` or the legacy `NaviMini` name while lane guidance is eligible, temporarily replacing ETA while keeping the proven center Navigation renderer, then automatically restore the normal Navigation/ETA layout when lanes hide. This performs no ADB or firmware write. See `docs/V90_34_10_LANE_RIGHT_SIDE_PROBE_BACKGROUND_RESEARCH.md`.
+
 # v90.34.9.1 — Persistent Music CI test correction
 
 v90.34.9.1 is a CI-only correction to v90.34.9. The app/runtime sources are unchanged. The Xcode simulator build passed in the v90.34.9 workflow, but one source-inspection XCTest incorrectly searched the persistent-music method slice for the `.seconds(5)` interval even though that constant is declared as an AppState property above the slice. The test now validates the property declaration and verifies that the persistent loop sleeps using that property.

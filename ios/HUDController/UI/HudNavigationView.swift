@@ -40,6 +40,25 @@ struct HudNavigationView: View {
                                 ForEach(HudLaneGuidanceMode.allCases) { mode in Text(mode.title).tag(mode) }
                             }
                             .pickerStyle(.segmented)
+
+                            Picker("Lane placement", selection: Binding(
+                                get: { state.settings.lanePlacementMode },
+                                set: { value in
+                                    state.settings.lanePlacementMode = value
+                                    state.applyNavigationPresentationSettings()
+                                }
+                            )) {
+                                ForEach(HudLanePlacementMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.menu)
+
+                            if state.settings.lanePlacementMode != .centerNative {
+                                Text("Right-side probe keeps the normal center Navigation renderer and temporarily replaces ETA with the selected stock candidate only while lanes are eligible. If the firmware supports a side lane renderer, a right-side lane response should appear. The stock center gray lane box may still remain during this probe. Normal ETA is restored automatically when lanes hide.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             if state.settings.laneGuidanceMode == .nearTurn {
                                 Text(String(format: "Show lanes within %.1f mi (~%d ft)", state.settings.laneGuidanceDistanceMiles, Int((state.settings.laneGuidanceDistanceMiles * 5280).rounded())))
                                     .font(.subheadline)
@@ -51,7 +70,7 @@ struct HudNavigationView: View {
                                     }
                                 ), in: 0.1...1.0, step: 0.1)
                             }
-                            Text("Live U2W v8.8 active lane-event resolution is enabled in this build. The Apple/Google recorded replay remains available for one final comparison test.")
+                            Text("Live U2W v8.8 active-event resolution remains unchanged. Center (stock) keeps the proven renderer. The two right-side choices are safe stock-widget probes for this field test.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

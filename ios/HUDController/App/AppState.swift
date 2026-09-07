@@ -46,6 +46,12 @@ final class AppState {
     private var activeLiveLaneGuidanceIndex: Int?
     private var activeLiveLaneEventIndex: Int?
     private let laneGuidanceRefreshInterval: Duration = .milliseconds(1500)
+    // v90.34.10: safe stock-widget probe for the user's requested right-side
+    // lane placement. No firmware/APK write is performed. While active we
+    // temporarily replace the normal Navigation dashboard with an isolated
+    // side-widget factory probe so a lane packet can reveal whether the stock
+    // launcher has any hidden right-side lane-capable renderer.
+    private var laneRightSideProbeActive = false
 
     // Legacy U2W v8.7 fallback cache. v8.7 incorrectly labeled the 0x5204
     // composed-guidance-event id as a route maneuver index and retained only the
@@ -165,6 +171,7 @@ final class AppState {
             self.hudReassertTask = nil
             self.laneGuidanceRefreshTask?.cancel()
             self.laneGuidanceRefreshTask = nil
+            self.laneRightSideProbeActive = false
             self.hudWiFiExposureTask?.cancel()
             self.hudWiFiExposureTask = nil
             self.firmwareMaintenanceTask?.cancel()
@@ -635,7 +642,7 @@ final class AppState {
         navigation.showCurrentStreet = settings.navigationShowCurrentStreet
         logger.log(
             "NAV PRESENTATION",
-            "currentStreet=\(settings.navigationShowCurrentStreet ? "ON" : "OFF") lanes=\(settings.laneGuidanceMode.title) threshold=\(String(format: "%.1f", settings.laneGuidanceDistanceMiles))mi"
+            "currentStreet=\(settings.navigationShowCurrentStreet ? "ON" : "OFF") lanes=\(settings.laneGuidanceMode.title) threshold=\(String(format: "%.1f", settings.laneGuidanceDistanceMiles))mi placement=\(settings.lanePlacementMode.title)"
         )
 
         // Re-send the currently visible maneuver so the current-street toggle is
@@ -665,11 +672,18 @@ final class AppState {
         guard bluetooth.state == .connected else { return }
         guard shouldDisplayActiveLanes() else {
             bluetooth.enqueue(HudCommands.clearLaneGuidance(), label: "Lane policy → clear (\(reason))")
+            restoreNormalNavigationAfterLaneProbeIfNeeded(reason: "lane hidden: \(reason)")
             logger.log(
                 "HUD LANE POLICY",
-                "hidden reason=\(reason) mode=\(settings.laneGuidanceMode.title) distance=\(activeLaneDistanceMeters)m threshold=\(laneGuidanceThresholdMeters)m"
+                "hidden reason=\(reason) mode=\(settings.laneGuidanceMode.title) distance=\(activeLaneDistanceMeters)m threshold=\(laneGuidanceThresholdMeters)m placement=\(settings.lanePlacementMode.title)"
             )
             return
+        }
+
+        if settings.lanePlacementMode == .centerNative {
+            restoreNormalNavigationAfterLaneProbeIfNeeded(reason: "center-native selected")
+        } else {
+            activateRightLaneWidgetProbeIfNeeded(reason: reason)
         }
 
         sendActiveLaneGuidance(label: "Lane policy → show (\(reason))")
@@ -684,6 +698,53 @@ final class AppState {
                 self.sendActiveLaneGuidance(label: "Lane policy → persistence refresh")
             }
         }
+    }
+
+    private func activateRightLaneWidgetProbeIfNeeded(reason: String) {
+        guard !laneRightSideProbeActive,
+              navigation.navigationActive,
+              let rightWidget = settings.lanePlacementMode.rightWidgetName else { return }
+
+        laneRightSideProbeActive = true
+        // Static firmware inspection shows setLaneInstructions() fans the same
+        // lane list to center/left/right widgets. Keep the proven center
+        // Navigation widget in place for a safe road test, while temporarily
+        // replacing the normal right-side ETA with the selected candidate. If
+        // that candidate implements lanes, we should see a second/right-side
+        // response. The center gray lane box may still appear during this probe
+        // because the stock command cannot address one widget independently.
+        bluetooth.enqueue(
+            HudCommands.dashboard(
+                left: obd.navigationLeft.rawValue,
+                center: "Navigation",
+                right: rightWidget,
+                navigationLayout: true
+            ),
+            label: "Lane right-side probe → \(rightWidget)"
+        )
+        logger.log(
+            "HUD LANE PROBE",
+            "activate right=\(rightWidget) replaces ETA center=Navigation reason=\(reason); stock-only/no filesystem write"
+        )
+
+        // setWidgets() creates a fresh widget and hydrates cached values, but
+        // explicitly re-send the current maneuver so any hidden side navigation
+        // implementation receives the same native maneuver state before lanes.
+        navigation.sendCurrent(owner: navigation.feedOwner)
+    }
+
+    private func restoreNormalNavigationAfterLaneProbeIfNeeded(reason: String) {
+        guard laneRightSideProbeActive else { return }
+        laneRightSideProbeActive = false
+        guard bluetooth.state == .connected else { return }
+        obd.applyNavigationWidgets()
+        if navigation.navigationActive {
+            navigation.sendCurrent(owner: navigation.feedOwner)
+        }
+        logger.log(
+            "HUD LANE PROBE",
+            "restore normal Navigation dashboard right=\(obd.navigationRight.rawValue) reason=\(reason)"
+        )
     }
 
     private func sendActiveLaneGuidance(label: String) {
@@ -720,8 +781,12 @@ final class AppState {
         activeLiveLaneManeuverIndex = nil
         activeLiveLaneGuidanceIndex = nil
         activeLiveLaneEventIndex = nil
-        guard bluetooth.state == .connected else { return }
+        guard bluetooth.state == .connected else {
+            laneRightSideProbeActive = false
+            return
+        }
         bluetooth.enqueue(HudCommands.clearLaneGuidance(), label: "Lane guidance clear")
+        restoreNormalNavigationAfterLaneProbeIfNeeded(reason: "lane policy cleared: \(reason)")
         logger.log("HUD LANE POLICY", "clear reason=\(reason)")
     }
 

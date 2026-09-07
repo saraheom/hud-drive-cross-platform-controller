@@ -29,7 +29,7 @@ final class V90349PersistentMusicAndUICleanupTests: XCTestCase {
         XCTAssertFalse(ui.contains("Ambient-light test build"))
         XCTAssertFalse(ui.contains("Manual navigation diagnostics"))
         XCTAssertFalse(ui.contains("Firmware-native lane guidance"))
-        XCTAssertFalse(ui.contains("Recorded CarPlay lane replay"))
+        XCTAssertTrue(ui.contains("Recorded CarPlay lane replay"))
         XCTAssertTrue(ui.contains("Navigation presentation"))
         XCTAssertTrue(ui.contains("HUD Firmware Maintenance"))
     }

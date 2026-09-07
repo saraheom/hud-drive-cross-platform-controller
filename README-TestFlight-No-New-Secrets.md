@@ -1,3 +1,7 @@
+# v90.34.10 note
+
+This release keeps the existing TestFlight/signing workflow unchanged. The new lane-placement experiment is BLE-only and does not add secrets, entitlements, ADB requirements, or firmware writes during normal driving.
+
 # v88 TestFlight — no-new-secrets workflow fix
 
 This version removes the proposed `APPLE_ID` / `FASTLANE_SESSION` requirement.

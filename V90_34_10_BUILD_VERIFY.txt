@@ -1,0 +1,41 @@
+v90.34.10 local verification
+
+Scope
+-----
+Lane presentation field probe on top of v90.34.9.1.
+No HUD firmware/APK/system write is added by the lane probe.
+The physically validated v90.34.8.3 boot-animation maintenance path remains present and unchanged in purpose.
+
+User field result carried forward
+-------------------------------
+The v90.34.9.1 Music mini-state experiment is not a side widget. Physical testing showed the native mini command moves the Music notification into the upper HUD area and compresses the normal dashboard into the lower area. v90.34.10 therefore moves the active investigation to lane presentation.
+
+Firmware/static findings driving this build
+------------------------------------------
+- The proven center ManeuverViewNewLayoutWidget hard-codes the lane background as #252525 before drawing a rounded rectangle.
+- The lane packet itself contains lane values only; there is no discovered BLE field for lane background transparency/color or placement.
+- HwDriveCoreView fans lane state to current center/left/right widget instances.
+- Recovered firmware contains right-side/legacy navigation names/resources (Navigation, NaviMini/widget_navigation_side), but static inspection did not establish a lane-capable side override.
+
+v90.34.10 field probe
+--------------------
+Navigation presentation adds a persisted Lane placement setting:
+- Center (stock)
+- Right probe: Navigation
+- Right probe: NaviMini
+
+When a right probe is selected and lanes are eligible:
+- keep center = Navigation so the proven maneuver renderer remains usable;
+- temporarily replace the normal right ETA widget with the selected stock candidate;
+- re-send current maneuver and the existing native lane packet;
+- automatically restore the normal Navigation/ETA dashboard when lanes hide/clear.
+
+This probe uses only the existing dashboard/maneuver/lane BLE packets. It does not call ADB, maintenance mode, APK replacement, /system, or a filesystem write.
+
+Local validation
+----------------
+- pytest: 263 passed
+- Swift syntax parse: 163 files passed
+- YAML parse: 10 files passed
+- requested Navigation UI cleanup remains in place: no Ambient-light test build, Manual navigation diagnostics, Firmware-native lane guidance, or Recorded CarPlay lane replay blocks
+- full Xcode/macOS simulator CI: not run locally; GitHub Actions remains the authoritative compiler/XCTest check

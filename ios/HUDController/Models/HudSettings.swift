@@ -18,6 +18,31 @@ struct DashboardPreset: Identifiable, Hashable {
 }
 
 
+
+
+enum HudLanePlacementMode: String, CaseIterable, Identifiable {
+    case centerNative
+    case rightNavigationProbe
+    case rightNaviMiniProbe
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .centerNative: return "Center (stock)"
+        case .rightNavigationProbe: return "Right probe: Navigation"
+        case .rightNaviMiniProbe: return "Right probe: NaviMini"
+        }
+    }
+
+    var rightWidgetName: String? {
+        switch self {
+        case .centerNative: return nil
+        case .rightNavigationProbe: return "Navigation"
+        case .rightNaviMiniProbe: return "NaviMini"
+        }
+    }
+}
 enum HudLaneGuidanceMode: String, CaseIterable, Identifiable {
     case off
     case nearTurn
@@ -66,6 +91,7 @@ final class HudSettings {
     var navigationShowCurrentStreet: Bool { didSet { defaults.set(navigationShowCurrentStreet, forKey: "HUD.Settings.navigationShowCurrentStreet") } }
     var laneGuidanceMode: HudLaneGuidanceMode { didSet { defaults.set(laneGuidanceMode.rawValue, forKey: "HUD.Settings.laneGuidanceMode") } }
     var laneGuidanceDistanceMiles: Double { didSet { defaults.set(laneGuidanceDistanceMiles, forKey: "HUD.Settings.laneGuidanceDistanceMiles") } }
+    var lanePlacementMode: HudLanePlacementMode { didSet { defaults.set(lanePlacementMode.rawValue, forKey: "HUD.Settings.lanePlacementMode") } }
 
     var notificationExposureSeconds: Int { didSet { defaults.set(notificationExposureSeconds, forKey: "HUD.Settings.notificationExposureSeconds") } }
     var notificationLines: Int { didSet { defaults.set(notificationLines, forKey: "HUD.Settings.notificationLines") } }
@@ -115,6 +141,8 @@ final class HudSettings {
         let laneModeRaw = store.string(forKey: "HUD.Settings.laneGuidanceMode") ?? HudLaneGuidanceMode.nearTurn.rawValue
         laneGuidanceMode = HudLaneGuidanceMode(rawValue: laneModeRaw) ?? .nearTurn
         laneGuidanceDistanceMiles = min(1.0, max(0.1, double("HUD.Settings.laneGuidanceDistanceMiles", default: 0.5)))
+        let lanePlacementRaw = store.string(forKey: "HUD.Settings.lanePlacementMode") ?? HudLanePlacementMode.centerNative.rawValue
+        lanePlacementMode = HudLanePlacementMode(rawValue: lanePlacementRaw) ?? .centerNative
 
         notificationExposureSeconds = integer("HUD.Settings.notificationExposureSeconds", default: 10)
         notificationLines = integer("HUD.Settings.notificationLines", default: 5)
