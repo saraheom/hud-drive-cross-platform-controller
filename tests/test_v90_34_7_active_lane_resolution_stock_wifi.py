@@ -4,6 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
 ROUTE = (ROOT / "ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift").read_text()
 UI = (ROOT / "ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift").read_text()
+SETTINGS_UI = (ROOT / "ios/HUDController/UI/HudSettingsView.swift").read_text()
 
 
 def test_google_maps_cursor_wobble_no_longer_clears_lane_cache():
@@ -35,7 +36,8 @@ def test_failed_ap_pin_mode4_experiment_is_retired_after_physical_test():
     assert "returnHUDRendererKeepingWiFi" not in APP
     assert "hudHotspotBaseband(is5G: true, forceEnable: true)" not in APP
     assert "Pin AP + Return HUD Mode 4" not in UI
-    assert "Start Firmware Maintenance" in UI
+    assert "Start Firmware Maintenance" not in UI
+    assert "Start Firmware Maintenance" in SETTINGS_UI
 
 
 def test_v88_json_fields_are_optional_for_v87_compatibility():

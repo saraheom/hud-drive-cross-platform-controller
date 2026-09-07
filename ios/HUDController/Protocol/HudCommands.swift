@@ -23,6 +23,32 @@ enum HudCommands {
         HudProtocol.frame(command: 2, p1: 8, p2: 1, payload: Data([enabled ? 1 : 0]))
     }
 
+    // MARK: - Original HUDWAY display calibration
+
+    /// Original HUDWAY `LayoutSizeCommandPacket`.
+    /// CommandPacket(p1=14, p2=0), payload = DataOutputStream.writeFloat(size).
+    /// Stock Advanced UI maps seeker 0...100 to size 0.00...0.20.
+    static func layoutSize(_ size: Float) -> Data {
+        HudProtocol.frame(
+            command: 2,
+            p1: 14,
+            p2: 0,
+            payload: HudProtocol.float32(size)
+        )
+    }
+
+    /// Original HUDWAY `KeyStoneCommandPacket`.
+    /// CommandPacket(p1=3, p2=0), payload = DataOutputStream.writeFloat(value).
+    /// Stock Advanced UI maps seeker 0...100 to value 0.00...0.10.
+    static func keyStone(_ value: Float) -> Data {
+        HudProtocol.frame(
+            command: 2,
+            p1: 3,
+            p2: 0,
+            payload: HudProtocol.float32(value)
+        )
+    }
+
     // MARK: - HUD Wi-Fi / casting network exposure (no firmware writer)
 
     /// Stock KivicModeCommandPacket: p1=7, p2=0, int32 mode.

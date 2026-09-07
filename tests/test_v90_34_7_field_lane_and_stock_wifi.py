@@ -4,6 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
 ROUTE = (ROOT / "ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift").read_text()
 UI = (ROOT / "ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift").read_text()
+SETTINGS_UI = (ROOT / "ios/HUDController/UI/HudSettingsView.swift").read_text()
 
 
 def _block(text: str, start: str, end: str) -> str:
@@ -60,7 +61,8 @@ def test_failed_pin_ap_experiment_is_removed_and_maintenance_uses_stock_mode5():
     assert "Pin AP + Return HUD Mode 4" not in UI
     maintenance = _block(APP, "func startFirmwareMaintenance", "func reconnectFirmwareMaintenanceADB")
     assert "enableHUDWiFiExposure()" in maintenance
-    assert "Start Firmware Maintenance" in UI
+    assert "Start Firmware Maintenance" not in UI
+    assert "Start Firmware Maintenance" in SETTINGS_UI
 
 
 def test_no_firmware_writer_was_added_to_this_wifi_lane_build():

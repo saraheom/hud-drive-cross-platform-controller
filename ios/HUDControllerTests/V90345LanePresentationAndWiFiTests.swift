@@ -53,6 +53,7 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
 
     func testIOS26UIKeepsLiveSettingsAndMaintenanceWithoutLegacyDiagnosticPanels() throws {
         let ui = try source("HUDController/AmbientTest/HudNavigationViewIOS26.swift")
+        let settingsUI = try source("HUDController/UI/HudSettingsView.swift")
         XCTAssertTrue(ui.contains("Navigation presentation"))
         XCTAssertTrue(ui.contains("Show Current Street"))
         XCTAssertTrue(ui.contains("Lane Guidance"))
@@ -61,12 +62,13 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
         XCTAssertFalse(ui.contains("Manual navigation diagnostics"))
         XCTAssertFalse(ui.contains("Firmware-native lane guidance"))
         XCTAssertFalse(ui.contains("Ambient-light test build"))
-        XCTAssertTrue(ui.contains("HUD Firmware Maintenance"))
-        XCTAssertTrue(ui.contains("Start Firmware Maintenance"))
-        XCTAssertTrue(ui.contains("Reconnect ADB"))
-        XCTAssertFalse(ui.contains("Pin AP + Return HUD Mode 4"))
-        XCTAssertTrue(ui.contains("87654321"))
-        XCTAssertTrue(ui.contains("192.168.43.1"))
+        XCTAssertFalse(ui.contains("HUD Firmware Maintenance"))
+        XCTAssertTrue(settingsUI.contains("HUD Firmware Maintenance"))
+        XCTAssertTrue(settingsUI.contains("Start Firmware Maintenance"))
+        XCTAssertTrue(settingsUI.contains("Reconnect ADB"))
+        XCTAssertFalse(settingsUI.contains("Pin AP + Return HUD Mode 4"))
+        XCTAssertTrue(settingsUI.contains("87654321"))
+        XCTAssertTrue(settingsUI.contains("192.168.43.1"))
     }
 
     func testWiFiExposureNeverEntersFirmwareWriter() throws {

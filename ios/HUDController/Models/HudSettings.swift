@@ -68,6 +68,18 @@ final class HudSettings {
     var brightness: Int { didSet { defaults.set(brightness, forKey: "HUD.Settings.brightness") } }
     var showTimeWeather: Bool { didSet { defaults.set(showTimeWeather, forKey: "HUD.Settings.showTimeWeather") } }
     var minimizeWidgets: Bool { didSet { defaults.set(minimizeWidgets, forKey: "HUD.Settings.minimizeWidgets") } }
+    /// Original HUDWAY Advanced-screen seeker values (0...100).
+    /// They are converted to firmware Float32 values only when transmitted.
+    var displayScaleAdjustment: Int { didSet { defaults.set(displayScaleAdjustment, forKey: "HUD.Settings.displayScaleAdjustment") } }
+    var displayPerspectiveAdjustment: Int { didSet { defaults.set(displayPerspectiveAdjustment, forKey: "HUD.Settings.displayPerspectiveAdjustment") } }
+
+    var displayScaleWireValue: Float {
+        Float(max(0, min(100, displayScaleAdjustment))) * 0.2 / 100.0
+    }
+
+    var displayPerspectiveWireValue: Float {
+        Float(max(0, min(100, displayPerspectiveAdjustment))) * 0.1 / 100.0
+    }
     var colorTheme: HudColorTheme {
         didSet { defaults.set(colorTheme.rawValue, forKey: "HUD.Settings.colorTheme") }
     }
@@ -117,6 +129,8 @@ final class HudSettings {
         brightness = integer("HUD.Settings.brightness", default: 50)
         showTimeWeather = bool("HUD.Settings.showTimeWeather", default: true)
         minimizeWidgets = bool("HUD.Settings.minimizeWidgets", default: false)
+        displayScaleAdjustment = min(100, max(0, integer("HUD.Settings.displayScaleAdjustment", default: 0)))
+        displayPerspectiveAdjustment = min(100, max(0, integer("HUD.Settings.displayPerspectiveAdjustment", default: 0)))
 
         let colorName = store.string(forKey: "HUD.Settings.colorTheme") ?? "Red"
         colorTheme = HudColorTheme(rawValue: colorName) ?? .red

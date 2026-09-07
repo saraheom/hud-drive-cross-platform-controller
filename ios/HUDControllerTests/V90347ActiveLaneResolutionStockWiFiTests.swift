@@ -31,6 +31,7 @@ final class V90347ActiveLaneResolutionStockWiFiTests: XCTestCase {
     func testStockWiFiBootstrapAndMaintenanceAreDistinct() throws {
         let app = try source("HUDController/App/AppState.swift")
         let ui = try source("HUDController/AmbientTest/HudNavigationViewIOS26.swift")
+        let settingsUI = try source("HUDController/UI/HudSettingsView.swift")
         let enableStart = try XCTUnwrap(app.range(of: "func enableHUDWiFiExposure()"))
         let holdStart = try XCTUnwrap(app.range(of: "func holdHUDWiFiCastingModeForDiagnostics", range: enableStart.lowerBound..<app.endIndex))
         let enable = String(app[enableStart.lowerBound..<holdStart.lowerBound])
@@ -42,7 +43,8 @@ final class V90347ActiveLaneResolutionStockWiFiTests: XCTestCase {
         XCTAssertFalse(app.contains("returnHUDRendererKeepingWiFi"))
         XCTAssertFalse(app.contains("hudHotspotBaseband(is5G: true, forceEnable: true)"))
         XCTAssertTrue(app.contains("func startFirmwareMaintenance"))
-        XCTAssertTrue(ui.contains("Start Firmware Maintenance"))
+        XCTAssertFalse(ui.contains("Start Firmware Maintenance"))
+        XCTAssertTrue(settingsUI.contains("Start Firmware Maintenance"))
         XCTAssertFalse(ui.contains("Pin AP + Return HUD Mode 4"))
     }
 }

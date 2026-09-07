@@ -4,6 +4,7 @@ struct RootView: View {
     @Bindable var state: AppState
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: RootTab = .navigation
+    @State private var showSettings = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -24,22 +25,27 @@ struct RootView: View {
                 .tabItem { Label("My trips", systemImage: "clock.arrow.circlepath") }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if selectedTab != .logs {
-                QuickShortcutBar(
-                    navigationAction: {
-                        selectedTab = .navigation
-                        state.quickStartNavigation()
-                    },
-                    musicAction: {
-                        selectedTab = .media
-                        state.quickRefreshNowPlaying()
-                    },
-                    ambientAction: {
-                        selectedTab = .vehicle
-                        state.ambientLight.requestPairedLightsFocus()
-                    }
-                )
-            }
+            QuickShortcutBar(
+                showDrivingShortcuts: selectedTab != .logs,
+                navigationAction: {
+                    selectedTab = .navigation
+                    state.quickStartNavigation()
+                },
+                musicAction: {
+                    selectedTab = .media
+                    state.quickRefreshNowPlaying()
+                },
+                ambientAction: {
+                    selectedTab = .vehicle
+                    state.ambientLight.requestPairedLightsFocus()
+                },
+                settingsAction: {
+                    showSettings = true
+                }
+            )
+        }
+        .sheet(isPresented: $showSettings) {
+            HudSettingsView(state: state)
         }
         .tint(HudTheme.accent)
         .preferredColorScheme(.dark)
@@ -91,15 +97,31 @@ private enum RootTab: Hashable {
 }
 
 private struct QuickShortcutBar: View {
+    let showDrivingShortcuts: Bool
     let navigationAction: () -> Void
     let musicAction: () -> Void
     let ambientAction: () -> Void
+    let settingsAction: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            shortcut("Navigation", icon: "location.north.fill", action: navigationAction)
-            shortcut("Music", icon: "music.note", action: musicAction)
-            shortcut("Ambient", icon: "lightbulb.2.fill", action: ambientAction)
+            if showDrivingShortcuts {
+                shortcut("Navigation", icon: "location.north.fill", action: navigationAction)
+                shortcut("Music", icon: "music.note", action: musicAction)
+                shortcut("Ambient", icon: "lightbulb.2.fill", action: ambientAction)
+            } else {
+                Spacer(minLength: 0)
+            }
+
+            Button(action: settingsAction) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 42, height: 36)
+                    .background(HudTheme.card, in: RoundedRectangle(cornerRadius: 10))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

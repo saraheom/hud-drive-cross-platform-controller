@@ -6,6 +6,7 @@ SETTINGS = (ROOT / "ios/HUDController/Models/HudSettings.swift").read_text()
 NAV = (ROOT / "ios/HUDController/Navigation/HudNavigationController.swift").read_text()
 UI26 = (ROOT / "ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift").read_text()
 COMMANDS = (ROOT / "ios/HUDController/Protocol/HudCommands.swift").read_text()
+SETTINGS_UI = (ROOT / "ios/HUDController/UI/HudSettingsView.swift").read_text()
 
 
 def test_navigation_presentation_persists_three_lane_modes_and_threshold():
@@ -43,8 +44,9 @@ def test_recorded_replay_is_retained_and_routes_through_policy():
 def test_custom_app_uses_stock_softap_bootstrap_without_ota_start():
     assert "static func hudHotspotBaseband" in COMMANDS
     assert "static func kivicMode" in COMMANDS
-    assert "HUD Firmware Maintenance" in UI26
-    assert "Start Firmware Maintenance" in UI26
+    assert "HUD Firmware Maintenance" not in UI26
+    assert "HUD Firmware Maintenance" in SETTINGS_UI
+    assert "Start Firmware Maintenance" in SETTINGS_UI
     assert "Pin AP + Return HUD Mode 4" not in UI26
     start = APP.index("func enableHUDWiFiExposure")
     end = APP.index("func holdHUDWiFiCastingModeForDiagnostics", start)

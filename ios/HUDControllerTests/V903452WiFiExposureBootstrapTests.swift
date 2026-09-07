@@ -38,10 +38,12 @@ final class V903452WiFiExposureBootstrapTests: XCTestCase {
     func testFailedAPPinExperimentIsRemovedFromCurrentBuild() throws {
         let app = try source("HUDController/App/AppState.swift")
         let ui = try source("HUDController/AmbientTest/HudNavigationViewIOS26.swift")
+        let settingsUI = try source("HUDController/UI/HudSettingsView.swift")
         XCTAssertFalse(app.contains("returnHUDRendererKeepingWiFi"))
         XCTAssertFalse(app.contains("hudHotspotBaseband(is5G: true, forceEnable: true)"))
         XCTAssertFalse(ui.contains("Pin AP + Return HUD Mode 4"))
-        XCTAssertTrue(ui.contains("Start Firmware Maintenance"))
+        XCTAssertFalse(ui.contains("Start Firmware Maintenance"))
+        XCTAssertTrue(settingsUI.contains("Start Firmware Maintenance"))
         XCTAssertFalse(app.contains("HudCommands.softwareUpdate"))
     }
 }

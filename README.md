@@ -1,3 +1,15 @@
+# v90.34.11 — Original HUDWAY display calibration + Settings UI
+
+v90.34.11 adds the original HUDWAY Drive 1.4.6 **Scale** and **Perspective** controls using the stock BLE packets only. Scale maps the original 0–100 seeker to `LayoutSizeCommandPacket` values `0.00–0.20`; Perspective maps 0–100 to `KeyStoneCommandPacket` values `0.00–0.10`. Both use one big-endian Float32, persist locally, apply live while connected, and are reasserted after HUD reconnect/reboot. Slider sends are lightly debounced so dragging does not flood the serialized HUD BLE queue.
+
+The app UI is also reorganized: a persistent **gear icon at the top right** opens Settings, and the existing **HUD Firmware Maintenance** / boot-animation card has moved out of Navigation into Settings beside the new HUD Display card. The maintenance implementation and its `/data/local/bootanimation` safety boundary are unchanged.
+
+Per-widget scale/perspective was explicitly audited. The recovered calibration packets contain only a single Float32 and no left/center/right widget identifier; the dashboard packet only selects widget names. This build therefore does not invent an unverified per-widget command. Per-widget transforms remain a read-only firmware-research target.
+
+See `docs/V90_34_11_DISPLAY_CALIBRATION_SETTINGS.md` and `V90_34_11_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.10.2 — Right-side lane probe candidate reconfiguration fix
 
 v90.34.10.2 is a focused diagnostic follow-up to v90.34.10.1. Physical parked replay proved that the `Right probe: Navigation` candidate replaces ETA but renders no lane guidance on the right; the stock lane view remains in the center/bottom Navigation renderer. The field log also exposed a probe-state bug: changing the selector from `Right probe: Navigation` to `Right probe: NaviMini` while lane guidance was already active changed the setting but did not transmit a new dashboard packet, so NaviMini was never physically tested.

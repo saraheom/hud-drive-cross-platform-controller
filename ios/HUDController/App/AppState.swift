@@ -21,6 +21,8 @@ final class AppState {
     private var hudReassertTask: Task<Void, Never>?
     private var hudWiFiExposureTask: Task<Void, Never>?
     private var firmwareMaintenanceTask: Task<Void, Never>?
+    private var displayScaleApplyTask: Task<Void, Never>?
+    private var displayPerspectiveApplyTask: Task<Void, Never>?
 
     // v90.34.9 persistent stock-music experiment. Static inspection of the
     // HUDWAY Drive launcher shows MusicNotificationPacket is consumed directly
@@ -270,6 +272,73 @@ final class AppState {
 
     func applyTimeWeather() {
         bluetooth.enqueue(HudCommands.timeWeather(settings.showTimeWeather), label: "Time/weather \(settings.showTimeWeather)")
+    }
+
+    // MARK: - Original HUDWAY display calibration
+
+    func setDisplayScaleAdjustment(_ value: Int) {
+        settings.displayScaleAdjustment = min(100, max(0, value))
+        displayScaleApplyTask?.cancel()
+        guard bluetooth.state == .connected else {
+            logger.log("HUD DISPLAY", "Saved Scale=\(settings.displayScaleAdjustment) while HUD disconnected")
+            return
+        }
+        displayScaleApplyTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(90))
+            guard let self, !Task.isCancelled else { return }
+            self.applyDisplayScale()
+            self.displayScaleApplyTask = nil
+        }
+    }
+
+    func setDisplayPerspectiveAdjustment(_ value: Int) {
+        settings.displayPerspectiveAdjustment = min(100, max(0, value))
+        displayPerspectiveApplyTask?.cancel()
+        guard bluetooth.state == .connected else {
+            logger.log("HUD DISPLAY", "Saved Perspective=\(settings.displayPerspectiveAdjustment) while HUD disconnected")
+            return
+        }
+        displayPerspectiveApplyTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(90))
+            guard let self, !Task.isCancelled else { return }
+            self.applyDisplayPerspective()
+            self.displayPerspectiveApplyTask = nil
+        }
+    }
+
+    func applyDisplayScale() {
+        let wire = settings.displayScaleWireValue
+        bluetooth.enqueue(
+            HudCommands.layoutSize(wire),
+            label: String(format: "HUD Scale %d → layoutSize %.4f", settings.displayScaleAdjustment, Double(wire))
+        )
+        logger.log("HUD DISPLAY", String(format: "Scale seeker=%d wire=%.4f", settings.displayScaleAdjustment, Double(wire)))
+    }
+
+    func applyDisplayPerspective() {
+        let wire = settings.displayPerspectiveWireValue
+        bluetooth.enqueue(
+            HudCommands.keyStone(wire),
+            label: String(format: "HUD Perspective %d → keyStone %.4f", settings.displayPerspectiveAdjustment, Double(wire))
+        )
+        logger.log("HUD DISPLAY", String(format: "Perspective seeker=%d wire=%.4f", settings.displayPerspectiveAdjustment, Double(wire)))
+    }
+
+    func applyDisplayCalibration() {
+        applyDisplayScale()
+        applyDisplayPerspective()
+    }
+
+    func resetDisplayCalibrationToStock() {
+        displayScaleApplyTask?.cancel()
+        displayPerspectiveApplyTask?.cancel()
+        settings.displayScaleAdjustment = 0
+        settings.displayPerspectiveAdjustment = 0
+        if bluetooth.state == .connected {
+            applyDisplayCalibration()
+        } else {
+            logger.log("HUD DISPLAY", "Reset Scale/Perspective to stock 0/0; will reapply on next HUD connection")
+        }
     }
 
 
@@ -1293,6 +1362,7 @@ final class AppState {
         bluetooth.enqueue(HudCommands.imperialUnits(), label: "Persisted units → imperial (mi/mph)")
         applyBrightness()
         applyTimeWeather()
+        applyDisplayCalibration()
         applyColorTheme()
         applyNotificationSettings()
         obd.hudDidBecomeReady()
@@ -1308,7 +1378,8 @@ final class AppState {
         logger.log(
             "HUD REHYDRATE",
             "PHASE 2 END brightness=\(settings.brightness) autoBrightness=\(settings.autoBrightness) " +
-            "timeWeather=\(settings.showTimeWeather) color=\(settings.colorTheme.rawValue) OBDauto=\(obd.autoConnect) " +
+            "timeWeather=\(settings.showTimeWeather) scale=\(settings.displayScaleAdjustment) perspective=\(settings.displayPerspectiveAdjustment) " +
+            "color=\(settings.colorTheme.rawValue) OBDauto=\(obd.autoConnect) " +
             "speedLimit=\(speedEngine.showSpeedLimit) warning=original-auto"
         )
     }
@@ -1321,6 +1392,7 @@ final class AppState {
         // hard-coded inside the speed engine/command path.
         bluetooth.enqueue(HudCommands.imperialUnits(), label: "Reassert → imperial units (mi/mph)")
         applyBrightness()
+        applyDisplayCalibration()
         applyColorTheme()
         applyTimeWeather()
         obd.applyWidgetSelection()

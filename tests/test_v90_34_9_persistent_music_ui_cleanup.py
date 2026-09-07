@@ -5,6 +5,7 @@ APP = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
 MEDIA = (ROOT / "ios/HUDController/UI/MediaView.swift").read_text()
 NAV26 = (ROOT / "ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift").read_text()
 COMMANDS = (ROOT / "ios/HUDController/Protocol/HudCommands.swift").read_text()
+SETTINGS_UI = (ROOT / "ios/HUDController/UI/HudSettingsView.swift").read_text()
 
 
 def test_persistent_music_reuses_stock_packets_without_firmware_write():
@@ -35,7 +36,8 @@ def test_obsolete_navigation_diagnostic_cards_are_removed_from_ios26_ui():
     # card so the right-side lane renderer can be tested at home.
     assert "Recorded CarPlay lane replay" in NAV26
     assert "Navigation presentation" in NAV26
-    assert "HUD Firmware Maintenance" in NAV26
+    assert "HUD Firmware Maintenance" not in NAV26
+    assert "HUD Firmware Maintenance" in SETTINGS_UI
 
 
 def test_stock_music_wire_commands_remain_available():

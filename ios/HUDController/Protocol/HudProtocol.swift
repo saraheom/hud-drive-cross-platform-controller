@@ -36,6 +36,12 @@ enum HudProtocol {
         return withUnsafeBytes(of: u) { Data($0) }
     }
 
+    /// Java DataOutputStream.writeFloat-compatible IEEE-754 big-endian Float32.
+    static func float32(_ value: Float) -> Data {
+        let bits = value.bitPattern.bigEndian
+        return withUnsafeBytes(of: bits) { Data($0) }
+    }
+
     static func uint16(_ value: UInt16) -> Data {
         let u = value.bigEndian
         return withUnsafeBytes(of: u) { Data($0) }

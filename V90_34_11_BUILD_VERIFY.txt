@@ -1,0 +1,45 @@
+HUD Controller v90.34.11 — Display Calibration + Settings UI build verification
+=============================================================================
+
+Scope
+-----
+- Base: v90.34.10.2 lane-probe reconfiguration fix.
+- Adds original HUDWAY 1.4.6 Scale and Perspective BLE commands.
+- Adds persistent top-right Settings gear.
+- Moves HUD Firmware Maintenance from Navigation into Settings.
+- Does not add any HUD filesystem write beyond the existing validated boot-animation override.
+- Does not invent or transmit any per-widget scale/perspective packet.
+
+Original protocol evidence
+--------------------------
+Scale:
+- Advanced seeker: 0...100
+- Mapping: value * 0.2 / 100
+- LayoutSizeCommandPacket: command=2, p1=14, p2=0
+- Payload: one big-endian IEEE-754 Float32
+
+Perspective:
+- Advanced seeker: 0...100
+- Mapping: value * 0.1 / 100
+- KeyStoneCommandPacket: command=2, p1=3, p2=0
+- Payload: one big-endian IEEE-754 Float32
+
+Per-widget audit
+----------------
+- Neither proven calibration packet contains a slot/widget id.
+- Dashboard packet selects left/center/right widget names but has no transform fields.
+- Per-widget calibration is therefore documented as research-only in this build.
+
+Safety
+------
+- Display calibration uses BLE only.
+- No ADB, /data, /system, updater, recovery, or remount operation is reachable from the display-calibration methods.
+- Firmware Maintenance retains the v90.34.8.x transactional boot-animation override workflow unchanged in purpose.
+
+Local verification
+------------------
+- Python/static regression suite: 275 passed.
+- Swift syntax parse: 167 Swift files, 0 failures.
+- YAML parse: 10 files PASS.
+- No pytest/__pycache__ artifacts are included in the packaged repository.
+- Full Xcode/macOS simulator CI is not claimed by local Linux verification; GitHub Actions remains the authoritative iOS SDK build/XCTest check.

@@ -26,12 +26,14 @@ final class V90349PersistentMusicAndUICleanupTests: XCTestCase {
 
     func testIOS26NavigationUIHasNoLegacyDiagnosticCards() throws {
         let ui = try source("HUDController/AmbientTest/HudNavigationViewIOS26.swift")
+        let settingsUI = try source("HUDController/UI/HudSettingsView.swift")
         XCTAssertFalse(ui.contains("Ambient-light test build"))
         XCTAssertFalse(ui.contains("Manual navigation diagnostics"))
         XCTAssertFalse(ui.contains("Firmware-native lane guidance"))
         XCTAssertTrue(ui.contains("Recorded CarPlay lane replay"))
         XCTAssertTrue(ui.contains("Navigation presentation"))
-        XCTAssertTrue(ui.contains("HUD Firmware Maintenance"))
+        XCTAssertFalse(ui.contains("HUD Firmware Maintenance"))
+        XCTAssertTrue(settingsUI.contains("HUD Firmware Maintenance"))
     }
 
     func testMediaUIHasExplicitPersistentRendererControls() throws {
