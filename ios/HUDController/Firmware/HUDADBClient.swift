@@ -183,7 +183,7 @@ actor HUDADBClient {
     }
 
     private func waitForReady(_ conn: NWConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let lock = NSLock()
             var finished = false
             func finish(_ result: Result<Void, Error>) {
@@ -347,7 +347,7 @@ actor HUDADBClient {
     }
 
     private func send(_ data: Data, over connection: NWConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error { continuation.resume(throwing: ADBError.connectionFailed(error.localizedDescription)) }
                 else { continuation.resume() }
@@ -358,7 +358,7 @@ actor HUDADBClient {
     private func receiveExactly(_ count: Int, over connection: NWConnection) async throws -> Data {
         var result = Data()
         while result.count < count {
-            let chunk = try await withCheckedThrowingContinuation { continuation in
+            let chunk: Data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
                 connection.receive(minimumIncompleteLength: 1, maximumLength: count - result.count) { data, _, complete, error in
                     if let error {
                         continuation.resume(throwing: ADBError.connectionFailed(error.localizedDescription))

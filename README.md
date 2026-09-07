@@ -865,3 +865,6 @@ those higher-level assumptions:
   Spotify vehicle wake gate, and OSM speed-limit sources remain intact.
 
 See `docs/V90_16_FIELD_HARDENING.md`.
+
+### v90.34.8.1 CI compile correction
+The Xcode 26.6 simulator CI exposed three Swift generic-inference errors in the new minimal ADB client. v90.34.8.1 adds explicit `CheckedContinuation<Void, Error>` / `CheckedContinuation<Data, Error>` result types only; boot-animation and ADB runtime semantics are otherwise unchanged from v90.34.8.

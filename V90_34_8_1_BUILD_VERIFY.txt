@@ -1,0 +1,35 @@
+v90.34.8.1 — Xcode 26 ADB continuation compile fix
+=================================================
+
+Scope
+-----
+CI-only semantic compile correction for v90.34.8. No intended runtime behavior changes to boot animation conversion, ADB protocol, HUD writes, U2W v8.8 lane guidance, or HUD Wi-Fi maintenance behavior.
+
+GitHub Actions failure diagnosed
+--------------------------------
+Run 34068027637, iOS CI — Ambient Test (Xcode 26), failed in HUDADBClient.swift because Xcode 26.6 / Swift could not infer the generic result type of three withCheckedThrowingContinuation calls:
+- waitForReady(_:): Void continuation
+- send(_:over:): Void continuation
+- receiveExactly(_:over:): Data continuation
+
+Correction
+----------
+Added explicit continuation result types:
+- CheckedContinuation<Void, Error>
+- CheckedContinuation<Data, Error>
+and an explicit Data type on the received chunk.
+
+Safety
+------
+No filesystem paths, device identity gates, boot-animation format validation, write/rollback behavior, ADB packet semantics, Wi-Fi behavior, lane guidance behavior, or updater behavior were changed.
+
+Local validation
+----------------
+- Python/static regression suite: 252 passed.
+- Swift syntax parse: 160 Swift files passed with swiftc -parse.
+- YAML parse: 10 files passed with PyYAML.
+- Unexpected diff check vs v90.34.8: none outside HUDADBClient.swift plus version/test/docs files.
+
+Caveat
+------
+This corrects exactly the three semantic errors reported by Xcode 26.6 CI. A fresh macOS/Xcode CI run is still required to prove there are no later-stage semantic/link/test errors once compilation proceeds beyond HUDADBClient.swift.
