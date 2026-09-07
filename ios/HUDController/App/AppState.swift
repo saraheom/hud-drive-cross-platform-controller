@@ -22,6 +22,18 @@ final class AppState {
     private var hudWiFiExposureTask: Task<Void, Never>?
     private var firmwareMaintenanceTask: Task<Void, Never>?
 
+    // v90.34.9 persistent stock-music experiment. Static inspection of the
+    // HUDWAY Drive launcher shows MusicNotificationPacket is consumed directly
+    // by MainActivity and fed into the stock full/mini music views; there is no
+    // public broadcast carrying the parsed metadata. The least-invasive way to
+    // test persistence is therefore to reassert the existing native music packet
+    // before the launcher's shared notification timeout expires.
+    private var persistentMusicTask: Task<Void, Never>?
+    private(set) var persistentMusicActive = false
+    private(set) var persistentMusicMini = false
+    private(set) var persistentMusicStatus = "Persistent music stopped"
+    private let persistentMusicRefreshInterval: Duration = .seconds(5)
+
     // v90.34.5 lane-presentation coordinator. The stock HUD auto-hides lane
     // graphics, so active lanes are reasserted while the selected policy says
     // they should remain visible. No HUD firmware write is involved.
@@ -157,6 +169,7 @@ final class AppState {
             self.hudWiFiExposureTask = nil
             self.firmwareMaintenanceTask?.cancel()
             self.firmwareMaintenanceTask = nil
+            self.stopPersistentMusic(sendRestorePackets: false, reason: "HUD BLE transport disconnected")
             if self.firmwareMaintenanceActive {
                 self.firmwareMaintenanceActive = false
                 self.maintenance.disconnectADB()
@@ -809,6 +822,7 @@ final class AppState {
             return
         }
         firmwareMaintenanceTask?.cancel()
+        stopPersistentMusic(sendRestorePackets: true, reason: "firmware maintenance started")
         firmwareMaintenanceActive = true
         routeGuidance.stop(reason: "HUD firmware maintenance Wi-Fi")
         nowPlaying.stop(reason: "HUD firmware maintenance Wi-Fi")
@@ -954,6 +968,114 @@ final class AppState {
         logger.log(
             "HUD LANE REPLAY",
             "source=\(step.source) rec=\(step.captureRecord) group=\(step.laneGroupIndex) road=\(step.currentRoad) maneuver=\(step.maneuverDescription) angles=\(step.laneAngleSummary) hud=\(step.hudValueSummary)"
+        )
+    }
+
+    // MARK: - Persistent stock music renderer experiment
+
+    func startPersistentMusic(mini: Bool) {
+        guard bluetooth.state == .connected else {
+            persistentMusicStatus = "Connect the HUD over BLE first"
+            return
+        }
+        guard !firmwareMaintenanceActive else {
+            persistentMusicStatus = "Exit HUD Firmware Maintenance first"
+            return
+        }
+
+        persistentMusicTask?.cancel()
+        persistentMusicActive = true
+        persistentMusicMini = mini
+        persistentMusicStatus = mini
+            ? "Persistent mini music active • reassert every 5 s"
+            : "Persistent full music active • reassert every 5 s"
+
+        musicFilterInitialized = true
+        bluetooth.enqueue(
+            HudCommands.musicNotificationFilter(enabled: true),
+            label: "Persistent music → native filter ON"
+        )
+        bluetooth.enqueue(
+            HudCommands.widgetsMiniState(mini),
+            label: "Persistent music → HUD mini state \(mini ? "ON" : "OFF")"
+        )
+        sendPersistentMusicFrame(reason: "start")
+
+        persistentMusicTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: self.persistentMusicRefreshInterval)
+                guard !Task.isCancelled,
+                      self.persistentMusicActive,
+                      self.bluetooth.state == .connected,
+                      !self.firmwareMaintenanceActive else { break }
+
+                if self.persistentMusicMini {
+                    // Keep the stock mini layout selected during this explicit
+                    // experiment. This command is global to the stock HUD UI.
+                    self.bluetooth.enqueue(
+                        HudCommands.widgetsMiniState(true),
+                        label: "Persistent music → mini-state reassert"
+                    )
+                }
+                self.sendPersistentMusicFrame(reason: "5 s keepalive")
+            }
+        }
+
+        logger.log(
+            "HUD PERSISTENT MUSIC",
+            "started renderer=\(mini ? "mini" : "full") interval=5s stock-timeout=\(settings.notificationExposureSeconds)s"
+        )
+    }
+
+    func stopPersistentMusic() {
+        stopPersistentMusic(sendRestorePackets: true, reason: "manual stop")
+    }
+
+    private func stopPersistentMusic(sendRestorePackets: Bool, reason: String) {
+        persistentMusicTask?.cancel()
+        persistentMusicTask = nil
+        let wasActive = persistentMusicActive
+        let wasMini = persistentMusicMini
+        persistentMusicActive = false
+        persistentMusicMini = false
+        persistentMusicStatus = "Persistent music stopped"
+
+        if sendRestorePackets, bluetooth.state == .connected {
+            if wasMini {
+                bluetooth.enqueue(
+                    HudCommands.widgetsMiniState(false),
+                    label: "Persistent music → restore normal HUD state"
+                )
+            }
+            bluetooth.enqueue(
+                HudCommands.musicNotificationFilter(enabled: settings.notifyMusic),
+                label: "Persistent music → restore Music filter \(settings.notifyMusic ? "ON" : "OFF")"
+            )
+            musicFilterInitialized = settings.notifyMusic
+        }
+
+        if wasActive {
+            logger.log("HUD PERSISTENT MUSIC", "stopped reason=\(reason)")
+        }
+    }
+
+    private func sendPersistentMusicFrame(reason: String) {
+        guard persistentMusicActive, bluetooth.state == .connected else { return }
+
+        let artist = nowPlaying.artist.isEmpty ? "HUDWAY" : nowPlaying.artist
+        let track = nowPlaying.title == "No CarPlay media" || nowPlaying.title.isEmpty
+            ? "Persistent Music Test"
+            : nowPlaying.title
+
+        bluetooth.enqueue(
+            HudCommands.musicNotification(artist: artist, track: track),
+            label: "Persistent music → \(artist) — \(track)"
+        )
+        persistentMusicStatus = "\(persistentMusicMini ? "Mini" : "Full") • \(artist) — \(track)"
+        logger.log(
+            "HUD PERSISTENT MUSIC",
+            "reassert reason=\(reason) renderer=\(persistentMusicMini ? "mini" : "full") artist=\(artist) track=\(track)"
         )
     }
 

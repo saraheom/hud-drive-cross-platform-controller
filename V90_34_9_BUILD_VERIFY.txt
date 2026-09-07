@@ -1,0 +1,35 @@
+v90.34.9 local verification
+============================
+
+Scope:
+- Based on physically validated v90.34.8.3.
+- Adds explicit persistent stock Music renderer experiment using existing BLE MusicNotificationPacket.
+- Full/mini persistence reassert interval: 5 seconds.
+- No new ADB/APK/filesystem write in persistent Music path.
+- Removes iOS 26 Navigation UI cards:
+  * Ambient-light test build
+  * Manual navigation diagnostics
+  * Firmware-native lane guidance
+  * Recorded CarPlay lane replay
+- Keeps live U2W v8.8 lane guidance and Navigation presentation settings.
+- Keeps existing validated boot-animation maintenance workflow unchanged.
+
+Static HudLauncher findings used by this release:
+- MusicNotificationPacket concrete handler: MainActivity$47.onPacketReceived(...)
+- Handler calls HwDriveCoreView.setMusicNotificationInfo(title,message)
+- HwDriveCoreView updates both full and mini Music views, then setStateMusic(true)
+- No normal/LocalBroadcastManager publication of parsed Music metadata in that handler
+- Stock notification timeout is shared and is controlled by NotiTimeoutCommandPacket
+
+Local verification:
+- pytest: 259 passed
+- Swift source files parsed with swiftc -parse: 162 passed
+- YAML files parsed: 10 passed
+- No Xcode/macOS CI result is claimed in this local verification file.
+
+Runtime Swift files intentionally changed from v90.34.8.3:
+- ios/HUDController/App/AppState.swift
+- ios/HUDController/UI/MediaView.swift
+- ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift
+
+Boot-animation maintenance runtime files are not changed by v90.34.9.

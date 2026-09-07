@@ -20,7 +20,8 @@ def test_native_lane_diagnostics_are_manual_only():
     nav = text("ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift")
     route = text("ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift")
     assert "sendNativeLaneTest" in app
-    assert "Send Lane Test" in nav
+    assert "Send Lane Test" not in nav
+    assert "Firmware-native lane guidance" not in nav
     assert "clearNativeLaneTest" in app
     assert "HudCommands.laneGuidance" not in route
 
@@ -30,8 +31,8 @@ def test_mini_music_uses_stock_ble_packets_and_has_restore():
     assert "HudCommands.widgetsMiniState(true)" in app
     assert "HudCommands.widgetsMiniState(false)" in app
     assert "HudCommands.musicNotification(" in app
-    assert "Mini Music ON + Send" in media
-    assert "Restore Normal UI" in media
+    assert "Persistent stock music renderer" in media
+    assert "Stop + Restore Normal HUD" in media
     start = app.index("func sendNativeMusicMiniTest")
     end = app.index("func sendNativeMusicTest", start)
     music_block = app[start:end].lower()

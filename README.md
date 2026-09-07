@@ -1,3 +1,13 @@
+# v90.34.9 — Persistent stock Music renderer experiment + Navigation UI cleanup
+
+v90.34.9 builds on the physically validated v90.34.8.3 boot-animation maintenance release. The Media screen adds an explicit BLE-only persistent Music experiment that reuses the stock HudLauncher full/mini Music views and refreshes the existing `MusicNotificationPacket` every five seconds instead of patching the signed system launcher. Static inspection shows the stock Music packet handler writes directly into `HwDriveCoreView`'s full and mini Music views and does not publish parsed metadata through a public Android broadcast. `Start Mini` is therefore the first physical candidate for a persistent side-widget-style renderer; because the stock mini-state command is global to the HUD UI, it remains opt-in and must be evaluated with live Navigation.
+
+The iOS 26 Navigation screen is also cleaned up: the `Ambient-light test build`, `Manual navigation diagnostics`, `Firmware-native lane guidance`, and `Recorded CarPlay lane replay` cards are removed. Live U2W v8.8 lane guidance and its Current Street / Off / Near Turn / Persistent presentation controls remain unchanged, as does the validated HUD Firmware Maintenance / boot-animation workflow. No new HUD filesystem write, APK install, updater action, or `/system` modification is added.
+
+See `docs/V90_34_9_PERSISTENT_MUSIC_UI_CLEANUP.md` and `V90_34_9_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.8.2 — Boot Animation Maintenance CI Test Fix
 
 - Runtime Swift sources are unchanged from v90.34.8.1.

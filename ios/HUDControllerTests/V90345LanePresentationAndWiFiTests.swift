@@ -51,13 +51,16 @@ final class V90345LanePresentationAndWiFiTests: XCTestCase {
         XCTAssertFalse(tail.contains("HudCommands.laneGuidance(step.nativeLanes)"))
     }
 
-    func testIOS26UIKeepsReplayAndAddsWiFiAndLaneSettings() throws {
+    func testIOS26UIKeepsLiveSettingsAndMaintenanceWithoutLegacyDiagnosticPanels() throws {
         let ui = try source("HUDController/AmbientTest/HudNavigationViewIOS26.swift")
         XCTAssertTrue(ui.contains("Navigation presentation"))
         XCTAssertTrue(ui.contains("Show Current Street"))
         XCTAssertTrue(ui.contains("Lane Guidance"))
         XCTAssertTrue(ui.contains("0.1...1.0"))
-        XCTAssertTrue(ui.contains("Recorded CarPlay lane replay"))
+        XCTAssertFalse(ui.contains("Recorded CarPlay lane replay"))
+        XCTAssertFalse(ui.contains("Manual navigation diagnostics"))
+        XCTAssertFalse(ui.contains("Firmware-native lane guidance"))
+        XCTAssertFalse(ui.contains("Ambient-light test build"))
         XCTAssertTrue(ui.contains("HUD Firmware Maintenance"))
         XCTAssertTrue(ui.contains("Start Firmware Maintenance"))
         XCTAssertTrue(ui.contains("Reconnect ADB"))

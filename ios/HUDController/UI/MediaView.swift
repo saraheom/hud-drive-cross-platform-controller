@@ -87,39 +87,36 @@ struct MediaView: View {
 
                     HudCard {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Firmware-native mini music test").font(.headline)
+                            Text("Persistent stock music renderer").font(.headline)
 
-                            Text("HudLauncher contains both full and mini Music notification renderers. This diagnostic uses only the existing BLE MusicNotificationPacket plus HudHUDWidgetsMiniState; it performs no ADB or firmware write.")
+                            Text("Static inspection of the HUDWAY Drive launcher shows MusicNotificationPacket is consumed directly by MainActivity and written into the stock full and mini Music views. No public broadcast exposes the parsed metadata to a companion app. This experiment therefore keeps the original renderer alive by re-sending the existing native Music packet every 5 seconds, before the stock notification timeout expires.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+
+                            LabeledContent("State", value: state.persistentMusicStatus)
+                            LabeledContent("Stock timeout", value: "\(state.settings.notificationExposureSeconds) sec")
 
                             HStack {
-                                Button("Mini Music ON + Send") {
-                                    state.sendNativeMusicMiniTest()
-                                }
-                                .buttonStyle(.borderedProminent)
-
-                                Button("Restore Normal UI") {
-                                    state.restoreFromNativeMusicMiniTest()
+                                Button("Start Full") {
+                                    state.startPersistentMusic(mini: false)
                                 }
                                 .buttonStyle(.bordered)
+                                .disabled(state.bluetooth.state != .connected || state.firmwareMaintenanceActive)
+
+                                Button("Start Mini") {
+                                    state.startPersistentMusic(mini: true)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(state.bluetooth.state != .connected || state.firmwareMaintenanceActive)
                             }
 
-                            Button("Re-send Current Track") {
-                                state.sendNativeMusicMiniTest()
+                            Button("Stop + Restore Normal HUD") {
+                                state.stopPersistentMusic()
                             }
                             .buttonStyle(.bordered)
+                            .disabled(!state.persistentMusicActive)
 
-                            Text("The mini-state command is global to the stock HUD renderer, so this first build intentionally does not auto-refresh it or force a left/right position. We want to observe exactly where and how the original firmware renders it before adding persistence logic.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    HudCard {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Physical HUD behavior").font(.headline)
-                            Text("CarPlay Now Playing feeds the stock Music notification renderer. v90.34.3 adds a controlled mini-state experiment; no custom HUD graphics or firmware files are changed.")
+                            Text("Start Mini is the candidate for a persistent side-widget-style presentation, but HudHUDWidgetsMiniState is global to the stock HUD layout. Use this first build to observe whether Navigation/side widgets remain acceptable while music stays visible. Stop restores the normal HUD mini-state and your existing Music notification filter. No ADB or HUD filesystem write is used.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
