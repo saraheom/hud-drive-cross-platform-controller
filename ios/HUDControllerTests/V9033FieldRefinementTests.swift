@@ -28,14 +28,14 @@ final class V9033FieldRefinementTests: XCTestCase {
 
     func testOverspeedWarningSeparatesDayNightBrightnessAndSmoothlyRestores() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        let view = try source("HUDController/UI/VehicleView.swift")
+        let ambientView = try source("HUDController/UI/AmbientLightingView.swift")
         XCTAssertTrue(monitor.contains("overspeedWarningNightBrightness"))
         XCTAssertTrue(monitor.contains("warningIsNight = headlightPowerSessionActive"))
         XCTAssertTrue(monitor.contains("interpolatedOverspeedColor"))
         XCTAssertTrue(monitor.contains("overspeedRestoreTransitionSeconds: TimeInterval = 1.0"))
         XCTAssertTrue(monitor.contains("overspeed smooth RGB restore"))
         XCTAssertTrue(monitor.contains("overspeed smooth brightness restore"))
-        XCTAssertTrue(view.contains("Day warning brightness"))
-        XCTAssertTrue(view.contains("Night warning brightness"))
+        XCTAssertTrue(ambientView.contains("Day warning brightness"))
+        XCTAssertTrue(ambientView.contains("Night warning brightness"))
     }
 }

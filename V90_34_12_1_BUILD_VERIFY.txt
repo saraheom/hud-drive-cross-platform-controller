@@ -1,0 +1,30 @@
+v90.34.12.1 local verification
+
+Scope
+-----
+CI-only XCTest source-inspection alignment on top of v90.34.12.
+No runtime Swift source, UI behavior, HUD BLE protocol behavior, navigation behavior,
+ambient-light behavior, firmware-maintenance behavior, or persisted setting changes.
+
+Root cause from GitHub Actions run 92497332769
+------------------------------------------------
+The HUDController app target compiled successfully. Unit tests then reported 7 assertion
+failures across three legacy tests:
+- V9011HeadlightSpotifySpeedSourceTests.testV9012OptInOverspeedWarningStillUsesExistingCLLocationSpeed
+- V9014IndependentFeaturesTests.testConfigurableOverspeedWarningRemains
+- V9033FieldRefinementTests.testOverspeedWarningSeparatesDayNightBrightnessAndSmoothlyRestores
+
+All seven failures were stale source-location assertions. v90.34.12 intentionally moved
+AMBIENT OVERSPEED WARNING controls from VehicleView.swift to AmbientLightingView.swift,
+but these older tests continued to search VehicleView.swift. The actual ambient warning
+runtime remains in AmbientLightMonitor.swift and the controls are present in
+AmbientLightingView.swift.
+
+v90.34.12.1 change
+------------------
+Only the three XCTest files above are updated to inspect AmbientLightingView.swift for
+the moved controls. Assertions covering CLLocation speed, warning threshold logic,
+default red color, cooldown, pulse duration, day/night brightness, and smooth restore
+remain intact.
+
+GitHub Actions/macOS XCTest is still authoritative for final simulator validation.

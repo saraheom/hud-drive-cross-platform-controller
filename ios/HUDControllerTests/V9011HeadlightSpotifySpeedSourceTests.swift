@@ -56,9 +56,9 @@ final class V9011HeadlightSpotifySpeedSourceTests: XCTestCase {
 
     func testV9012OptInOverspeedWarningStillUsesExistingCLLocationSpeed() throws {
         let speed = try source("HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
-        let view = try source("HUDController/UI/VehicleView.swift")
+        let ambientView = try source("HUDController/UI/AmbientLightingView.swift")
         XCTAssertTrue(speed.contains("CLLocation.speed"))
-        XCTAssertTrue(view.contains("AMBIENT OVERSPEED WARNING"))
-        XCTAssertTrue(view.contains("Offset above limit"))
+        XCTAssertTrue(ambientView.contains("AMBIENT OVERSPEED WARNING"))
+        XCTAssertTrue(ambientView.contains("Offset above limit"))
     }
 }

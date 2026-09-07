@@ -34,6 +34,11 @@ The gray `#252525` lane-container background remains a stock `HudLauncher` rende
 
 See `docs/V90_34_10_2_LANE_PROBE_RECONFIGURE.md` and `V90_34_10_2_BUILD_VERIFY.txt`.
 
+
+## v90.34.12.1 — CI source-inspection alignment
+
+GitHub Actions run `92497332769` confirmed that the v90.34.12 application target compiled successfully, but three older XCTest source-inspection tests still searched `VehicleView.swift` for ambient overspeed controls. v90.34.12 intentionally moved those controls to `AmbientLightingView.swift` as part of the requested Ambient-tab reorganization. v90.34.12.1 updates only those stale test source paths; runtime Swift sources and physical-HUD behavior are unchanged.
+
 ## v90.34.5.1 — CI replay-regression alignment
 
 v90.34.5.1 is a **test-only correction** on top of v90.34.5. The supplied GitHub Actions run confirmed that the iOS 26 simulator app target built successfully and 209 of 210 XCTest cases passed. The sole failure was the older `V90344RecordedCarPlayLaneReplayTests.testReplayRemainsBLEOnlyDiagnostic`, which still required the pre-v90.34.5 direct replay call `HudCommands.laneGuidance(step.nativeLanes)`. v90.34.5 intentionally removed that direct send so recorded Apple/Google replay passes through `setLaneGuidanceForCurrentManeuver(...)`, the same configurable Off/Near turn/Persistent lane coordinator used by the new Navigation presentation settings.
