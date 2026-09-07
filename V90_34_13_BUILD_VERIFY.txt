@@ -1,0 +1,39 @@
+v90.34.13 local verification
+
+Scope
+-----
+Apple Maps arrival-distance correctness fix on top of v90.34.12.1.
+
+Field root cause
+----------------
+The supplied September 7 Apple Maps capture showed:
+- U2W live distanceToManeuverMeters=0 and distanceToManeuverText="0";
+- U2W overall distanceRemainingMeters=0 / timeRemainingSeconds=0 at arrival;
+- Apple maneuver table destination placeholder still contained 1931 m / 1.2 mi;
+- v90.34.12.1 treated numeric zero as missing and selected 1931 m;
+- HUD TX payload contained 0x0000078B (=1931), proving the wrong distance was sent by the iOS app rather than invented by HudLauncher.
+
+v90.34.13 changes
+-----------------
+1. RouteGuidanceAdapterClient now preserves explicit live zero maneuver distances.
+2. routeState=2 + remaining distance/time both zero force a 0 m HUD maneuver.
+3. Legacy maneuver-table fallback remains only for the ambiguous zero + empty live-distance-text shape.
+4. A blank destination maneuver now prefers snapshot.destination before currentRoad.
+5. Existing V9031 CarPlay Route Guidance XCTest gains captured Apple-arrival regression cases:
+   - explicit zero beats stale 1931 m table value;
+   - arrived state forces zero even if display-distance text is absent;
+   - legacy missing-live-distance fallback still returns the table value;
+   - blank destination placeholder resolves to Target.
+6. Python/static regression coverage checks that the new resolver remains wired into RouteGuidanceAdapterClient.
+
+Unaffected
+----------
+U2W v8.8, Google Maps/Waze behavior, lane guidance, ETA, speed limits, ambient lighting,
+HUD display calibration, firmware maintenance, and v90.34.12 UI organization.
+
+Local validation
+----------------
+- pytest: 285 passed
+- Swift syntax parse: 168 files, 0 failures
+- YAML parse: 10 files, 0 failures
+- GitHub Actions/macOS simulator build + XCTest: not available locally; CI remains authoritative.

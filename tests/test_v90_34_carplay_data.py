@@ -48,3 +48,14 @@ def test_waze_priority_remains_but_no_speculative_client_side_force_enable():
     assert 'case waze = "Waze"' in route
     assert 'case .waze: 100' in route
     assert "sourceSupportsRouteGuidance" not in route
+
+
+def test_apple_maps_explicit_zero_distance_beats_stale_destination_table_fallback():
+    route = read("ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift")
+    assert "static func resolvedManeuverDistanceMeters" in route
+    assert "snapshot.distanceToManeuverMeters > 0 || !liveText.isEmpty" in route
+    assert "routeExplicitlyArrived" in route
+    assert "return max(0, maneuver.distanceMeters)" in route
+    assert "static func resolvedManeuverStreet" in route
+    assert "if mapped == .destination" in route
+    assert "snapshot.destination.trimmingCharacters" in route

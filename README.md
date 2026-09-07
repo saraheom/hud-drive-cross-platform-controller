@@ -1,3 +1,15 @@
+# v90.34.13 — Apple Maps arrival zero-distance preservation
+
+v90.34.13 is a narrow Route Guidance correctness fix on top of v90.34.12.1. A September 7 Apple Maps field capture showed the U2W v8.8 exporter correctly reporting `distanceToManeuverMeters=0` and `distanceToManeuverText="0"` at the destination while Apple Maps kept a stale destination-placeholder maneuver-table entry at `1931 m / 1.2 mi`. The previous iOS resolver treated every numeric zero as missing and fell back to that stale table entry, so the physical HUD was explicitly sent 1931 m and displayed 1.2 mi even though the app's live U2W fields were already zero.
+
+The resolver now distinguishes an explicit live zero from an absent/ambiguous zero. A nonempty CarPlay display-distance field makes the live numeric distance authoritative even when it is zero, and Route Guidance `routeState=2` with both remaining distance and remaining time at zero also forces a zero-meter HUD maneuver. The historical maneuver-table fallback remains intact when the live numeric field is zero *and* the live display-distance field is empty, preserving compatibility with older/transitional captures.
+
+Apple Maps can also replace its real final `Arrive at <destination>` maneuver with a blank destination placeholder. For that specific blank destination shape, the HUD street/text line now prefers the route's `destination` value instead of incorrectly falling back to `currentRoad`. Google Maps/Waze source priority, U2W v8.8 lane guidance, lane presentation policy, ETA, speed-limit matching, ambient lighting, Scale/Perspective, and the v90.34.12 UI reorganization are otherwise unchanged.
+
+See `docs/V90_34_13_APPLE_ARRIVAL_ZERO_DISTANCE.md` and `V90_34_13_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.12 — UI reorganization + optional current-turn text
 
 v90.34.12 builds on the physically validated v90.34.11 Scale/Perspective controls and cleans up the normal driving UI. The parked **Recorded CarPlay lane replay**, disproven **Lane placement** probe, and **Persistent stock music renderer** controls are no longer exposed. Their historical backend/source remains available for regression archaeology, but normal navigation stays on the proven `Speedo | Navigation | ETA` layout. Any persisted right-side lane-probe selection is migrated back to stock center placement so ETA cannot remain replaced by an empty side widget.

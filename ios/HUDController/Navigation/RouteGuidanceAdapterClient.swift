@@ -642,18 +642,83 @@ final class RouteGuidanceAdapterClient {
         ].joined(separator: "|")
     }
 
+    /// Resolve the HUD maneuver distance without treating a legitimate CarPlay
+    /// zero as "missing". Apple Maps can advance to a destination placeholder
+    /// whose maneuver-table distance remains stale (observed: 1931 m / 1.2 mi)
+    /// while the live Route Guidance fields explicitly report 0.
+    ///
+    /// The maneuver-table value remains a compatibility fallback only when the
+    /// live numeric field is zero *and* CarPlay exported no display-distance
+    /// text, which is the ambiguous/missing-data shape seen in older captures.
+    nonisolated static func resolvedManeuverDistanceMeters(
+        snapshot: Snapshot,
+        maneuver: ManeuverSnapshot
+    ) -> Int {
+        let liveMeters = max(0, snapshot.distanceToManeuverMeters)
+        let liveText = snapshot.distanceToManeuverText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let routeExplicitlyArrived =
+            snapshot.routeState == 2 &&
+            snapshot.distanceRemainingMeters == 0 &&
+            snapshot.timeRemainingSeconds == 0
+
+        if routeExplicitlyArrived {
+            return 0
+        }
+
+        if snapshot.distanceToManeuverMeters > 0 || !liveText.isEmpty {
+            return liveMeters
+        }
+
+        return max(0, maneuver.distanceMeters)
+    }
+
+    /// Apple Maps may replace the real "Arrive at <destination>" maneuver with
+    /// a blank destination placeholder at the end of a route. Prefer the route
+    /// destination for that placeholder instead of falling back to currentRoad.
+    nonisolated static func resolvedManeuverStreet(
+        snapshot: Snapshot,
+        maneuver: ManeuverSnapshot,
+        mapped: HudManeuver
+    ) -> String {
+        let afterRoad = maneuver.afterRoad.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !afterRoad.isEmpty {
+            return afterRoad
+        }
+
+        let description = maneuver.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !description.isEmpty {
+            return description
+        }
+
+        if mapped == .destination {
+            let destination = snapshot.destination.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !destination.isEmpty {
+                return destination
+            }
+        }
+
+        return snapshot.currentRoad
+    }
+
     private func makeInstruction(_ snapshot: Snapshot) -> NavigationInstruction? {
         guard let maneuver = primaryCurrentManeuver(in: snapshot) else { return nil }
 
         let mapped = Self.mapManeuverType(maneuver.type)
-        let street = !maneuver.afterRoad.isEmpty
-            ? maneuver.afterRoad
-            : (!maneuver.description.isEmpty ? maneuver.description : snapshot.currentRoad)
+        let street = Self.resolvedManeuverStreet(
+            snapshot: snapshot,
+            maneuver: maneuver,
+            mapped: mapped
+        )
         let primary = Self.primaryText(for: maneuver.type, description: maneuver.description, street: street)
 
         return NavigationInstruction(
             maneuver: mapped,
-            distanceMeters: max(0, snapshot.distanceToManeuverMeters > 0 ? snapshot.distanceToManeuverMeters : maneuver.distanceMeters),
+            distanceMeters: Self.resolvedManeuverDistanceMeters(
+                snapshot: snapshot,
+                maneuver: maneuver
+            ),
             primaryText: primary,
             streetName: street,
             displayDistanceText: displayDistance(snapshot),
