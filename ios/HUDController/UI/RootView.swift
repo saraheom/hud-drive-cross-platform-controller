@@ -5,6 +5,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: RootTab = .navigation
     @State private var showSettings = false
+    @State private var showTrips = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -20,13 +21,17 @@ struct RootView: View {
             VehicleView(state: state)
                 .tag(RootTab.vehicle)
                 .tabItem { Label("Vehicle", systemImage: "car") }
-            LogsView(state: state)
-                .tag(RootTab.logs)
-                .tabItem { Label("My trips", systemImage: "clock.arrow.circlepath") }
+            NavigationStack {
+                AmbientLightingView(
+                    monitor: state.ambientLight,
+                    speedEngine: state.speedEngine
+                )
+            }
+            .tag(RootTab.ambient)
+            .tabItem { Label("Ambient", systemImage: "lightbulb.2.fill") }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             QuickShortcutBar(
-                showDrivingShortcuts: selectedTab != .logs,
                 navigationAction: {
                     selectedTab = .navigation
                     state.quickStartNavigation()
@@ -36,13 +41,19 @@ struct RootView: View {
                     state.quickRefreshNowPlaying()
                 },
                 ambientAction: {
-                    selectedTab = .vehicle
+                    selectedTab = .ambient
                     state.ambientLight.requestPairedLightsFocus()
+                },
+                tripsAction: {
+                    showTrips = true
                 },
                 settingsAction: {
                     showSettings = true
                 }
             )
+        }
+        .sheet(isPresented: $showTrips) {
+            LogsView(state: state)
         }
         .sheet(isPresented: $showSettings) {
             HudSettingsView(state: state)
@@ -93,35 +104,33 @@ private enum RootTab: Hashable {
     case dashboard
     case media
     case vehicle
-    case logs
+    case ambient
 }
 
 private struct QuickShortcutBar: View {
-    let showDrivingShortcuts: Bool
     let navigationAction: () -> Void
     let musicAction: () -> Void
     let ambientAction: () -> Void
+    let tripsAction: () -> Void
     let settingsAction: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            if showDrivingShortcuts {
-                shortcut("Navigation", icon: "location.north.fill", action: navigationAction)
-                shortcut("Music", icon: "music.note", action: musicAction)
-                shortcut("Ambient", icon: "lightbulb.2.fill", action: ambientAction)
-            } else {
-                Spacer(minLength: 0)
-            }
+            shortcut("Navigation", icon: "location.north.fill", action: navigationAction)
+            shortcut("Music", icon: "music.note", action: musicAction)
+            shortcut("Ambient", icon: "lightbulb.2.fill", action: ambientAction)
 
-            Button(action: settingsAction) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 42, height: 36)
-                    .background(HudTheme.card, in: RoundedRectangle(cornerRadius: 10))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
+            iconShortcut(
+                icon: "clock.arrow.circlepath",
+                accessibilityLabel: "My Trips",
+                action: tripsAction
+            )
+
+            iconShortcut(
+                icon: "gearshape.fill",
+                accessibilityLabel: "Settings",
+                action: settingsAction
+            )
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -147,5 +156,21 @@ private struct QuickShortcutBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title) shortcut")
+    }
+
+    private func iconShortcut(
+        icon: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 42, height: 36)
+                .background(HudTheme.card, in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
     }
 }

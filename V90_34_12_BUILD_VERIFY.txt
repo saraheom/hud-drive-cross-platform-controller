@@ -1,0 +1,72 @@
+HUD Controller v90.34.12 — UI Reorganization + Current Turn Text build verification
+==================================================================================
+
+Scope
+-----
+- Base: v90.34.11 Display Calibration + Settings UI.
+- Carries forward the physically validated original HUDWAY Scale/Perspective controls unchanged in protocol/range.
+- Removes the Recorded CarPlay replay, right-side lane-placement probe, and Persistent stock Music renderer from normal UI.
+- Promotes My Trips beside Settings in the persistent top shortcut strip.
+- Replaces the bottom My Trips tab with a dedicated Ambient tab and moves light-specific controls there.
+- Adds persisted Navigation → Show Current Turn Text immediately below Show Current Street.
+- Adds reusable collapsible Details descriptions to reduce normal UI text clutter.
+- Corrects visible HUD color-swatch labels without changing original enum persistence or firmware wire values.
+
+Navigation turn-text behavior
+-----------------------------
+- Default: ON.
+- OFF modifies only a copy of NavigationInstruction immediately before native HUD transmission:
+  wireInstruction.primaryText = ""
+- Maneuver type/direction, upcoming street, distance, ETA, exit number, lane guidance, and route ownership are unchanged.
+- Current Street remains controlled independently by Show Current Street.
+- HudCommands.maneuver preserves leading/interior blank text lines and trims only trailing empty lines, so hiding primaryText does not shift streetName into the first/turn-text slot.
+
+UI organization
+---------------
+Persistent top strip:
+- Navigation (rectangular shortcut)
+- Music (rectangular shortcut)
+- Ambient (rectangular shortcut)
+- My Trips (compact icon)
+- Settings (compact icon)
+
+Bottom tabs:
+- Navigation
+- Dashboard
+- Media
+- Vehicle
+- Ambient
+
+Vehicle keeps OBD and speed/speed-limit source configuration. Ambient owns:
+- ambient BLE/device/group controls;
+- smooth transitions/Breath;
+- Door day/night controls;
+- HUD Center/BLEDOM Auto Brightness;
+- finite ambient overspeed warning and its color/brightness/pulse controls.
+
+Experimental UI retirement
+--------------------------
+- iOS 26 Navigation does not expose Recorded CarPlay lane replay or Lane placement.
+- Media does not expose Start Full/Start Mini persistent stock Music controls.
+- Historical backend/source remains for regression/reference only.
+- Any persisted non-center lane-placement probe selection migrates to centerNative so ETA cannot remain replaced by a blank right-side probe widget.
+
+HUD color labels
+----------------
+- displayName is separate from HudColorTheme.rawValue.
+- First three user-observed swatches display Blue / Red / Green.
+- Raw historical enum values and exact originalWireValue color payloads remain unchanged.
+
+Safety
+------
+- No new ADB command, filesystem write, /system modification, APK replacement, firmware updater, or unknown BLE command.
+- Turn-text customization uses only the existing native maneuver packet.
+- v90.34.11 global Scale/Perspective BLE commands are unchanged.
+- Existing Firmware Maintenance / boot-animation workflow remains in Settings with its prior transactional safety boundary.
+
+Local verification
+------------------
+- Python/static regression suite: 284 passed.
+- Swift syntax parse: 168 Swift files, 0 failures.
+- YAML parse: 10 files, 0 failures.
+- Full Xcode/macOS simulator build and XCTest execution are not claimed from this Linux container; GitHub Actions remains authoritative for the iOS SDK build.

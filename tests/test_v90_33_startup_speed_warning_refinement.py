@@ -39,7 +39,7 @@ def test_state6_weakens_route_semantics_for_speed_matching():
 
 def test_overspeed_warning_has_separate_day_and_night_brightness():
     monitor = read("ios/HUDController/Vehicle/AmbientLightMonitor.swift")
-    view = read("ios/HUDController/UI/VehicleView.swift")
+    view = read("ios/HUDController/UI/AmbientLightingView.swift")
     assert "overspeedWarningNightBrightness" in monitor
     assert 'HUD.Ambient.v90_33.overspeed.nightBrightness' in monitor
     assert "? 20" in monitor

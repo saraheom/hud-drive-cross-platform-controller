@@ -22,6 +22,10 @@ final class HudNavigationController {
     /// App-side presentation preference. The original instruction is retained in
     /// `current`; only the wire copy suppresses currentStreet when disabled.
     var showCurrentStreet = true
+    /// App-side presentation preference. The source instruction is retained,
+    /// while the wire copy can suppress only the redundant turn-language line
+    /// (e.g. “Turn right”) without changing the maneuver graphic or road name.
+    var showCurrentTurnText = true
     private var simulatorTask: Task<Void, Never>?
 
     let bluetooth: HudBluetoothManager
@@ -93,7 +97,14 @@ final class HudNavigationController {
         if !showCurrentStreet {
             wireInstruction.currentStreet = ""
         }
-        logger.log("NAV", "owner=\(owner.rawValue) \(instruction.maneuver.label), \(instruction.distanceMeters)m, \(instruction.streetName) currentStreet=\(showCurrentStreet ? instruction.currentStreet : "<hidden>")")
+        if !showCurrentTurnText {
+            wireInstruction.primaryText = ""
+        }
+        logger.log(
+            "NAV",
+            "owner=\(owner.rawValue) \(instruction.maneuver.label), \(instruction.distanceMeters)m, \(instruction.streetName) " +
+            "turnText=\(showCurrentTurnText ? instruction.primaryText : "<hidden>") currentStreet=\(showCurrentStreet ? instruction.currentStreet : "<hidden>")"
+        )
         // The stock Android app applies DisplaySpeedUintsCommandPacket as part
         // of HUD settings. Reassert it here so a physical HUD reboot cannot
         // format a correct meter distance using a stale/default unit mode.

@@ -15,6 +15,7 @@ final class V903410LaneRightSideProbeTests: XCTestCase {
         XCTAssertTrue(settings.contains("case rightNaviMiniProbe"))
         XCTAssertTrue(settings.contains("HUD.Settings.lanePlacementMode"))
         XCTAssertTrue(settings.contains("HudLanePlacementMode.centerNative.rawValue"))
+        XCTAssertTrue(settings.contains("lanePlacementMode = .centerNative"))
     }
 
     func testRightProbeIsStockOnlyAndRestoresNormalNavigation() throws {
@@ -34,13 +35,14 @@ final class V903410LaneRightSideProbeTests: XCTestCase {
         XCTAssertFalse(probe.contains("maintenance"))
     }
 
-    func testNavigationUIExposesOnlyFocusedLanePlacementProbe() throws {
+    func testDisprovenLanePlacementProbeIsRetiredFromNavigationUI() throws {
         let view = try source("HUDController/AmbientTest/HudNavigationViewIOS26.swift")
-        XCTAssertTrue(view.contains("Picker(\"Lane placement\""))
-        XCTAssertTrue(view.contains("Right-side probe keeps the normal center Navigation renderer"))
+        XCTAssertFalse(view.contains("Picker(\"Lane placement\""))
+        XCTAssertFalse(view.contains("Right-side probe keeps the normal center Navigation renderer"))
+        XCTAssertFalse(view.contains("Recorded CarPlay lane replay"))
+        XCTAssertTrue(view.contains("Navigation presentation"))
         XCTAssertFalse(view.contains("Manual navigation diagnostics"))
         XCTAssertFalse(view.contains("Firmware-native lane guidance"))
-        XCTAssertTrue(view.contains("Recorded CarPlay lane replay"))
         XCTAssertFalse(view.contains("Ambient-light test build"))
     }
 }

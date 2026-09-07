@@ -101,6 +101,7 @@ final class HudSettings {
     var navigationAppleMapsEnabled: Bool { didSet { defaults.set(navigationAppleMapsEnabled, forKey: "HUD.Settings.navigationAppleMapsEnabled") } }
     var navigationWazeEnabled: Bool { didSet { defaults.set(navigationWazeEnabled, forKey: "HUD.Settings.navigationWazeEnabled") } }
     var navigationShowCurrentStreet: Bool { didSet { defaults.set(navigationShowCurrentStreet, forKey: "HUD.Settings.navigationShowCurrentStreet") } }
+    var navigationShowCurrentTurnText: Bool { didSet { defaults.set(navigationShowCurrentTurnText, forKey: "HUD.Settings.navigationShowCurrentTurnText") } }
     var laneGuidanceMode: HudLaneGuidanceMode { didSet { defaults.set(laneGuidanceMode.rawValue, forKey: "HUD.Settings.laneGuidanceMode") } }
     var laneGuidanceDistanceMiles: Double { didSet { defaults.set(laneGuidanceDistanceMiles, forKey: "HUD.Settings.laneGuidanceDistanceMiles") } }
     var lanePlacementMode: HudLanePlacementMode { didSet { defaults.set(lanePlacementMode.rawValue, forKey: "HUD.Settings.lanePlacementMode") } }
@@ -152,11 +153,19 @@ final class HudSettings {
         navigationAppleMapsEnabled = bool("HUD.Settings.navigationAppleMapsEnabled", default: false)
         navigationWazeEnabled = bool("HUD.Settings.navigationWazeEnabled", default: false)
         navigationShowCurrentStreet = bool("HUD.Settings.navigationShowCurrentStreet", default: true)
+        navigationShowCurrentTurnText = bool("HUD.Settings.navigationShowCurrentTurnText", default: true)
         let laneModeRaw = store.string(forKey: "HUD.Settings.laneGuidanceMode") ?? HudLaneGuidanceMode.nearTurn.rawValue
         laneGuidanceMode = HudLaneGuidanceMode(rawValue: laneModeRaw) ?? .nearTurn
         laneGuidanceDistanceMiles = min(1.0, max(0.1, double("HUD.Settings.laneGuidanceDistanceMiles", default: 0.5)))
         let lanePlacementRaw = store.string(forKey: "HUD.Settings.lanePlacementMode") ?? HudLanePlacementMode.centerNative.rawValue
-        lanePlacementMode = HudLanePlacementMode(rawValue: lanePlacementRaw) ?? .centerNative
+        let restoredLanePlacement = HudLanePlacementMode(rawValue: lanePlacementRaw) ?? .centerNative
+        // v90.34.12 retires the physically disproven right-side lane probes from
+        // the normal UI. Migrate any persisted probe selection back to stock so
+        // ETA cannot remain replaced by an empty right-side widget.
+        lanePlacementMode = .centerNative
+        if restoredLanePlacement != .centerNative {
+            store.set(HudLanePlacementMode.centerNative.rawValue, forKey: "HUD.Settings.lanePlacementMode")
+        }
 
         notificationExposureSeconds = integer("HUD.Settings.notificationExposureSeconds", default: 10)
         notificationLines = integer("HUD.Settings.notificationLines", default: 5)

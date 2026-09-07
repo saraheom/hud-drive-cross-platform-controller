@@ -14,7 +14,8 @@ def test_lane_placement_modes_are_persisted_and_safe_by_default():
     assert "case rightNavigationProbe" in settings
     assert "case rightNaviMiniProbe" in settings
     assert 'HUD.Settings.lanePlacementMode' in settings
-    assert '?? HudLanePlacementMode.centerNative.rawValue' in settings
+    assert 'HudLanePlacementMode.centerNative.rawValue' in settings
+    assert 'lanePlacementMode = .centerNative' in settings
 
 
 def test_right_side_probe_uses_only_stock_widget_packets_and_restores_dashboard():
@@ -37,11 +38,12 @@ def test_right_side_probe_uses_only_stock_widget_packets_and_restores_dashboard(
     assert "navigation.sendCurrent" in restore
 
 
-def test_lane_probe_is_exposed_only_in_navigation_presentation_ui():
+def test_disproven_lane_probe_is_no_longer_exposed_in_navigation_ui():
     view = read("ios/HUDController/AmbientTest/HudNavigationViewIOS26.swift")
-    assert 'Picker("Lane placement"' in view
-    assert "Right-side probe keeps the normal center Navigation renderer" in view
-    assert "Recorded CarPlay lane replay" in view
+    assert 'Picker("Lane placement"' not in view
+    assert "Right-side probe keeps the normal center Navigation renderer" not in view
+    assert "Recorded CarPlay lane replay" not in view
+    assert "Navigation presentation" in view
     for removed in (
         "Ambient-light test build",
         "Manual navigation diagnostics",

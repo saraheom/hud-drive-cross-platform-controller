@@ -17,12 +17,12 @@ def test_persistent_music_reuses_stock_packets_without_firmware_write():
     assert "adb." not in APP[APP.index("// MARK: - Persistent stock music renderer experiment"):APP.index("func sendNativeMusicMiniTest")]
 
 
-def test_media_ui_exposes_explicit_full_and_mini_persistence_controls():
-    assert "Persistent stock music renderer" in MEDIA
-    assert 'Button("Start Full")' in MEDIA
-    assert 'Button("Start Mini")' in MEDIA
-    assert 'Button("Stop + Restore Normal HUD")' in MEDIA
-    assert "No public broadcast exposes the parsed metadata" in MEDIA
+def test_experimental_persistent_music_controls_are_retired_from_media_ui():
+    assert "Persistent stock music renderer" not in MEDIA
+    assert 'Button("Start Full")' not in MEDIA
+    assert 'Button("Start Mini")' not in MEDIA
+    assert 'Button("Stop + Restore Normal HUD")' not in MEDIA
+    assert "CarPlay Now Playing" in MEDIA
 
 
 def test_obsolete_navigation_diagnostic_cards_are_removed_from_ios26_ui():
@@ -32,9 +32,7 @@ def test_obsolete_navigation_diagnostic_cards_are_removed_from_ios26_ui():
         "Firmware-native lane guidance",
     ):
         assert text not in NAV26
-    # v90.34.10.1 intentionally restores only the parked CarPlay lane replay
-    # card so the right-side lane renderer can be tested at home.
-    assert "Recorded CarPlay lane replay" in NAV26
+    assert "Recorded CarPlay lane replay" not in NAV26
     assert "Navigation presentation" in NAV26
     assert "HUD Firmware Maintenance" not in NAV26
     assert "HUD Firmware Maintenance" in SETTINGS_UI

@@ -44,9 +44,7 @@ struct RouteGuidanceStatusCard: View {
                     .disabled(!state.routeGuidance.running)
                 }
 
-                Text("Source priority: Google Maps > Apple Maps > Waze. A higher-priority source wins only while its Route Guidance stream is fresh. There is no OCR fallback: stale/unavailable adapter data returns the HUD to Freeride automatically. Navigation dashboard default: Speed on the left, ETA on the right.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                HudDescription("Source priority: Google Maps > Apple Maps > Waze. A higher-priority source wins only while its Route Guidance stream is fresh. There is no OCR fallback: stale/unavailable adapter data returns the HUD to Freeride automatically. Navigation dashboard default: Speed on the left, ETA on the right.")
 
                 if !state.routeGuidance.lastError.isEmpty {
                     Text("Last adapter error: \(state.routeGuidance.lastError)")

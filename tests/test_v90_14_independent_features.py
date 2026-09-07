@@ -7,6 +7,7 @@ SPEED = (ROOT / 'ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift').read
 SPOTIFY = (ROOT / 'ios/HUDController/Media/SpotifyMediaController.swift').read_text()
 APP = (ROOT / 'ios/HUDController/App/AppState.swift').read_text()
 VEHICLE = (ROOT / 'ios/HUDController/UI/VehicleView.swift').read_text()
+AMBIENT = (ROOT / 'ios/HUDController/UI/AmbientLightingView.swift').read_text()
 
 
 def test_configurable_overspeed_warning_is_retained():
@@ -22,10 +23,11 @@ def test_configurable_overspeed_warning_is_retained():
 
 
 def test_overspeed_ui_and_fresh_limit_wiring_are_retained():
-    assert 'AMBIENT OVERSPEED WARNING' in VEHICLE
-    assert 'Warning color' in VEHICLE
-    assert 'in: 0.0...5.0' in VEHICLE
-    assert 'Repeat cooldown' in VEHICLE
+    assert 'AMBIENT OVERSPEED WARNING' in AMBIENT
+    assert 'Warning color' in AMBIENT
+    assert 'in: 0.0...5.0' in AMBIENT
+    assert 'Repeat cooldown' in AMBIENT
+    assert 'AMBIENT OVERSPEED WARNING' not in VEHICLE
     assert 'speedLimitAvailableForWarning' in SPEED
     assert 'onSpeedStateChanged' in SPEED
     assert 'ambientLight?.updateOverspeedWarning' in APP

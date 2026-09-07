@@ -1,3 +1,17 @@
+# v90.34.12 — UI reorganization + optional current-turn text
+
+v90.34.12 builds on the physically validated v90.34.11 Scale/Perspective controls and cleans up the normal driving UI. The parked **Recorded CarPlay lane replay**, disproven **Lane placement** probe, and **Persistent stock music renderer** controls are no longer exposed. Their historical backend/source remains available for regression archaeology, but normal navigation stays on the proven `Speedo | Navigation | ETA` layout. Any persisted right-side lane-probe selection is migrated back to stock center placement so ETA cannot remain replaced by an empty side widget.
+
+The persistent top shortcut bar now contains the same three rectangular shortcuts (**Navigation / Music / Ambient**) followed by compact **My Trips** and **Settings** icons. My Trips opens the existing Trips & Logs sheet. The fifth bottom tab is now **Ambient**, replacing My Trips. All ambient-light controls, HUD Center/BLEDOM auto-brightness configuration, and finite ambient overspeed-warning controls are centralized there; Vehicle retains OBD and speed/speed-limit source configuration.
+
+Navigation adds **Show Current Turn Text** immediately below **Show Current Street**. Turning it off blanks only the maneuver packet's first text slot (for example `Turn right`, `Turn left`, or `U-turn`) while retaining the maneuver type/direction graphics, upcoming street name, current-street preference, distance, ETA, and lane guidance. The wire encoder preserves a leading empty line so disabling that first label cannot promote the upcoming street name into the turn-text slot.
+
+Dashboard color swatches now use user-facing names that match the actual visible colors (the first three are Blue / Red / Green) while retaining the original HUDWAY enum identity and exact raw firmware color values. Explanatory prose across the primary cards now uses a reusable **Details** disclosure with a chevron; controls and live status remain visible when the prose is collapsed.
+
+See `docs/V90_34_12_UI_REORGANIZATION_TURN_TEXT.md` and `V90_34_12_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.11 — Original HUDWAY display calibration + Settings UI
 
 v90.34.11 adds the original HUDWAY Drive 1.4.6 **Scale** and **Perspective** controls using the stock BLE packets only. Scale maps the original 0–100 seeker to `LayoutSizeCommandPacket` values `0.00–0.20`; Perspective maps 0–100 to `KeyStoneCommandPacket` values `0.00–0.10`. Both use one big-endian Float32, persist locally, apply live while connected, and are reasserted after HUD reconnect/reboot. Slider sends are lightly debounced so dragging does not flood the serialized HUD BLE queue.

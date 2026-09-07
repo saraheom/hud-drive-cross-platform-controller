@@ -71,7 +71,11 @@ def test_persistent_quick_shortcuts_cover_navigation_music_ambient_except_logs()
     assert 'shortcut("Navigation"' in root
     assert 'shortcut("Music"' in root
     assert 'shortcut("Ambient"' in root
-    assert "selectedTab != .logs" in root
+    assert "case ambient" in root
+    assert "case logs" not in root
+    assert 'accessibilityLabel: "My Trips"' in root
+    assert "showTrips = true" in root
+    assert "LogsView(state: state)" in root
     assert "state.quickStartNavigation()" in root
     assert "state.quickRefreshNowPlaying()" in root
     assert "state.ambientLight.requestPairedLightsFocus()" in root
@@ -82,7 +86,7 @@ def test_persistent_quick_shortcuts_cover_navigation_music_ambient_except_logs()
     assert "capture.presentFullDisplayPicker()" not in app.split("func quickStartNavigation()", 1)[1].split("func quickRefreshNowPlaying", 1)[0]
     assert "nowPlaying.refreshNow()" in app
     assert "SpotifyMediaController" not in app
-    assert 'path = [.ambient(focusPairedLights: true)]' in vehicle
+    assert 'AmbientLightingView(' not in vehicle
     assert '.id("pairedLights")' in (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
 
 

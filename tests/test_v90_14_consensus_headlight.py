@@ -4,7 +4,8 @@ MONITOR = (ROOT / 'ios/HUDController/Vehicle/AmbientLightMonitor.swift').read_te
 APP = (ROOT / 'ios/HUDController/App/AppState.swift').read_text()
 SPOTIFY = (ROOT / 'ios/HUDController/Media/SpotifyMediaController.swift').read_text()
 SPEED = (ROOT / 'ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift').read_text()
-VIEW = (ROOT / 'ios/HUDController/UI/VehicleView.swift').read_text()
+VEHICLE = (ROOT / 'ios/HUDController/UI/VehicleView.swift').read_text()
+AMBIENT = (ROOT / 'ios/HUDController/UI/AmbientLightingView.swift').read_text()
 
 def test_two_controller_consensus_remains_stable_diagnostic_crosscheck():
     assert 'private enum HeadlightConsensusObservation' in MONITOR
@@ -43,6 +44,7 @@ def test_newer_independent_features_are_kept():
     assert 'setAutomaticVehicleWakeAllowed' in SPOTIFY
     assert 'case traceOSM = "OSM Trace"' in SPEED
     assert 'case improvedTracePhilly = "Improved + Philly GIS"' in SPEED
-    assert 'AMBIENT OVERSPEED WARNING' in VIEW
+    assert 'AMBIENT OVERSPEED WARNING' in AMBIENT
+    assert 'AMBIENT OVERSPEED WARNING' not in VEHICLE
     assert 'overspeedWarningColor' in MONITOR
     assert 'overspeedWarningCooldownSeconds: TimeInterval = 60.0' in MONITOR

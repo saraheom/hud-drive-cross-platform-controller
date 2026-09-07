@@ -48,7 +48,8 @@ def test_display_changes_are_ble_only_and_debounced():
 
 
 def test_top_right_settings_gear_opens_new_settings_page():
-    assert 'Image(systemName: "gearshape.fill")' in ROOT_VIEW
+    assert 'icon: "gearshape.fill"' in ROOT_VIEW
+    assert 'accessibilityLabel: "Settings"' in ROOT_VIEW
     assert "showSettings = true" in ROOT_VIEW
     assert "HudSettingsView(state: state)" in ROOT_VIEW
     assert 'navigationTitle("Settings")' in SETTINGS_UI

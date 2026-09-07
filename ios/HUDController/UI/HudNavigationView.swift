@@ -25,6 +25,13 @@ struct HudNavigationView: View {
                                     state.applyNavigationPresentationSettings()
                                 }
                             ))
+                            Toggle("Show Current Turn Text", isOn: Binding(
+                                get: { state.settings.navigationShowCurrentTurnText },
+                                set: { value in
+                                    state.settings.navigationShowCurrentTurnText = value
+                                    state.applyNavigationPresentationSettings()
+                                }
+                            ))
                             Picker("Lane Guidance", selection: Binding(
                                 get: { state.settings.laneGuidanceMode },
                                 set: { value in
@@ -36,24 +43,6 @@ struct HudNavigationView: View {
                             }
                             .pickerStyle(.segmented)
 
-                            Picker("Lane placement", selection: Binding(
-                                get: { state.settings.lanePlacementMode },
-                                set: { value in
-                                    state.settings.lanePlacementMode = value
-                                    state.applyNavigationPresentationSettings()
-                                }
-                            )) {
-                                ForEach(HudLanePlacementMode.allCases) { mode in
-                                    Text(mode.title).tag(mode)
-                                }
-                            }
-                            .pickerStyle(.menu)
-
-                            if state.settings.lanePlacementMode != .centerNative {
-                                Text("Right-side probe keeps the normal center Navigation renderer and temporarily replaces ETA with the selected stock candidate only while lanes are eligible. If the firmware supports a side lane renderer, a right-side lane response should appear. The stock center gray lane box may still remain during this probe. Normal ETA is restored automatically when lanes hide.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
                             if state.settings.laneGuidanceMode == .nearTurn {
                                 Text(String(format: "Show lanes within %.1f mi (~%d ft)", state.settings.laneGuidanceDistanceMiles, Int((state.settings.laneGuidanceDistanceMiles * 5280).rounded())))
                                     .font(.subheadline)
@@ -65,9 +54,7 @@ struct HudNavigationView: View {
                                     }
                                 ), in: 0.1...1.0, step: 0.1)
                             }
-                            Text("Live U2W v8.8 active-event resolution remains unchanged. Center (stock) keeps the proven renderer. The two right-side choices are safe stock-widget probes for this field test.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Show Current Turn Text suppresses only the redundant language line such as ‘Turn right’, ‘Turn left’, or ‘U-turn’. The maneuver graphic, upcoming street name, distance, ETA, and live Route Guidance remain unchanged. Persistent/Near Turn/Off continue to control the native lane layer.")
                         }
                     }
 
@@ -176,13 +163,11 @@ struct HudNavigationView: View {
                                         .textSelection(.enabled)
                                 }
 
-                                Text("""
+                                HudDescription("""
                                 Google Maps and Apple Maps are detected automatically from OCR/layout evidence; there is no source selector. Valid route lists automatically enter Navigation mode. Apple Maps “Proceed to the route” is treated as active navigation, reroutes can replace the entire current maneuver immediately when the new layout is structurally valid, and normal Maps home/map screens return the HUD to Freeride after confirmation.
 
                                 Screen capture is treated as a long-lived driving service. Raw ScreenCaptureKit frames feed a heartbeat independently of OCR. If that heartbeat dies, the HUD immediately returns to Freeride while the app rebuilds the stream. After repeated failures of the cached filter, the app invalidates it and asks for a fresh Entire Display selection instead of leaving navigation frozen.
                                 """)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                             }
                         }
                     } else {

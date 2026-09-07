@@ -72,53 +72,7 @@ struct MediaView: View {
                                     .foregroundStyle(.orange)
                             }
 
-                            Divider()
-
-                            Button("Send Native HUD Music Test") {
-                                state.sendNativeMusicTest()
-                            }
-                            .buttonStyle(.bordered)
-
-                            Text("Media metadata now comes directly from the CarPlay adapter. Spotify authorization, tokens, callbacks, and automatic app launching are not used by this screen. Compatible active media apps can provide title, artist, album, playback state, progress, and artwork through CarPlay Now Playing.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    HudCard {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Persistent stock music renderer").font(.headline)
-
-                            Text("Static inspection of the HUDWAY Drive launcher shows MusicNotificationPacket is consumed directly by MainActivity and written into the stock full and mini Music views. No public broadcast exposes the parsed metadata to a companion app. This experiment therefore keeps the original renderer alive by re-sending the existing native Music packet every 5 seconds, before the stock notification timeout expires.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            LabeledContent("State", value: state.persistentMusicStatus)
-                            LabeledContent("Stock timeout", value: "\(state.settings.notificationExposureSeconds) sec")
-
-                            HStack {
-                                Button("Start Full") {
-                                    state.startPersistentMusic(mini: false)
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(state.bluetooth.state != .connected || state.firmwareMaintenanceActive)
-
-                                Button("Start Mini") {
-                                    state.startPersistentMusic(mini: true)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(state.bluetooth.state != .connected || state.firmwareMaintenanceActive)
-                            }
-
-                            Button("Stop + Restore Normal HUD") {
-                                state.stopPersistentMusic()
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(!state.persistentMusicActive)
-
-                            Text("Start Mini is the candidate for a persistent side-widget-style presentation, but HudHUDWidgetsMiniState is global to the stock HUD layout. Use this first build to observe whether Navigation/side widgets remain acceptable while music stays visible. Stop restores the normal HUD mini-state and your existing Music notification filter. No ADB or HUD filesystem write is used.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Media metadata comes directly from the CarPlay adapter. Spotify authorization, tokens, callbacks, and automatic app launching are not used by this screen. Compatible active media apps can provide title, artist, album, playback state, progress, and artwork through CarPlay Now Playing.")
                         }
                     }
                 }

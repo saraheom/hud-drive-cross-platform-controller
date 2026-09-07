@@ -151,8 +151,10 @@ def test_osm_trace_held_sign_does_not_refresh_fresh_resolution_clock():
     assert trace.count('traceLastResolutionFresh = true') >= 2
 
 
-def test_vehicle_help_text_matches_fast_center_hud_brightness_owner():
+def test_ambient_help_text_matches_fast_center_hud_brightness_owner():
+    ambient = (ROOT / 'ios/HUDController/UI/AmbientLightingView.swift').read_text()
     vehicle = (ROOT / 'ios/HUDController/UI/VehicleView.swift').read_text()
-    assert 'Use Center/BLEDOM power for HUD Auto Brightness' in vehicle
-    assert 'Center present = night/Auto Brightness ON' in vehicle
-    assert 'Dashboard cannot delay either output' in vehicle
+    assert 'Use Center/BLEDOM power for HUD Auto Brightness' in ambient
+    assert 'Center present = night/Auto Brightness ON' in ambient
+    assert 'Dashboard cannot delay either output' in ambient
+    assert 'Use Center/BLEDOM power for HUD Auto Brightness' not in vehicle

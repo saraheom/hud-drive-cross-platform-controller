@@ -185,13 +185,19 @@ enum HudCommands {
         // field, so do not duplicate the source distance in the first text line.
         // `displayDistanceText` remains available to diagnostics and source
         // comparison, but the physical HUD text is simply e.g. "Turn right".
-        let text = [
+        var textLines = [
             instruction.primaryText,
             instruction.streetName,
             instruction.currentStreet
         ]
-        .filter { !$0.isEmpty }
-        .joined(separator: "\n")
+        // Keep interior/leading empty fields so a hidden first line does not
+        // promote the upcoming street name into the turn-text slot. Only empty
+        // trailing fields are removed. Java String.split("\n") preserves the
+        // leading empty element used by the HUD renderer for this purpose.
+        while textLines.last?.isEmpty == true {
+            textLines.removeLast()
+        }
+        let text = textLines.joined(separator: "\n")
 
         var payload = HudProtocol.javaWriteUTF(text)
         payload.append(HudProtocol.int32(Int32(instruction.maneuver.type)))

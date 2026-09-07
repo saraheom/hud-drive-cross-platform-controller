@@ -3,6 +3,7 @@ import UIKit
 
 struct AmbientLightingView: View {
     @Bindable var monitor: AmbientLightMonitor
+    @Bindable var speedEngine: OriginalSpeedLimitEngine
     var focusPairedLightsOnAppear: Bool = false
 
     @State private var newGroupName = ""
@@ -31,9 +32,7 @@ struct AmbientLightingView: View {
                                     .disabled(!monitor.enabled)
                             }
 
-                            Text("Background BLE scanning and reconnect remain active for the paired lights. The nearby-device list is hidden from the normal UI because the three vehicle lights are already configured.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Background BLE scanning and reconnect remain active for the paired lights. The nearby-device list is hidden from the normal UI because the three vehicle lights are already configured.")
                         }
                     }
 
@@ -82,9 +81,7 @@ struct AmbientLightingView: View {
                             }
                             .buttonStyle(.borderedProminent)
 
-                            Text("Automatic Breath is HUD-connection-gated. Courtesy lights may connect before the HUD transport is ready, but they stay steady and do not animate. When the HUD connects, the app waits for Center + Door + Dashboard to become ready and then starts all three on one common animation clock; if all three are not ready within the startup window, the startup Breath is skipped rather than partially replayed. Later, while the HUD remains connected, a headlight-ON transition animates only the newly powered cohort. For example, if Door is already on and Center + Dashboard turn on with the headlights, only Center + Dashboard wait for each other and Breath together. There is no late independent catch-up Breath.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Automatic Breath is HUD-connection-gated. Courtesy lights may connect before the HUD transport is ready, but they stay steady and do not animate. When the HUD connects, the app waits for Center + Door + Dashboard to become ready and then starts all three on one common animation clock; if all three are not ready within the startup window, the startup Breath is skipped rather than partially replayed. Later, while the HUD remains connected, a headlight-ON transition animates only the newly powered cohort. For example, if Door is already on and Center + Dashboard turn on with the headlights, only Center + Dashboard wait for each other and Breath together. There is no late independent catch-up Breath.")
                         }
                     }
 
@@ -97,9 +94,7 @@ struct AmbientLightingView: View {
                                     .font(.subheadline.weight(.semibold))
                             }
 
-                            Text("BLEDIM now uses the field-validated minimal sequence for automatic and Preview Breaths: no routine Power/RGB/baseline preparation writes, then a brightness-only final commit. This avoids the start/end blink seen with the experimental sequences while keeping the same synchronized Breath timeline.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("BLEDIM now uses the field-validated minimal sequence for automatic and Preview Breaths: no routine Power/RGB/baseline preparation writes, then a brightness-only final commit. This avoids the start/end blink seen with the experimental sequences while keeping the same synchronized Breath timeline.")
 
                             Button("Preview BLEDIM Only") { monitor.previewEnabledBLEDIMBreathNow() }
                                 .buttonStyle(.bordered)
@@ -135,9 +130,161 @@ struct AmbientLightingView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Text("Door brightness is independent from animation and engine-session detection. Center/BLEDOM present = night and absent = day; that same fast signal controls HUD Auto Brightness. Dashboard + Center remain a diagnostic cross-check only. Automatic Door day/night changes use a dedicated fast 1.0 s fade, while the manual/group transition duration above remains independently adjustable.")
-                                .font(.caption2)
+                            HudDescription("Door brightness is independent from animation and engine-session detection. Center/BLEDOM present = night and absent = day; that same fast signal controls HUD Auto Brightness. Dashboard + Center remain a diagnostic cross-check only. Automatic Door day/night changes use a dedicated fast 1.0 s fade, while the manual/group transition duration above remains independently adjustable.")
+                        }
+                    }
+
+                    section("HUD AUTO-BRIGHTNESS") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Use Center/BLEDOM power for HUD Auto Brightness", isOn: Binding(
+                                get: { monitor.hudBrightnessTriggerEnabled },
+                                set: { monitor.hudBrightnessTriggerEnabled = $0 }
+                            ))
+                            .disabled(!monitor.enabled)
+
+                            TextField("BLE advertised name", text: Binding(
+                                get: { monitor.targetName },
+                                set: { monitor.targetName = $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+
+                            Stepper(
+                                "Absent timeout: \(monitor.absenceTimeoutSeconds)s",
+                                value: Binding(
+                                    get: { monitor.absenceTimeoutSeconds },
+                                    set: { monitor.setAbsenceTimeout($0) }
+                                ),
+                                in: 1...30
+                            )
+
+                            LabeledContent("Status", value: monitor.status)
+                            LabeledContent(
+                                "Peripheral UUID",
+                                value: monitor.detectedIdentifier.isEmpty ? "—" : monitor.detectedIdentifier
+                            )
+                            if let rssi = monitor.lastRSSI {
+                                LabeledContent("RSSI", value: "\(rssi) dBm")
+                            }
+
+                            HudDescription("HUD Auto Brightness follows the fast Center/BLEDOM power signal: Center present = night/Auto Brightness ON and Center absent = day/Auto Brightness OFF. Automatic Door day/night brightness consumes that same signal independently. Dashboard + Center remain a diagnostic cross-check only and Dashboard cannot delay either output. BLEDOM does not need to appear in Settings → Bluetooth.")
+                        }
+                    }
+
+                    section("AMBIENT OVERSPEED WARNING") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Finite color-light warning", isOn: Binding(
+                                get: { monitor.overspeedWarningEnabled },
+                                set: { monitor.overspeedWarningEnabled = $0 }
+                            ))
+
+                            Picker("Warning light", selection: Binding(
+                                get: { monitor.overspeedWarningLight },
+                                set: { monitor.overspeedWarningLight = $0 }
+                            )) {
+                                ForEach(AmbientOverspeedWarningLight.allCases) { light in
+                                    Text(light.rawValue).tag(light)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(!monitor.overspeedWarningEnabled)
+
+                            ColorPicker(
+                                "Warning color",
+                                selection: Binding(
+                                    get: { monitor.overspeedWarningColor.swiftUIColor },
+                                    set: { monitor.setOverspeedWarningColor($0.ambientRGB) }
+                                ),
+                                supportsOpacity: false
+                            )
+                            .disabled(!monitor.overspeedWarningEnabled)
+
+                            Stepper(
+                                "Offset above limit: +\(monitor.overspeedWarningOffsetMph) mph",
+                                value: Binding(
+                                    get: { monitor.overspeedWarningOffsetMph },
+                                    set: { monitor.setOverspeedWarningOffset($0) }
+                                ),
+                                in: 0...20
+                            )
+                            .disabled(!monitor.overspeedWarningEnabled)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Day warning brightness: \(monitor.overspeedWarningBrightness)%")
+                                    .font(.subheadline)
+                                Slider(
+                                    value: Binding(
+                                        get: { Double(monitor.overspeedWarningBrightness) },
+                                        set: { monitor.setOverspeedWarningBrightness(Int($0.rounded())) }
+                                    ),
+                                    in: 5...100,
+                                    step: 5
+                                )
+
+                                Text("Night warning brightness: \(monitor.overspeedWarningNightBrightness)%")
+                                    .font(.subheadline)
+                                Slider(
+                                    value: Binding(
+                                        get: { Double(monitor.overspeedWarningNightBrightness) },
+                                        set: { monitor.setOverspeedWarningNightBrightness(Int($0.rounded())) }
+                                    ),
+                                    in: 5...100,
+                                    step: 5
+                                )
+                            }
+                            .disabled(!monitor.overspeedWarningEnabled)
+
+                            Picker("Pulse count", selection: Binding(
+                                get: { monitor.overspeedWarningPulseCount },
+                                set: { monitor.setOverspeedWarningPulseCount($0) }
+                            )) {
+                                Text("2×").tag(2)
+                                Text("3×").tag(3)
+                            }
+                            .pickerStyle(.segmented)
+                            .disabled(!monitor.overspeedWarningEnabled)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Pulse duration / cycle: \(monitor.overspeedWarningPulseDurationSeconds, specifier: "%.1f") s")
+                                    .font(.subheadline)
+                                Slider(
+                                    value: Binding(
+                                        get: { monitor.overspeedWarningPulseDurationSeconds },
+                                        set: { monitor.setOverspeedWarningPulseDuration($0) }
+                                    ),
+                                    in: 0.0...5.0,
+                                    step: 0.1
+                                )
+                            }
+                            .disabled(!monitor.overspeedWarningEnabled)
+
+                            LabeledContent("Repeat cooldown", value: "60 s")
+                                .font(.subheadline)
+                                .disabled(!monitor.overspeedWarningEnabled)
+
+                            if speedEngine.speedLimitAvailableForWarning {
+                                LabeledContent(
+                                    "Warning threshold",
+                                    value: "> \(speedEngine.currentSpeedLimitMph + monitor.overspeedWarningOffsetMph) mph"
+                                )
+                            } else if speedEngine.currentSpeedLimitMph > 0 {
+                                LabeledContent("Warning threshold", value: "Displayed limit not warning-eligible — disabled")
+                            } else {
+                                LabeledContent("Warning threshold", value: "No speed-limit sign — disabled")
+                            }
+
+                            Text(monitor.overspeedWarningStatus)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
+
+                            LabeledContent("GPS speed", value: "\(speedEngine.currentSpeedMph) mph")
+                            LabeledContent(
+                                "Posted limit",
+                                value: speedEngine.currentSpeedLimitMph > 0
+                                    ? "\(speedEngine.currentSpeedLimitMph) mph\(speedEngine.speedLimitAvailableForWarning ? "" : " • warning off")"
+                                    : "—"
+                            )
+
+                            HudDescription("Night/day follows the same confirmed Center/headlight state used by Door brightness, and warning restore fades RGB + brightness smoothly for about 1 second. A warning triggers only when GPS speed crosses from at/below to strictly above posted speed limit + offset. It runs 2–3 finite pulses using the selected color, then restores the normal light state. A 60-second cooldown suppresses threshold chatter. If the speed-limit sign is unavailable or not warning-eligible, no ambient warning is allowed. Dashboard warnings run only while the physical headlight circuit is on; headlight power loss cancels the warning without sending stale restore commands. Speed-limit source selection remains under Vehicle.")
                         }
                     }
 
@@ -451,14 +598,10 @@ struct AmbientDeviceControlView: View {
                                     .font(.caption)
                             }
 
-                            Text("Manual brightness changes use the global \(String(format: "%.1f", monitor.brightnessTransitionSeconds)) s smooth transition instead of jumping directly to the target.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Manual brightness changes use the global \(String(format: "%.1f", monitor.brightnessTransitionSeconds)) s smooth transition instead of jumping directly to the target.")
 
                             if device.role == .door, monitor.vehicleAutomationEnabled {
-                                Text("When the engine session is active, Door steady-state brightness follows the Day/Night targets on the main Ambient Lighting page. The generic preferred value remains saved for manual use.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                HudDescription("When the engine session is active, Door steady-state brightness follows the Day/Night targets on the main Ambient Lighting page. The generic preferred value remains saved for manual use.")
                             }
                         }
                     }
@@ -476,9 +619,7 @@ struct AmbientDeviceControlView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(!monitor.isControllable(deviceID))
 
-                            Text("Global profile: \(monitor.breathCycles)× at \(String(format: "%.1f", monitor.breathDurationSeconds)) s per cycle (\(String(format: "%.1f", monitor.breathDurationSeconds * Double(monitor.breathCycles))) s total). Every cycle uses that light’s actual starting brightness: current → 0% → 100% → current, unless a new target is selected during the animation.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Global profile: \(monitor.breathCycles)× at \(String(format: "%.1f", monitor.breathDurationSeconds)) s per cycle (\(String(format: "%.1f", monitor.breathDurationSeconds * Double(monitor.breathCycles))) s total). Every cycle uses that light’s actual starting brightness: current → 0% → 100% → current, unless a new target is selected during the animation.")
                         }
                     }
 
@@ -600,9 +741,7 @@ struct AmbientGroupControlView: View {
                                 Button("Save") { monitor.renameGroup(groupID, to: name) }
                                     .buttonStyle(.bordered)
                             }
-                            Text("Group color and brightness commands are fanned out to every member. Brightness changes share one synchronized transition timeline.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Group color and brightness commands are fanned out to every member. Brightness changes share one synchronized transition timeline.")
                         }
                     }
 
@@ -670,9 +809,7 @@ struct AmbientGroupControlView: View {
                             )
                             .disabled(group.memberIDs.isEmpty)
 
-                            Text("Tap a color block to apply it to the whole group. Tap the pencil under any slot to replace that preset with the current picker color.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Tap a color block to apply it to the whole group. Tap the pencil under any slot to replace that preset with the current picker color.")
                         }
                     }
 
@@ -757,9 +894,7 @@ private struct PresetColorRow: View {
                     .frame(maxWidth: .infinity)
                 }
             }
-            Text("Tap a color block to apply • tap its pencil to save the current picker color into that slot")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            HudDescription("Tap a color block to apply • tap its pencil to save the current picker color into that slot")
         }
     }
 }

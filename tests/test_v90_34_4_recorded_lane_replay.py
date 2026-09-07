@@ -29,14 +29,11 @@ def test_replay_ui_is_parked_manual_and_not_live_route_integration():
     app = text("ios/HUDController/App/AppState.swift")
     live = text("ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift")
 
-    assert "Recorded CarPlay lane replay" in nav
-    assert "Send This Recorded Step" in nav
-    assert "◀ Previous" in nav
-    assert "Next ▶" in nav
-    assert "Auto Replay • 4 s/step" in nav
-    assert "Raw CarPlay lane angles" in nav
-    assert "Native HUD signed values" in nav
-    assert "Parked diagnostic for the lane-placement probe" in nav
+    # Fixtures/backend remain available for source-level diagnostics, but the
+    # parked experimental card is intentionally removed from the normal app UI.
+    assert "Recorded CarPlay lane replay" not in nav
+    assert "Send This Recorded Step" not in nav
+    assert "Auto Replay • 4 s/step" not in nav
     assert "sendRecordedCarPlayLaneReplayStep" in app
     # v90.34.4 stays diagnostic-first: no 0x5204 lane injection into live adapter polling yet.
     assert "HudCommands.laneGuidance" not in live

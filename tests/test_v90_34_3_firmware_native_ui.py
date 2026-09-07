@@ -31,8 +31,9 @@ def test_mini_music_uses_stock_ble_packets_and_has_restore():
     assert "HudCommands.widgetsMiniState(true)" in app
     assert "HudCommands.widgetsMiniState(false)" in app
     assert "HudCommands.musicNotification(" in app
-    assert "Persistent stock music renderer" in media
-    assert "Stop + Restore Normal HUD" in media
+    assert "Persistent stock music renderer" not in media
+    assert "Stop + Restore Normal HUD" not in media
+    assert "CarPlay Now Playing" in media
     start = app.index("func sendNativeMusicMiniTest")
     end = app.index("func sendNativeMusicTest", start)
     music_block = app[start:end].lower()

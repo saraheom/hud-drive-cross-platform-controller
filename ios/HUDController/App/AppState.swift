@@ -91,6 +91,10 @@ final class AppState {
         navigation.showCurrentStreet = UserDefaults.standard.object(forKey: showCurrentStreetKey) == nil
             ? true
             : UserDefaults.standard.bool(forKey: showCurrentStreetKey)
+        let showCurrentTurnTextKey = "HUD.Settings.navigationShowCurrentTurnText"
+        navigation.showCurrentTurnText = UserDefaults.standard.object(forKey: showCurrentTurnTextKey) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: showCurrentTurnTextKey)
         self.navigation = navigation
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
@@ -711,9 +715,12 @@ final class AppState {
 
     func applyNavigationPresentationSettings() {
         navigation.showCurrentStreet = settings.navigationShowCurrentStreet
+        navigation.showCurrentTurnText = settings.navigationShowCurrentTurnText
         logger.log(
             "NAV PRESENTATION",
-            "currentStreet=\(settings.navigationShowCurrentStreet ? "ON" : "OFF") lanes=\(settings.laneGuidanceMode.title) threshold=\(String(format: "%.1f", settings.laneGuidanceDistanceMiles))mi placement=\(settings.lanePlacementMode.title)"
+            "currentStreet=\(settings.navigationShowCurrentStreet ? "ON" : "OFF") " +
+            "turnText=\(settings.navigationShowCurrentTurnText ? "ON" : "OFF") lanes=\(settings.laneGuidanceMode.title) " +
+            "threshold=\(String(format: "%.1f", settings.laneGuidanceDistanceMiles))mi placement=\(settings.lanePlacementMode.title)"
         )
 
         // Re-send the currently visible maneuver so the current-street toggle is
@@ -1104,6 +1111,7 @@ final class AppState {
         // native HUDWAY path, immediately followed by the captured 0x5204 lane
         // topology normalized to HudLanesManueverCommandPacket values.
         navigation.showCurrentStreet = settings.navigationShowCurrentStreet
+        navigation.showCurrentTurnText = settings.navigationShowCurrentTurnText
         navigation.navigationOn()
         navigation.send(step.instruction)
         setLaneGuidanceForCurrentManeuver(

@@ -33,8 +33,8 @@ def test_lane_policy_reasserts_stock_lane_packet_without_firmware_write():
     assert "activeLaneDistanceMeters <= laneGuidanceThresholdMeters" in APP
 
 
-def test_recorded_replay_is_retained_and_routes_through_policy():
-    assert "Recorded CarPlay lane replay" in UI26
+def test_recorded_replay_backend_is_retained_but_ui_is_retired():
+    assert "Recorded CarPlay lane replay" not in UI26
     assert "sendRecordedCarPlayLaneReplayStep" in APP
     start = APP.index("func sendRecordedCarPlayLaneReplayStep")
     block = APP[start:start + 1800]

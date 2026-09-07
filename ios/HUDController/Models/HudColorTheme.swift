@@ -20,6 +20,24 @@ enum HudColorTheme: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Human-readable label for the actual rendered swatch color. The enum raw
+    /// values intentionally remain the original HUDWAY labels for persistence
+    /// and wire compatibility.
+    var displayName: String {
+        switch self {
+        case .red:     return "Blue"
+        case .green:   return "Red"
+        case .blue:    return "Green"
+        case .magenta: return "Sky Blue"
+        case .black:   return "Purple"
+        case .yellow:  return "Magenta"
+        case .grey:    return "Deep Blue"
+        case .cyan:    return "White"
+        case .ivory:   return "Orange"
+        case .maroon:  return "Yellow"
+        }
+    }
+
     /// Android `Color.parseColor(...)` source value from HwColorTable.
     var rgbHex: String {
         switch self {

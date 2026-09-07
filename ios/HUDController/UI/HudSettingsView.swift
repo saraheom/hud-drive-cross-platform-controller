@@ -130,9 +130,7 @@ struct HudSettingsView: View {
                     }
                 }
 
-                Text("The stock app maps each 0–100 slider to a firmware Float32: Scale → 0.00–0.20 using LayoutSizeCommandPacket, Perspective → 0.00–0.10 using KeyStoneCommandPacket. Changes are saved and reasserted after HUD reconnect/reboot.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HudDescription("The stock app maps each 0–100 slider to a firmware Float32: Scale → 0.00–0.20 using LayoutSizeCommandPacket, Perspective → 0.00–0.10 using KeyStoneCommandPacket. Changes are saved and reasserted after HUD reconnect/reboot.")
 
                 Divider()
 
@@ -145,9 +143,7 @@ struct HudSettingsView: View {
                             .font(.caption.bold())
                             .foregroundStyle(.secondary)
                     }
-                    Text("The recovered stock protocol does not expose a safe per-widget variant: the Scale and Keystone packets contain only one Float32 and no left/center/right widget identifier, while the dashboard packet only selects widget names. This build therefore keeps calibration global instead of inventing an unverified packet. Per-widget rendering remains a read-only firmware research target.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HudDescription("The recovered stock protocol does not expose a safe per-widget variant: the Scale and Keystone packets contain only one Float32 and no left/center/right widget identifier, while the dashboard packet only selects widget names. This build therefore keeps calibration global instead of inventing an unverified packet. Per-widget rendering remains a read-only firmware research target.")
                 }
             }
         }
@@ -239,9 +235,7 @@ struct HudSettingsView: View {
 
                 Text("Boot Animation Override")
                     .font(.subheadline.bold())
-                Text("The HUD bootanimation binary checks /data/local/bootanimation/bootanimation.zip before the untouched stock /system/media/bootanimation.zip. The installer writes only the data/local override and verifies it by complete ADB read-back.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HudDescription("The HUD bootanimation binary checks /data/local/bootanimation/bootanimation.zip before the untouched stock /system/media/bootanimation.zip. The installer writes only the data/local override and verifies it by complete ADB read-back.")
 
                 Button("Select Video or bootanimation.zip") {
                     showBootAnimationImporter = true
@@ -285,9 +279,7 @@ struct HudSettingsView: View {
                         .foregroundStyle(.orange)
                 }
 
-                Text("Video import is converted locally to the HUD's native 480×240, 24-fps Android bootanimation format and remains limited to 12 seconds. Restore Stock deletes only the override; it never remounts or modifies /system.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HudDescription("Video import is converted locally to the HUD's native 480×240, 24-fps Android bootanimation format and remains limited to 12 seconds. Restore Stock deletes only the override; it never remounts or modifies /system.")
             }
         }
     }

@@ -39,9 +39,7 @@ struct DashboardView: View {
                                 in: 0...255
                             )
                             .disabled(true)
-                            Text("Experimental raw firmware value (event 3/30/0). We will verify during physical light/dark testing before treating this as calibrated lux.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("Experimental raw firmware value (event 3/30/0). We will verify during physical light/dark testing before treating this as calibrated lux.")
                         }
                     }
 
@@ -49,7 +47,7 @@ struct DashboardView: View {
                     HudCard {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Text(state.settings.colorTheme.rawValue)
+                                Text(state.settings.colorTheme.displayName)
                                     .font(.headline)
                                 Spacer()
                                 Text("Original HUD palette")
@@ -83,7 +81,7 @@ struct DashboardView: View {
                                                 }
                                             }
 
-                                            Text(theme.rawValue)
+                                            Text(theme.displayName)
                                                 .font(.caption2)
                                                 .lineLimit(1)
                                                 .minimumScaleFactor(0.7)
@@ -91,7 +89,7 @@ struct DashboardView: View {
                                         }
                                     }
                                     .buttonStyle(.plain)
-                                    .accessibilityLabel("\(theme.rawValue) HUD color")
+                                    .accessibilityLabel("\(theme.displayName) HUD color")
                                     .accessibilityAddTraits(
                                         state.settings.colorTheme == theme
                                             ? .isSelected : []
@@ -99,9 +97,7 @@ struct DashboardView: View {
                                 }
                             }
 
-                            Text("Uses the same 10 options and raw HUD color values as the original app.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HudDescription("The swatch labels describe the actual visible colors. Under the hood, the app still sends the exact same 10 original HUDWAY raw color values so physical HUD behavior is unchanged.")
                         }
                     }
 

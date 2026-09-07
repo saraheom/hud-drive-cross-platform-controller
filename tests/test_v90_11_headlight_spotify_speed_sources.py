@@ -5,6 +5,7 @@ MONITOR = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_te
 SPOTIFY = (ROOT / "ios/HUDController/Media/SpotifyMediaController.swift").read_text()
 SPEED = (ROOT / "ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift").read_text()
 VEHICLE = (ROOT / "ios/HUDController/UI/VehicleView.swift").read_text()
+AMBIENT = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
 MEDIA = (ROOT / "ios/HUDController/UI/MediaView.swift").read_text()
 
 
@@ -81,6 +82,7 @@ def test_v9011_baseline_still_uses_cllocation_speed_and_v9012_can_consume_it_opt
     # v90.12 deliberately enables an opt-in finite ambient warning from the same
     # CLLocation speed already used by the HUD. It must not imply OBD speed access.
     assert "CLLocation.speed" in SPEED
-    assert "AMBIENT OVERSPEED WARNING" in VEHICLE
+    assert "AMBIENT OVERSPEED WARNING" in AMBIENT
+    assert "AMBIENT OVERSPEED WARNING" not in VEHICLE
     assert "updateOverspeedWarning" in MONITOR
     assert "gpsSpeedMph > threshold" in MONITOR

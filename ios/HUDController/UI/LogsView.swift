@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LogsView: View {
     @Bindable var state: AppState
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -27,6 +28,11 @@ struct LogsView: View {
             .scrollContentBackground(.hidden)
             .background(HudTheme.background)
             .navigationTitle("Trips & Logs")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }

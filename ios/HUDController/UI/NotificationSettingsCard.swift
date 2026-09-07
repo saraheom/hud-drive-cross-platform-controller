@@ -67,12 +67,8 @@ struct NotificationSettingsCard: View {
                 .buttonStyle(.borderedProminent)
                 .padding(.top, 14)
 
-                Text("""
-                Verified on physical iPhone: Messages and KakaoTalk reach the HUD through the accessory notification path. Only apps that produce iOS Notification Center notifications belong in this section.
-                """)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 10)
+                HudDescription("Verified on physical iPhone: Messages and KakaoTalk reach the HUD through the accessory notification path. Only apps that produce iOS Notification Center notifications belong in this section.")
+                    .padding(.top, 10)
 
                 Divider().padding(.vertical, 12)
 
@@ -98,12 +94,8 @@ struct NotificationSettingsCard: View {
                     detail: "No turn guidance observed through ANCS"
                 )
 
-                Text("""
-                These sources stay in the architecture as separate future providers. They are intentionally not sent as ANCS application filters anymore.
-                """)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 10)
+                HudDescription("These sources stay in the architecture as separate providers. They are intentionally not sent as ANCS application filters.")
+                    .padding(.top, 10)
             }
         }
     }

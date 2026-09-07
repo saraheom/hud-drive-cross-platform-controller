@@ -7,7 +7,7 @@ final class V90349PersistentMusicAndUICleanupTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testPersistentMusicUsesExistingNativeRendererOnly() throws {
+    func testPersistentMusicBackendStillUsesExistingNativeRendererOnly() throws {
         let app = try source("HUDController/App/AppState.swift")
         guard let start = app.range(of: "// MARK: - Persistent stock music renderer experiment")?.lowerBound,
               let end = app.range(of: "func sendNativeMusicMiniTest", range: start..<app.endIndex)?.lowerBound else {
@@ -24,23 +24,24 @@ final class V90349PersistentMusicAndUICleanupTests: XCTestCase {
         XCTAssertFalse(section.contains("/system/"))
     }
 
-    func testIOS26NavigationUIHasNoLegacyDiagnosticCards() throws {
+    func testIOS26NavigationUIHasNoExperimentalDiagnosticCards() throws {
         let ui = try source("HUDController/AmbientTest/HudNavigationViewIOS26.swift")
         let settingsUI = try source("HUDController/UI/HudSettingsView.swift")
         XCTAssertFalse(ui.contains("Ambient-light test build"))
         XCTAssertFalse(ui.contains("Manual navigation diagnostics"))
         XCTAssertFalse(ui.contains("Firmware-native lane guidance"))
-        XCTAssertTrue(ui.contains("Recorded CarPlay lane replay"))
+        XCTAssertFalse(ui.contains("Recorded CarPlay lane replay"))
         XCTAssertTrue(ui.contains("Navigation presentation"))
         XCTAssertFalse(ui.contains("HUD Firmware Maintenance"))
         XCTAssertTrue(settingsUI.contains("HUD Firmware Maintenance"))
     }
 
-    func testMediaUIHasExplicitPersistentRendererControls() throws {
+    func testMediaUIHidesExperimentalPersistentRendererControls() throws {
         let ui = try source("HUDController/UI/MediaView.swift")
-        XCTAssertTrue(ui.contains("Persistent stock music renderer"))
-        XCTAssertTrue(ui.contains("Start Full"))
-        XCTAssertTrue(ui.contains("Start Mini"))
-        XCTAssertTrue(ui.contains("Stop + Restore Normal HUD"))
+        XCTAssertFalse(ui.contains("Persistent stock music renderer"))
+        XCTAssertFalse(ui.contains("Start Full"))
+        XCTAssertFalse(ui.contains("Start Mini"))
+        XCTAssertFalse(ui.contains("Stop + Restore Normal HUD"))
+        XCTAssertTrue(ui.contains("CarPlay Now Playing"))
     }
 }
