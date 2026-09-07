@@ -21,7 +21,15 @@ final class V90348BootAnimationMaintenanceTests: XCTestCase {
         XCTAssertTrue(maintenance.contains("adb.hashRemoteFile(Self.remotePending)"))
         XCTAssertTrue(maintenance.contains("mv \\(Self.remotePending) \\(Self.remoteOverride)"))
         XCTAssertFalse(maintenance.contains("remount"))
-        XCTAssertFalse(maintenance.contains("/system/media/bootanimation.zip"))
+
+        // The stock path may be mentioned in user-facing status text to explain
+        // rollback behavior. What must never exist is an ADB shell command that
+        // writes, removes, renames, copies, or chmods the stock system archive.
+        let shellLines = maintenance.components(separatedBy: .newlines)
+            .filter { $0.contains("adb.shell") }
+        XCTAssertFalse(shellLines.contains { line in
+            line.contains("/system/media/bootanimation.zip")
+        })
     }
 
     func testFailedForceEnablePinExperimentIsNotReachable() throws {

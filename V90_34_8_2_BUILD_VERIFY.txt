@@ -1,0 +1,14 @@
+v90.34.8.2 local verification
+
+Purpose: CI/XCTest-only correction for v90.34.8.1 boot-animation maintenance.
+Runtime Swift sources are intended to remain byte-identical to v90.34.8.1.
+
+Validation results are appended/updated by the build preparation session.
+
+Final local results:
+- Python/static: 252/252 PASS
+- Swift syntax parse: 160 files PASS
+- YAML parse: 10 files PASS
+- Runtime ios/HUDController tree byte-identical to v90.34.8.1: YES
+- Changed XCTest: V90348BootAnimationMaintenanceTests only, to distinguish user-facing stock-path text from ADB shell commands.
+- Full Xcode/macOS XCTest run: NOT available locally; rerun GitHub iOS CI to confirm.

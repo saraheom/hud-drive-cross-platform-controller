@@ -1,3 +1,9 @@
+# v90.34.8.2 — Boot Animation Maintenance CI Test Fix
+
+- Runtime Swift sources are unchanged from v90.34.8.1.
+- Fixes a false-positive XCTest in `V90348BootAnimationMaintenanceTests`: the test previously rejected any mention of `/system/media/bootanimation.zip`, including the safe user-facing status string explaining that the stock file was untouched.
+- The corrected test now checks only `adb.shell(...)` command lines for the stock-system path, preserving the intended safety invariant while allowing explanatory UI text.
+
 # HUD Controller v90.34.8 — reversible boot-animation maintenance over HUD Wi-Fi/ADB
 
 v90.34.8 builds directly on v90.34.7 and keeps the U2W v8.8 live-lane fixes. Its new writable feature is intentionally narrow: a user-confirmed **boot-animation override** at `/data/local/bootanimation/bootanimation.zip`. The original `/system/media/bootanimation.zip` is never remounted, overwritten, renamed, or deleted.
