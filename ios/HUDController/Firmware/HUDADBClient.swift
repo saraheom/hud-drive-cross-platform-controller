@@ -156,7 +156,7 @@ actor HUDADBClient {
             try await ensureSyncBytes(8, stream: stream, buffer: &buffer)
             let idData = buffer.prefix(4)
             let id = String(data: idData, encoding: .ascii) ?? "????"
-            let value = readUInt32LE(buffer, offset: 4)
+            let value = try Self.readUInt32LE(buffer, offset: 4)
             buffer.removeFirst(8)
 
             switch id {
@@ -293,7 +293,7 @@ actor HUDADBClient {
                                   buffer: inout Data) async throws -> (id: String, message: String?) {
         try await ensureSyncBytes(8, stream: stream, buffer: &buffer)
         let id = String(data: buffer.prefix(4), encoding: .ascii) ?? "????"
-        let value = Int(readUInt32LE(buffer, offset: 4))
+        let value = Int(try Self.readUInt32LE(buffer, offset: 4))
         buffer.removeFirst(8)
         if id == "FAIL" {
             try await ensureSyncBytes(value, stream: stream, buffer: &buffer)
@@ -326,12 +326,12 @@ actor HUDADBClient {
     private func readPacket() async throws -> Packet {
         guard let connection else { throw ADBError.notConnected }
         let header = try await receiveExactly(24, over: connection)
-        let command = readUInt32LE(header, offset: 0)
-        let arg0 = readUInt32LE(header, offset: 4)
-        let arg1 = readUInt32LE(header, offset: 8)
-        let length = Int(readUInt32LE(header, offset: 12))
-        let checksum = readUInt32LE(header, offset: 16)
-        let magic = readUInt32LE(header, offset: 20)
+        let command = try Self.readUInt32LE(header, offset: 0)
+        let arg0 = try Self.readUInt32LE(header, offset: 4)
+        let arg1 = try Self.readUInt32LE(header, offset: 8)
+        let length = Int(try Self.readUInt32LE(header, offset: 12))
+        let checksum = try Self.readUInt32LE(header, offset: 16)
+        let magic = try Self.readUInt32LE(header, offset: 20)
         guard magic == (command ^ 0xffffffff) else {
             throw ADBError.protocolError("Bad message magic")
         }
@@ -385,8 +385,21 @@ actor HUDADBClient {
             (UInt32(bytes[3]) << 24)
     }
 
-    private func readUInt32LE(_ data: Data, offset: Int) -> UInt32 {
-        let bytes = [UInt8](data[offset..<(offset + 4)])
+    /// Decode a little-endian UInt32 using an offset relative to `data.startIndex`.
+    ///
+    /// Foundation `Data` does not guarantee that `startIndex == 0` after
+    /// `removeFirst(_:)`. The ADB SYNC parser intentionally consumes records
+    /// with `removeFirst`, so subscripting `data[4..<8]` can trap even when the
+    /// remaining buffer has enough bytes. Keep this bounds-checked and
+    /// start-index-relative so malformed/fragmented network input becomes a
+    /// recoverable protocol error rather than an app crash.
+    nonisolated static func readUInt32LE(_ data: Data, offset: Int) throws -> UInt32 {
+        guard offset >= 0, data.count >= offset + 4 else {
+            throw ADBError.protocolError("Truncated UInt32 field offset=\(offset) available=\(data.count)")
+        }
+        let start = data.index(data.startIndex, offsetBy: offset)
+        let end = data.index(start, offsetBy: 4)
+        let bytes = [UInt8](data[start..<end])
         return UInt32(bytes[0]) |
             (UInt32(bytes[1]) << 8) |
             (UInt32(bytes[2]) << 16) |

@@ -1,0 +1,20 @@
+v90.34.8.3 — ADB Data-index crash fix
+
+Field issue fixed:
+- First boot-animation install could terminate the app during ADB SYNC parsing.
+- Data.removeFirst() can leave a non-zero Data.startIndex.
+- Old readUInt32LE used absolute collection indices and could trap.
+
+Runtime change:
+- ios/HUDController/Firmware/HUDADBClient.swift only.
+- UInt32 decoding is now bounds-checked and relative to Data.startIndex.
+- Truncated input throws ADBError.protocolError rather than crashing.
+
+Regression coverage:
+- V903483ADBDataIndexCrashTests.swift
+- tests/test_v90_34_8_3_adb_data_index_crash.py
+
+Boot-animation safety remains unchanged:
+- write only /data/local/bootanimation/bootanimation.zip(.pending)
+- no /system remount/write
+- full ADB read-back SHA-256 before and after atomic commit
