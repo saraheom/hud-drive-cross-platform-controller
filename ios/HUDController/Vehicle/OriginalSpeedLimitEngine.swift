@@ -263,14 +263,16 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private let warningLimitFreshnessSeconds: TimeInterval = 12.0
     private(set) var status = "Waiting for location"
     private(set) var sourceDetail = "Current • original matcher"
+    private(set) var speedMarkerProbeStatus = "Idle — live speed-limit logic unchanged"
+    private var speedMarkerProbeFollowupTask: Task<Void, Never>?
 
     /// v90.12: publishes the same iPhone GPS speed and currently displayed
     /// speed-limit availability to the ambient warning controller.
     var onSpeedStateChanged: ((Int, Int, Bool) -> Void)?
 
-    /// User-facing state for the original HUDWAY DisplaySpeedWarning renderer.
-    /// When armed, firmware draws the native short red threshold arc on its
-    /// speed gauge(s); inferred/display-only limits deliberately do not arm it.
+    /// User-facing state for the original HUDWAY DisplaySpeedWarning threshold.
+    /// The threshold is confirmed on-wire; whether it alone owns the small red
+    /// gauge marker is intentionally left unclaimed while v90.34.15 probes it.
     var nativeSpeedMarkerStatus: String {
         guard showSpeedLimit, currentSpeedLimitMph > 0 else {
             return "Off — no posted limit"
@@ -278,7 +280,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         guard currentLimitWarningEligible else {
             return "Off — display-only limit"
         }
-        return "\(currentSpeedLimitMph) mph • stock red threshold arc"
+        return "\(currentSpeedLimitMph) mph • DisplaySpeedWarning armed"
     }
 
     var sourceMode: SpeedLimitSourceMode {
@@ -457,7 +459,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// Reassert only the original HUDWAY `DisplaySpeedWarningCommandPacket`
     /// state. Dashboard profile/mode changes can construct a fresh Simple or
     /// Speedo renderer, so the stock threshold is resent after those transitions
-    /// without altering the legal-limit matcher or fabricating any graphics.
+    /// without altering the legal-limit matcher or claiming which visual element
+    /// the firmware binds to that threshold.
     func reassertOriginalSpeedMarker(reason: String) {
         guard bluetooth.state == .connected else { return }
 
@@ -465,7 +468,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             sendOriginalAutomaticSpeedWarning(legalLimitMph: currentSpeedLimitMph)
             logger.log(
                 "SPEED MARKER",
-                "Reasserted stock red threshold arc at \(currentSpeedLimitMph) mph reason=\(reason)"
+                "Reasserted stock DisplaySpeedWarning threshold at \(currentSpeedLimitMph) mph reason=\(reason)"
             )
         } else {
             bluetooth.enqueue(
@@ -477,6 +480,104 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 "Cleared stock threshold arc reason=\(reason) showLimit=\(showSpeedLimit ? 1 : 0) limit=\(currentSpeedLimitMph) eligible=\(currentLimitWarningEligible ? 1 : 0)"
             )
         }
+    }
+
+    /// Temporary v90.34.15 diagnostic. This deliberately does NOT mutate the
+    /// selected matcher, current limit, persistence, or production packet path.
+    /// It reproduces the decompiled HUDWAY Drive 1.4.6 Automatic/TRAVEL branch sequence:
+    /// HudSpeedLimitAndTolerance(limit=0,tolerance=0,style=0), then
+    /// DisplaySpeedWarning(threshold=<test limit>).
+    func runOriginalAutomaticMarkerProbe(limitMph: Int, restoreProductionSign: Bool) {
+        guard bluetooth.state == .connected else {
+            speedMarkerProbeStatus = "HUD not connected"
+            return
+        }
+        let limit = max(5, min(100, limitMph))
+        speedMarkerProbeFollowupTask?.cancel()
+        speedMarkerProbeFollowupTask = nil
+
+        bluetooth.enqueue(
+            HudCommands.speedLimitProbe(limit: 0, tolerance: 0, style: 0),
+            label: "Marker probe → exact original auto reset limit=0 tolerance=0 style=0"
+        )
+        bluetooth.enqueue(
+            HudCommands.speedWarningThreshold(limit),
+            label: "Marker probe → exact original DisplaySpeedWarning \(limit) mph"
+        )
+        logger.log(
+            "SPEED MARKER PROBE",
+            "Exact original Automatic/TRAVEL sequence sent testLimit=\(limit) restoreProductionSign=\(restoreProductionSign ? 1 : 0); live matcher state untouched"
+        )
+
+        if restoreProductionSign {
+            speedMarkerProbeStatus = "Original auto sent at \(limit) mph; restoring production square sign after 350 ms"
+            speedMarkerProbeFollowupTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard let self, !Task.isCancelled, self.bluetooth.state == .connected else { return }
+                self.bluetooth.enqueue(
+                    HudCommands.speedLimit(limit: limit, tolerance: 0),
+                    label: "Marker probe → restore production square sign at \(limit) mph"
+                )
+                self.speedMarkerProbeStatus = "Original auto + production sign restore sent at \(limit) mph"
+                self.logger.log(
+                    "SPEED MARKER PROBE",
+                    "Production square sign restored after exact original Automatic/TRAVEL sequence testLimit=\(limit)"
+                )
+                self.speedMarkerProbeFollowupTask = nil
+            }
+        } else {
+            speedMarkerProbeStatus = "Exact original Automatic/TRAVEL sequence sent at \(limit) mph"
+        }
+    }
+
+    /// A/B baseline for the same test value using the existing production packet
+    /// sequence. This is diagnostic-only and does not update matcher state.
+    func runCurrentProductionMarkerProbe(limitMph: Int) {
+        guard bluetooth.state == .connected else {
+            speedMarkerProbeStatus = "HUD not connected"
+            return
+        }
+        let limit = max(5, min(100, limitMph))
+        speedMarkerProbeFollowupTask?.cancel()
+        speedMarkerProbeFollowupTask = nil
+        bluetooth.enqueue(
+            HudCommands.speedLimit(limit: limit, tolerance: 0),
+            label: "Marker probe → current production sign \(limit) mph"
+        )
+        bluetooth.enqueue(
+            HudCommands.speedWarningThreshold(limit),
+            label: "Marker probe → current production DisplaySpeedWarning \(limit) mph"
+        )
+        speedMarkerProbeStatus = "Current production sequence sent at \(limit) mph"
+        logger.log(
+            "SPEED MARKER PROBE",
+            "Current production sequence sent testLimit=\(limit); live matcher state untouched"
+        )
+    }
+
+    func restoreLiveSpeedLimitStateAfterMarkerProbe() {
+        speedMarkerProbeFollowupTask?.cancel()
+        speedMarkerProbeFollowupTask = nil
+        guard bluetooth.state == .connected else {
+            speedMarkerProbeStatus = "Restore pending — HUD not connected"
+            return
+        }
+
+        if showSpeedLimit, currentSpeedLimitMph > 0 {
+            resendCurrentLimitIfPossible()
+            speedMarkerProbeStatus = "Restored live \(currentSpeedLimitMph) mph state"
+        } else {
+            bluetooth.enqueue(
+                HudCommands.speedLimit(limit: 0, tolerance: 0),
+                label: "Marker probe restore → live sign cleared"
+            )
+            bluetooth.enqueue(
+                HudCommands.speedWarningThreshold(0),
+                label: "Marker probe restore → live warning cleared"
+            )
+            speedMarkerProbeStatus = "Restored live no-limit state"
+        }
+        logger.log("SPEED MARKER PROBE", speedMarkerProbeStatus)
     }
 
     private func resendCurrentLimitIfPossible() {

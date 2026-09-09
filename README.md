@@ -1,3 +1,13 @@
+# v90.34.15 — temporary stock speed-marker probe + time/weather boot persistence
+
+v90.34.15 keeps the v90.34.14 production speed-limit logic unchanged and adds a temporary Vehicle-screen A/B probe for the small native speed-limit marker. Probe A sends the exact decompiled HUDWAY Drive 1.4.6 Automatic-mode sequence (`HudSpeedLimitAndTolerance(limit=0,tolerance=0,style=0)` followed by `DisplaySpeedWarning(testLimit)`). Probe B then restores the normal square sign after 350 ms; Probe C sends the current production sequence; a Restore button returns to the live matcher state. The diagnostic does not mutate source selection, cached limit, confidence, or saved settings.
+
+The September 9 log also exposed the fresh-boot time/weather regression: the saved setting was OFF and OFF packets were sent, but they preceded subsequent Freeride/Navigation dashboard-profile reconstruction. v90.34.15 now sends the persisted time/weather state after dashboard reconstruction and performs one debounced 300 ms post-profile reassert whenever a Freeride or Navigation profile is applied. Enabled remains enabled; disabled remains disabled.
+
+See `docs/V90_34_15_SPEED_MARKER_PROBE_TIME_WEATHER_BOOT.md`.
+
+---
+
 # v90.34.14 — native speed-limit marker + post-color ambient brightness restore
 
 v90.34.14 builds on v90.34.13 without changing the validated Apple Maps arrival fix, CarPlay lane guidance, ETA, speed-limit matching, Scale/Perspective, or the reorganized UI. It adds two focused field-behavior refinements.

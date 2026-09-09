@@ -16,7 +16,7 @@ final class V903414NativeSpeedMarkerAmbientColorRestoreTests: XCTestCase {
         XCTAssertTrue(commands.contains("command: 2, p1: 9, p2: 9"))
         XCTAssertTrue(speed.contains("func reassertOriginalSpeedMarker(reason: String)"))
         XCTAssertTrue(speed.contains("sendOriginalAutomaticSpeedWarning(legalLimitMph: currentSpeedLimitMph)"))
-        XCTAssertTrue(speed.contains("stock red threshold arc"))
+        XCTAssertTrue(speed.contains("DisplaySpeedWarning threshold"))
     }
 
     func testNavigationRendererSwapReassertsMarker() throws {
@@ -47,6 +47,6 @@ final class V903414NativeSpeedMarkerAmbientColorRestoreTests: XCTestCase {
         let ui = try source("HUDController/UI/VehicleView.swift")
         XCTAssertTrue(ui.contains("LabeledContent(\"Native speed marker\""))
         XCTAssertTrue(ui.contains("nativeSpeedMarkerStatus"))
-        XCTAssertTrue(ui.contains("small red speed-limit arc"))
+        XCTAssertTrue(ui.contains("temporary probe"))
     }
 }

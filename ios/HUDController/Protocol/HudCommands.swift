@@ -321,6 +321,17 @@ enum HudCommands {
         return HudProtocol.frame(command: 2, p1: 101, p2: 2, payload: payload)
     }
 
+    /// v90.34.15 diagnostic-only form of HudSpeedLimitAndToleranceCommandPacket.
+    /// Production `speedLimit(...)` remains rectangular/style=1. This helper
+    /// exists only so the Vehicle probe can reproduce the original HUDWAY
+    /// Automatic-mode packet sequence byte-for-byte, including style=0.
+    static func speedLimitProbe(limit: Int, tolerance: Int = 0, style: Int) -> Data {
+        var payload = HudProtocol.int32(Int32(max(0, limit)))
+        payload.append(HudProtocol.int32(Int32(max(0, tolerance))))
+        payload.append(HudProtocol.int32(Int32(max(0, min(1, style)))))
+        return HudProtocol.frame(command: 2, p1: 101, p2: 2, payload: payload)
+    }
+
     /// Decompiled DisplaySpeedWarningCommandPacket(command=2, p1=9, p2=9)
     static func speedWarningThreshold(_ value: Int) -> Data {
         HudProtocol.frame(

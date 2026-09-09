@@ -1,0 +1,35 @@
+HUD Controller v90.34.15 build verification
+===========================================
+
+Base: v90.34.14 Native Speed Marker + Ambient Color Restore FullRepo
+
+Requested changes
+-----------------
+1. Production speed-limit logic remains unchanged.
+2. Added a temporary Vehicle-tab speed-marker probe:
+   A = exact decompiled HUDWAY Drive 1.4.6 Automatic/TRAVEL branch
+       HudSpeedLimitAndTolerance(limit=0,tolerance=0,style=0)
+       -> DisplaySpeedWarning(testLimit)
+   B = A, then restore normal square sign after 350 ms
+   C = current production limit+warning sequence
+   Restore = return to current live matcher state
+3. Fresh-boot time/weather persistence fix:
+   persisted state is sent after dashboard/profile reconstruction and reasserted
+   once more after a 300 ms debounced settling interval.
+
+Validation performed in this environment
+----------------------------------------
+- pytest: 299 passed
+- swiftc -parse: 170 Swift files, 0 failures
+- YAML parse: 10 files, 0 failures
+- Full Xcode/iOS simulator compile/link/XCTest: not available in Linux container;
+  GitHub iOS CI remains authoritative for that stage.
+
+Safety / scope
+--------------
+- No HUD firmware/APK/system write added.
+- No U2W firmware/exporter change.
+- No production OSM/CarPlay speed matcher behavior changed.
+- No ambient-light behavior change from v90.34.14.
+- ZIP integrity: PASS
+- ZIP cache/build junk: 0

@@ -15,7 +15,7 @@ def test_native_speed_marker_uses_stock_display_speed_warning_packet():
     assert "func reassertOriginalSpeedMarker(reason: String)" in speed
     assert "sendOriginalAutomaticSpeedWarning(legalLimitMph: currentSpeedLimitMph)" in speed
     assert '"SPEED MARKER"' in speed
-    assert "stock red threshold arc" in speed
+    assert "DisplaySpeedWarning threshold" in speed
     assert "HudCommands.speedWarningThreshold(0)" in speed
 
 
@@ -39,7 +39,7 @@ def test_vehicle_ui_exposes_native_marker_state_and_manual_widget_reasserts():
     assert 'reassertOriginalSpeedMarker(reason: "Freeride widget profile applied")' in ui
     assert 'reassertOriginalSpeedMarker(reason: "Navigation widget profile applied")' in ui
     assert "DisplaySpeedWarning threshold" in ui
-    assert "small red speed-limit arc" in ui
+    assert "temporary probe" in ui
 
 
 def test_manual_color_write_restores_resolved_preferred_brightness():

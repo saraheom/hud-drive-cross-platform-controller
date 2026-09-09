@@ -2,6 +2,7 @@ import SwiftUI
 
 struct VehicleView: View {
     @Bindable var state: AppState
+    @State private var speedMarkerProbeLimitMph = 25
 
     var body: some View {
         NavigationStack {
@@ -129,9 +130,54 @@ struct VehicleView: View {
                             HudDescription("""
                             \(state.speedEngine.sourceMode.shortDescription)
 
-                            Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Switching sources clears the previous sign until the selected matcher produces a fresh result. Speed warning follows the posted speed limit automatically. For a confirmed posted limit, the app now reasserts the original HUDWAY DisplaySpeedWarning threshold after Freeride/Navigation renderer changes. This is the stock firmware path that draws the small red speed-limit arc; it does not draw a custom gauge on the iPhone. Display-only/inferred limits remain intentionally ineligible for the native warning/marker.
+                            Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Switching sources clears the previous sign until the selected matcher produces a fresh result. Speed warning follows the posted speed limit automatically. For a confirmed posted limit, the app now reasserts the original HUDWAY DisplaySpeedWarning threshold after Freeride/Navigation renderer changes. This is the stock DisplaySpeedWarning path used by HUDWAY Drive; v90.34.15 no longer assumes that packet alone owns the small red arc. The temporary probe below can reproduce the original Automatic/TRAVEL branch sequence without changing live speed-limit logic. Display-only/inferred limits remain intentionally ineligible for the native warning/marker.
 
                             Current keeps the decompiled HUDWAY matcher unchanged. OSM Trace preserves the rolling explicit-maxspeed matcher used in the latest road test for direct A/B comparison. Improved + Philly GIS loads nearby drivable OSM roads, strengthens road continuity, and inside Philadelphia cross-checks the City’s public Street Speed Limits and Residential Streets layers. Outside Philadelphia, the improved mode automatically continues with improved OSM only. Ambient-light overspeed warning controls now live entirely in the Ambient tab and consume this selected speed-limit result.
+                            """)
+                        }
+                    }
+
+                    section("SPEED MARKER PROBE — TEMPORARY") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Stepper(
+                                "Test threshold: \(speedMarkerProbeLimitMph) mph",
+                                value: $speedMarkerProbeLimitMph,
+                                in: 5...100,
+                                step: 5
+                            )
+
+                            Button("A — Exact original Automatic/TRAVEL sequence") {
+                                state.speedEngine.runOriginalAutomaticMarkerProbe(
+                                    limitMph: speedMarkerProbeLimitMph,
+                                    restoreProductionSign: false
+                                )
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("B — Original sequence + restore square sign") {
+                                state.speedEngine.runOriginalAutomaticMarkerProbe(
+                                    limitMph: speedMarkerProbeLimitMph,
+                                    restoreProductionSign: true
+                                )
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("C — Current production sequence") {
+                                state.speedEngine.runCurrentProductionMarkerProbe(
+                                    limitMph: speedMarkerProbeLimitMph
+                                )
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("Restore live speed-limit state") {
+                                state.speedEngine.restoreLiveSpeedLimitStateAfterMarkerProbe()
+                            }
+                            .buttonStyle(.bordered)
+
+                            LabeledContent("Probe status", value: state.speedEngine.speedMarkerProbeStatus)
+
+                            HudDescription("""
+                            This block is diagnostic only. It does not change the selected speed-limit source, cached road limit, warning eligibility, or saved settings. A sends the decompiled HUDWAY Drive 1.4.6 Automatic/TRAVEL branch sequence exactly: HudSpeedLimitAndTolerance(limit=0, tolerance=0, style=0), followed by DisplaySpeedWarning(test threshold). B runs the same sequence, then restores our normal square speed-limit sign after 350 ms so we can see whether the native marker survives. C is the v90.34.14 production sequence for direct A/B comparison. Use Restore live speed-limit state when finished.
                             """)
                         }
                     }

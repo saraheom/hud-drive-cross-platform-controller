@@ -74,6 +74,10 @@ final class HudOBDController {
     private(set) var supportedPIDs = ""
     private(set) var status = "Not connected"
     var onConnectionChanged: ((Bool) -> Void)?
+    /// Some HUD firmware builds re-apply their default bottom time/weather panel
+    /// when a dashboard profile is reconstructed. AppState uses this callback to
+    /// reassert the persisted time/weather choice *after* the profile packet.
+    var onDashboardProfileApplied: ((String) -> Void)?
 
     var freerideLeft: HudSideWidget { didSet { saveWidget(freerideLeft, key: "HUD.Widget.freerideLeft") } }
     var freerideRight: HudSideWidget { didSet { saveWidget(freerideRight, key: "HUD.Widget.freerideRight") } }
@@ -210,6 +214,7 @@ final class HudOBDController {
             "DASHBOARD",
             "Freeride type=0 left=\(freerideLeft.rawValue) center=Simple right=\(freerideRight.rawValue)"
         )
+        onDashboardProfileApplied?("Freeride")
     }
 
     func applyNavigationWidgets() {
@@ -227,6 +232,7 @@ final class HudOBDController {
             "DASHBOARD",
             "Navigation type=1 left=\(navigationLeft.rawValue) center=Navigation right=\(navigationRight.rawValue)"
         )
+        onDashboardProfileApplied?("Navigation")
     }
 
     func hudDidBecomeReady() {

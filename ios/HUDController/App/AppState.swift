@@ -23,6 +23,7 @@ final class AppState {
     private var firmwareMaintenanceTask: Task<Void, Never>?
     private var displayScaleApplyTask: Task<Void, Never>?
     private var displayPerspectiveApplyTask: Task<Void, Never>?
+    private var timeWeatherPostDashboardTask: Task<Void, Never>?
 
     // v90.34.9 persistent stock-music experiment. Static inspection of the
     // HUDWAY Drive launcher shows MusicNotificationPacket is consumed directly
@@ -110,8 +111,9 @@ final class AppState {
         navigation.onNavigationModeChanged = { [weak speedEngine] active in
             // The stock HUD can instantiate a fresh gauge renderer when the
             // active dashboard mode changes. Re-send the original HUDWAY
-            // DisplaySpeedWarning threshold shortly afterward so the red limit
-            // arc is available in Freeride Simple and Navigation Speedo alike.
+            // DisplaySpeedWarning threshold shortly afterward so the stock
+            // warning state is available to a fresh Freeride Simple or Navigation
+            // Speedo renderer. Physical red-arc ownership remains under test.
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(150))
                 speedEngine?.reassertOriginalSpeedMarker(
@@ -124,6 +126,9 @@ final class AppState {
         }
         let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
         self.ambientLight = ambientLight
+        obd.onDashboardProfileApplied = { [weak self] profile in
+            self?.scheduleTimeWeatherPostDashboardReassert(reason: "\(profile) dashboard profile applied")
+        }
         routeGuidance.onLaneGuidanceChanged = { [weak self] state in
             self?.receiveLiveLaneGuidance(state)
         }
@@ -188,6 +193,8 @@ final class AppState {
             self.hudRehydrateTask = nil
             self.hudReassertTask?.cancel()
             self.hudReassertTask = nil
+            self.timeWeatherPostDashboardTask?.cancel()
+            self.timeWeatherPostDashboardTask = nil
             self.laneGuidanceRefreshTask?.cancel()
             self.laneGuidanceRefreshTask = nil
             self.laneRightSideProbeActive = false
@@ -288,6 +295,29 @@ final class AppState {
 
     func applyTimeWeather() {
         bluetooth.enqueue(HudCommands.timeWeather(settings.showTimeWeather), label: "Time/weather \(settings.showTimeWeather)")
+    }
+
+    /// Dashboard/profile reconstruction on the physical 1.1.27 firmware can
+    /// restore the bottom time/weather panel to its boot default after an earlier
+    /// OFF packet. Reassert the *current persisted setting* after the profile has
+    /// settled. This is debounced because rehydration writes Freeride and
+    /// Navigation profiles back-to-back.
+    private func scheduleTimeWeatherPostDashboardReassert(reason: String) {
+        timeWeatherPostDashboardTask?.cancel()
+        timeWeatherPostDashboardTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, !Task.isCancelled, self.bluetooth.state == .connected else { return }
+            let enabled = self.settings.showTimeWeather
+            self.bluetooth.enqueue(
+                HudCommands.timeWeather(enabled),
+                label: "Post-dashboard time/weather \(enabled) — \(reason)"
+            )
+            self.logger.log(
+                "TIME/WEATHER",
+                "Reasserted persisted state=\(enabled ? "ON" : "OFF") after dashboard profile reason=\(reason)"
+            )
+            self.timeWeatherPostDashboardTask = nil
+        }
     }
 
     // MARK: - Original HUDWAY display calibration
@@ -443,6 +473,7 @@ final class AppState {
             HudCommands.dashboard(left: p.left, center: p.center, right: p.right, navigationLayout: p.navigationLayout),
             label: "Dashboard \(p.name)"
         )
+        scheduleTimeWeatherPostDashboardReassert(reason: "Dashboard preset \(p.name)")
     }
 
 
@@ -824,6 +855,7 @@ final class AppState {
             "HUD LANE PROBE",
             "\(reconfiguring ? "reconfigure" : "activate") right=\(rightWidget) replaces ETA center=Navigation reason=\(reason); stock-only/no filesystem write"
         )
+        scheduleTimeWeatherPostDashboardReassert(reason: "Lane right-side probe dashboard")
 
         // setWidgets() creates a fresh widget and hydrates cached values, but
         // explicitly re-send the current maneuver so any hidden side navigation
@@ -1381,12 +1413,14 @@ final class AppState {
 
         bluetooth.enqueue(HudCommands.imperialUnits(), label: "Persisted units → imperial (mi/mph)")
         applyBrightness()
-        applyTimeWeather()
         applyDisplayCalibration()
         applyColorTheme()
         applyNotificationSettings()
         obd.hudDidBecomeReady()
         restoreDashboardOperatingMode(reason: "phase 2 persisted state / \(reason)")
+        // Important ordering: dashboard/profile packets can restore firmware's
+        // default bottom panel, so the persisted time/weather state must follow.
+        applyTimeWeather()
         ambientLight.rehydrateHUDState()
         speedEngine.primeRectangularStyle()
         speedEngine.rehydrateHUDState()
@@ -1414,9 +1448,11 @@ final class AppState {
         applyBrightness()
         applyDisplayCalibration()
         applyColorTheme()
-        applyTimeWeather()
         obd.applyWidgetSelection()
         restoreDashboardOperatingMode(reason: "phase 3 display reassert / \(reason)")
+        // Final authoritative packet after dashboard reconstruction. The
+        // onDashboardProfileApplied callback also performs one delayed reassert.
+        applyTimeWeather()
         ambientLight.rehydrateHUDState()
         speedEngine.rehydrateHUDState()
 
