@@ -31,6 +31,11 @@ final class HudNavigationController {
     let bluetooth: HudBluetoothManager
     let logger: LogManager
 
+    /// v90.34.14: lets AppState reassert the stock HUDWAY
+    /// DisplaySpeedWarning threshold after the firmware swaps between the
+    /// Freeride Simple renderer and the Navigation side-Speedo renderer.
+    var onNavigationModeChanged: ((Bool) -> Void)?
+
     init(bluetooth: HudBluetoothManager, logger: LogManager) {
         self.bluetooth = bluetooth
         self.logger = logger
@@ -56,6 +61,7 @@ final class HudNavigationController {
         if changed {
             bluetooth.enqueue(HudCommands.navigationState(true), label: "Navigation ON (\(owner.rawValue))")
             logger.log("DASHBOARD MODE", "Navigation active owner=\(owner.rawValue)")
+            onNavigationModeChanged?(true)
         }
     }
 
@@ -77,6 +83,7 @@ final class HudNavigationController {
         feedOwner = .manual
         bluetooth.enqueue(HudCommands.navigationState(false), label: "Navigation OFF (\(owner.rawValue))")
         logger.log("DASHBOARD MODE", "Navigation inactive; HUD Freeride mode active")
+        onNavigationModeChanged?(false)
     }
 
     func sendCurrent(owner: NavigationFeedOwner = .manual) {

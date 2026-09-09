@@ -1,3 +1,29 @@
+# v90.34.14 — native speed-limit marker + post-color ambient brightness restore
+
+v90.34.14 builds on v90.34.13 without changing the validated Apple Maps arrival fix, CarPlay lane guidance, ETA, speed-limit matching, Scale/Perspective, or the reorganized UI. It adds two focused field-behavior refinements.
+
+### Original HUDWAY native speed-limit marker
+
+The speed engine continues to use the decompiled HUDWAY Drive 1.4.6 `DisplaySpeedWarningCommandPacket` (`2 / 9 / 9`) with the threshold equal to the confirmed posted speed limit. No custom arc is rendered by the iPhone. The HUD firmware remains responsible for drawing the small red threshold segment on its native speed gauge. v90.34.14 now reasserts that stock threshold after the HUD swaps between Freeride and Navigation renderers, and after a manual Freeride/Navigation widget-profile apply. This is intended to preserve the original red marker on the center `Simple` Freeride gauge and make the same global threshold available to the left-side `Speedo` widget in Navigation. Navigation-side rendering remains a physical-HUD behavior to verify; no firmware graphic is fabricated.
+
+Lower-confidence/display-only limits retain the existing safety boundary: they may remain visible for continuity, but `DisplaySpeedWarning` is cleared so neither the native overspeed threshold nor its red marker is armed from an inferred value. Vehicle now shows a read-only **Native speed marker** status row reporting whether the stock threshold is armed.
+
+### Ambient RGB brightness restore
+
+The physical BLEDIM modules have been observed to jump to maximum brightness whenever an RGB/color command is written, matching behavior in the original BLEDIM app. v90.34.14 treats a manual color change (including device presets and group presets) as that hardware event and automatically returns the light to its semantic steady target.
+
+- BLEDIM2: after RGB is accepted, the runtime is treated as physically 100% and smoothly returned to the resolved target over 1.0 second.
+- Door: when vehicle day/night automation is enabled, the resolved target is the current confirmed Day or Night brightness selected by the Center/headlight state.
+- Other lights: the resolved target is that light's saved preferred brightness.
+- Groups: each member uses its own resolved target; a group color change does not force one common group brightness afterward.
+- Lotus/ELK-BLEDOM: because the recovered protocol exposes independent RGB and brightness writes but we have not observed the same forced-100% behavior, the resolved target is simply reasserted once after RGB instead of fabricating a 100% ramp.
+- Active Breath owns brightness: a manual RGB change does not cancel an active Breath; the existing animation's next frame and terminal target remain authoritative.
+- Active ambient overspeed overlay owns color: a manual color selection is saved but the hardware RGB write is deferred until the normal overspeed restore, preventing the warning from being overwritten mid-pulse.
+
+See `docs/V90_34_14_NATIVE_SPEED_MARKER_AMBIENT_COLOR_RESTORE.md` and `V90_34_14_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.13 — Apple Maps arrival zero-distance preservation
 
 v90.34.13 is a narrow Route Guidance correctness fix on top of v90.34.12.1. A September 7 Apple Maps field capture showed the U2W v8.8 exporter correctly reporting `distanceToManeuverMeters=0` and `distanceToManeuverText="0"` at the destination while Apple Maps kept a stale destination-placeholder maneuver-table entry at `1931 m / 1.2 mi`. The previous iOS resolver treated every numeric zero as missing and fell back to that stale table entry, so the physical HUD was explicitly sent 1931 m and displayed 1.2 mi even though the app's live U2W fields were already zero.

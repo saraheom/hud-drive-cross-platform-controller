@@ -421,6 +421,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     private var overspeedWarningColorWasApplied = false
     private let overspeedWarningCooldownSeconds: TimeInterval = 60.0
     private let overspeedRestoreTransitionSeconds: TimeInterval = 1.0
+    /// BLEDIM controllers physically jump to full brightness on an RGB write,
+    /// matching the official app behavior observed in the vehicle. After a manual
+    /// color/preset change, return to the currently resolved steady target over a
+    /// short fixed transition instead of leaving the module at 100%.
+    private let manualColorBrightnessRestoreSeconds: TimeInterval = 1.0
 
     /// UI deep-link token used by the persistent Ambient shortcut.
     private(set) var pairedLightsFocusRequest = 0
@@ -1045,7 +1050,84 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         updateDevice(id) { $0.color = color }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            _ = await self.sendColorWhenReady(id, color: color, reason: "manual")
+
+            // Do not overwrite an active red overspeed overlay. The desired new
+            // color is already persisted above, and the warning's normal terminal
+            // restore will read and apply that newest saved color.
+            if self.overspeedWarningActiveID == id {
+                self.logger.log(
+                    "AMBIENT COLOR",
+                    "Saved manual RGB for \(self.pairedDevice(id)?.displayName ?? id.uuidString); hardware write deferred until overspeed restore"
+                )
+                return
+            }
+
+            guard await self.sendColorWhenReady(id, color: color, reason: "manual") else { return }
+            await self.restorePreferredBrightnessAfterManualColor(id, reason: "manual RGB")
+        }
+    }
+
+    /// RGB writes on the physical BLEDIM modules reset their own brightness to
+    /// maximum. Restore the app's semantic steady-state target automatically:
+    /// Door uses the current confirmed Day/Night target when vehicle automation
+    /// is enabled; every other light uses its saved preferred brightness.
+    ///
+    /// Active Breath preparation/animation remains the brightness owner. Its next
+    /// animation frame corrects any transient module-side RGB brightness reset and
+    /// its terminal frame already resolves the proper steady target.
+    private func restorePreferredBrightnessAfterManualColor(_ id: UUID, reason: String) async {
+        guard let device = pairedDevice(id), device.powerOn, isControllable(id) else { return }
+        let target = steadyBrightnessTarget(for: device)
+
+        if activeBreathIDs.contains(id) || breathPrepareTasks[id] != nil {
+            activeBreathReturnBrightness[id] = target
+            logger.log(
+                "AMBIENT COLOR",
+                "RGB restore delegated to active Breath for \(device.displayName) target=\(target)% reason=\(reason)"
+            )
+            return
+        }
+
+        // A manual color choice is the newest steady-state action. If an ordinary
+        // brightness fade was in progress, replace it with the post-RGB restore so
+        // the hardware's physical 100% jump cannot remain out of sync with our
+        // runtime model.
+        cancelBrightnessTransition(for: id)
+
+        switch device.protocolKind {
+        case .bledim2:
+            // Field behavior: command 0x82 (RGB) also drives the controller to
+            // maximum brightness. Reflect that transient physical state in-memory
+            // only, then use the existing synchronized fade engine back to target.
+            if let index = pairedDevices.firstIndex(where: { $0.id == id }) {
+                pairedDevices[index].lastAppliedBrightness = 100
+            }
+            logger.log(
+                "AMBIENT COLOR",
+                "BLEDIM RGB assumed physical 100% → restoring \(device.displayName) to \(target)% over \(String(format: "%.1f", manualColorBrightnessRestoreSeconds))s reason=\(reason)"
+            )
+            transitionBrightness(
+                ids: [id],
+                targets: [id: target],
+                over: manualColorBrightnessRestoreSeconds,
+                reason: "post-RGB preferred brightness restore"
+            )
+
+        case .lotusLantern:
+            // The recovered Lotus protocol has independent RGB and brightness
+            // packets, but we have not observed the same forced-100% behavior.
+            // Reassert the resolved target once without fabricating a max-brightness
+            // ramp; this is idempotent if Lotus preserved its brightness.
+            _ = await applyRuntimeBrightnessWhenReady(
+                id,
+                percent: target,
+                reason: "post-RGB preferred brightness restore",
+                persist: true
+            )
+            logger.log(
+                "AMBIENT COLOR",
+                "Lotus RGB steady target reasserted \(device.displayName)=\(target)% reason=\(reason)"
+            )
         }
     }
 

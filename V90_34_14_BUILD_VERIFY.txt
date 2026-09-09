@@ -1,0 +1,46 @@
+v90.34.14 local verification
+================================
+Base: v90.34.13 Apple Maps arrival zero-distance preservation
+Scope: original HUDWAY native speed-limit threshold marker reassertion + ambient post-RGB brightness restore
+
+Local checks completed
+----------------------
+Python/static regression tests: 293 passed
+Swift syntax parse: 169 files, 0 failures
+YAML parse: 10 files, 0 failures
+
+Runtime/source changes
+----------------------
+- ios/HUDController/App/AppState.swift
+  Hooks Navigation mode changes and reasserts the stock DisplaySpeedWarning threshold after a short renderer-settle delay.
+- ios/HUDController/Navigation/HudNavigationController.swift
+  Publishes Navigation ON/OFF renderer transitions to AppState.
+- ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift
+  Adds read-only native marker status and a narrow stock threshold reassert method. Confirmed limits use the original posted-limit threshold; display-only/inferred limits still clear it.
+- ios/HUDController/UI/VehicleView.swift
+  Shows Native speed marker status and reasserts the threshold after manual Freeride/Navigation widget-profile applies.
+- ios/HUDController/Vehicle/AmbientLightMonitor.swift
+  After manual RGB writes, BLEDIM2 assumes the observed physical 100% brightness reset and returns to the resolved steady target over 1.0 s. Door resolves Day/Night from the existing Center/headlight state; other lights use preferred brightness. Lotus reasserts target once. Breath/overspeed ownership is preserved.
+- ios/HUDController/UI/AmbientLightingView.swift
+  Documents post-color per-light brightness restore behavior for individual lights and groups.
+
+Regression coverage added
+-------------------------
+- ios/HUDControllerTests/V903414NativeSpeedMarkerAmbientColorRestoreTests.swift
+- tests/test_v90_34_14_native_speed_marker_ambient_color_restore.py
+
+Unchanged functional boundaries
+-------------------------------
+- U2W v8.8 exporter/firmware
+- Apple Maps v90.34.13 explicit-zero arrival fix
+- Google Maps/Apple Maps/Waze source priority
+- 0x5204 lane decoding and lane presentation policy
+- ETA handling
+- legal speed-limit matching/provider logic
+- ambient Breath waveform and overspeed warning behavior, except color-change restore ownership
+- HUD Scale/Perspective
+- firmware maintenance / boot-animation path
+
+Build limitation
+----------------
+This Linux container cannot perform the authoritative Xcode/iOS Simulator build or XCTest run. GitHub iOS CI remains authoritative for full compile/link/test validation. Local Swift parsing, Python/static regressions, YAML parsing, and archive integrity were completed here.

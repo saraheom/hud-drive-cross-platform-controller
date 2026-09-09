@@ -598,7 +598,7 @@ struct AmbientDeviceControlView: View {
                                     .font(.caption)
                             }
 
-                            HudDescription("Manual brightness changes use the global \(String(format: "%.1f", monitor.brightnessTransitionSeconds)) s smooth transition instead of jumping directly to the target.")
+                            HudDescription("Manual brightness changes use the global \(String(format: "%.1f", monitor.brightnessTransitionSeconds)) s smooth transition instead of jumping directly to the target. After a color or preset change, BLEDIM modules are automatically returned from their physical 100% RGB-reset brightness to this light's resolved preferred target over about 1 second. Door resolves to the current Day/Night target when vehicle automation is active.")
 
                             if device.role == .door, monitor.vehicleAutomationEnabled {
                                 HudDescription("When the engine session is active, Door steady-state brightness follows the Day/Night targets on the main Ambient Lighting page. The generic preferred value remains saved for manual use.")
@@ -809,7 +809,7 @@ struct AmbientGroupControlView: View {
                             )
                             .disabled(group.memberIDs.isEmpty)
 
-                            HudDescription("Tap a color block to apply it to the whole group. Tap the pencil under any slot to replace that preset with the current picker color.")
+                            HudDescription("Tap a color block to apply it to the whole group. Tap the pencil under any slot to replace that preset with the current picker color. A group color change restores each member to its own resolved steady brightness afterward; Door therefore returns to its current Day/Night target rather than inheriting one common group brightness.")
                         }
                     }
 

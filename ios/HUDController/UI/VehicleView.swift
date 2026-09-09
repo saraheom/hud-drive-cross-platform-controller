@@ -52,7 +52,10 @@ struct VehicleView: View {
                             )) {
                                 ForEach(HudSideWidget.allCases) { Text($0.displayName).tag($0) }
                             }
-                            Button("Apply Freeride Widgets") { state.obd.applyFreerideWidgets() }
+                            Button("Apply Freeride Widgets") {
+                                state.obd.applyFreerideWidgets()
+                                state.speedEngine.reassertOriginalSpeedMarker(reason: "Freeride widget profile applied")
+                            }
                                 .buttonStyle(.borderedProminent)
 
                             Divider()
@@ -69,7 +72,10 @@ struct VehicleView: View {
                             )) {
                                 ForEach(HudSideWidget.allCases) { Text($0.displayName).tag($0) }
                             }
-                            Button("Apply Navigation Widgets") { state.obd.applyNavigationWidgets() }
+                            Button("Apply Navigation Widgets") {
+                                state.obd.applyNavigationWidgets()
+                                state.speedEngine.reassertOriginalSpeedMarker(reason: "Navigation widget profile applied")
+                            }
                                 .buttonStyle(.borderedProminent)
 
                             HudDescription("This uses the original app's HUD-managed OBD connection packets. Visible Freeride and Navigation side widgets are configured separately with the original HudWidgetCommandPacket (111/0).")
@@ -109,6 +115,7 @@ struct VehicleView: View {
                                     ? "\(state.speedEngine.currentSpeedLimitMph) mph\(state.speedEngine.speedLimitAvailableForWarning ? "" : " • warning off")"
                                     : "—"
                             )
+                            LabeledContent("Native speed marker", value: state.speedEngine.nativeSpeedMarkerStatus)
                             LabeledContent("Source", value: state.speedEngine.sourceMode.rawValue)
                             Text(state.speedEngine.status)
                                 .font(.caption)
@@ -122,7 +129,7 @@ struct VehicleView: View {
                             HudDescription("""
                             \(state.speedEngine.sourceMode.shortDescription)
 
-                            Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Switching sources clears the previous sign until the selected matcher produces a fresh result. The HUD's native warning threshold continues to follow the posted limit exactly.
+                            Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Switching sources clears the previous sign until the selected matcher produces a fresh result. Speed warning follows the posted speed limit automatically. For a confirmed posted limit, the app now reasserts the original HUDWAY DisplaySpeedWarning threshold after Freeride/Navigation renderer changes. This is the stock firmware path that draws the small red speed-limit arc; it does not draw a custom gauge on the iPhone. Display-only/inferred limits remain intentionally ineligible for the native warning/marker.
 
                             Current keeps the decompiled HUDWAY matcher unchanged. OSM Trace preserves the rolling explicit-maxspeed matcher used in the latest road test for direct A/B comparison. Improved + Philly GIS loads nearby drivable OSM roads, strengthens road continuity, and inside Philadelphia cross-checks the City’s public Street Speed Limits and Residential Streets layers. Outside Philadelphia, the improved mode automatically continues with improved OSM only. Ambient-light overspeed warning controls now live entirely in the Ambient tab and consume this selected speed-limit result.
                             """)

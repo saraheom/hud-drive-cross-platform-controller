@@ -268,6 +268,19 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// speed-limit availability to the ambient warning controller.
     var onSpeedStateChanged: ((Int, Int, Bool) -> Void)?
 
+    /// User-facing state for the original HUDWAY DisplaySpeedWarning renderer.
+    /// When armed, firmware draws the native short red threshold arc on its
+    /// speed gauge(s); inferred/display-only limits deliberately do not arm it.
+    var nativeSpeedMarkerStatus: String {
+        guard showSpeedLimit, currentSpeedLimitMph > 0 else {
+            return "Off — no posted limit"
+        }
+        guard currentLimitWarningEligible else {
+            return "Off — display-only limit"
+        }
+        return "\(currentSpeedLimitMph) mph • stock red threshold arc"
+    }
+
     var sourceMode: SpeedLimitSourceMode {
         didSet {
             UserDefaults.standard.set(sourceMode.rawValue, forKey: "HUD.Speed.limitSource")
@@ -439,6 +452,31 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             HudCommands.speedWarningThreshold(legalLimitMph),
             label: "Original auto speed warning threshold = posted limit \(legalLimitMph) mph"
         )
+    }
+
+    /// Reassert only the original HUDWAY `DisplaySpeedWarningCommandPacket`
+    /// state. Dashboard profile/mode changes can construct a fresh Simple or
+    /// Speedo renderer, so the stock threshold is resent after those transitions
+    /// without altering the legal-limit matcher or fabricating any graphics.
+    func reassertOriginalSpeedMarker(reason: String) {
+        guard bluetooth.state == .connected else { return }
+
+        if showSpeedLimit, currentSpeedLimitMph > 0, currentLimitWarningEligible {
+            sendOriginalAutomaticSpeedWarning(legalLimitMph: currentSpeedLimitMph)
+            logger.log(
+                "SPEED MARKER",
+                "Reasserted stock red threshold arc at \(currentSpeedLimitMph) mph reason=\(reason)"
+            )
+        } else {
+            bluetooth.enqueue(
+                HudCommands.speedWarningThreshold(0),
+                label: "Native speed marker OFF — \(reason)"
+            )
+            logger.log(
+                "SPEED MARKER",
+                "Cleared stock threshold arc reason=\(reason) showLimit=\(showSpeedLimit ? 1 : 0) limit=\(currentSpeedLimitMph) eligible=\(currentLimitWarningEligible ? 1 : 0)"
+            )
+        }
     }
 
     private func resendCurrentLimitIfPossible() {

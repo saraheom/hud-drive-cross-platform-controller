@@ -107,6 +107,18 @@ final class AppState {
         }
         let speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)
         self.speedEngine = speedEngine
+        navigation.onNavigationModeChanged = { [weak speedEngine] active in
+            // The stock HUD can instantiate a fresh gauge renderer when the
+            // active dashboard mode changes. Re-send the original HUDWAY
+            // DisplaySpeedWarning threshold shortly afterward so the red limit
+            // arc is available in Freeride Simple and Navigation Speedo alike.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(150))
+                speedEngine?.reassertOriginalSpeedMarker(
+                    reason: active ? "Navigation renderer activated" : "Freeride renderer activated"
+                )
+            }
+        }
         routeGuidance.onRoadContextChanged = { [weak speedEngine] context in
             speedEngine?.updateCarPlayRouteContext(context)
         }
