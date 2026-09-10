@@ -1,0 +1,28 @@
+v90.34.17 local verification
+
+Base
+----
+- Full-repository base: v90.34.16.1.
+- v90.34.16 runtime behavior is preserved; v90.34.16.1 CI correction is included.
+
+Scope
+-----
+- Added CarPlayMapPreview.imageset from the recovered MainVideo map crop.
+- Added NavigationHUDPreviewCard.swift.
+- Added the preview card to the iOS 26 Navigation screen.
+- Added documentation and regression tests.
+
+Behavior boundary
+-----------------
+- Preview reads live route/speed state when available.
+- Preview falls back to sample values while parked.
+- Layout, map-size, crop, fade, and nudge controls are local @State only.
+- No HUD/BLE/navigation/OBD/ambient/U2W/firmware runtime sender is invoked by the preview.
+
+Validation
+----------
+- Python/static test suite: 310 passed.
+- Swift syntax parse: 172 files passed.
+- YAML parse: 10 files passed.
+- Asset catalog JSON parse: passed.
+- GitHub Actions/Xcode simulator: not available locally; remains authoritative for full iOS compile/XCTest.

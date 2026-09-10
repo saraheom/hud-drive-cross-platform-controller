@@ -1,3 +1,15 @@
+# v90.34.17 — Navigation map-video layout preview UI
+
+v90.34.17 builds directly on v90.34.16.1 and adds the new **Map Video Display (Preview)** card to the iOS 26 Navigation screen. It uses the recovered CarPlay MainVideo map crop as the center visual and composes the proposed HUD layout as **speed / speed limit on the left, map in the center, maneuver + distance + street + lane guidance + ETA on the right**.
+
+The preview prefers current app telemetry when a live route/speed is available and falls back to clearly illustrative sample values while parked. Preview-only controls allow Left–Center–Right, Map Focus, and Minimal compositions, map scale/crop adjustment, soft edge fading, and block nudging. These controls are intentionally local UI state: this release does **not** change HUD BLE packets, Route Guidance ownership, speed-limit matching, lane policy, U2W polling, ambient lighting, OBD, time/weather synchronization, or firmware-maintenance behavior.
+
+This is the visual/calibration step before wiring a validated CarPlay MainVideo transport into the physical HUD. The production navigation path remains exactly the v90.34.16.1 path.
+
+See `docs/V90_34_17_NAVIGATION_MAP_VIDEO_PREVIEW_UI.md` and `V90_34_17_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.16.1 — CI-only UART escape expectation fix
 
 v90.34.16.1 changes **no runtime Swift source and no physical HUD behavior** from v90.34.16. The GitHub Actions app build completed successfully; the workflow failed only in `V903416TimeWeatherColdOffSpeedGaugeProbeTests.testRecoveredSpeedGaugePacketsEncodeAsKivicSDKDefines`.

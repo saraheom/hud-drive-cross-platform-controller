@@ -72,12 +72,15 @@ struct HudNavigationView: View {
                             HudDescription("Persistent keeps the latest lane guidance visible for the current maneuver by reasserting the stock lane packet. Near Turn caches the lane data but displays it only inside the selected distance. Off clears lane graphics. Show Current Street controls the current-road line. Show Current Turn Text controls only the redundant language line such as ‘Turn right’, ‘Turn left’, or ‘U-turn’; the maneuver arrow, upcoming street name, distance, ETA, and route data remain unchanged.")
                         }
                     }
+
+                    NavigationHUDPreviewCard(state: state)
                 }
                 .padding()
             }
             .background(HudTheme.background.ignoresSafeArea())
             .navigationTitle("Navigation")
         }
+        .tint(Color(red: 0.20, green: 0.64, blue: 1.00))
     }
 }
 #endif
