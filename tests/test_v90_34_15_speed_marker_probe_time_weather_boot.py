@@ -32,7 +32,7 @@ def test_vehicle_ui_exposes_temporary_abc_marker_probe():
     assert 'Button("A — Exact original Automatic/TRAVEL sequence")' in ui
     assert 'Button("B — Original sequence + restore square sign")' in ui
     assert 'Button("C — Current production sequence")' in ui
-    assert 'Button("Restore live speed-limit state")' in ui
+    assert 'Button("Restore current HUD")' in ui
     assert "does not change the selected speed-limit source" in ui
 
 

@@ -321,7 +321,7 @@ enum HudCommands {
         return HudProtocol.frame(command: 2, p1: 101, p2: 2, payload: payload)
     }
 
-    /// v90.34.15 diagnostic-only form of HudSpeedLimitAndToleranceCommandPacket.
+    /// v90.34.15+ diagnostic-only form of HudSpeedLimitAndToleranceCommandPacket.
     /// Production `speedLimit(...)` remains rectangular/style=1. This helper
     /// exists only so the Vehicle probe can reproduce the original HUDWAY
     /// Automatic-mode packet sequence byte-for-byte, including style=0.
@@ -332,11 +332,33 @@ enum HudCommands {
         return HudProtocol.frame(command: 2, p1: 101, p2: 2, payload: payload)
     }
 
+    /// Decompiled DisplaySpeedCommandPacket(command=2, p1=9, p2=3).
+    /// The Kivic SDK names this boolean `isSpeedInformationVisible` and defaults
+    /// it to true. Production behavior does not depend on this command; it is
+    /// exposed here for the temporary v90.34.16 red-arc/gauge probe only.
+    static func speedInformationVisible(_ enabled: Bool) -> Data {
+        HudProtocol.frame(
+            command: 2, p1: 9, p2: 3,
+            payload: Data([enabled ? 1 : 0])
+        )
+    }
+
     /// Decompiled DisplaySpeedWarningCommandPacket(command=2, p1=9, p2=9)
     static func speedWarningThreshold(_ value: Int) -> Data {
         HudProtocol.frame(
             command: 2, p1: 9, p2: 9,
             payload: HudProtocol.int32(Int32(max(0, value)))
+        )
+    }
+
+    /// Decompiled DisplaySpeedGaugeCommandPacket(command=2, p1=9, p2=12).
+    /// The stock SDK defaults this boolean to true. The production HUDWAY 1.4.6
+    /// Android path does not explicitly instantiate it, so this remains a
+    /// diagnostic probe rather than a production assumption.
+    static func speedGaugeEnabled(_ enabled: Bool) -> Data {
+        HudProtocol.frame(
+            command: 2, p1: 9, p2: 12,
+            payload: Data([enabled ? 1 : 0])
         )
     }
 

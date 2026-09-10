@@ -1,0 +1,56 @@
+HUD Controller v90.34.16 build verification
+===========================================
+
+Base
+----
+- Built directly from the supplied v90.34.15 FullRepo archive.
+- Production CarPlay/U2W navigation, lane guidance, ETA, speed-limit matcher,
+  ambient lighting, OBD, display Scale/Perspective, and firmware-maintenance
+  paths are intentionally unchanged outside the scoped changes below.
+
+Scoped runtime changes
+----------------------
+1. Time/weather cold-OFF synchronization
+   - Existing post-dashboard persisted-state reassert remains.
+   - After final Phase-3 rehydration, only when persisted Show Time/Weather is
+     OFF, one delayed ON -> OFF synchronization edge is sent.
+   - Delay ordering: 650 ms after Phase 3, transient ON, 350 ms, authoritative OFF.
+   - The persisted setting never changes.
+   - A user change to ON aborts the pending OFF synchronization.
+   - HUD disconnect/new rehydration cancels stale synchronization work.
+
+2. Expanded temporary red-arc/speed-gauge probe
+   - Added recovered Kivic SDK DisplaySpeedCommandPacket: 2 / 9 / 3 / boolean.
+   - Added recovered Kivic SDK DisplaySpeedGaugeCommandPacket: 2 / 9 / 12 / boolean.
+   - Existing A/B/C probes retained.
+   - Added D0 zero-threshold gauge test.
+   - Added D1 gauge + full stock Automatic/setSpeedTolerance chain.
+   - Added D2 DisplaySpeedGauge false -> true edge + D1 chain.
+   - Added D3 parked exact stock Freeride Speedo|Simple|Weather + D2 chain.
+   - Restore current HUD reapplies user dashboard/mode/time-weather/live speed
+     state and returns the experimental gauge boolean to OFF.
+   - No probe changes selected speed source, cached matcher result, warning
+     eligibility, or saved speed settings.
+
+Validation performed in this environment
+----------------------------------------
+- Python/static regression suite: 305 passed.
+- Swift syntax parse: 171 Swift files parsed successfully with swiftc -parse.
+- YAML parse: 10 YAML workflow/project files parsed successfully.
+- Full macOS/Xcode simulator/device compilation was NOT run in this Linux
+  environment; GitHub Actions/Xcode remains authoritative for full iOS compile.
+- Final FullRepo ZIP integrity is checked after archive creation.
+
+Primary new regression coverage
+-------------------------------
+- tests/test_v90_34_16_time_weather_cold_off_speed_gauge_probe.py
+- ios/HUDControllerTests/V903416TimeWeatherColdOffSpeedGaugeProbeTests.swift
+
+Field test notes
+----------------
+- D0 is the highest-value first test: with no live speed limit, check whether a
+  small red segment appears near zero.
+- D3 intentionally switches to the stock Freeride profile and Navigation OFF;
+  use it parked and tap Restore current HUD afterward.
+- Export HUD Controller logs after testing; SPEED MARKER PROBE, TX, and
+  TIME/WEATHER entries identify the transmitted sequence.

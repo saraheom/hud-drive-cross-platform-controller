@@ -1,3 +1,33 @@
+# v90.34.16 — cold-boot time/weather OFF synchronization + expanded native speed-gauge probe
+
+v90.34.16 builds directly on v90.34.15 and keeps the production navigation, CarPlay/U2W, speed-limit matching, ambient-light, OBD, lane-guidance, Scale/Perspective, and firmware-maintenance behavior unchanged outside two targeted areas.
+
+### Time/weather OFF cold-session synchronization
+
+Two independent physical-HUD commutes showed the same state mismatch: the saved **Show weather/current time** setting was OFF and multiple OFF packets were transmitted after dashboard reconstruction, yet the panel stayed visible until the user manually toggled ON and then OFF. Repeating another plain OFF packet therefore is not sufficient on this HUD 1.1.27 cold-start path.
+
+When the persisted setting is OFF, v90.34.16 now waits until the normal three-phase HUD rehydration and the existing 300 ms post-dashboard OFF reassert have completed, then performs one bounded synchronization edge: transient `timeWeather(true)`, wait 350 ms, then authoritative `timeWeather(false)`. The UserDefaults setting remains OFF the entire time. If the user changes the setting to ON before or during the sequence, the pending OFF synchronization aborts. Disconnects and a new HUD rehydration cancel any stale synchronization task.
+
+### Expanded red-arc / speed-gauge probe
+
+The v90.34.15 A/B/C controls remain. v90.34.16 adds diagnostic access to two recovered Kivic SDK packets that production code still does not assume are required:
+
+- `DisplaySpeedCommandPacket` = `2 / 9 / 3`, boolean speed-information visibility;
+- `DisplaySpeedGaugeCommandPacket` = `2 / 9 / 12`, boolean gauge visibility/state.
+
+New temporary probes:
+
+- **D0 — Gauge ON + zero threshold:** turns speed information/gauge on, resets the speed-limit packet to zero/style 0, and sends warning threshold 0. This directly tests the user's observation that the original HUD keeps a small red segment parked near zero when no posted limit exists.
+- **D1 — Gauge ON + full stock speed chain:** enables the recovered gauge state, sends the stock Automatic/TRAVEL reset + `DisplaySpeedWarning(testLimit)`, then sends the later `setSpeedTolerance` packet (`limit=test`, tolerance 0, style 0) present in the original Android `applyHUDSettings()` sequence.
+- **D2 — Gauge OFF→ON edge + stock chain:** forces a 350 ms false→true edge on `DisplaySpeedGauge`, then runs D1. This checks for a stale internal boolean/view relationship analogous to the time/weather issue.
+- **D3 — Exact stock Freeride + gauge edge (parked):** temporarily applies the physically observed original Freeride dashboard `Speedo | Simple | Weather`, forces Navigation OFF, then runs the D2 sequence. This changes the dashboard and should be used parked.
+
+**Restore current HUD** reapplies the user's Freeride/Navigation profiles, active dashboard mode, time/weather setting, turns the temporary experimental gauge boolean back OFF, and restores the current live speed-limit state. The probes do not change the selected speed-limit source, matcher cache, warning eligibility, or saved settings.
+
+See `docs/V90_34_16_TIME_WEATHER_COLD_OFF_SPEED_GAUGE_PROBE.md` and `V90_34_16_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.15 — temporary stock speed-marker probe + time/weather boot persistence
 
 v90.34.15 keeps the v90.34.14 production speed-limit logic unchanged and adds a temporary Vehicle-screen A/B probe for the small native speed-limit marker. Probe A sends the exact decompiled HUDWAY Drive 1.4.6 Automatic-mode sequence (`HudSpeedLimitAndTolerance(limit=0,tolerance=0,style=0)` followed by `DisplaySpeedWarning(testLimit)`). Probe B then restores the normal square sign after 350 ms; Probe C sends the current production sequence; a Restore button returns to the live matcher state. The diagnostic does not mutate source selection, cached limit, confidence, or saved settings.

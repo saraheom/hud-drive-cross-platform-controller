@@ -24,6 +24,7 @@ final class AppState {
     private var displayScaleApplyTask: Task<Void, Never>?
     private var displayPerspectiveApplyTask: Task<Void, Never>?
     private var timeWeatherPostDashboardTask: Task<Void, Never>?
+    private var timeWeatherColdOffSyncTask: Task<Void, Never>?
 
     // v90.34.9 persistent stock-music experiment. Static inspection of the
     // HUDWAY Drive launcher shows MusicNotificationPacket is consumed directly
@@ -195,6 +196,8 @@ final class AppState {
             self.hudReassertTask = nil
             self.timeWeatherPostDashboardTask?.cancel()
             self.timeWeatherPostDashboardTask = nil
+            self.timeWeatherColdOffSyncTask?.cancel()
+            self.timeWeatherColdOffSyncTask = nil
             self.laneGuidanceRefreshTask?.cancel()
             self.laneGuidanceRefreshTask = nil
             self.laneRightSideProbeActive = false
@@ -318,6 +321,66 @@ final class AppState {
             )
             self.timeWeatherPostDashboardTask = nil
         }
+    }
+
+    /// v90.34.16 cold-session synchronization for the physical 1.1.27 HUD.
+    /// Two independent drive logs showed that repeated OFF packets can be
+    /// ignored at cold boot until the launcher's internal panel state has first
+    /// crossed through ON. When the persisted setting is OFF, perform one
+    /// deliberate ON -> OFF edge after the final dashboard/profile rehydration.
+    /// The saved setting never changes, and any user change to ON aborts the
+    /// pending edge before another packet is sent.
+    private func scheduleTimeWeatherColdOffSynchronization(reason: String) {
+        timeWeatherColdOffSyncTask?.cancel()
+        guard !settings.showTimeWeather else { return }
+
+        timeWeatherColdOffSyncTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.timeWeatherColdOffSyncTask = nil }
+
+            // Let the normal 300 ms post-dashboard OFF reassert finish first.
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled,
+                  self.bluetooth.state == .connected,
+                  !self.settings.showTimeWeather else { return }
+
+            self.bluetooth.enqueue(
+                HudCommands.timeWeather(true),
+                label: "Cold-session time/weather sync edge -> transient ON"
+            )
+            self.logger.log(
+                "TIME/WEATHER",
+                "Cold-session OFF sync edge phase=ON reason=\(reason); persisted setting remains OFF"
+            )
+
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled,
+                  self.bluetooth.state == .connected,
+                  !self.settings.showTimeWeather else { return }
+
+            self.bluetooth.enqueue(
+                HudCommands.timeWeather(false),
+                label: "Cold-session time/weather sync edge -> authoritative OFF"
+            )
+            self.logger.log(
+                "TIME/WEATHER",
+                "Cold-session OFF sync edge phase=OFF complete reason=\(reason)"
+            )
+        }
+    }
+
+    /// Restore the normal dashboard/profile and speed-limit state after a
+    /// temporary speed-marker probe, including any D3 stock-Freeride override.
+    func restoreHUDAfterSpeedMarkerProbe() {
+        guard bluetooth.state == .connected else {
+            speedEngine.restoreLiveSpeedLimitStateAfterMarkerProbe()
+            return
+        }
+        obd.applyWidgetSelection()
+        restoreDashboardOperatingMode(reason: "speed-marker probe restore")
+        applyTimeWeather()
+        speedEngine.restoreLiveSpeedLimitStateAfterMarkerProbe()
+        logger.log("SPEED MARKER PROBE", "Restored current HUD dashboard + live speed-limit state")
     }
 
     // MARK: - Original HUDWAY display calibration
@@ -1368,6 +1431,8 @@ final class AppState {
     private func scheduleHUDRehydration(reason: String) {
         hudRehydrateTask?.cancel()
         hudReassertTask?.cancel()
+        timeWeatherColdOffSyncTask?.cancel()
+        timeWeatherColdOffSyncTask = nil
 
         hudRehydrateTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1390,6 +1455,7 @@ final class AppState {
                 guard let self, !Task.isCancelled,
                       self.bluetooth.state == .connected else { return }
                 self.reassertDisplayCriticalState(reason: reason)
+                self.scheduleTimeWeatherColdOffSynchronization(reason: reason)
                 self.hudReassertTask = nil
             }
 

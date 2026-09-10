@@ -27,7 +27,7 @@ final class V903415SpeedMarkerProbeTimeWeatherBootTests: XCTestCase {
         XCTAssertTrue(speed.contains("speedLimitProbe(limit: 0, tolerance: 0, style: 0)"))
         XCTAssertTrue(speed.contains("live matcher state untouched"))
         XCTAssertTrue(ui.contains("SPEED MARKER PROBE — TEMPORARY"))
-        XCTAssertTrue(ui.contains("Restore live speed-limit state"))
+        XCTAssertTrue(ui.contains("Restore current HUD"))
     }
 
     func testTimeWeatherReassertFollowsDashboardProfiles() throws {

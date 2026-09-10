@@ -272,7 +272,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     /// User-facing state for the original HUDWAY DisplaySpeedWarning threshold.
     /// The threshold is confirmed on-wire; whether it alone owns the small red
-    /// gauge marker is intentionally left unclaimed while v90.34.15 probes it.
+    /// gauge marker is intentionally left unclaimed while v90.34.16 expands the physical probe.
     var nativeSpeedMarkerStatus: String {
         guard showSpeedLimit, currentSpeedLimitMph > 0 else {
             return "Off — no posted limit"
@@ -482,7 +482,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    /// Temporary v90.34.15 diagnostic. This deliberately does NOT mutate the
+    /// Temporary v90.34.15+ diagnostic. This deliberately does NOT mutate the
     /// selected matcher, current limit, persistence, or production packet path.
     /// It reproduces the decompiled HUDWAY Drive 1.4.6 Automatic/TRAVEL branch sequence:
     /// HudSpeedLimitAndTolerance(limit=0,tolerance=0,style=0), then
@@ -555,6 +555,122 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         )
     }
 
+    /// D0: test the newly recovered Kivic `DisplaySpeedGauge` state with the
+    /// threshold intentionally parked at zero. The original physical HUD keeps
+    /// a small red segment near zero when no posted limit is available, so this
+    /// is the highest-value discriminator for gauge ownership.
+    func runSpeedGaugeZeroProbe() {
+        guard bluetooth.state == .connected else {
+            speedMarkerProbeStatus = "HUD not connected"
+            return
+        }
+        speedMarkerProbeFollowupTask?.cancel()
+        speedMarkerProbeFollowupTask = nil
+        bluetooth.enqueue(HudCommands.speedInformationVisible(true), label: "Gauge probe D0 -> DisplaySpeed ON")
+        bluetooth.enqueue(HudCommands.speedGaugeEnabled(true), label: "Gauge probe D0 -> DisplaySpeedGauge ON")
+        bluetooth.enqueue(
+            HudCommands.speedLimitProbe(limit: 0, tolerance: 0, style: 0),
+            label: "Gauge probe D0 -> stock limit/tolerance zero style=0"
+        )
+        bluetooth.enqueue(HudCommands.speedWarningThreshold(0), label: "Gauge probe D0 -> threshold 0 mph")
+        speedMarkerProbeStatus = "D0 sent — gauge ON, threshold 0"
+        logger.log("SPEED MARKER PROBE", "D0 gauge ON + threshold zero sent; live matcher state untouched")
+    }
+
+    /// D1: enable both recovered speed/gauge visibility states, then reproduce
+    /// the stock Automatic/TRAVEL speed-limit branch plus the later
+    /// `setSpeedTolerance(...)` packet from `applyHUDSettings()`. With tolerance
+    /// zero this is: limit=0/style=0 -> warning threshold -> limit=test/style=0.
+    func runSpeedGaugeStockChainProbe(limitMph: Int) {
+        guard bluetooth.state == .connected else {
+            speedMarkerProbeStatus = "HUD not connected"
+            return
+        }
+        let limit = max(5, min(100, limitMph))
+        speedMarkerProbeFollowupTask?.cancel()
+        speedMarkerProbeFollowupTask = nil
+        sendSpeedGaugeStockChain(limit: limit, prefix: "D1")
+        speedMarkerProbeStatus = "D1 sent — gauge ON + stock chain at \(limit) mph"
+        logger.log("SPEED MARKER PROBE", "D1 gauge ON + full stock Automatic/tolerance chain sent testLimit=\(limit); live matcher state untouched")
+    }
+
+    /// D2: force an explicit false -> true edge on DisplaySpeedGauge before the
+    /// D1 chain. This tests whether the physical launcher has the same stale
+    /// boolean/view relationship suspected for the time/weather panel.
+    func runSpeedGaugeEdgeProbe(limitMph: Int) {
+        guard bluetooth.state == .connected else {
+            speedMarkerProbeStatus = "HUD not connected"
+            return
+        }
+        let limit = max(5, min(100, limitMph))
+        speedMarkerProbeFollowupTask?.cancel()
+        bluetooth.enqueue(HudCommands.speedInformationVisible(true), label: "Gauge probe D2 -> DisplaySpeed ON")
+        bluetooth.enqueue(HudCommands.speedGaugeEnabled(false), label: "Gauge probe D2 -> DisplaySpeedGauge OFF edge")
+        speedMarkerProbeStatus = "D2 edge started — gauge OFF, ON + stock chain in 350 ms"
+        logger.log("SPEED MARKER PROBE", "D2 DisplaySpeedGauge OFF edge sent testLimit=\(limit)")
+
+        speedMarkerProbeFollowupTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let self, !Task.isCancelled, self.bluetooth.state == .connected else { return }
+            self.sendSpeedGaugeStockChain(limit: limit, prefix: "D2")
+            self.speedMarkerProbeStatus = "D2 sent — gauge OFF->ON edge + stock chain at \(limit) mph"
+            self.logger.log("SPEED MARKER PROBE", "D2 DisplaySpeedGauge OFF->ON edge + stock chain complete testLimit=\(limit)")
+            self.speedMarkerProbeFollowupTask = nil
+        }
+    }
+
+    /// D3: parked-only reproduction of the exact stock Freeride dashboard seen
+    /// in the physical HUD log (Speedo | Simple | Weather, type=0), followed by
+    /// the D2 gauge edge/stock speed chain. This intentionally changes the live
+    /// dashboard until the user taps Restore current HUD.
+    func runStockFreerideGaugeEdgeProbe(limitMph: Int) {
+        guard bluetooth.state == .connected else {
+            speedMarkerProbeStatus = "HUD not connected"
+            return
+        }
+        let limit = max(5, min(100, limitMph))
+        speedMarkerProbeFollowupTask?.cancel()
+        bluetooth.enqueue(
+            HudCommands.dashboard(left: "Speedo", center: "Simple", right: "Weather", navigationLayout: false),
+            label: "Gauge probe D3 -> exact stock Freeride Speedo|Simple|Weather"
+        )
+        bluetooth.enqueue(HudCommands.navigationState(false), label: "Gauge probe D3 -> stock Freeride Navigation OFF")
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "Gauge probe D3 -> stock keep alive")
+        speedMarkerProbeStatus = "D3 stock Freeride applied — gauge edge begins in 250 ms"
+        logger.log("SPEED MARKER PROBE", "D3 exact stock Freeride dashboard applied testLimit=\(limit)")
+
+        speedMarkerProbeFollowupTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard let self, !Task.isCancelled, self.bluetooth.state == .connected else { return }
+            self.bluetooth.enqueue(HudCommands.speedInformationVisible(true), label: "Gauge probe D3 -> DisplaySpeed ON")
+            self.bluetooth.enqueue(HudCommands.speedGaugeEnabled(false), label: "Gauge probe D3 -> DisplaySpeedGauge OFF edge")
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, self.bluetooth.state == .connected else { return }
+            self.sendSpeedGaugeStockChain(limit: limit, prefix: "D3")
+            self.speedMarkerProbeStatus = "D3 sent — stock Freeride + gauge edge + stock chain at \(limit) mph"
+            self.logger.log("SPEED MARKER PROBE", "D3 stock Freeride + gauge OFF->ON edge + stock chain complete testLimit=\(limit)")
+            self.speedMarkerProbeFollowupTask = nil
+        }
+    }
+
+    private func sendSpeedGaugeStockChain(limit: Int, prefix: String) {
+        bluetooth.enqueue(HudCommands.speedInformationVisible(true), label: "Gauge probe \(prefix) -> DisplaySpeed ON")
+        bluetooth.enqueue(HudCommands.speedGaugeEnabled(true), label: "Gauge probe \(prefix) -> DisplaySpeedGauge ON")
+        bluetooth.enqueue(
+            HudCommands.speedLimitProbe(limit: 0, tolerance: 0, style: 0),
+            label: "Gauge probe \(prefix) -> stock auto reset limit=0 tolerance=0 style=0"
+        )
+        bluetooth.enqueue(
+            HudCommands.speedWarningThreshold(limit),
+            label: "Gauge probe \(prefix) -> DisplaySpeedWarning \(limit) mph"
+        )
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "Gauge probe \(prefix) -> stock keep alive")
+        bluetooth.enqueue(
+            HudCommands.speedLimitProbe(limit: limit, tolerance: 0, style: 0),
+            label: "Gauge probe \(prefix) -> stock setSpeedTolerance limit=\(limit) tolerance=0 style=0"
+        )
+    }
+
     func restoreLiveSpeedLimitStateAfterMarkerProbe() {
         speedMarkerProbeFollowupTask?.cancel()
         speedMarkerProbeFollowupTask = nil
@@ -562,6 +678,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             speedMarkerProbeStatus = "Restore pending — HUD not connected"
             return
         }
+
+        // The temporary D0-D3 probes explicitly touch the recovered 9/12 gauge
+        // boolean. Normal production code does not, so return it to OFF before
+        // restoring the current app-managed speed-limit packets.
+        bluetooth.enqueue(HudCommands.speedInformationVisible(true), label: "Marker probe restore -> DisplaySpeed ON")
+        bluetooth.enqueue(HudCommands.speedGaugeEnabled(false), label: "Marker probe restore -> experimental DisplaySpeedGauge OFF")
 
         if showSpeedLimit, currentSpeedLimitMph > 0 {
             resendCurrentLimitIfPossible()
@@ -575,7 +697,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 HudCommands.speedWarningThreshold(0),
                 label: "Marker probe restore → live warning cleared"
             )
-            speedMarkerProbeStatus = "Restored live no-limit state"
+            speedMarkerProbeStatus = "Restored current app no-limit state; experimental gauge OFF"
         }
         logger.log("SPEED MARKER PROBE", speedMarkerProbeStatus)
     }
