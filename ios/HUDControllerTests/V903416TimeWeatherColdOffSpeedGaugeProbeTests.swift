@@ -10,9 +10,15 @@ final class V903416TimeWeatherColdOffSpeedGaugeProbeTests: XCTestCase {
     }
 
     func testRecoveredSpeedGaugePacketsEncodeAsKivicSDKDefines() {
+        // p2=0x03 is the UART ETX sentinel and must therefore be escaped
+        // by HudProtocol.frame as 0x7D, (0x03 ^ 0x7D)=0x7E.
         XCTAssertEqual(
             HudProtocol.hex(HudCommands.speedInformationVisible(true)),
-            "02 7D 7F 09 03 01 03"
+            "02 7D 7F 09 7D 7E 01 03"
+        )
+        XCTAssertEqual(
+            HudProtocol.unescape(HudCommands.speedInformationVisible(true)),
+            Data([0x02, 0x09, 0x03, 0x01])
         )
         XCTAssertEqual(
             HudProtocol.hex(HudCommands.speedGaugeEnabled(true)),

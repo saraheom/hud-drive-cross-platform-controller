@@ -1,0 +1,30 @@
+HUD Controller v90.34.16.1 local verification
+
+Scope
+-----
+CI-only XCTest UART escaping expectation correction on top of v90.34.16.
+No runtime Swift source under ios/HUDController changed.
+
+GitHub Actions run 93442492103
+-----------------------------
+- iOS app/simulator build: PASSED
+- Unit tests: 266 executed, exactly 1 failed
+- Failure: V903416TimeWeatherColdOffSpeedGaugeProbeTests.testRecoveredSpeedGaugePacketsEncodeAsKivicSDKDefines
+- Actual correct encoded DisplaySpeed(ON): 02 7D 7F 09 7D 7E 01 03
+- Stale expected value omitted escaping of p2=0x03 (ETX).
+
+v90.34.16.1 correction
+----------------------
+- XCTest now expects UART byte stuffing for p2=0x03: 03 -> 7D 7E.
+- XCTest additionally validates the unescaped logical body 02 09 03 01.
+- Added Python/static regression guard against reintroducing the malformed expectation.
+
+Local verification
+------------------
+Python/static: 306 passed in 0.75s
+Swift syntax parse: 171 files, failures=0
+YAML parse: 10 files, failures=0
+Runtime ios/HUDController tree vs v90.34.16: BYTE-IDENTICAL
+ZIP integrity: PASS
+
+GitHub Actions/macOS XCTest remains authoritative for full simulator test execution.

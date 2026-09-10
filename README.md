@@ -1,3 +1,15 @@
+# v90.34.16.1 — CI-only UART escape expectation fix
+
+v90.34.16.1 changes **no runtime Swift source and no physical HUD behavior** from v90.34.16. The GitHub Actions app build completed successfully; the workflow failed only in `V903416TimeWeatherColdOffSpeedGaugeProbeTests.testRecoveredSpeedGaugePacketsEncodeAsKivicSDKDefines`.
+
+The stale XCTest expected `DisplaySpeedCommandPacket (2/9/3)` as `02 7D 7F 09 03 01 03`. That expectation was invalid because `0x03` is the HUD UART ETX delimiter. `HudProtocol.frame` correctly byte-stuffs every in-frame `0x03` as `7D 7E`, so the actual and correct wire frame is `02 7D 7F 09 7D 7E 01 03`. The test now validates both that escaped wire representation and the unescaped logical body `[02,09,03,01]`.
+
+Time/weather cold-OFF synchronization, D0–D3 speed-gauge probes, navigation, CarPlay/U2W, ambient lighting, OBD, lane guidance, and firmware maintenance are runtime-identical to v90.34.16.
+
+See `docs/V90_34_16_1_CI_ESCAPE_TEST_FIX.md` and `V90_34_16_1_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.16 — cold-boot time/weather OFF synchronization + expanded native speed-gauge probe
 
 v90.34.16 builds directly on v90.34.15 and keeps the production navigation, CarPlay/U2W, speed-limit matching, ambient-light, OBD, lane-guidance, Scale/Perspective, and firmware-maintenance behavior unchanged outside two targeted areas.
