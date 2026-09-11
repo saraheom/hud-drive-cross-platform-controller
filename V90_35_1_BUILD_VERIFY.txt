@@ -1,0 +1,45 @@
+HUD Controller v90.35.1 — Live U2W MainVideo Map Crop
+Build verification — 2026-09-11
+
+BASELINE
+- Built from the complete v90.35 Map Mode / OBD-speed overlay / custom-widget repository.
+- v90.35 physical Map Mode behavior remains bounded and reversible.
+
+NEW APP PATH
+- U2WMainVideoClient consumes http://192.168.50.2/cgi-bin/u2wvideo-main-stream.cgi.
+- Transport is Annex-B H.264; no ScreenCaptureKit and no OCR are used.
+- SPS/PPS are used to construct a VideoToolbox format description.
+- H.264 video slices are submitted to VTDecompressionSession.
+- Latest decoded 800x480 UIImage is used as the center Map Mode source.
+- Follow Source preserves original CarPlay pixels/theme.
+- Dark HUD / Light HUD are post-processing filters on the same real frame.
+- Persisted source crop controls: zoom, X offset, Y offset.
+- Physical mode-5 HUD cast freezes the latest real U2W frame before the Wi-Fi handoff; it does not claim continuous live video after leaving U2W Wi-Fi.
+- Disable Map Mode restores normal HUD state and resumes U2W Route Guidance, Now Playing, and MainVideo polling.
+
+STATIC / SOURCE VALIDATION
+- Swift syntax parse: 178 files, 0 failures.
+- tests_v9031_static.py: PASS.
+- tests_v9035_map_mode.py: PASS (6 v90.35 checks).
+- tests_v90351_live_mainvideo.py: PASS (10 v90.35.1 checks).
+- ios/project.yml YAML parse: PASS.
+- ios/project-ios26-ambient.yml YAML parse: PASS.
+- Both XcodeGen projects include HUDController recursively, so the new MapMode/U2WMainVideoClient.swift source is included automatically.
+
+U2W v8.11 PAIRING
+- Passive exporter target: U2W software 2021.03.06.1343.
+- AppleCarPlay stock SHA1 guard: bc9618df3f957a3e381646dc576e008be27725da.
+- ARMadb-driver stock SHA1 guard: f3710d48926a978d75f2bc247172f7ba0c8e014a.
+- ARM exporter: ELF32 ARM EABI5 soft-float, dynamically linked LD_PRELOAD object.
+- Passive only: no naviScreenInfo injection, no command 508/509, no secondary-screen forcing.
+- Existing U2W v8.8 Route Guidance is preserved: v8.8 wraps ARMiPhoneIAP2; v8.11 wraps AppleCarPlay.
+- Main H.264 mirror lives only in /tmp and uses a bounded rolling segment.
+- Real v8.10 physical-capture replay through the v8.11 mirror: PASS.
+- ffprobe on mirrored bytes: H.264, 800x480: PASS.
+- Real decoded CarPlay PNG frame from mirrored bytes: PASS.
+- U2W shell syntax / AES image round-trip checks: PASS (see bundled u2w/v8.11_MainVideoLive/BUILD_VERIFY.txt).
+
+FIELD-TEST BOUNDARIES
+- Full Xcode/iOS framework type-check and device build were not available in this Linux environment; GitHub Actions Xcode 26 remains authoritative.
+- Boa long-lived CGI H.264 streaming needs physical validation on the user's actual adapter. A finite snapshot CGI and dump CGI are included for diagnosis.
+- Continuous real-map video on the physical HUD is NOT claimed in mode 5, because the iPhone must leave U2W Wi-Fi and join the HUDWAY AP. The latest live frame is frozen intentionally for that handoff.

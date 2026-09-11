@@ -15,6 +15,16 @@ final class AppState {
     let ambientLight: AmbientLightMonitor
     let maintenance: HudMaintenanceManager
     let settings = HudSettings()
+    let mapModeSettings = HudMapModeSettings()
+    let mapModeCastServer = HudMapModeCastServer()
+    let mainVideo: U2WMainVideoClient
+    private var mapModeFrameTask: Task<Void, Never>?
+    private var mapModeOBDOverlayTask: Task<Void, Never>?
+    private var mapModeFrozenSnapshot: HudMapModeSnapshot?
+    private var mapModeFrozenSourceImage: UIImage?
+    private(set) var mapModeActive = false
+    private(set) var mapModeStatus = "Map Mode off"
+    private(set) var mapModeLastNetworkEvent = "Cast server idle"
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
     private var hudRehydrateTask: Task<Void, Never>?
@@ -84,6 +94,8 @@ final class AppState {
     init() {
         let logger = LogManager()
         self.logger = logger
+        let mainVideo = U2WMainVideoClient(logger: logger)
+        self.mainVideo = mainVideo
         let maintenance = HudMaintenanceManager(logger: logger)
         self.maintenance = maintenance
         let bluetooth = HudBluetoothManager(logger: logger)
@@ -149,6 +161,9 @@ final class AppState {
             // uses it as permission for ambient animation. HUD transport readiness
             // is the reliable automatic-animation session gate.
             ambientLight?.obdPowerSignal(connected)
+            if connected, self?.mapModeActive == true {
+                self?.startNativeOBDSpeedOverlayProbeIfNeeded()
+            }
         }
 
         speedEngine.onSpeedStateChanged = { [weak ambientLight] speedMph, limitMph, available in
@@ -169,6 +184,7 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
+            self.mainVideo.start(reason: "HUD BLE transport ready")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
                !self.hudWiFiExposureActive {
@@ -219,10 +235,28 @@ final class AppState {
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.nowPlaying.stop(reason: "HUD BLE transport disconnected")
+            self.mainVideo.stop(reason: "HUD BLE transport disconnected")
             self.logger.log(
                 "HUD SESSION",
                 "BLE transport disconnected; Route Guidance polling stopped and HUD returned to Freeride"
             )
+
+            if self.mapModeActive {
+                self.mapModeFrameTask?.cancel()
+                self.mapModeFrameTask = nil
+                self.mapModeOBDOverlayTask?.cancel()
+                self.mapModeOBDOverlayTask = nil
+                self.mapModeCastServer.stop()
+                self.mapModeActive = false
+                self.mapModeStatus = "Map Mode stopped — HUD BLE disconnected; restore armed for reconnect"
+                UserDefaults.standard.set(true, forKey: self.hudWiFiRecoveryKey)
+            }
+        }
+
+        mapModeCastServer.onEvent = { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.handleMapModeCastEvent(event)
+            }
         }
 
     }
@@ -323,13 +357,13 @@ final class AppState {
         }
     }
 
-    /// v90.34.16 cold-session synchronization for the physical 1.1.27 HUD.
-    /// Two independent drive logs showed that repeated OFF packets can be
-    /// ignored at cold boot until the launcher's internal panel state has first
-    /// crossed through ON. When the persisted setting is OFF, perform one
-    /// deliberate ON -> OFF edge after the final dashboard/profile rehydration.
-    /// The saved setting never changes, and any user change to ON aborts the
-    /// pending edge before another packet is sent.
+    /// v90.35 field correction: OFF is now authoritative at cold boot.
+    ///
+    /// The previous v90.34.16 workaround intentionally sent a transient ON -> OFF
+    /// edge when the saved setting was OFF. The 2026-09-11 drive proved that the
+    /// transient ON itself can leave the panel visibly enabled. Never transmit ON
+    /// from an OFF setting; issue one delayed OFF-only reassert after the final
+    /// dashboard/profile reconstruction instead.
     private func scheduleTimeWeatherColdOffSynchronization(reason: String) {
         timeWeatherColdOffSyncTask?.cancel()
         guard !settings.showTimeWeather else { return }
@@ -338,33 +372,18 @@ final class AppState {
             guard let self else { return }
             defer { self.timeWeatherColdOffSyncTask = nil }
 
-            // Let the normal 300 ms post-dashboard OFF reassert finish first.
             try? await Task.sleep(for: .milliseconds(650))
             guard !Task.isCancelled,
                   self.bluetooth.state == .connected,
                   !self.settings.showTimeWeather else { return }
 
             self.bluetooth.enqueue(
-                HudCommands.timeWeather(true),
-                label: "Cold-session time/weather sync edge -> transient ON"
-            )
-            self.logger.log(
-                "TIME/WEATHER",
-                "Cold-session OFF sync edge phase=ON reason=\(reason); persisted setting remains OFF"
-            )
-
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled,
-                  self.bluetooth.state == .connected,
-                  !self.settings.showTimeWeather else { return }
-
-            self.bluetooth.enqueue(
                 HudCommands.timeWeather(false),
-                label: "Cold-session time/weather sync edge -> authoritative OFF"
+                label: "Cold-session time/weather authoritative OFF"
             )
             self.logger.log(
                 "TIME/WEATHER",
-                "Cold-session OFF sync edge phase=OFF complete reason=\(reason)"
+                "Cold-session delayed OFF-only reassert reason=\(reason); no transient ON packet sent"
             )
         }
     }
@@ -985,6 +1004,264 @@ final class AppState {
         logger.log("HUD LANE POLICY", "clear reason=\(reason)")
     }
 
+    // MARK: - v90.35 custom Map Mode cast
+
+    var mapModePreviewSnapshot: HudMapModeSnapshot {
+        makeMapModeSnapshot(useFrozenRouteWhenUnavailable: mapModeActive, allowDesignFallback: true)
+    }
+
+    var mapModePreviewSourceImage: UIImage? {
+        mapModeActive ? (mapModeFrozenSourceImage ?? mainVideo.latestFrame) : mainVideo.latestFrame
+    }
+
+    func enableMapMode() {
+        guard bluetooth.state == .connected else {
+            mapModeStatus = "Connect the HUD over BLE first"
+            return
+        }
+        guard !firmwareMaintenanceActive else {
+            mapModeStatus = "Exit HUD Firmware Maintenance before starting Map Mode"
+            return
+        }
+        guard !mapModeActive else { return }
+
+        mapModeFrozenSnapshot = makeMapModeSnapshot(
+            useFrozenRouteWhenUnavailable: false,
+            allowDesignFallback: true
+        )
+        // Freeze the latest decoded U2W MainVideo frame before Wi-Fi moves from
+        // Carlinkit to the HUD AP. The iPhone cannot remain associated with both
+        // networks, so the physical mode-5 cast uses this last real map frame
+        // unless a future shared-network path is physically validated.
+        mapModeFrozenSourceImage = mainVideo.latestFrame
+        mainVideo.stop(reason: "Map Mode HUD-Wi-Fi handoff — freeze last U2W frame")
+        // Freeze the last U2W semantic route before Wi-Fi moves from Carlinkit
+        // to the HUD AP. This prevents adapter timeout/release packets from
+        // fighting the casting experiment while the two networks are mutually
+        // exclusive on the iPhone. Normal polling resumes on Map Mode exit.
+        routeGuidance.stop(reason: "Map Mode frozen-route Wi-Fi handoff")
+        nowPlaying.stop(reason: "Map Mode HUD Wi-Fi handoff")
+        mapModeActive = true
+        mapModeStatus = "Starting Map Mode cast server…"
+        mapModeLastNetworkEvent = "Starting"
+        UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
+
+        do {
+            try mapModeCastServer.start()
+        } catch {
+            mapModeActive = false
+            mapModeStatus = "Could not start Map Mode cast server: \(error.localizedDescription)"
+            routeGuidance.start(reason: "Map Mode cast-server start failed")
+            nowPlaying.start(reason: "Map Mode cast-server start failed")
+            mainVideo.start(reason: "Map Mode cast-server start failed")
+            UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
+            logger.log("MAP MODE", "Cast server start failed: \(error.localizedDescription)")
+            return
+        }
+
+        startMapModeFrameLoop()
+
+        // Exact stock iOS casting AP bootstrap already validated on HUD FW 1.1.27.
+        bluetooth.enqueue(
+            HudCommands.hudHotspotBaseband(is5G: true, forceEnable: false),
+            label: "Map Mode → stock 5GHz HUD AP"
+        )
+        bluetooth.enqueue(HudCommands.kivicMode(5), label: "Map Mode → IOS_KIVICCAST_MODE(5)")
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "Map Mode → KeepAlive")
+        logger.log(
+            "MAP MODE",
+            "Enabled custom cast; frozen route=\(mapModeFrozenSnapshot?.turningStreet ?? "—") " +
+            "OBDOverlayProbe=\(mapModeSettings.nativeOBDSpeedOverlayExperiment)"
+        )
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self, self.mapModeActive else { return }
+            if !self.mapModeStatus.contains("streaming") {
+                self.mapModeStatus = "HUD AP ready — join HUDWAY Drive Wi-Fi on iPhone; cast starts after KivicCast discovery"
+            }
+        }
+    }
+
+    func disableMapMode(reason: String = "manual") {
+        mapModeFrameTask?.cancel()
+        mapModeFrameTask = nil
+        mapModeOBDOverlayTask?.cancel()
+        mapModeOBDOverlayTask = nil
+        mapModeCastServer.stop()
+        mapModeActive = false
+        mapModeFrozenSnapshot = nil
+        mapModeFrozenSourceImage = nil
+
+        guard bluetooth.state == .connected else {
+            mapModeStatus = "Map Mode stopped locally — HUD restore armed for next BLE connection"
+            UserDefaults.standard.set(true, forKey: hudWiFiRecoveryKey)
+            return
+        }
+
+        // Clear the experimental OBD custom slot, release KivicCast mode and
+        // reconstruct exactly the normal Freeride/Navigation state.
+        bluetooth.enqueue(
+            HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.none.rawValue)),
+            label: "Map Mode → clear native OBD speed overlay probe"
+        )
+        bluetooth.enqueue(
+            HudCommands.hudHotspotBaseband(is5G: true, forceEnable: false),
+            label: "Map Mode → stock HUD AP release"
+        )
+        bluetooth.enqueue(HudCommands.kivicMode(4), label: "Map Mode → restore IOS_HUD_MODE(4)")
+        bluetooth.enqueue(HudCommands.fullScreen(true), label: "Map Mode → restore full screen")
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "Map Mode → restore KeepAlive")
+        obd.applyWidgetSelection()
+        restoreDashboardOperatingMode(reason: "Map Mode disabled / \(reason)")
+        applyTimeWeather()
+        reevaluateActiveLaneGuidance(reason: "Map Mode disabled")
+        speedEngine.reassertOriginalSpeedMarker(reason: "Map Mode disabled")
+        routeGuidance.start(reason: "Map Mode disabled — resume U2W polling")
+        nowPlaying.start(reason: "Map Mode disabled — resume U2W polling")
+        mainVideo.start(reason: "Map Mode disabled — resume U2W main video")
+        UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
+        mapModeStatus = "Map Mode off — normal Freeride/Navigation restored"
+        logger.log("MAP MODE", "Disabled reason=\(reason); normal HUD state restored")
+    }
+
+    private func startMapModeFrameLoop() {
+        mapModeFrameTask?.cancel()
+        mapModeFrameTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.mapModeActive {
+                let snapshot = self.makeMapModeSnapshot(
+                    useFrozenRouteWhenUnavailable: true,
+                    allowDesignFallback: true
+                )
+                let suppressSpeed = self.mapModeSettings.nativeOBDSpeedOverlayExperiment && self.obd.connected
+                if let frame = HudMapModeFrameRenderer.jpeg(
+                    snapshot: snapshot,
+                    settings: self.mapModeSettings,
+                    sourceMapImage: self.mapModeFrozenSourceImage ?? self.mainVideo.latestFrame,
+                    suppressCustomSpeedForNativeOBDProbe: suppressSpeed
+                ) {
+                    self.mapModeCastServer.updateFrame(frame)
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
+    }
+
+    private func handleMapModeCastEvent(_ event: String) {
+        mapModeLastNetworkEvent = event
+        logger.log("MAP CAST", event)
+        guard mapModeActive else { return }
+        if event.contains("HUD MJPEG client streaming") {
+            mapModeStatus = "Map Mode streaming to HUD"
+            startNativeOBDSpeedOverlayProbeIfNeeded()
+        } else if event.contains("HUD discovered Map Mode stream") {
+            mapModeStatus = "HUD discovered iPhone Map Mode stream — opening MJPEG"
+        }
+    }
+
+    private func startNativeOBDSpeedOverlayProbeIfNeeded() {
+        mapModeOBDOverlayTask?.cancel()
+        guard mapModeSettings.nativeOBDSpeedOverlayExperiment else {
+            logger.log("MAP OBD PROBE", "Disabled by user")
+            return
+        }
+        guard obd.connected else {
+            logger.log("MAP OBD PROBE", "Skipped: HUD-side OBD is not connected")
+            mapModeStatus = "Map Mode streaming — native OBD speed probe waiting for OBD"
+            return
+        }
+
+        mapModeOBDOverlayTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            // KivicCast normally hides the stock widget layer. Reassert the
+            // exact recovered custom OBD item after streaming begins and try the
+            // non-fullscreen HUD visibility state. No APK/filesystem write occurs.
+            self.bluetooth.enqueue(HudCommands.fullScreen(false), label: "Map OBD probe → stock HUD layer visible")
+            for attempt in 1...3 {
+                guard !Task.isCancelled, self.mapModeActive, self.bluetooth.state == .connected else { return }
+                self.bluetooth.enqueue(
+                    HudCommands.obdCustomItem(
+                        position: 0,
+                        itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)
+                    ),
+                    label: "Map OBD probe → Driving velocity position 0 attempt \(attempt)"
+                )
+                self.bluetooth.enqueue(HudCommands.keepAlive(), label: "Map OBD probe → KeepAlive \(attempt)")
+                self.logger.log(
+                    "MAP OBD PROBE",
+                    "Sent stock OBD_DRIVING_VELOCITY itemIndex=10 position=0 attempt=\(attempt); custom cast speed intentionally blank"
+                )
+                try? await Task.sleep(for: .milliseconds(1200))
+            }
+            self.mapModeStatus = "Map Mode streaming — native OBD speed overlay probe sent"
+        }
+    }
+
+    private func makeMapModeSnapshot(
+        useFrozenRouteWhenUnavailable: Bool,
+        allowDesignFallback: Bool
+    ) -> HudMapModeSnapshot {
+        let speed = speedEngine.currentSpeedMph
+        let limit = speedEngine.currentSpeedLimitMph
+        let liveRoute = routeGuidance.selectedSource != "—"
+
+        var distance = routeGuidance.distanceToManeuverText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if distance.isEmpty || distance == "—" {
+            distance = navigation.current.displayDistanceText
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if distance.isEmpty, navigation.current.distanceMeters > 0 {
+            let feet = Int((Double(navigation.current.distanceMeters) * 3.28084).rounded())
+            distance = feet >= 5280
+                ? String(format: "%.1f mi", Double(feet) / 5280.0)
+                : "\(feet) ft"
+        }
+
+        let current = HudMapModeSnapshot(
+            speedMph: speed,
+            speedLimitMph: limit,
+            currentRoad: routeGuidance.currentRoad,
+            turningStreet: navigation.current.streetName,
+            maneuver: navigation.current.maneuver,
+            distanceText: distance,
+            destination: routeGuidance.destination,
+            etaText: routeGuidance.etaText,
+            timeLeftText: Self.mapModeTimeLeftText(routeGuidance.timeRemainingSeconds),
+            laneValues: activeLaneGuidance.map { Int($0.wireValue) },
+            routeRoads: routeGuidance.routeRoads,
+            hasLiveRoute: liveRoute
+        )
+
+        if liveRoute { return current }
+
+        if useFrozenRouteWhenUnavailable, var frozen = mapModeFrozenSnapshot {
+            frozen.speedMph = speed
+            frozen.speedLimitMph = limit
+            if !activeLaneGuidance.isEmpty {
+                frozen.laneValues = activeLaneGuidance.map { Int($0.wireValue) }
+            }
+            return frozen
+        }
+
+        guard allowDesignFallback else { return current }
+        var fallback = HudMapModeSnapshot.previewFallback
+        fallback.speedMph = speed > 0 ? speed : fallback.speedMph
+        fallback.speedLimitMph = limit > 0 ? limit : fallback.speedLimitMph
+        return fallback
+    }
+
+    private static func mapModeTimeLeftText(_ seconds: Int) -> String {
+        guard seconds > 0 else { return "—" }
+        if seconds < 60 { return "<1 min" }
+        let minutes = Int(ceil(Double(seconds) / 60.0))
+        if minutes < 60 { return "\(minutes) min" }
+        let hours = minutes / 60
+        let remaining = minutes % 60
+        return remaining == 0 ? "\(hours) hr" : "\(hours) hr \(remaining) min"
+    }
+
     // MARK: - HUD Wi-Fi / casting network exposure
 
     var hudWiFiExpectedSSID: String {
@@ -1086,6 +1363,7 @@ final class AppState {
         firmwareMaintenanceActive = true
         routeGuidance.stop(reason: "HUD firmware maintenance Wi-Fi")
         nowPlaying.stop(reason: "HUD firmware maintenance Wi-Fi")
+        mainVideo.stop(reason: "HUD firmware maintenance Wi-Fi")
         enableHUDWiFiExposure()
         logger.log("HUD MAINT", "Starting boot-animation maintenance: stock 5GHz force=false mode 5")
 
@@ -1136,6 +1414,7 @@ final class AppState {
             guard let self, self.bluetooth.state == .connected, !self.firmwareMaintenanceActive else { return }
             self.routeGuidance.start(reason: "firmware maintenance ended")
             self.nowPlaying.start(reason: "firmware maintenance ended")
+            self.mainVideo.start(reason: "firmware maintenance ended")
         }
     }
 

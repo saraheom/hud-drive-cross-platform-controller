@@ -1,0 +1,32 @@
+U2W Main CarPlay Video Live Exporter v8.11 — build verification
+
+Target: U2W 2021.03.06.1343
+Saved stock ARMadb-driver SHA1: f3710d48926a978d75f2bc247172f7ba0c8e014a
+Saved stock AppleCarPlay SHA1: bc9618df3f957a3e381646dc576e008be27725da
+
+ARM shim:
+/mnt/data/u2w_v811/source/libu2w_mainvideo_live.so: ELF 32-bit LSB shared object, ARM, EABI5 version 1 (SYSV), dynamically linked, not stripped
+- ELF32 ARM EABI5 soft-float: PASS
+- dynamically linked LD_PRELOAD object: PASS
+
+Passive architecture checks:
+- AppleCarPlay only is preloaded: PASS
+- ARMadb-driver restored from exact saved stock binary on install: PASS
+- no naviScreenInfo / command-508 / secondary-screen injection path: PASS
+- v8.8 Route Guidance exporter files are not modified: PASS
+- rolling H.264 file lives only under /tmp: PASS
+
+Replay validation using latest physical v8.10 dump:
+- mirrored capture decodes as H.264: PASS
+- decoded resolution: 800x480: PASS
+- decoded PNG frame produced from mirrored bytes: PASS
+- observed replay counters: SPS=1 PPS=1 IDR=2 slices=166
+
+Shell syntax: PASS
+AES update-image round-trip + tar-member assertion: PASS
+Install SHA256: 71e170df276640a849bf51f56523aedbdffa13f73a61d538871d7835b064c4ad
+Uninstall SHA256: 55e23b3a46ba67a84737e49bfa31d3a85d5da0537aff7ffd077084b343373567
+
+Known field-test boundary:
+- Boa long-lived CGI streaming still needs physical validation on this adapter.
+- finite u2wvideo-main-snapshot.cgi is included independently for diagnosis.

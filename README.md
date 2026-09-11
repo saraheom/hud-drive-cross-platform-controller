@@ -1,3 +1,31 @@
+# v90.35.1 — live U2W MainVideo map crop + source-theme filters
+
+v90.35.1 pairs with **U2W Main CarPlay Video Live Exporter v8.11**. The adapter now passively exposes the already-proven 800×480 MainVideo H.264 stream at `192.168.50.2`; the iOS app decodes it with VideoToolbox and uses the latest real CarPlay frame as the center Map Mode source. There is still no ScreenCaptureKit/OCR fallback.
+
+The Map Mode preview now shows a **Live U2W map source** status/card with decoded frame count and source resolution. The center source supports three appearance modes: **Follow source** leaves Google Maps / Apple Maps / Waze pixels unchanged, including their own light/dark theme; **Dark HUD** and **Light HUD** are optional post-processing filters applied to those same pixels. Map zoom and X/Y crop are independently adjustable and persisted; defaults are tuned from the 800×480 Google Maps frame recovered in the September 10 v8.10 dump.
+
+The approved left/right widgets remain unchanged: U.S. rectangular speed-limit sign, turning street above maneuver, distance, live lanes, ETA and time-left, with independent left/center/right scaling and per-component show/hide controls. The native OBD Driving Velocity overlay experiment is also retained.
+
+**Network boundary:** while the iPhone is on U2W Wi-Fi, the in-app map preview is genuinely live. The current physical KivicCast test still requires moving the iPhone to the HUDWAY mode-5 AP, so enabling physical Map Mode freezes the latest decoded U2W frame and semantic route before that handoff. A continuously live physical-HUD map still depends on separately validating the HUD-as-U2W-STA/shared-network path. The UI and logs state this explicitly rather than presenting the frozen frame as live.
+
+See `docs/V90_35_1_LIVE_U2W_MAINVIDEO_MAP_CROP.md` and `u2w/v8.11_MainVideoLive/README.md`.
+
+---
+
+# v90.35 — Custom Map Mode cast + OBD-speed overlay probe + per-component layout
+
+v90.35 converts the v90.34.17 Map Video Display preview into a bounded physical-HUD test. The custom 480×240 renderer uses the approved HUD-safe **left / center / right** composition: U.S.-style speed/speed-limit on the left, sparse map in the center, and turning street / maneuver / distance / lane guidance / ETA / time-left on the right. Left, center and right scale independently, and every individual component can be shown or hidden.
+
+The new **Enable Map Mode on HUD** control starts the recovered stock KivicCast mode-5 AP plus an iPhone UDP discovery / HTTP MJPEG responder. Because the iPhone cannot remain on Carlinkit and HUDWAY Wi-Fi simultaneously, v90.35 freezes the last live U2W semantic route before the handoff and resumes normal U2W polling after Map Mode is disabled. The current center map is still the custom schematic: U2W v8.10 proved main CarPlay video exists, but no app-friendly live frame endpoint has been wired yet. **Follow source** is retained as the production target for that later live crop; Dark HUD and Light HUD are available now.
+
+The first physical cast also tests true OBD speed without pretending GPS is OBD. With the native OBD overlay experiment enabled and HUD-side OBD connected, the physical MJPEG frame reserves a blank speed-number area, then reasserts the recovered `OBD_DRIVING_VELOCITY` custom item (`itemIndex=10`) after streaming begins. If the HUD draws a speed value there, it comes from the stock HUD's ECU/OBD path. Disabling Map Mode clears the probe and restores normal Freeride/Navigation/dashboard state.
+
+The September 11 time/weather field regression is also corrected: a saved OFF setting no longer sends the v90.34.16 transient ON→OFF cold-start edge. v90.35 uses OFF-only reasserts.
+
+See `docs/V90_35_MAP_MODE_CAST_OBD_SPEED_CUSTOM_WIDGETS.md` and `V90_35_BUILD_VERIFY.txt`.
+
+---
+
 # v90.34.17 — Navigation map-video layout preview UI
 
 v90.34.17 builds directly on v90.34.16.1 and adds the new **Map Video Display (Preview)** card to the iOS 26 Navigation screen. It uses the recovered CarPlay MainVideo map crop as the center visual and composes the proposed HUD layout as **speed / speed limit on the left, map in the center, maneuver + distance + street + lane guidance + ETA on the right**.

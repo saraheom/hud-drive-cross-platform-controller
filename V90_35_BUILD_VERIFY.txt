@@ -1,0 +1,59 @@
+HUD Controller v90.35 — local build verification
+Date: 2026-09-11
+Baseline: v90.34.17 full repository
+
+Scope implemented
+-----------------
+- Custom 480x240 Map Mode renderer with left/center/right HUD-safe composition.
+- U.S. rectangular SPEED LIMIT sign.
+- Right-side order: turning street -> maneuver -> distance -> lane guidance -> ETA -> time left.
+- Independent left / center / right size controls (60-145%).
+- Per-component show/hide controls:
+  left: speed, speed-limit sign
+  center: map
+  right: turning street, maneuver, distance, lane guidance, ETA, time left
+- Map appearance: Follow source / Dark HUD / Light HUD.
+- Follow-source is a forward-compatible setting; v90.35 still uses the schematic fallback because U2W v8.10 has no iOS live-frame endpoint yet.
+- Route Guidance now exposes time-remaining and a de-duplicated route-road list to Map Mode.
+- Map Mode freezes the last live U2W semantic route before switching from Carlinkit Wi-Fi to the HUDWAY AP.
+- Experimental stock KivicCast responder:
+  UDP 15320 discovery (KVMJPEG/1.0)
+  HTTP MJPEG 15330
+  480x240 JPEG at ~5 fps
+- Manual Enable / Disable Map Mode control.
+- Disable restores IOS_HUD_MODE(4), full screen, dashboard profiles, time/weather, lane policy, speed marker and resumes U2W polling.
+- Native OBD speed overlay probe: OBD_DRIVING_VELOCITY item index 10 at position 0 after MJPEG streaming begins; physical custom speed area is blank during the probe.
+- Time/weather cold-OFF path no longer sends any transient ON packet.
+
+Local verification
+------------------
+1. Swift parser validation
+   Command: swiftc -parse <each Swift source>
+   Result: 157 Swift files parsed, 0 failures.
+
+2. Existing repository static regression
+   Command: python tests_v9031_static.py
+   Result: PASS (exit code 0).
+
+3. v90.35 map-mode static regression
+   Command: python tests_v9035_map_mode.py
+   Result: PASS — 6 checks.
+
+4. XcodeGen YAML syntax
+   Parsed with PyYAML:
+   - ios/project.yml
+   - ios/project-ios26-ambient.yml
+   Result: PASS.
+
+5. Source inclusion
+   Both XcodeGen specs include HUDController recursively, so the new Models/MapMode source files are included automatically. No new package dependency or signing secret is required.
+
+Not run locally
+---------------
+This environment is Linux, not macOS/Xcode. A full Xcode 26 simulator/device compile, XCTest run, archive, signing, and TestFlight upload cannot be executed here. The repository retains the existing GitHub Actions Xcode 26 CI/TestFlight workflows; the first GitHub run is the authoritative compile/type-check for SwiftUI/UIKit/Network framework APIs.
+
+Physical-test caveats
+---------------------
+- The recovered KivicCast HTTP/UDP implementation is based on the HUD firmware's viewer behavior and still requires the first physical compatibility test.
+- The iPhone must join the HUDWAY Drive AP for this v90.35 cast test, so live U2W network access is temporarily unavailable; the last U2W route snapshot is intentionally frozen.
+- The native OBD speed overlay is an experiment. No APK or firmware write is performed.

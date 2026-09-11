@@ -171,6 +171,8 @@ final class RouteGuidanceAdapterClient {
     private(set) var currentRoad = "—"
     private(set) var destination = "—"
     private(set) var etaText = "—"
+    private(set) var timeRemainingSeconds = 0
+    private(set) var routeRoads: [String] = []
     private(set) var distanceToManeuverText = "—"
     private(set) var lastError = ""
     private(set) var lastUpdateAt: Date?
@@ -221,6 +223,8 @@ final class RouteGuidanceAdapterClient {
         currentRoad = "—"
         destination = "—"
         etaText = "—"
+        timeRemainingSeconds = 0
+        routeRoads = []
         distanceToManeuverText = "—"
         status = "Adapter feed stopped"
         navigation.navigationOff(owner: .carPlayAdapter)
@@ -308,6 +312,8 @@ final class RouteGuidanceAdapterClient {
             currentRoad = "—"
             destination = "—"
             etaText = "—"
+            timeRemainingSeconds = 0
+            routeRoads = []
             distanceToManeuverText = "—"
             lastDeliveredSignature = ""
             lastEtaMilliseconds = nil
@@ -354,6 +360,8 @@ final class RouteGuidanceAdapterClient {
         selectedSource = kind == .other ? (snapshot.source.isEmpty ? "Other" : snapshot.source) : kind.rawValue
         currentRoad = snapshot.currentRoad.isEmpty ? "—" : snapshot.currentRoad
         destination = snapshot.destination.isEmpty ? "—" : snapshot.destination
+        timeRemainingSeconds = max(0, snapshot.timeRemainingSeconds)
+        routeRoads = Self.uniqueRouteRoads(from: snapshot)
         distanceToManeuverText = displayDistance(snapshot)
         status = "Live Route Guidance • \(selectedSource) • seq \(snapshot.sequence)"
 
@@ -757,6 +765,21 @@ final class RouteGuidanceAdapterClient {
         case 4: return raw.contains(" ") ? raw : "\(raw) ft"
         default: return raw
         }
+    }
+
+    private static func uniqueRouteRoads(from snapshot: Snapshot) -> [String] {
+        var seen = Set<String>()
+        var output: [String] = []
+        let candidates = [snapshot.currentRoad] + snapshot.maneuvers.flatMap { [$0.afterRoad, $0.description] }
+        for raw in candidates {
+            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, !seen.contains(value) else { continue }
+            let lower = value.lowercased()
+            guard !lower.hasPrefix("turn "), !lower.hasPrefix("keep "), !lower.hasPrefix("toward ") else { continue }
+            seen.insert(value)
+            output.append(value)
+        }
+        return output
     }
 
     private static func formatETA(milliseconds: Int64) -> String {
