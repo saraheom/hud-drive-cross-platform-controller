@@ -1,3 +1,13 @@
+# v90.35.1.1 — CI regression alignment for OFF-only time/weather rehydration
+
+The first v90.35.1 GitHub Actions run compiled successfully and reached the full unit-test phase. It executed 266 tests; the only failures were three stale assertions in `V903416TimeWeatherColdOffSpeedGaugeProbeTests` that still expected the removed v90.34.16 cold-session ON → OFF edge. v90.35 intentionally changed that behavior to an OFF-only delayed reassert after the September 11 field test showed the transient ON could leave the panel visible.
+
+This hotfix updates that legacy test to enforce the current OFF-only invariant. **No runtime Swift source, live U2W MainVideo behavior, Map Mode behavior, or U2W v8.11 image changes.**
+
+See `V90_35_1_1_BUILD_VERIFY.txt`.
+
+---
+
 # v90.35.1 — live U2W MainVideo map crop + source-theme filters
 
 v90.35.1 pairs with **U2W Main CarPlay Video Live Exporter v8.11**. The adapter now passively exposes the already-proven 800×480 MainVideo H.264 stream at `192.168.50.2`; the iOS app decodes it with VideoToolbox and uses the latest real CarPlay frame as the center Map Mode source. There is still no ScreenCaptureKit/OCR fallback.

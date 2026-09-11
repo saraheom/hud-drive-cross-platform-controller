@@ -43,13 +43,16 @@ final class V903416TimeWeatherColdOffSpeedGaugeProbeTests: XCTestCase {
         XCTAssertTrue(ui.contains("Restore current HUD"))
     }
 
-    func testColdOffSynchronizationUsesOneOnOffEdgeAfterFinalRehydration() throws {
+    func testColdOffSynchronizationIsOffOnlyAfterFinalRehydration() throws {
         let app = try source("HUDController/App/AppState.swift")
         XCTAssertTrue(app.contains("scheduleTimeWeatherColdOffSynchronization"))
         XCTAssertTrue(app.contains("Task.sleep(for: .milliseconds(650))"))
-        XCTAssertTrue(app.contains("Cold-session time/weather sync edge -> transient ON"))
-        XCTAssertTrue(app.contains("Task.sleep(for: .milliseconds(350))"))
-        XCTAssertTrue(app.contains("Cold-session time/weather sync edge -> authoritative OFF"))
-        XCTAssertTrue(app.contains("persisted setting remains OFF"))
+        XCTAssertTrue(app.contains("Cold-session time/weather authoritative OFF"))
+        XCTAssertTrue(app.contains("Cold-session delayed OFF-only reassert"))
+        XCTAssertTrue(app.contains("no transient ON packet sent"))
+
+        // v90.35 field correction: a saved OFF preference must never manufacture
+        // the old v90.34.16 ON -> OFF edge during cold rehydration.
+        XCTAssertFalse(app.contains("Cold-session time/weather sync edge -> transient ON"))
     }
 }

@@ -1,0 +1,30 @@
+HUD Controller v90.35.1.1 — CI regression alignment
+===================================================
+
+Scope
+-----
+- Runtime Swift sources are unchanged from v90.35.1.
+- U2W v8.11 MainVideo exporter is unchanged.
+- This is a test-only CI alignment release.
+
+GitHub Actions evidence
+-----------------------
+The supplied iOS CI log compiled the application successfully, then executed 266 tests.
+Only V903416TimeWeatherColdOffSpeedGaugeProbeTests failed: its legacy source-inspection
+assertions still required the v90.34.16 cold-session time/weather ON -> OFF workaround.
+
+v90.35 intentionally removed that workaround after the 2026-09-11 physical drive showed
+that the transient ON packet could leave the time/weather panel visible while the saved
+setting was OFF. AppState now waits 650 ms after final rehydration and sends an OFF-only
+reassert.
+
+Correction
+----------
+V903416TimeWeatherColdOffSpeedGaugeProbeTests now verifies the current invariant:
+- scheduleTimeWeatherColdOffSynchronization remains present;
+- the delayed 650 ms OFF reassert remains present;
+- the authoritative OFF label/log is present;
+- the old transient-ON label is absent;
+- the old transient-ON label is absent; unrelated 350 ms rehydration timing remains untouched.
+
+No production behavior is changed by v90.35.1.1.
