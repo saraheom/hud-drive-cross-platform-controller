@@ -1,6 +1,6 @@
-# v90.35.2 — HUD-as-STA → U2W home diagnostic
+# v90.35.2.1 — HUD-as-STA → U2W home diagnostic (CI alignment)
 
-v90.35.2 adds a no-CarPlay home diagnostic for the shared-network architecture. The iPhone stays connected to the existing U2W/Carlinkit AP while the HUD is commanded over BLE into stock `IOS_KIVICCAST_STA_MODE` (mode 6) and receives the U2W SSID/password using the recovered `WifiSTAModeCommandPacket`. The app now parses the returned `WifiSTAStatusEventPacket`, including status, reason and assigned IP.
+v90.35.2.1 is runtime-identical to v90.35.2 and aligns one stale XCTest with the intentional removal of the temporary Speed Marker Probe UI. v90.35.2 adds a no-CarPlay home diagnostic for the shared-network architecture. The iPhone stays connected to the existing U2W/Carlinkit AP while the HUD is commanded over BLE into stock `IOS_KIVICCAST_STA_MODE` (mode 6) and receives the U2W SSID/password using the recovered `WifiSTAModeCommandPacket`. The app now parses the returned `WifiSTAStatusEventPacket`, including status, reason and assigned IP.
 
 Paired **U2W v8.13** leaves the normal U2W AP unchanged and serves a known 480×240 KivicCast image directly from `192.168.50.2`. This test therefore determines whether the HUD can join the same U2W AP as a second station and pull the cast stream without moving the iPhone to HUDWAY Wi-Fi.
 
