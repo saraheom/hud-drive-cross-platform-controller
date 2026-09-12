@@ -1,4 +1,4 @@
-# HUD Controller v90.35.3.10 — compact Map Mode UI + visual calibration
+# HUD Controller v90.35.3.10.1 — compact Map Mode UI + visual calibration
 
 Paired adapter update: **U2W v8.15.1 No Known-Image Primer**. This release keeps the v90.35.3.9.1 map-video/navigation/ambient reliability behavior and only refines Map Mode presentation, startup priming, and UI density.
 
@@ -1086,3 +1086,8 @@ The Xcode 26.6 simulator CI exposed three Swift generic-inference errors in the 
 ## v90.35.3.1 relay stability
 
 Suppresses ordinary HUD profile rehydration while the mode-6 U2W live relay is active and prevents the legacy mode-5 control from interrupting the relay. Pair with U2W v8.14.1 for persistent KivicCast rediscovery.
+
+
+## v90.35.3.10.1 CI alignment
+
+This point release contains **no runtime behavior changes** from v90.35.3.10. It only updates the stale `V90353U2WLiveFrameRelayTests.testRelayUIReportsFrameIngress` XCTest to match the intentionally compact Map Mode UI introduced in v90.35.3.10.

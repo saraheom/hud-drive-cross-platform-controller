@@ -1,0 +1,15 @@
+HUD Controller v90.35.3.10.1 — XCTest CI alignment
+
+CI failure analyzed from logs_94056832064.zip:
+- Production build completed.
+- 282 XCTest cases executed.
+- Only failure: V90353U2WLiveFrameRelayTests.testRelayUIReportsFrameIngress.
+- Cause: stale test expected the intentionally removed verbose UI heading "Live iPhone → U2W → HUD relay".
+- Fix: update source-string XCTest to validate the compact Map Mode UI and collapsed relay diagnostics.
+- No production HUDController Swift source changed from v90.35.3.10.
+- U2W v8.15.1 unchanged.
+
+Local validation:
+- pytest: 341 passed
+- Swift syntax parse: 183 files, 0 failures
+- production source diff vs v90.35.3.10: none

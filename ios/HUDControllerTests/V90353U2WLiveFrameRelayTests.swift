@@ -26,8 +26,16 @@ final class V90353U2WLiveFrameRelayTests: XCTestCase {
 
     func testRelayUIReportsFrameIngress() throws {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
-        XCTAssertTrue(ui.contains("Live iPhone → U2W → HUD relay"))
+        // v90.35.3.10 intentionally removed the old verbose relay heading and
+        // folded the controls into the compact Map Mode card. Keep this test
+        // aligned with the production UI while still verifying the relay
+        // diagnostics remain available behind the disclosure control.
+        XCTAssertTrue(ui.contains("CarPlay adapter Wi-Fi name"))
+        XCTAssertTrue(ui.contains("Enable Map Mode"))
+        XCTAssertTrue(ui.contains("Status & diagnostics"))
+        XCTAssertTrue(ui.contains("Frame ingress"))
         XCTAssertTrue(ui.contains("Frames sent"))
-        XCTAssertTrue(ui.contains("U2W v8.15"))
+        XCTAssertTrue(ui.contains("U2W v8.15.1"))
+        XCTAssertFalse(ui.contains("Live iPhone → U2W → HUD relay"))
     }
 }
