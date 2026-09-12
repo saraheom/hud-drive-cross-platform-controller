@@ -1,3 +1,16 @@
+# HUD Controller v90.35.3.5 — U2W live relay IP soft-connect recovery
+
+This release keeps the v90.35.3.4 BLE nested-frame resynchronization, but removes the destructive empty-SSID STA reset that the latest field log showed can trap the HUD in stock status 6 ("Empty network").
+
+Key field finding: the HUD can report status 6 while also returning a valid DHCP address such as `192.168.50.100`, and the U2W ARP table simultaneously contains both HUD and iPhone peers. v90.35.3.5 therefore treats a valid HUD IPv4 address as a usable STA link even when status 6 is reported, and proceeds to kick the KivicCast viewer/discovery path.
+
+Fresh Start now uses:
+`mode 4 -> short settle -> mode 6 -> NISSAN68 credentials`
+
+It never sends empty SSID/password credentials during Start. `Retry HUD display` can also force the mode-6 viewer path when the BLE status is ambiguous.
+
+U2W v8.14.2 remains the required adapter image; no adapter reflash is needed when upgrading from v90.35.3.4.
+
 # HUD Controller v90.35.3.4 — STA reset + BLE frame resync (CI alignment)
 
 # v90.35.3.3 — HUD STA clean-reset + BLE frame resynchronization
