@@ -22,7 +22,13 @@ final class U2WMainVideoClient {
 
     private let logger: LogManager
     private var worker: U2WMainVideoStreamWorker?
+    private var workerGeneration = 0
     private var running = false
+    private var freshnessTask: Task<Void, Never>?
+    private var lastDecodedFrameAt: Date?
+    private var lastFreshnessReconnectAt: Date?
+    private let staleFrameInterval: TimeInterval = 3.0
+    private let freshnessReconnectCooldown: TimeInterval = 6.0
 
     init(logger: LogManager) {
         self.logger = logger
@@ -32,14 +38,22 @@ final class U2WMainVideoClient {
         guard !running else { return }
         running = true
         status = "Connecting to U2W main video…"
+        lastDecodedFrameAt = nil
         logger.log("U2W VIDEO", "Start reason=\(reason)")
+        startWorker(reason: reason)
+        startFreshnessWatchdog()
+    }
 
+    private func startWorker(reason: String) {
+        worker?.stop()
+        workerGeneration &+= 1
+        let generation = workerGeneration
         let worker = U2WMainVideoStreamWorker(
             endpoint: URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-main-stream.cgi")!
         )
         worker.onStatus = { [weak self] message, isConnected in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.running, self.workerGeneration == generation else { return }
                 self.status = message
                 self.connected = isConnected
                 self.logger.log("U2W VIDEO", message)
@@ -47,8 +61,9 @@ final class U2WMainVideoClient {
         }
         worker.onFrame = { [weak self] image in
             Task { @MainActor [weak self] in
-                guard let self, self.running else { return }
+                guard let self, self.running, self.workerGeneration == generation else { return }
                 self.latestFrame = image
+                self.lastDecodedFrameAt = Date()
                 self.frameCount += 1
                 self.sourceSize = "\(Int(image.size.width))×\(Int(image.size.height))"
                 if self.frameCount == 1 || self.frameCount % 120 == 0 {
@@ -61,21 +76,62 @@ final class U2WMainVideoClient {
         }
         self.worker = worker
         worker.start()
+        logger.log("U2W VIDEO", "Worker opened reason=\(reason)")
+    }
+
+    private func startFreshnessWatchdog() {
+        freshnessTask?.cancel()
+        freshnessTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.running {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, self.running, self.connected,
+                      let lastDecodedFrameAt = self.lastDecodedFrameAt else { continue }
+                let now = Date()
+                let age = now.timeIntervalSince(lastDecodedFrameAt)
+                guard age >= self.staleFrameInterval else { continue }
+                if let lastFreshnessReconnectAt = self.lastFreshnessReconnectAt,
+                   now.timeIntervalSince(lastFreshnessReconnectAt) < self.freshnessReconnectCooldown {
+                    continue
+                }
+                self.lastFreshnessReconnectAt = now
+                self.status = "U2W main video stale — reconnecting…"
+                self.logger.log(
+                    "U2W VIDEO WATCH",
+                    "No decoded frame for \(String(format: "%.1f", age))s while HTTP stream remained connected; restarting source"
+                )
+                self.connected = false
+                self.lastDecodedFrameAt = nil
+                self.startWorker(reason: "freshness watchdog")
+            }
+        }
     }
 
     func stop(reason: String) {
         guard running || worker != nil else { return }
         running = false
+        freshnessTask?.cancel()
+        freshnessTask = nil
         worker?.stop()
         worker = nil
+        workerGeneration &+= 1
         connected = false
+        lastDecodedFrameAt = nil
         status = "U2W main video stopped"
         logger.log("U2W VIDEO", "Stop reason=\(reason)")
     }
 
     func reconnect(reason: String = "manual") {
-        stop(reason: "reconnect / \(reason)")
-        start(reason: "reconnect / \(reason)")
+        guard running else {
+            start(reason: "reconnect / \(reason)")
+            return
+        }
+        connected = false
+        lastDecodedFrameAt = nil
+        lastFreshnessReconnectAt = Date()
+        status = "Reconnecting U2W main video…"
+        logger.log("U2W VIDEO", "Reconnect reason=\(reason)")
+        startWorker(reason: "reconnect / \(reason)")
     }
 }
 

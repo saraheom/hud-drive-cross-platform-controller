@@ -8,7 +8,7 @@ VIEW = (ROOT / "ios/HUDController/UI/AmbientLightingView.swift").read_text()
 
 def test_production_bledim_is_already_on_minimal_and_lab_ui_is_gone():
     prep = MONITOR.split("private func queuePowerUpBreath", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
-    assert "? .alreadyOnMinimal" in prep
+    assert "requiresExplicitBLEDIMPrime ? .v90172Baseline : .alreadyOnMinimal" in prep
     minimal = prep.split("case .alreadyOnMinimal:", 1)[1].split("case .v9018NoFlash:", 1)[0]
     assert "sendPowerWhenReady" not in minimal
     assert "sendColorWhenReady" not in minimal

@@ -24,7 +24,7 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("private func applyRuntimeBrightnessWhenReady"))
         XCTAssertTrue(monitor.contains("power-up breath terminal Power ON"))
         XCTAssertTrue(monitor.contains("power-up breath terminal RGB"))
-        XCTAssertTrue(monitor.contains("? .alreadyOnMinimal"))
+        XCTAssertTrue(monitor.contains("requiresExplicitBLEDIMPrime ? .v90172Baseline : .alreadyOnMinimal"))
         XCTAssertTrue(monitor.contains("case .v90172Baseline, .baselineHold, .brightnessOnlyFinish, .noTerminalCommit:"))
         XCTAssertTrue(monitor.contains("power-up breath terminal Power ON"))
     }

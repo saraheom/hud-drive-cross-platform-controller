@@ -33,10 +33,13 @@ def test_critical_restore_and_breath_prepare_writes_are_retried_in_order():
     assert restore.index("sendPowerWhenReady") < restore.index("sendColorWhenReady") < restore.index("applyRuntimeBrightnessWhenReady")
     prep = MONITOR.split("private func queuePowerUpBreath", 1)[1].split("private func registerPowerOnCohortMember", 1)[0]
     assert prep.index("sendPowerWhenReady") < prep.index("sendColorWhenReady") < prep.index("applyRuntimeBrightnessWhenReady")
-    # v90.22 keeps the retryable legacy preparation code for compatibility, but
-    # production BLEDIM selection is permanently Already-On Minimal.
-    assert '? .alreadyOnMinimal' in prep
+    # v90.35.3.9.1 preserves Already-On Minimal for normal/headlight reconnects.
+    # The explicit Power/RGB/baseline path exists only for a deliberate app-issued OFF.
+    assert 'requiresExplicitBLEDIMPrime ? .v90172Baseline : .alreadyOnMinimal' in prep
     assert 'case .alreadyOnMinimal:' in prep
+    assert 'bledimExplicitPowerPrimeRequiredIDs.remove(id)' in prep
+    assert 'bledimExplicitPowerPrimeRequiredIDs.insert(dashboardID)' not in MONITOR
+    assert 'scheduleDashboardReconnectBrightnessRecovery' in MONITOR
 
 
 def test_center_signal_is_fast_day_night_owner_and_two_light_crosscheck_does_not_own_animation():

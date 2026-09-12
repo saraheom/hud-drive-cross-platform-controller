@@ -128,8 +128,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         }
     }
 
-    /// Retained only to migrate/source-read v90.21 settings. v90.22 production and
-    /// Preview BLEDIM Breath both use Already-On Minimal unconditionally.
+    /// Retained only to migrate/source-read v90.21 settings. Production headlight
+    /// reconnects and Preview keep the finalized Already-On Minimal behavior.
+    /// v90.35.3.9.1 permits an explicit Power/RGB prime only after this app itself
+    /// sent a manual Power OFF, because that is the one state where logical OFF is known.
     var bledimAnimationStrategy: BLEDIMAnimationStrategy {
         didSet { UserDefaults.standard.set(bledimAnimationStrategy.rawValue, forKey: "HUD.Ambient.v90_21.bledimAnimationStrategy") }
     }
@@ -366,6 +368,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// Captured at preparation time so changing the UI strategy never mutates an
     /// animation already in flight. Only BLEDIM members use this map.
     private var activeBLEDIMAnimationStrategyByID: [UUID: BLEDIMAnimationStrategy] = [:]
+    /// v90.35.3.9.1: preserve the finalized no-Power-ON headlight behavior. Only an
+    /// explicit app-issued manual OFF invalidates Already-On Minimal; the next manual
+    /// ON/Preview may issue one Power/RGB/brightness prime, then this flag is cleared.
+    private var bledimExplicitPowerPrimeRequiredIDs: Set<UUID> = []
     private var activeBreathStartedAt: Date?
 
     /// v90.10 transport reliability. Power/color/final-brightness writes are
@@ -633,7 +639,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         controllerStatus = "Scanning for ambient lights"
         logger.log(
             "AMBIENT TRACE",
-            "Flight recorder v90.30 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,hudAnimationGate=1,hudStartupStabilization=\(String(format: "%.1f", hudStartupStabilizationSeconds))s,startupWait=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s,headlightStrictWait=\(String(format: "%.1f", headlightStrictReadyTimeoutSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal,startupSync=HUD-gated-all-three,headlightSync=new-joiners-strict-fresh-dashboard,noLateCatchup=1}"
+            "Flight recorder v90.30 enabled config{breathCycles=\(breathCycles),breathPerCycle=\(String(format: "%.1f", breathDurationSeconds))s,sync=\(synchronizePowerOnBreathEnabled ? 1 : 0),bledimBootSettle=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s,hudAnimationGate=1,hudStartupStabilization=\(String(format: "%.1f", hudStartupStabilizationSeconds))s,startupWait=\(String(format: "%.1f", engineStartupMaxWaitSeconds))s,headlightStrictWait=\(String(format: "%.1f", headlightStrictReadyTimeoutSeconds))s,doorDay=\(doorDayBrightness)%,doorNight=\(doorNightBrightness)%,manualFade=\(String(format: "%.1f", brightnessTransitionSeconds))s,doorAutoFade=\(String(format: "%.1f", automaticDoorDayNightTransitionSeconds))s,crossCheckStable=\(String(format: "%.2f", headlightConsensusStabilitySeconds))s,bledimProduction=alreadyOnMinimal+manualOffPrime+reconnectBrightnessRecovery,startupSync=HUD-gated-all-three,headlightSync=new-joiners-strict-fresh-dashboard,noLateCatchup=1}"
         )
         ambientTrace("Ambient monitor start")
     }
@@ -672,6 +678,7 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         ambientConnectionGenerationByID.removeAll()
         minimumFreshHeadlightConnectionGenerationByID.removeAll()
         loggedFreshHeadlightWaitIDs.removeAll()
+        bledimExplicitPowerPrimeRequiredIDs.removeAll()
         activeBreathStartBrightness.removeAll()
         activeBreathReturnBrightness.removeAll()
         activeBLEDIMAnimationStrategyByID.removeAll()
@@ -1031,6 +1038,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         restoreTasks[id] = nil
         removeFromActiveBreath(id)
         updateDevice(id) { $0.powerOn = on }
+        if pairedDevice(id)?.protocolKind == .bledim2, !on {
+            bledimExplicitPowerPrimeRequiredIDs.insert(id)
+            animatedConnectionSession.remove(id)
+            logger.log("AMBIENT BLEDIM", "Manual Power OFF invalidated Already-On Minimal assumption for \(pairedDevice(id)?.displayName ?? id.uuidString)")
+        }
 
         // A user-requested OFF -> ON is also a real light power-up event. If this
         // light has Animation enabled, the Breath preparation owns the reliable
@@ -1422,12 +1434,82 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             self.bledimBootSettleTasks[id] = nil
             guard self.enabled, self.isControllable(id),
                   let current = self.pairedDevice(id), current.protocolKind == .bledim2 else { return }
+            let needsPrime = self.bledimExplicitPowerPrimeRequiredIDs.contains(id)
             self.logger.log(
                 "AMBIENT BLEDIM",
-                "Fresh power-on boot settle complete: \(current.displayName); admitting Already-On Minimal Breath"
+                "Fresh power-on boot settle complete: \(current.displayName); admitting \(needsPrime ? "explicit Power/RGB prime" : "Already-On Minimal") Breath"
             )
-            self.ambientTrace("BLEDIM boot settled; power-on Breath admitted \(current.displayName)")
+            self.ambientTrace("BLEDIM boot settled; power-on Breath admitted \(current.displayName) prime=\(needsPrime ? 1 : 0)")
             self.queuePowerUpBreath(id, force: forceBreath)
+        }
+    }
+
+    /// v90.35.3.9.1: a late/fresh Dashboard GATT reconnect outside an active
+    /// headlight cohort must not immediately run the generic steady restore, because
+    /// that path starts with a software Power ON. The physical headlight rail already
+    /// powers BLEDIM Dashboard, and the extra ON was intentionally removed from the
+    /// finalized animation path to avoid a visible blink. Hold the controller quiet
+    /// through its normal firmware settle; if a strict headlight cohort opens during
+    /// that window, hand it to the synchronized Breath. Otherwise reassert only the
+    /// preferred brightness. This also recovers a Breath interrupted near 0% without
+    /// changing the established day/night state machine or sending Power ON.
+    private func scheduleDashboardReconnectBrightnessRecovery(_ id: UUID, reason: String) {
+        guard let device = pairedDevice(id),
+              device.protocolKind == .bledim2,
+              device.role == .dashboard else { return }
+
+        restoreTasks[id]?.cancel()
+        logger.log(
+            "AMBIENT BLEDIM",
+            "Fresh Dashboard reconnect held through boot settle; no Power ON/RGB write delay=\(String(format: "%.2f", bledimBootSettleDelaySeconds))s reason=\(reason)"
+        )
+        ambientTrace("Dashboard reconnect quiet-settle brightness recovery")
+
+        restoreTasks[id] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.restoreTasks[id] = nil }
+            try? await Task.sleep(for: .seconds(self.bledimBootSettleDelaySeconds))
+            guard !Task.isCancelled, self.enabled, self.isControllable(id),
+                  let current = self.pairedDevice(id), current.powerOn else { return }
+
+            // Center may have opened the strict headlight cohort while Dashboard was
+            // settling. In that case do not issue any steady write here; let the normal
+            // synchronized preparation own the device.
+            if self.syncHeadlightBarrierActive, self.syncCohortExpectedIDs.contains(id) {
+                self.logger.log(
+                    "AMBIENT BLEDIM",
+                    "Dashboard reconnect settle completed into active headlight cohort; handing off without steady write"
+                )
+                self.prepareAutomaticSyncMember(id, reason: "fresh Dashboard reconnect settled into headlight cohort")
+                return
+            }
+
+            // A deliberate app-issued OFF is different from a physical headlight
+            // power cycle: logical LED output is known OFF and must be explicitly
+            // re-enabled before animation. Normally setPower(ON) owns this path, but
+            // keep the guard here for reconnect races.
+            if self.bledimExplicitPowerPrimeRequiredIDs.contains(id) {
+                self.logger.log(
+                    "AMBIENT BLEDIM",
+                    "Dashboard reconnect still carries manual-OFF recovery flag; queuing explicit recovery Breath"
+                )
+                self.queuePowerUpBreath(id, force: true)
+                return
+            }
+
+            let target = self.steadyBrightnessTarget(for: current)
+            let sent = await self.applyRuntimeBrightnessWhenReady(
+                id,
+                percent: target,
+                reason: "fresh Dashboard reconnect brightness-only recovery",
+                persist: true
+            )
+            self.animatedConnectionSession.insert(id)
+            self.logger.log(
+                "AMBIENT BLEDIM",
+                "Fresh Dashboard reconnect brightness-only recovery complete target=\(target)% sent=\(sent ? 1 : 0); Power ON/RGB intentionally omitted"
+            )
+            self.ambientTrace("Dashboard reconnect brightness recovery target=\(target)% sent=\(sent ? 1 : 0)")
         }
     }
 
@@ -1971,6 +2053,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             return
         }
 
+        if device.protocolKind == .bledim2, device.role == .dashboard {
+            logger.log(
+                "AMBIENT ANIM",
+                "Automatic Breath withheld outside HUD-start/headlight cohort: \(device.displayName); quiet boot-settle + brightness-only recovery"
+            )
+            scheduleDashboardReconnectBrightnessRecovery(
+                id,
+                reason: "GATT ready outside HUD-start/headlight cohort"
+            )
+            return
+        }
+
         animatedConnectionSession.insert(id)
         logger.log(
             "AMBIENT ANIM",
@@ -2052,12 +2146,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         restoreTasks[id] = nil
 
         let initialBrightness = steadyBrightnessTarget(for: device)
-        // v90.22 production decision: all BLEDIM Breaths use the field-validated
-        // Already-On Minimal path. Keep the override parameter only for source/API
-        // compatibility with old diagnostics; it can no longer select a blink-prone
-        // production sequence.
+        // v90.35.3.9.1: normal physical/headlight reconnects remain Already-On
+        // Minimal so the controller's own power-up is never followed by a blink-prone
+        // software Power ON. Only an explicit app-issued manual OFF -> ON cycle uses
+        // the field-proven 17.2 Power ON -> RGB -> Preferred preparation once.
+        let requiresExplicitBLEDIMPrime = device.protocolKind == .bledim2 &&
+            bledimExplicitPowerPrimeRequiredIDs.contains(id)
         let capturedBLEDIMStrategy: BLEDIMAnimationStrategy? = device.protocolKind == .bledim2
-            ? .alreadyOnMinimal
+            ? (requiresExplicitBLEDIMPrime ? .v90172Baseline : .alreadyOnMinimal)
             : nil
 
         logger.log(
@@ -2090,6 +2186,10 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                     ) else {
                         self.scheduleAnimationAbortFailsafe(for: id, reason: "Breath prepare baseline failed")
                         return
+                    }
+                    if strategy == .v90172Baseline {
+                        self.bledimExplicitPowerPrimeRequiredIDs.remove(id)
+                        self.logger.log("AMBIENT BLEDIM", "Manual-OFF recovery Power/RGB/brightness prime completed for \(device.displayName); future steady previews may use Already-On Minimal")
                     }
                     if strategy == .baselineHold {
                         self.logger.log("AMBIENT LAB", "BLEDIM diagnostic hold begin 0.75s light=\(device.displayName)")

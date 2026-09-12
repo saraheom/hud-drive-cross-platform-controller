@@ -20,7 +20,7 @@ final class V90353U2WLiveFrameRelayTests: XCTestCase {
         let app = try source("HUDController/App/AppState.swift")
         XCTAssertTrue(app.contains("sourceMapImage: self.mainVideo.latestFrame"))
         XCTAssertTrue(app.contains("HudCommands.kivicMode(6)"))
-        XCTAssertTrue(app.contains("U2W v8.14"))
+        XCTAssertTrue(app.contains("U2W v8.15"))
         XCTAssertFalse(app.contains("status == 1 && !address.isEmpty"))
     }
 
@@ -28,6 +28,6 @@ final class V90353U2WLiveFrameRelayTests: XCTestCase {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         XCTAssertTrue(ui.contains("Live iPhone → U2W → HUD relay"))
         XCTAssertTrue(ui.contains("Frames sent"))
-        XCTAssertTrue(ui.contains("U2W v8.14"))
+        XCTAssertTrue(ui.contains("U2W v8.15"))
     }
 }

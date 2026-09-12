@@ -1,3 +1,15 @@
+# HUD Controller v90.35.3.9.1 — MapVideo / Navigation / targeted Dashboard reconnect recovery
+
+This paired release uses **U2W v8.15** and keeps the v90.35.3.9 map-video and Route Guidance reliability fixes while narrowing the ambient-light change to the physical Dashboard reconnect problem. The previously finalized Center/day-night state machine is restored unchanged. Normal headlight OFF→ON cycles also keep the established **Already-On Minimal / no software Power ON** behavior so the old startup blink does not return.
+
+The targeted ambient change is limited to Dashboard/BLEDIM reconnect timing: a fresh Dashboard GATT reconnect outside an active headlight cohort is held quiet through the normal 1.5-second controller boot settle, then gets a **brightness-only steady reassert**. If the strict Center+Dashboard headlight cohort opens during that settle, Dashboard is handed into the synchronized Breath instead. This also recovers an interrupted Breath that stranded Dashboard near 0% without sending Power ON or RGB. An explicit Power/RGB/brightness prime is reserved only for a deliberate **app-issued manual Power OFF → ON/Preview** recovery, where logical LED output is actually known to be off.
+
+U2W v8.15 remains unchanged: rotation-safe MainVideo streaming, serialized Route Guidance/Now Playing JSON publication, and session-scoped HUD relay status/Stop→Start behavior. OBD2-first speed remains deferred.
+
+See `docs/V90_35_3_9_1_RELIABILITY.md`, `V90_35_3_9_1_BUILD_VERIFY.txt`, and `u2w/v8.15_Reliability/README.md`.
+
+---
+
 # HUD Controller v90.35.3.8 — physical Map UI layout calibration
 
 This app-only revision keeps the proven **v90.35.3.7 + U2W v8.14.3** live relay transport unchanged and adds the requested in-car visual calibration controls for the rendered 480×240 HUD frame. The normal start path remains mode 6 once → NISSAN68 credentials once → wait; no U2W reflash is required.

@@ -1,0 +1,25 @@
+U2W v8.15 — Reliability hardening build verification
+
+Target gate:
+- product_type: U2W
+- software_version: 2021.03.06.1343
+- saved original ARMiPhoneIAP2 SHA-1 required: 2c3eb90d018b29fb9f35ba807260fad0cfd0fe84
+- v8.11 MainVideo marker required
+
+Payload changes:
+- libu2w_rgd_preload.so: locked Route Guidance/media JSON snapshot publication
+- u2w_mainvideo_streamer: rotation/truncation-aware Annex-B H.264 follower
+- u2whud_discovery + u2whud_cast_relay: session-scoped markers
+- start/status/stop CGIs: current-session state + daemon preservation across display stop
+
+The encrypted update and uninstall images are generated with the same validated U2W update container/encryption format used by prior custom releases. build_images.py decrypt-verifies each produced image and checks the tar member list.
+
+Local validation:
+- all .sh/.cgi files pass `sh -n`
+- libu2w_rgd_preload.so: ELF32 ARM EABI5 shared object; undefined symbol set identical to v8.8 shim
+- u2w_mainvideo_streamer/u2whud_cast_relay/u2whud_discovery/u2whud_frame_ingress: ELF32 ARM EABI5 static executables
+- no DT_NEEDED entries on freestanding helper executables
+- encrypted image payload member lists decrypt-verified by build_images.py
+
+Update SHA-256: edaee847559dd570d0cf1750c6cfc5e454d8cc179f5b7944c51782afcbef7439
+Uninstall SHA-256: 2a497c0d4d9aad3dc71dbce824ae72d7b457efa8a8c1a7cbd172a8415b35b1fc

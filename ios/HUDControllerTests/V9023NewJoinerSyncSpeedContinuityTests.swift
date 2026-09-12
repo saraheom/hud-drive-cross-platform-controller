@@ -10,7 +10,7 @@ final class V9023NewJoinerSyncSpeedContinuityTests: XCTestCase {
     func testProductionBLEDIMIsAlreadyOnMinimalAndLabUIIsRemoved() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         let view = try source("HUDController/UI/AmbientLightingView.swift")
-        XCTAssertTrue(monitor.contains("? .alreadyOnMinimal"))
+        XCTAssertTrue(monitor.contains("requiresExplicitBLEDIMPrime ? .v90172Baseline : .alreadyOnMinimal"))
         XCTAssertTrue(monitor.contains("case .alreadyOnMinimal:"))
         XCTAssertFalse(view.contains("BLEDIM ANIMATION TEST LAB"))
         XCTAssertTrue(view.contains("BLEDIM PRODUCTION ANIMATION"))

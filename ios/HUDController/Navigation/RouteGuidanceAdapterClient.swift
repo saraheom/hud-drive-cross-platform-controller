@@ -135,6 +135,10 @@ final class RouteGuidanceAdapterClient {
     /// progression. Apple Maps legitimately holds an unchanged active 0x5201 for
     /// tens of seconds at stoplights and before joining the first routed road.
     private let endpointStaleInterval: TimeInterval = 4.5
+    /// v90.35.3.9: a malformed/partial CGI response is a transport fault, not proof
+    /// that CarPlay navigation ended. Preserve the last valid guidance long enough
+    /// for U2W to recover instead of immediately dropping the physical HUD to Freeride.
+    private let transportFailureHoldoverInterval: TimeInterval = 45.0
     private let pollInterval: Duration = .milliseconds(750)
     private var pollTask: Task<Void, Never>?
     private var snapshots: [SourceKind: TimedSnapshot] = [:]
@@ -146,6 +150,8 @@ final class RouteGuidanceAdapterClient {
     private var lastSequenceBySource: [SourceKind: Int] = [:]
     private var lastSequenceProgressAtBySource: [SourceKind: Date] = [:]
     private var lastEndpointSuccessAt: Date?
+    private var transportHoldoverStartedAt: Date?
+    private var inactiveConfirmationsBySource: [SourceKind: Int] = [:]
     private var lastValidInstruction: NavigationInstruction?
     private var rerouteAwaitingFreshManeuver = false
     private var rerouteCandidateSignature: String?
@@ -205,6 +211,8 @@ final class RouteGuidanceAdapterClient {
         lastSequenceBySource.removeAll()
         lastSequenceProgressAtBySource.removeAll()
         lastEndpointSuccessAt = nil
+        transportHoldoverStartedAt = nil
+        inactiveConfirmationsBySource.removeAll()
         selectedKind = nil
         lastDeliveredSignature = ""
         lastEtaMilliseconds = nil
@@ -252,9 +260,37 @@ final class RouteGuidanceAdapterClient {
             lastError = ""
             ingest(snapshot, at: Date())
         } catch {
+            let now = Date()
             lastError = error.localizedDescription
+
+            // v90.35.3.9 transport holdover. If the currently selected source had
+            // a valid active route, a timeout or JSON decode error cannot by itself
+            // mean navigation ended. Keep the last maneuver/ETA/lane state while the
+            // exporter recovers. A valid decoded inactive payload still exits quickly
+            // through ingest() below.
+            if let selectedKind,
+               let timed = snapshots[selectedKind],
+               timed.snapshot.active,
+               timed.snapshot.routeState != 0,
+               let lastEndpointSuccessAt,
+               now.timeIntervalSince(lastEndpointSuccessAt) <= transportFailureHoldoverInterval {
+                if transportHoldoverStartedAt == nil {
+                    transportHoldoverStartedAt = now
+                    logger.log(
+                        "CARPLAY RGD HOLD",
+                        "Transport fault while \(selectedKind.rawValue) route active; holding last HUD guidance up to \(Int(transportFailureHoldoverInterval))s error=\(error.localizedDescription)"
+                    )
+                }
+                status = "Route feed interrupted — holding last guidance"
+                if requestCounter <= 3 || requestCounter % 20 == 0 {
+                    logger.log("CARPLAY RGD", "Poll failed request=\(requestCounter) during holdover: \(error.localizedDescription)")
+                }
+                return
+            }
+
+            transportHoldoverStartedAt = nil
             status = "U2W feed unavailable — HUD returned to Freeride"
-            pruneAndSelect(now: Date())
+            pruneAndSelect(now: now)
             if requestCounter <= 3 || requestCounter % 20 == 0 {
                 logger.log("CARPLAY RGD", "Poll failed request=\(requestCounter): \(error.localizedDescription)")
             }
@@ -263,6 +299,13 @@ final class RouteGuidanceAdapterClient {
 
     private func ingest(_ snapshot: Snapshot, at now: Date) {
         let kind = SourceKind.classify(snapshot.source)
+        if let started = transportHoldoverStartedAt {
+            logger.log(
+                "CARPLAY RGD HOLD",
+                "Route feed recovered after \(String(format: "%.1f", now.timeIntervalSince(started)))s seq=\(snapshot.sequence) state=\(snapshot.routeState) active=\(snapshot.active ? 1 : 0)"
+            )
+            transportHoldoverStartedAt = nil
+        }
         if snapshot.routeState == 5, kind != .other {
             rerouteGraceSource = kind
             rerouteGraceUntil = now.addingTimeInterval(rerouteGraceInterval)
@@ -275,6 +318,29 @@ final class RouteGuidanceAdapterClient {
             lastSequenceProgressAtBySource[kind] = now
         }
         lastSequenceBySource[kind] = snapshot.sequence
+
+        // A single explicit state-0 sample can occur at an exporter transition.
+        // Require two consecutive *successfully decoded* inactive samples before
+        // releasing an already-active source. This costs ~0.75 s on a real route end
+        // but prevents one transient packet from blinking the HUD back to Freeride.
+        if kind != .other,
+           (!snapshot.active || snapshot.routeState == 0),
+           let previous = snapshots[kind]?.snapshot,
+           previous.active,
+           previous.routeState != 0 {
+            let confirmations = (inactiveConfirmationsBySource[kind] ?? 0) + 1
+            inactiveConfirmationsBySource[kind] = confirmations
+            if confirmations < 2 {
+                status = "Confirming CarPlay route end…"
+                logger.log(
+                    "CARPLAY RGD HOLD",
+                    "Ignoring first inactive sample source=\(kind.rawValue) seq=\(snapshot.sequence) state=\(snapshot.routeState); waiting for confirmation"
+                )
+                return
+            }
+        } else if snapshot.active && snapshot.routeState != 0 {
+            inactiveConfirmationsBySource[kind] = 0
+        }
 
         // Every successful HTTP response proves that the adapter/runtime is alive.
         // An unchanged sequence simply means the route state did not change.

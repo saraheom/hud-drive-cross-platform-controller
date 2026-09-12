@@ -10,8 +10,9 @@ def test_app_does_not_bounce_mode6_after_link_up():
 
 def test_relay_status_tracks_client_and_live_frame():
     s = (ROOT/'ios/HUDController/App/AppState.swift').read_text()
-    assert 'clientSeen: text.contains("hud-mjpeg-client-connected")' in s
-    assert 'liveFrameSent: text.contains("live-frame-sent")' in s
+    assert 'session_client_seen' in s
+    assert 'session_live_frame_sent' in s
+    assert 'session_id' in s
 
 def test_u2w_robust_mjpeg_server_guards_sigpipe_and_primes_decoder():
     s = (ROOT/'u2w/v8.14.3_HUD_LiveFrameRelay_MJPEGStability/source/u2whud_cast_relay.c').read_text()

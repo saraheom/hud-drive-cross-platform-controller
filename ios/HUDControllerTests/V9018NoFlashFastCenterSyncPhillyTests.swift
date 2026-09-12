@@ -18,7 +18,7 @@ final class V9018NoFlashFastCenterSyncPhillyTests: XCTestCase {
 
         let prep = monitor.components(separatedBy: "private func queuePowerUpBreath")[1]
             .components(separatedBy: "private func registerPowerOnCohortMember")[0]
-        XCTAssertTrue(prep.contains("? .alreadyOnMinimal"))
+        XCTAssertTrue(prep.contains("requiresExplicitBLEDIMPrime ? .v90172Baseline : .alreadyOnMinimal"))
         XCTAssertTrue(prep.contains("case .v9018NoFlash:"))
         XCTAssertTrue(prep.contains("power-up breath preload RGB [18 No-Flash]"))
     }

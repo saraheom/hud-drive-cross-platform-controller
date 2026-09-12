@@ -632,8 +632,8 @@ final class AppState {
 
 
 
-    // MARK: - v90.35.3.6 live relay MJPEG stability + quiet discovery settle
-    // U2W v8.14.2 was the persistent-discovery predecessor; v8.14.3 hardens HTTP/MJPEG reconnects.
+    // MARK: - v90.35.3.9 live relay session status + rotation-safe MainVideo
+    // U2W v8.15 keeps the proven mode-6 join sequence while making relay status session-scoped.
 
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -679,7 +679,7 @@ final class AppState {
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
         hudU2WLiveRelayActive = false
-        hudU2WSTAStatus = "Starting U2W v8.14.3 live relay…"
+        hudU2WSTAStatus = "Starting U2W v8.15 live relay…"
         logger.log("HUD/U2W STA", "live relay start ssid=\(cleanSSID); iPhone remains on U2W AP")
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
@@ -691,13 +691,13 @@ final class AppState {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 let text = String(data: data.prefix(320), encoding: .utf8) ?? ""
-                self.logger.log("HUD/U2W STA", "U2W v8.14.3 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
+                self.logger.log("HUD/U2W STA", "U2W v8.15 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
                 guard (200...299).contains(code) else {
-                    self.hudU2WSTAStatus = "U2W v8.14.3 start failed (HTTP \(code))"
+                    self.hudU2WSTAStatus = "U2W v8.15 start failed (HTTP \(code))"
                     return
                 }
             } catch {
-                self.hudU2WSTAStatus = "U2W v8.14.3 unreachable"
+                self.hudU2WSTAStatus = "U2W v8.15 unreachable"
                 self.hudU2WSTAReason = error.localizedDescription
                 self.logger.log("HUD/U2W STA", "U2W relay start request failed: \(error.localizedDescription)")
                 return
@@ -806,6 +806,7 @@ final class AppState {
         let discoverySeen: Bool
         let clientSeen: Bool
         let liveFrameSent: Bool
+        let sessionID: String
     }
 
     private func primeHUDU2WKivicViewer(reason: String, force: Bool = false) {
@@ -822,10 +823,12 @@ final class AppState {
             self.hudU2WSTAStatus = "Wi-Fi connected — waiting for HUD discovery…"
             self.logger.log("HUD/U2W STA", "link-up confirmed; leaving mode 6 untouched reason=\(reason)")
 
+            var lastRelay = HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—")
             for attempt in 1...8 {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
                 let relay = await self.u2wHUDRelayStatus()
+                lastRelay = relay
                 if relay.established {
                     self.hudU2WSTAStatus = "Connected — HUD stream active"
                     self.logger.log("HUD/U2W STA", "U2W confirms active MJPEG client without post-connect mode-6 rewrite")
@@ -842,14 +845,23 @@ final class AppState {
                 }
             }
 
-            self.hudU2WSTAStatus = "Wi-Fi connected, but HUD sent no discovery — use Retry HUD display once"
-            self.logger.log("HUD/U2W STA", "no discovery after 8s; no automatic mode-6 retry was sent")
+            if lastRelay.clientSeen {
+                self.hudU2WSTAStatus = "HUD contacted U2W, but video stream is not established — use Retry HUD display once"
+            } else if lastRelay.discoverySeen {
+                self.hudU2WSTAStatus = "HUD discovery reached U2W, but video client did not connect — use Retry HUD display once"
+            } else {
+                self.hudU2WSTAStatus = "Wi-Fi connected, but HUD sent no discovery — use Retry HUD display once"
+            }
+            self.logger.log(
+                "HUD/U2W STA",
+                "8s viewer monitor ended session=\(lastRelay.sessionID) discovery=\(lastRelay.discoverySeen) client=\(lastRelay.clientSeen) established=\(lastRelay.established); no automatic mode-6 retry was sent"
+            )
         }
     }
 
     private func u2wHUDRelayStatus() async -> HUDU2WRelayStatus {
         guard let url = URL(string: "http://192.168.50.2/cgi-bin/u2whud-status.cgi") else {
-            return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false)
+            return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—")
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 2
@@ -857,22 +869,35 @@ final class AppState {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   let text = String(data: data, encoding: .utf8) else {
-                return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false)
+                return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—")
             }
+            func field(_ key: String) -> String? {
+                text.split(whereSeparator: \.isNewline)
+                    .first(where: { $0.hasPrefix("\(key)=") })
+                    .map { String($0.dropFirst(key.count + 1)) }
+            }
+            let hasSessionFields = field("session_id") != nil
             let status = HUDU2WRelayStatus(
-                established: text.contains("hud_mjpeg_established=YES"),
-                discoverySeen: text.contains("discovery-packet-received"),
-                clientSeen: text.contains("hud-mjpeg-client-connected") || text.contains("hud_client_seen=YES"),
-                liveFrameSent: text.contains("live-frame-sent") || text.contains("live_frame_sent=YES")
+                established: field("hud_mjpeg_established") == "YES",
+                discoverySeen: hasSessionFields
+                    ? field("session_discovery_seen") == "YES"
+                    : text.contains("discovery-packet-received"),
+                clientSeen: hasSessionFields
+                    ? field("session_client_seen") == "YES"
+                    : (text.contains("hud-mjpeg-client-connected") || text.contains("hud_client_seen=YES")),
+                liveFrameSent: hasSessionFields
+                    ? field("session_live_frame_sent") == "YES"
+                    : (text.contains("live-frame-sent") || text.contains("live_frame_sent=YES")),
+                sessionID: field("session_id") ?? "legacy"
             )
             self.logger.log(
                 "HUD/U2W STA",
-                "relay status mjpegEstablished=\(status.established) discoverySeen=\(status.discoverySeen) clientSeen=\(status.clientSeen) liveFrameSent=\(status.liveFrameSent)"
+                "relay status session=\(status.sessionID) mjpegEstablished=\(status.established) discoverySeen=\(status.discoverySeen) clientSeen=\(status.clientSeen) liveFrameSent=\(status.liveFrameSent)"
             )
             return status
         } catch {
             self.logger.log("HUD/U2W STA", "relay status query failed: \(error.localizedDescription)")
-            return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false)
+            return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—")
         }
     }
 

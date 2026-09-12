@@ -9,8 +9,8 @@ final class V9021BLEDIMAnimationTestLabTests: XCTestCase {
 
     func testV9022PromotesMinimalToAutomaticDefault() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains(") ?? .alreadyOnMinimal"))
-        XCTAssertTrue(monitor.contains("? .alreadyOnMinimal"))
+        XCTAssertTrue(monitor.contains("let capturedBLEDIMStrategy"))
+        XCTAssertTrue(monitor.contains("requiresExplicitBLEDIMPrime ? .v90172Baseline : .alreadyOnMinimal"))
         XCTAssertTrue(monitor.contains("applyBLEDIMTestStrategyToAutomaticPowerOn = d.object"))
     }
 

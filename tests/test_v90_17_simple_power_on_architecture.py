@@ -29,7 +29,9 @@ def test_bledim_waits_for_boot_then_runs_one_complete_power_on_sequence():
     block = MONITOR.split('private func scheduleBLEDIMBootSettleReassert', 1)[1].split('private func animationWriteInterval', 1)[0]
     assert 'bledimBootSettleDelaySeconds' in block
     assert 'Fresh power-on boot settle scheduled' in block
-    assert 'admitting Already-On Minimal Breath' in block
+    assert 'explicit Power/RGB prime' in block
+    assert 'Already-On Minimal' in block
+    assert 'bledimExplicitPowerPrimeRequiredIDs.contains(id)' in block
     assert 'self.queuePowerUpBreath(id, force: forceBreath)' in block
     assert 'restoreDeviceState(id)' not in block
 

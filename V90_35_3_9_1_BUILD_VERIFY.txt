@@ -1,0 +1,30 @@
+HUD Controller v90.35.3.9.1 — MapVideo / Navigation / targeted Dashboard reconnect reliability
+
+Paired U2W requirement: v8.15 Reliability (unchanged from v90.35.3.9)
+
+Runtime scope:
+- rotation-safe U2W MainVideo stream + 3s iOS decoded-frame freshness watchdog
+- generation-guarded MainVideo worker callbacks during automatic reconnect
+- 45s last-valid Route Guidance holdover for transport/JSON failures
+- two consecutive decoded inactive samples required for genuine route teardown
+- session-scoped U2W HUD relay state; Stop preserves relay daemons/latest frame
+- v90.35.3.8 Center/day-night state machine restored unchanged
+- normal headlight Dashboard reconnect remains Already-On Minimal / no software Power ON
+- fresh Dashboard GATT reconnect outside a cohort waits 1.5s and uses brightness-only recovery
+- if a headlight cohort opens during that settle, Dashboard hands off to synchronized Breath
+- explicit Power/RGB/baseline recovery only after app-issued manual Power OFF
+- v90.35.3.8 map UI calibration controls retained
+- OBD2-first speed still deferred
+
+Paired U2W v8.15 update SHA-256:
+edaee847559dd570d0cf1750c6cfc5e454d8cc179f5b7944c51782afcbef7439
+
+GitHub Actions / Xcode 26 remains authoritative for full iOS compilation and XCTest.
+
+Local validation:
+- Python/static regression suite: 334 passed
+- Swift syntax parse: 183 files, 0 failures
+- YAML parse: 10 files, 0 failures
+- ZIP integrity: verified after packaging
+
+GitHub Actions / Xcode 26 remains authoritative for full iOS compilation and XCTest.

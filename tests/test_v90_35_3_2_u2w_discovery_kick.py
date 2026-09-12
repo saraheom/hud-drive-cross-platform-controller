@@ -6,7 +6,7 @@ def test_post_connect_viewer_is_not_reprimed_after_sta_link_up():
     assert 'known-good join sequence: mode 6 once' in app
     assert 'leaving mode 6 untouched' in app
     assert 'no automatic mode-6 retry was sent' in app
-    assert 'hud_mjpeg_established=YES' in app
+    assert 'field("hud_mjpeg_established") == "YES"' in app
     assert 'Retry HUD display' in (ROOT/'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 def test_stop_does_not_clear_sta_credentials():
