@@ -3,35 +3,40 @@ import XCTest
 
 final class HudProtocolFrameTests: XCTestCase {
     func testExtractSingleCompleteFrame() {
-        var buffer = Data([0x02, 0x01, 0x02, 0x03])
+        // Raw STX (0x02) is a frame boundary on the HUD wire protocol, not legal
+        // unescaped payload. Use an ordinary payload byte in this baseline test.
+        var buffer = Data([0x02, 0x01, 0x04, 0x03])
         let frames = HudProtocol.extractFrames(from: &buffer)
 
         XCTAssertEqual(frames.count, 1)
-        XCTAssertEqual(frames[0], Data([0x02, 0x01, 0x02, 0x03]))
+        XCTAssertEqual(frames[0], Data([0x02, 0x01, 0x04, 0x03]))
         XCTAssertTrue(buffer.isEmpty)
     }
 
     func testExtractLeavesIncompleteFrameBuffered() {
-        var buffer = Data([0x02, 0x01, 0x02])
+        // Keep a syntactically valid incomplete frame. A trailing raw STX would
+        // intentionally resynchronize to that newer STX under the v90.35.3.3 parser.
+        var buffer = Data([0x02, 0x01, 0x04])
         let frames = HudProtocol.extractFrames(from: &buffer)
 
         XCTAssertTrue(frames.isEmpty)
-        XCTAssertEqual(buffer, Data([0x02, 0x01, 0x02]))
+        XCTAssertEqual(buffer, Data([0x02, 0x01, 0x04]))
     }
 
     func testExtractMultipleFrames() {
         var buffer = Data([
             0x02, 0x01, 0x03,
-            0x02, 0x02, 0x03
+            0x02, 0x04, 0x03
         ])
         let frames = HudProtocol.extractFrames(from: &buffer)
 
         XCTAssertEqual(frames, [
             Data([0x02, 0x01, 0x03]),
-            Data([0x02, 0x02, 0x03])
+            Data([0x02, 0x04, 0x03])
         ])
         XCTAssertTrue(buffer.isEmpty)
     }
+
     func testNestedUnescapedSTXResynchronizesToNewerFrame() {
         // A firmware/version frame was split, then a complete Wi-Fi STA event was
         // emitted before the first frame's continuation. Unescaped STX cannot occur
@@ -49,13 +54,10 @@ final class HudProtocolFrameTests: XCTestCase {
     }
 
     func testEscapedSTXDoesNotTriggerResynchronization() {
-        var buffer = Data([0x02, 0x01, 0x7D, 0x7F, 0x02, 0x03])
-        // 0x7D 0x7F is escaped literal STX; the following raw 0x02 is deliberately
-        // another frame start, so construct the valid case without a raw nested STX.
-        buffer = Data([0x02, 0x01, 0x7D, 0x7F, 0x03])
+        // 0x7D 0x7F is the wire encoding of a literal payload STX (0x02).
+        var buffer = Data([0x02, 0x01, 0x7D, 0x7F, 0x03])
         let frames = HudProtocol.extractFrames(from: &buffer)
         XCTAssertEqual(frames.count, 1)
         XCTAssertEqual(frames[0], Data([0x02, 0x01, 0x7D, 0x7F, 0x03]))
     }
-
 }

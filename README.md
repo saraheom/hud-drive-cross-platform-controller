@@ -1,3 +1,5 @@
+# HUD Controller v90.35.3.4 — STA reset + BLE frame resync (CI alignment)
+
 # v90.35.3.3 — HUD STA clean-reset + BLE frame resynchronization
 
 This release keeps the validated iPhone → U2W → HUD live-JPEG relay and targets the latest field failure where the HUD remained in Joining / Empty network even though U2W frame ingress was healthy.
