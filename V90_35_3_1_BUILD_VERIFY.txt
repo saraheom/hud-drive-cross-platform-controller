@@ -1,0 +1,6 @@
+v90.35.3.1 local validation
+pytest_all=314 passed
+swift_syntax_parse=181 files, 0 failures
+yaml_parse=10 files, PASS
+runtime_delta=relay stability only: suppress HUD rehydration while mode6 relay active; block legacy mode5 during relay
+paired_u2w=v8.14.1 persistent KivicCast discovery

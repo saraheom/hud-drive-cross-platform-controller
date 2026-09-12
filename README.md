@@ -1,6 +1,6 @@
-# v90.35.3 — Live iPhone → U2W → HUD frame relay
+# v90.35.3.1 — Live iPhone → U2W → HUD frame relay stability
 
-v90.35.3 promotes the successful v8.13 HUD-as-STA home test into the preferred physical Map Mode transport. The iPhone stays connected to the Carlinkit/U2W AP, the HUD joins that same AP using stock `IOS_KIVICCAST_STA_MODE` (mode 6), and the app continuously renders the existing 480×240 custom HUD composition at 5 fps. Each JPEG is sent over a persistent TCP connection to U2W v8.14 on `192.168.50.2:15331`; U2W then serves the latest frame to the HUD through the already-validated KivicCast discovery/MJPEG path on UDP 15320 / TCP 15330.
+v90.35.3.1 retains the v90.35.3 live relay architecture and stabilizes it. v90.35.3 originally promoted the successful v8.13 HUD-as-STA home test into the preferred physical Map Mode transport. The iPhone stays connected to the Carlinkit/U2W AP, the HUD joins that same AP using stock `IOS_KIVICCAST_STA_MODE` (mode 6), and the app continuously renders the existing 480×240 custom HUD composition at 5 fps. Each JPEG is sent over a persistent TCP connection to U2W v8.14.1 on `192.168.50.2:15331`; U2W then serves the latest frame to the HUD through the already-validated KivicCast discovery/MJPEG path on UDP 15320 / TCP 15330.
 
 Unlike the legacy mode-5 experiment, v90.35.3 does **not** stop U2W MainVideo, Route Guidance, lane, or Now Playing polling and does **not** switch the iPhone to HUDWAY Wi-Fi. The center map therefore uses `mainVideo.latestFrame` live rather than a frozen pre-handoff image. The existing manual crop/zoom controls remain in place for Dashboard geometry calibration.
 
@@ -983,3 +983,7 @@ See `docs/V90_16_FIELD_HARDENING.md`.
 
 ### v90.34.8.1 CI compile correction
 The Xcode 26.6 simulator CI exposed three Swift generic-inference errors in the new minimal ADB client. v90.34.8.1 adds explicit `CheckedContinuation<Void, Error>` / `CheckedContinuation<Data, Error>` result types only; boot-animation and ADB runtime semantics are otherwise unchanged from v90.34.8.
+
+## v90.35.3.1 relay stability
+
+Suppresses ordinary HUD profile rehydration while the mode-6 U2W live relay is active and prevents the legacy mode-5 control from interrupting the relay. Pair with U2W v8.14.1 for persistent KivicCast rediscovery.

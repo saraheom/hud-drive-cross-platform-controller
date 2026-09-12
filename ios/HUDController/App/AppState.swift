@@ -596,7 +596,7 @@ final class AppState {
 
 
 
-    // MARK: - v90.35.3 live iPhone -> U2W -> HUD relay
+    // MARK: - v90.35.3.1 live iPhone -> U2W -> HUD relay stability
 
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -613,6 +613,18 @@ final class AppState {
             return
         }
 
+        // Entering stock mode 6 can emit the same firmware/session hello used during
+        // ordinary HUD boot. Normal rehydration writes dashboard/navigation state and
+        // can tear down KivicCast STA immediately after it connects. Cancel any pending
+        // rehydration before the mode-6 transition; while the relay is active, firmware
+        // hello events are intentionally not allowed to start another rehydration cycle.
+        hudRehydrateTask?.cancel()
+        hudRehydrateTask = nil
+        hudReassertTask?.cancel()
+        hudReassertTask = nil
+        timeWeatherColdOffSyncTask?.cancel()
+        timeWeatherColdOffSyncTask = nil
+
         hudU2WSTAStatusTask?.cancel()
         hudU2WRelayFrameTask?.cancel()
         hudU2WFrameRelay.stop(reason: "new relay session")
@@ -620,7 +632,7 @@ final class AppState {
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
         hudU2WLiveRelayActive = false
-        hudU2WSTAStatus = "Starting U2W v8.14 live relay…"
+        hudU2WSTAStatus = "Starting U2W v8.14.1 live relay…"
         logger.log("HUD/U2W STA", "live relay start ssid=\(cleanSSID); iPhone remains on U2W AP")
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
@@ -632,13 +644,13 @@ final class AppState {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 let text = String(data: data.prefix(320), encoding: .utf8) ?? ""
-                self.logger.log("HUD/U2W STA", "U2W v8.14 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
+                self.logger.log("HUD/U2W STA", "U2W v8.14.1 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
                 guard (200...299).contains(code) else {
-                    self.hudU2WSTAStatus = "U2W v8.14 start failed (HTTP \(code))"
+                    self.hudU2WSTAStatus = "U2W v8.14.1 start failed (HTTP \(code))"
                     return
                 }
             } catch {
-                self.hudU2WSTAStatus = "U2W v8.14 unreachable"
+                self.hudU2WSTAStatus = "U2W v8.14.1 unreachable"
                 self.hudU2WSTAReason = error.localizedDescription
                 self.logger.log("HUD/U2W STA", "U2W relay start request failed: \(error.localizedDescription)")
                 return
@@ -1184,6 +1196,11 @@ final class AppState {
     }
 
     func enableMapMode() {
+        guard !hudU2WLiveRelayActive else {
+            mapModeStatus = "Stop the live U2W relay before using legacy mode-5 Map Mode"
+            logger.log("MAP MODE", "Legacy mode-5 start blocked while live U2W relay is active")
+            return
+        }
         guard bluetooth.state == .connected else {
             mapModeStatus = "Connect the HUD over BLE first"
             return
@@ -1877,6 +1894,13 @@ final class AppState {
 
 
     private func scheduleHUDRehydration(reason: String) {
+        if hudU2WLiveRelayActive {
+            // Mode 6 emits a firmware/session hello on this HUD. Rehydrating Freeride /
+            // Navigation profiles during an active KivicCast STA session overrides the
+            // casting state and was observed to collapse a valid stream after ~1 second.
+            logger.log("HUD REHYDRATE", "Suppressed during live U2W relay reason=\(reason)")
+            return
+        }
         hudRehydrateTask?.cancel()
         hudReassertTask?.cancel()
         timeWeatherColdOffSyncTask?.cancel()

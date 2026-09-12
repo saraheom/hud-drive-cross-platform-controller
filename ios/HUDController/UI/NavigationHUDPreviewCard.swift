@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// v90.35.3 custom Map Mode + live U2W relay control surface.
+/// v90.35.3.1 custom Map Mode + live U2W relay control surface.
 ///
 /// The preferred physical path keeps the iPhone on the Carlinkit AP, places the
 /// HUD in stock KivicCast STA mode 6, and relays rendered 480x240 JPEG frames
-/// through U2W v8.14 to the HUD.
+/// through U2W v8.14.1 to the HUD.
 struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
     @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = "NISSAN68"
@@ -42,7 +42,7 @@ struct NavigationHUDPreviewCard: View {
 
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "info.circle")
-                    Text("U2W v8.11 exposes the real 800×480 CarPlay MainVideo stream. U2W v8.14 now adds live frame ingress: the iPhone renders this 480×240 custom HUD image, sends JPEG frames to 192.168.50.2:15331, and the HUD pulls the changing MJPEG stream from U2W while remaining in stock STA mode 6. The legacy mode-5 path below remains only for comparison.")
+                    Text("U2W v8.11 exposes the real 800×480 CarPlay MainVideo stream. U2W v8.14.1 now adds live frame ingress: the iPhone renders this 480×240 custom HUD image, sends JPEG frames to 192.168.50.2:15331, and the HUD pulls the changing MJPEG stream from U2W while remaining in stock STA mode 6. The legacy mode-5 path below remains only for comparison.")
                         .font(.caption)
                 }
                 .foregroundStyle(.secondary)
@@ -153,7 +153,7 @@ struct NavigationHUDPreviewCard: View {
                 LabeledContent("Reason", value: state.hudU2WSTAReason)
             }
 
-            Text("Requires U2W v8.14. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. The app starts U2W's persistent JPEG ingress on TCP/15331, puts the HUD in IOS_KIVICCAST_STA_MODE (6), and continuously renders the same 480×240 layout shown above. MainVideo, Route Guidance, lanes, and Now Playing remain live because the iPhone never leaves the U2W AP.")
+            Text("Requires U2W v8.14.1. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. The app starts U2W's persistent JPEG ingress on TCP/15331, puts the HUD in IOS_KIVICCAST_STA_MODE (6), and continuously renders the same 480×240 layout shown above. MainVideo, Route Guidance, lanes, and Now Playing remain live because the iPhone never leaves the U2W AP.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -179,6 +179,7 @@ struct NavigationHUDPreviewCard: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(accent)
+                    .disabled(state.hudU2WLiveRelayActive)
                 }
 
                 Spacer(minLength: 8)
@@ -191,6 +192,12 @@ struct NavigationHUDPreviewCard: View {
             Text(state.mapModeStatus)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if state.hudU2WLiveRelayActive {
+                Text("Disabled while the live U2W relay is active. Mode 5 would replace the HUD's mode-6 STA session and interrupt the relay.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
 
             if state.mapModeActive {
                 Text("After the HUD AP starts, join HUDWAY Drive Wi-Fi on the iPhone. The app freezes the latest real U2W map frame plus route snapshot before Carlinkit becomes unreachable, then the HUD should discover the MJPEG stream automatically.")
