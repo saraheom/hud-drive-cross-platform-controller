@@ -18,6 +18,7 @@ final class AppState {
     let mapModeSettings = HudMapModeSettings()
     let mapModeCastServer = HudMapModeCastServer()
     let mainVideo: U2WMainVideoClient
+    let hudU2WFrameRelay: U2WHUDFrameRelayClient
     private var mapModeFrameTask: Task<Void, Never>?
     private var mapModeOBDOverlayTask: Task<Void, Never>?
     private var mapModeFrozenSnapshot: HudMapModeSnapshot?
@@ -30,6 +31,8 @@ final class AppState {
     private(set) var hudU2WSTAReason = ""
     private(set) var hudU2WSTAConnected = false
     private var hudU2WSTAStatusTask: Task<Void, Never>?
+    private var hudU2WRelayFrameTask: Task<Void, Never>?
+    private(set) var hudU2WLiveRelayActive = false
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
     private var hudRehydrateTask: Task<Void, Never>?
@@ -101,6 +104,8 @@ final class AppState {
         self.logger = logger
         let mainVideo = U2WMainVideoClient(logger: logger)
         self.mainVideo = mainVideo
+        let hudU2WFrameRelay = U2WHUDFrameRelayClient(logger: logger)
+        self.hudU2WFrameRelay = hudU2WFrameRelay
         let maintenance = HudMaintenanceManager(logger: logger)
         self.maintenance = maintenance
         let bluetooth = HudBluetoothManager(logger: logger)
@@ -173,7 +178,9 @@ final class AppState {
 
         bluetooth.onWiFiSTAStatusEvent = { [weak self] status, reason, address in
             guard let self else { return }
-            self.hudU2WSTAConnected = status == 1 && !address.isEmpty
+            // Physical v8.13 test proved stock status=1 means connected even when
+            // this firmware omits the optional address field.
+            self.hudU2WSTAConnected = status == 1
             self.hudU2WSTAAddress = address
             self.hudU2WSTAReason = reason
             switch status {
@@ -238,6 +245,10 @@ final class AppState {
             self.timeWeatherColdOffSyncTask = nil
             self.hudU2WSTAStatusTask?.cancel()
             self.hudU2WSTAStatusTask = nil
+            self.hudU2WRelayFrameTask?.cancel()
+            self.hudU2WRelayFrameTask = nil
+            self.hudU2WFrameRelay.stop(reason: "HUD BLE transport disconnected")
+            self.hudU2WLiveRelayActive = false
             self.hudU2WSTAConnected = false
             self.laneGuidanceRefreshTask?.cancel()
             self.laneGuidanceRefreshTask = nil
@@ -585,7 +596,7 @@ final class AppState {
 
 
 
-    // MARK: - v90.35.2 HUD-as-STA -> U2W home bridge diagnostic
+    // MARK: - v90.35.3 live iPhone -> U2W -> HUD relay
 
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -603,11 +614,14 @@ final class AppState {
         }
 
         hudU2WSTAStatusTask?.cancel()
+        hudU2WRelayFrameTask?.cancel()
+        hudU2WFrameRelay.stop(reason: "new relay session")
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
-        hudU2WSTAStatus = "Starting U2W v8.13 cast server…"
-        logger.log("HUD/U2W STA", "home probe start ssid=\(cleanSSID); iPhone remains on U2W AP")
+        hudU2WLiveRelayActive = false
+        hudU2WSTAStatus = "Starting U2W v8.14 live relay…"
+        logger.log("HUD/U2W STA", "live relay start ssid=\(cleanSSID); iPhone remains on U2W AP")
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -617,25 +631,29 @@ final class AppState {
                 request.timeoutInterval = 4
                 let (data, response) = try await URLSession.shared.data(for: request)
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-                let text = String(data: data.prefix(240), encoding: .utf8) ?? ""
-                self.logger.log("HUD/U2W STA", "U2W v8.13 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\\n", with: " | "))")
+                let text = String(data: data.prefix(320), encoding: .utf8) ?? ""
+                self.logger.log("HUD/U2W STA", "U2W v8.14 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
                 guard (200...299).contains(code) else {
-                    self.hudU2WSTAStatus = "U2W v8.13 start failed (HTTP \(code))"
+                    self.hudU2WSTAStatus = "U2W v8.14 start failed (HTTP \(code))"
                     return
                 }
             } catch {
-                self.hudU2WSTAStatus = "U2W v8.13 unreachable"
+                self.hudU2WSTAStatus = "U2W v8.14 unreachable"
                 self.hudU2WSTAReason = error.localizedDescription
-                self.logger.log("HUD/U2W STA", "U2W start request failed: \(error.localizedDescription)")
+                self.logger.log("HUD/U2W STA", "U2W relay start request failed: \(error.localizedDescription)")
                 return
             }
 
             guard !Task.isCancelled else { return }
+            self.hudU2WFrameRelay.start()
+            self.hudU2WLiveRelayActive = true
+            self.startHUDU2WRelayFrameLoop()
+
             self.hudU2WSTAStatus = "Joining \(cleanSSID)…"
-            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W home probe → IOS_KIVICCAST_STA_MODE(6)")
+            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → IOS_KIVICCAST_STA_MODE(6)")
             self.bluetooth.enqueue(
                 HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
-                label: "HUD/U2W home probe → Wi-Fi STA credentials for \(cleanSSID)"
+                label: "HUD/U2W live relay → Wi-Fi STA credentials for \(cleanSSID)"
             )
 
             try? await Task.sleep(for: .seconds(2.5))
@@ -647,18 +665,44 @@ final class AppState {
         }
     }
 
+    private func startHUDU2WRelayFrameLoop() {
+        hudU2WRelayFrameTask?.cancel()
+        hudU2WRelayFrameTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.hudU2WLiveRelayActive {
+                let snapshot = self.makeMapModeSnapshot(
+                    useFrozenRouteWhenUnavailable: false,
+                    allowDesignFallback: true
+                )
+                if let frame = HudMapModeFrameRenderer.jpeg(
+                    snapshot: snapshot,
+                    settings: self.mapModeSettings,
+                    sourceMapImage: self.mainVideo.latestFrame,
+                    suppressCustomSpeedForNativeOBDProbe: false
+                ) {
+                    self.hudU2WFrameRelay.sendFrame(frame)
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
+    }
+
     func requestHUDU2WSTAStatus() {
         guard bluetooth.state == .connected else {
             hudU2WSTAStatus = "HUD BLE disconnected"
             return
         }
-        bluetooth.enqueue(HudCommands.wifiSTAStatusRequest(), label: "HUD/U2W home probe → request STA status")
+        bluetooth.enqueue(HudCommands.wifiSTAStatusRequest(), label: "HUD/U2W live relay → request STA status")
         logger.log("HUD/U2W STA", "Requested stock WifiSTAStatusEventPacket")
     }
 
     func stopHUDU2WSTAHomeProbe() {
         hudU2WSTAStatusTask?.cancel()
         hudU2WSTAStatusTask = nil
+        hudU2WRelayFrameTask?.cancel()
+        hudU2WRelayFrameTask = nil
+        hudU2WFrameRelay.stop(reason: "relay stopped")
+        hudU2WLiveRelayActive = false
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
@@ -667,10 +711,10 @@ final class AppState {
         if bluetooth.state == .connected {
             bluetooth.enqueue(
                 HudCommands.wifiSTAMode(ssid: "", password: "", security: 0),
-                label: "HUD/U2W home probe → clear Wi-Fi STA credentials"
+                label: "HUD/U2W live relay → clear Wi-Fi STA credentials"
             )
-            bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W home probe → restore IOS_HUD_MODE(4)")
-            restoreDashboardOperatingMode(reason: "HUD/U2W STA home probe stopped")
+            bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W live relay → restore IOS_HUD_MODE(4)")
+            restoreDashboardOperatingMode(reason: "HUD/U2W live relay stopped")
         }
 
         Task { @MainActor [weak self] in
@@ -681,7 +725,7 @@ final class AppState {
                 _ = try? await URLSession.shared.data(for: request)
             }
             self.hudU2WSTAStatus = "Stopped — normal HUD mode restored"
-            self.logger.log("HUD/U2W STA", "home probe stopped; mode 4 restore requested")
+            self.logger.log("HUD/U2W STA", "live relay stopped; mode 4 restore requested")
         }
     }
 

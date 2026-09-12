@@ -1,3 +1,15 @@
+# v90.35.3 — Live iPhone → U2W → HUD frame relay
+
+v90.35.3 promotes the successful v8.13 HUD-as-STA home test into the preferred physical Map Mode transport. The iPhone stays connected to the Carlinkit/U2W AP, the HUD joins that same AP using stock `IOS_KIVICCAST_STA_MODE` (mode 6), and the app continuously renders the existing 480×240 custom HUD composition at 5 fps. Each JPEG is sent over a persistent TCP connection to U2W v8.14 on `192.168.50.2:15331`; U2W then serves the latest frame to the HUD through the already-validated KivicCast discovery/MJPEG path on UDP 15320 / TCP 15330.
+
+Unlike the legacy mode-5 experiment, v90.35.3 does **not** stop U2W MainVideo, Route Guidance, lane, or Now Playing polling and does **not** switch the iPhone to HUDWAY Wi-Fi. The center map therefore uses `mainVideo.latestFrame` live rather than a frozen pre-handoff image. The existing manual crop/zoom controls remain in place for Dashboard geometry calibration.
+
+The v8.13 physical result established that stock HUD Wi-Fi status `1` means connected even when the optional address field is omitted. v90.35.3 corrects that parser behavior.
+
+Paired **U2W v8.14** leaves `wlan0`, hostapd, DHCP, SSID, password and channel unchanged. It preserves the v8.8 Route Guidance exporter and v8.11 MainVideo exporter. Before the first iPhone JPEG arrives it serves the known v8.13 test image as a fallback.
+
+---
+
 # v90.35.2.1 — HUD-as-STA → U2W home diagnostic (CI alignment)
 
 v90.35.2.1 is runtime-identical to v90.35.2 and aligns one stale XCTest with the intentional removal of the temporary Speed Marker Probe UI. v90.35.2 adds a no-CarPlay home diagnostic for the shared-network architecture. The iPhone stays connected to the existing U2W/Carlinkit AP while the HUD is commanded over BLE into stock `IOS_KIVICCAST_STA_MODE` (mode 6) and receives the U2W SSID/password using the recovered `WifiSTAModeCommandPacket`. The app now parses the returned `WifiSTAStatusEventPacket`, including status, reason and assigned IP.

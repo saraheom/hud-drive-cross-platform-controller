@@ -1,0 +1,7 @@
+v90.35.3 local validation
+- Swift syntax parse: PASS (181 Swift files, 0 failures)
+- Python/static regression suite: PASS (311 tests)
+- U2W v8.14 shell syntax: PASS
+- U2W v8.14 image AES decrypt/tar round-trip: PASS
+- U2W v8.14 binaries: ARM EABI5 static executables
+- Full Xcode 26 compile remains authoritative and must run in GitHub Actions/TestFlight CI.

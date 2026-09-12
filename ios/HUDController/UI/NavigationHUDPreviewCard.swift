@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// v90.35.1 custom Map Mode + live U2W MainVideo control surface.
+/// v90.35.3 custom Map Mode + live U2W relay control surface.
 ///
-/// The in-app preview always remains available. "Enable Map Mode on HUD" starts
-/// the recovered stock KivicCast mode-5 AP plus the local MJPEG responder; the
-/// user then joins the HUDWAY Drive Wi-Fi on the iPhone for the physical test.
+/// The preferred physical path keeps the iPhone on the Carlinkit AP, places the
+/// HUD in stock KivicCast STA mode 6, and relays rendered 480x240 JPEG frames
+/// through U2W v8.14 to the HUD.
 struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
     @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = "NISSAN68"
@@ -42,7 +42,7 @@ struct NavigationHUDPreviewCard: View {
 
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "info.circle")
-                    Text("U2W v8.11 exposes the real 800×480 CarPlay MainVideo stream. v8.13 adds the separate home bridge diagnostic: the HUD joins the U2W AP in stock mode 6 and U2W serves a known KivicCast test image. The legacy Map Mode button below still uses the older mode-5 iPhone-to-HUD handoff and remains available only for comparison.")
+                    Text("U2W v8.11 exposes the real 800×480 CarPlay MainVideo stream. U2W v8.14 now adds live frame ingress: the iPhone renders this 480×240 custom HUD image, sends JPEG frames to 192.168.50.2:15331, and the HUD pulls the changing MJPEG stream from U2W while remaining in stock STA mode 6. The legacy mode-5 path below remains only for comparison.")
                         .font(.caption)
                 }
                 .foregroundStyle(.secondary)
@@ -103,9 +103,9 @@ struct NavigationHUDPreviewCard: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("HUD → U2W Wi-Fi home diagnostic")
+                    Text("Live iPhone → U2W → HUD relay")
                         .font(.subheadline.weight(.semibold))
-                    Text("Mode 6 • HUD joins the Carlinkit AP; iPhone stays on U2W Wi-Fi")
+                    Text("Mode 6 • HUD and iPhone stay on the Carlinkit AP • 5 fps JPEG relay")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -126,7 +126,7 @@ struct NavigationHUDPreviewCard: View {
                 .autocorrectionDisabled()
 
             HStack(spacing: 8) {
-                Button("Start home bridge test") {
+                Button("Start live U2W relay") {
                     state.startHUDU2WSTAHomeProbe(ssid: u2wSSID, password: u2wPassword)
                 }
                 .buttonStyle(.borderedProminent)
@@ -139,18 +139,21 @@ struct NavigationHUDPreviewCard: View {
                 .buttonStyle(.bordered)
             }
 
-            Button("Stop test + restore HUD", role: .destructive) {
+            Button("Stop relay + restore HUD", role: .destructive) {
                 state.stopHUDU2WSTAHomeProbe()
             }
             .buttonStyle(.bordered)
 
             LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
-            LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "—" : state.hudU2WSTAAddress)
+            LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
+            LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
+            LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
+            LabeledContent("Last JPEG", value: state.hudU2WFrameRelay.lastFrameBytes == 0 ? "—" : "\(state.hudU2WFrameRelay.lastFrameBytes) bytes")
             if !state.hudU2WSTAReason.isEmpty {
                 LabeledContent("Reason", value: state.hudU2WSTAReason)
             }
 
-            Text("Requires U2W v8.13. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. This button starts the known-image KivicCast server on 192.168.50.2, puts the HUD in IOS_KIVICCAST_STA_MODE (6), and asks the HUD to join the same U2W AP. Do not manually join HUDWAY Drive Wi-Fi and do not use the legacy Map Mode button during this home test.")
+            Text("Requires U2W v8.14. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. The app starts U2W's persistent JPEG ingress on TCP/15331, puts the HUD in IOS_KIVICCAST_STA_MODE (6), and continuously renders the same 480×240 layout shown above. MainVideo, Route Guidance, lanes, and Now Playing remain live because the iPhone never leaves the U2W AP.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

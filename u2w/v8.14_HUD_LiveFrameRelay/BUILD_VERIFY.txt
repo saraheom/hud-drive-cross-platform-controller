@@ -1,0 +1,4 @@
+/mnt/data/u2w_v814_build/source/u2whud_cast_relay:    ELF 32-bit LSB executable, ARM, EABI5 version 1 (SYSV), statically linked, not stripped
+/mnt/data/u2w_v814_build/source/u2whud_frame_ingress: ELF 32-bit LSB executable, ARM, EABI5 version 1 (SYSV), statically linked, not stripped
+shell_syntax=PASS
+image_roundtrip=PASS (asserted by build_images.py)
