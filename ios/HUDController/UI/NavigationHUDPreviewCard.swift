@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// v90.35.3.5 custom Map Mode + live U2W relay IP-soft-connect/frame-resync control surface.
+/// v90.35.3.6 custom Map Mode + live U2W relay IP-soft-connect/frame-resync control surface.
 ///
 /// The preferred physical path keeps the iPhone on the Carlinkit AP, places the
 /// HUD in stock KivicCast STA mode 6, and relays rendered 480x240 JPEG frames
-/// through U2W v8.14.2 to the HUD with deterministic STA recovery.
+/// through U2W v8.14.3 to the HUD with deterministic STA recovery.
 struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
     @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = "NISSAN68"
@@ -42,7 +42,7 @@ struct NavigationHUDPreviewCard: View {
 
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "info.circle")
-                    Text("U2W v8.11 exposes the real 800×480 CarPlay MainVideo stream. U2W v8.14.2 keeps live frame ingress and makes relay start idempotent: the iPhone renders this 480×240 custom HUD image, sends JPEG frames to 192.168.50.2:15331, and the HUD pulls the changing MJPEG stream from U2W while remaining in stock STA mode 6. The legacy mode-5 path below remains only for comparison.")
+                    Text("U2W v8.11 exposes the real 800×480 CarPlay MainVideo stream. U2W v8.14.3 keeps live frame ingress and makes relay start idempotent: the iPhone renders this 480×240 custom HUD image, sends JPEG frames to 192.168.50.2:15331, and the HUD pulls the changing MJPEG stream from U2W while remaining in stock STA mode 6. The legacy mode-5 path below remains only for comparison.")
                         .font(.caption)
                 }
                 .foregroundStyle(.secondary)
@@ -159,7 +159,7 @@ struct NavigationHUDPreviewCard: View {
                 LabeledContent("Reason", value: state.hudU2WSTAReason)
             }
 
-            Text("Requires U2W v8.14.2. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. v90.35.3.5 no longer erases the HUD's saved STA network before joining: it briefly returns to mode 4, enters mode 6, and overwrites NISSAN68 credentials non-destructively. A valid HUD DHCP address is treated as link-up even if this firmware reports status 6 / Empty network, so KivicCast discovery can still be forced. If the image is absent, use Retry HUD display rather than restarting the relay.")
+            Text("Requires U2W v8.14.3. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. v90.35.3.6 no longer erases the HUD's saved STA network before joining: it briefly returns to mode 4, enters mode 6, and overwrites NISSAN68 credentials non-destructively. A valid HUD DHCP address is treated as link-up even if this firmware reports status 6 / Empty network, so KivicCast discovery can still be forced. If the image is absent, use Retry HUD display rather than restarting the relay.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

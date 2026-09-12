@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.6 — U2W live relay MJPEG stability
+
+This paired release targets the first fully reproduced post-discovery failure. Field logs show the HUD reaches Wi-Fi status=1, emits repeated KivicCast discovery packets, and opens TCP/15330, while the iPhone continues uploading valid JPEG frames. v90.35.3.6 stops bouncing mode 6 after discovery has already succeeded and gives the HUD viewer a quiet HTTP settle window.
+
+Use with U2W v8.14.3. The adapter-side relay is now SIGPIPE-safe, supports repeated HUD HTTP probes/reconnects, primes the HUD decoder with the exact known-good v8.13 JPEG, and then switches to live baseline 480x240 frames.
+
+The Navigation tab stays green and the temporary Vehicle Speed Marker Probe UI remains removed.
+
+---
+
 # HUD Controller v90.35.3.5 — U2W live relay IP soft-connect recovery
 
 This release keeps the v90.35.3.4 BLE nested-frame resynchronization, but removes the destructive empty-SSID STA reset that the latest field log showed can trap the HUD in stock status 6 ("Empty network").
