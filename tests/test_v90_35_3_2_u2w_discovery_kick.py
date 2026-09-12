@@ -1,10 +1,11 @@
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
-def test_post_connect_viewer_prime_and_retry_are_present():
+def test_post_connect_viewer_is_not_reprimed_after_sta_link_up():
     app=(ROOT/'ios/HUDController/App/AppState.swift').read_text()
-    assert 'post-connect mode-6 viewer prime' in app
-    assert 'KivicCast viewer retry' in app
+    assert 'known-good join sequence: mode 6 once' in app
+    assert 'leaving mode 6 untouched' in app
+    assert 'no automatic mode-6 retry was sent' in app
     assert 'hud_mjpeg_established=YES' in app
     assert 'Retry HUD display' in (ROOT/'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 

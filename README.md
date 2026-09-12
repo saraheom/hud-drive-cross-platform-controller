@@ -1,3 +1,19 @@
+# HUD Controller v90.35.3.7 — known-good mode-6 sequencing
+
+This app-only relay stability revision keeps U2W v8.14.3 unchanged and restores the control ordering from the first successful physical HUD-as-STA test: send mode 6 once, send NISSAN68 credentials once, then wait. It deliberately does not send another mode-6 command when Wi-Fi status=1 arrives.
+
+Why: the v90.35.3.6 field log showed a clean status=1 / 192.168.50.100 join, but every post-connect mode-6 viewer prime was followed by zero KivicCast discovery packets. The original v8.13 physical-image success did not use a post-connect mode-6 rewrite.
+
+Changes:
+- Start no longer bounces through mode 4 before the normal join.
+- status=1 starts an 8-second read-only U2W discovery/client monitor; it does not rewrite mode 6.
+- no automatic mode-6 retry occurs after link-up.
+- `Retry HUD display` performs one controlled full viewer recreation (mode4 -> 900 ms -> mode6 -> 300 ms -> credentials) and is rate-limited to 10 seconds.
+- U2W v8.14.3 remains the required adapter image.
+
+
+---
+
 # HUD Controller v90.35.3.6 — U2W live relay MJPEG stability
 
 This paired release targets the first fully reproduced post-discovery failure. Field logs show the HUD reaches Wi-Fi status=1, emits repeated KivicCast discovery packets, and opens TCP/15330, while the iPhone continues uploading valid JPEG frames. v90.35.3.6 stops bouncing mode 6 after discovery has already succeeded and gives the HUD viewer a quiet HTTP settle window.

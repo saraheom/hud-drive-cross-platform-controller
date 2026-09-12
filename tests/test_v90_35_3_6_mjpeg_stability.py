@@ -1,12 +1,12 @@
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
-def test_app_waits_after_discovery_instead_of_immediate_mode6_bounce():
+def test_app_does_not_bounce_mode6_after_link_up():
     s = (ROOT/'ios/HUDController/App/AppState.swift').read_text()
-    assert 'viewer discovery already active; suppressing automatic mode-6 retry' in s
-    assert 'try? await Task.sleep(for: .seconds(5))' in s
-    assert 'if relay.discoverySeen || relay.clientSeen' in s
-    assert 'no discovery observed; viewer retry' in s
+    assert 'leaving mode 6 untouched' in s
+    assert 'no automatic mode-6 retry was sent' in s
+    assert 'for attempt in 1...8' in s
+    assert 'HUD discovery received — waiting for video connection' in s
 
 def test_relay_status_tracks_client_and_live_frame():
     s = (ROOT/'ios/HUDController/App/AppState.swift').read_text()

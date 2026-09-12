@@ -651,17 +651,10 @@ final class AppState {
         }
         if hudU2WLiveRelayActive {
             let linkUp = hudU2WSTAConnected || isUsableHUDSTAAddress(hudU2WSTAAddress)
-            hudU2WSTAStatus = linkUp ? "Relay already active — retrying HUD display…" : "Relay already active — refreshing Wi-Fi join"
-            if linkUp {
-                primeHUDU2WKivicViewer(reason: "manual Start while active", force: true)
-            } else {
-                bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W active recovery → IOS_KIVICCAST_STA_MODE(6)")
-                bluetooth.enqueue(
-                    HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
-                    label: "HUD/U2W active recovery → Wi-Fi STA credentials for \(cleanSSID)"
-                )
-                requestHUDU2WSTAStatus()
-            }
+            hudU2WSTAStatus = linkUp
+                ? "Relay already active — leave it running or use Retry HUD display once"
+                : "Relay already active — waiting for Wi-Fi join"
+            requestHUDU2WSTAStatus()
             return
         }
 
@@ -715,28 +708,20 @@ final class AppState {
             self.hudU2WLiveRelayActive = true
             self.startHUDU2WRelayFrameLoop()
 
-            // v90.35.3.6: do NOT erase the saved STA network before joining.
-            // The v90.35.3.4 field log proved that the empty-credentials reset itself
-            // reliably drives this HUD into status=6 "Empty network" and can keep it
-            // there even after correct credentials are resent. Return briefly to stock
-            // HUD mode, then enter STA KivicCast mode and overwrite the credentials
-            // non-destructively. This matches the sequence that previously reached
-            // status=1 and displayed the map.
-            self.hudU2WSTAStatus = "Preparing HUD Wi-Fi…"
-            self.bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W non-destructive reset → IOS_HUD_MODE(4)")
-            try? await Task.sleep(for: .milliseconds(450))
-            guard !Task.isCancelled else { return }
-
+            // v90.35.3.7 intentionally restores the exact control ordering from the
+            // first successful physical v8.13 home test: enter mode 6 once, send the
+            // credentials once, then leave the stock viewer alone. Do not bounce through
+            // mode 4 first and do not send another mode-6 packet when status=1 arrives.
             self.hudU2WSTAConnected = false
             self.hudU2WSTAReason = ""
             self.hudU2WSTAStatus = "Joining \(cleanSSID)…"
-            self.logger.log("HUD/U2W STA", "entering mode 6 without clearing saved STA credentials")
-            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → IOS_KIVICCAST_STA_MODE(6)")
+            self.logger.log("HUD/U2W STA", "known-good join sequence: mode 6 once → credentials once → wait")
+            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → IOS_KIVICCAST_STA_MODE(6) [single start]")
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
             self.bluetooth.enqueue(
                 HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
-                label: "HUD/U2W live relay → Wi-Fi STA credentials for \(cleanSSID)"
+                label: "HUD/U2W live relay → Wi-Fi STA credentials for \(cleanSSID) [single start]"
             )
 
             // Allow association/DHCP to settle, then ask for status. If this firmware
@@ -779,24 +764,41 @@ final class AppState {
             return
         }
         let now = Date()
-        guard now.timeIntervalSince(hudU2WLastManualDisplayRetryAt) >= 3 else {
-            hudU2WSTAStatus = "HUD display retry already in progress…"
+        guard now.timeIntervalSince(hudU2WLastManualDisplayRetryAt) >= 10 else {
+            hudU2WSTAStatus = "HUD display restart already in progress…"
             return
         }
         hudU2WLastManualDisplayRetryAt = now
-        let linkUp = hudU2WSTAConnected || isUsableHUDSTAAddress(hudU2WSTAAddress)
-        guard linkUp else {
-            // Allow a forced viewer prime as a diagnostic even if the HUD status
-            // packet is ambiguous; field logs show the STA can have DHCP while
-            // reporting status=6.
-            hudU2WSTAStatus = "Forcing HUD display discovery…"
-            bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W manual display retry → force IOS_KIVICCAST_STA_MODE(6)")
-            bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD/U2W manual display retry → KeepAlive")
-            requestHUDU2WSTAStatus()
-            return
+
+        // A manual retry is a single controlled recreation of the same sequence that
+        // produced the first successful physical image: mode 4 -> settle -> mode 6 ->
+        // credentials -> wait. There are no repeated mode-6 "kicks" after link-up.
+        hudU2WKivicKickTask?.cancel()
+        hudU2WKivicKickTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.hudU2WKivicKickCount = 0
+            self.hudU2WSTAConnected = false
+            self.hudU2WSTAStatus = "Restarting HUD viewer once…"
+            self.bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W manual restart → IOS_HUD_MODE(4)")
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+
+            self.hudU2WSTAStatus = "Rejoining HUD viewer…"
+            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W manual restart → IOS_KIVICCAST_STA_MODE(6)")
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+            self.bluetooth.enqueue(
+                HudCommands.wifiSTAMode(
+                    ssid: UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.ssid") ?? "NISSAN68",
+                    password: UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.password") ?? "",
+                    security: 2
+                ),
+                label: "HUD/U2W manual restart → Wi-Fi STA credentials"
+            )
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+            self.requestHUDU2WSTAStatus()
         }
-        hudU2WSTAConnected = true
-        primeHUDU2WKivicViewer(reason: "manual display retry", force: true)
     }
 
     private struct HUDU2WRelayStatus {
@@ -809,75 +811,39 @@ final class AppState {
     private func primeHUDU2WKivicViewer(reason: String, force: Bool = false) {
         guard hudU2WLiveRelayActive, bluetooth.state == .connected else { return }
         if !force, hudU2WKivicKickCount > 0 { return }
+
+        // "Prime" now means monitor only. The stock viewer was already created by the
+        // initial mode-6 transition. The field regression in v90.35.3.6 showed that
+        // sending mode 6 again immediately after status=1 can suppress discovery.
         hudU2WKivicKickTask?.cancel()
         hudU2WKivicKickTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            try? await Task.sleep(for: .milliseconds(350))
-            guard !Task.isCancelled, self.hudU2WLiveRelayActive, self.hudU2WSTAConnected else { return }
-
             self.hudU2WKivicKickCount += 1
-            let attempt = self.hudU2WKivicKickCount
-            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → post-connect KivicCast viewer prime #\(attempt)")
-            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD/U2W live relay → post-connect KeepAlive")
-            self.hudU2WSTAStatus = "Wi-Fi connected — requesting HUD stream…"
-            self.logger.log("HUD/U2W STA", "post-connect mode-6 viewer prime #\(attempt) reason=\(reason)")
+            self.hudU2WSTAStatus = "Wi-Fi connected — waiting for HUD discovery…"
+            self.logger.log("HUD/U2W STA", "link-up confirmed; leaving mode 6 untouched reason=\(reason)")
 
-            try? await Task.sleep(for: .milliseconds(1600))
-            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
-            var relay = await self.u2wHUDRelayStatus()
-            if relay.established {
-                self.hudU2WSTAStatus = "Connected — HUD stream active"
-                self.logger.log("HUD/U2W STA", "U2W confirms active MJPEG client")
-                return
-            }
-
-            // v90.35.3.6: once the HUD has already emitted KivicCast discovery, do NOT
-            // immediately bounce mode 6 again. Field logs show the discovery reply can
-            // arrive just before the HUD opens HTTP/15330; an eager second mode-6 packet
-            // tears down that in-flight viewer session. Give it a quiet settle window.
-            if relay.discoverySeen || relay.clientSeen {
-                self.hudU2WSTAStatus = relay.clientSeen
-                    ? "HUD contacted video server — waiting for stream…"
-                    : "HUD discovery received — waiting for video connection…"
-                self.logger.log(
-                    "HUD/U2W STA",
-                    "viewer discovery already active; suppressing automatic mode-6 retry discovery=\(relay.discoverySeen) clientSeen=\(relay.clientSeen)"
-                )
-
-                try? await Task.sleep(for: .seconds(5))
+            for attempt in 1...8 {
+                try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
-                relay = await self.u2wHUDRelayStatus()
+                let relay = await self.u2wHUDRelayStatus()
                 if relay.established {
                     self.hudU2WSTAStatus = "Connected — HUD stream active"
-                } else if relay.clientSeen {
-                    self.hudU2WSTAStatus = relay.liveFrameSent
-                        ? "HUD video client connected, but stream dropped — use Retry display once"
-                        : "HUD contacted video server — waiting; use Retry display once if blank"
-                } else {
-                    self.hudU2WSTAStatus = "Wi-Fi connected — discovery succeeded; use Retry display once if still blank"
+                    self.logger.log("HUD/U2W STA", "U2W confirms active MJPEG client without post-connect mode-6 rewrite")
+                    return
                 }
-                return
+                if relay.clientSeen {
+                    self.hudU2WSTAStatus = relay.liveFrameSent
+                        ? "HUD video client contacted U2W — waiting for display…"
+                        : "HUD contacted video server — waiting for first frame…"
+                } else if relay.discoverySeen {
+                    self.hudU2WSTAStatus = "HUD discovery received — waiting for video connection…"
+                } else {
+                    self.hudU2WSTAStatus = "Wi-Fi connected — waiting for HUD discovery… (\(attempt)/8)"
+                }
             }
 
-            // Only retry mode 6 automatically when U2W has seen no discovery at all.
-            if attempt < 2, self.hudU2WSTAConnected {
-                self.hudU2WSTAStatus = "Wi-Fi connected — retrying HUD discovery…"
-                self.hudU2WKivicKickCount += 1
-                let retry = self.hudU2WKivicKickCount
-                self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → KivicCast viewer retry #\(retry) (no discovery)")
-                self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD/U2W live relay → retry KeepAlive")
-                self.logger.log("HUD/U2W STA", "no discovery observed; viewer retry #\(retry)")
-                try? await Task.sleep(for: .seconds(3))
-                guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
-                relay = await self.u2wHUDRelayStatus()
-                self.hudU2WSTAStatus = relay.established
-                    ? "Connected — HUD stream active"
-                    : (relay.discoverySeen
-                        ? "Wi-Fi connected — discovery succeeded; waiting for HUD video…"
-                        : "Wi-Fi connected — no HUD discovery yet; use Retry display")
-            } else {
-                self.hudU2WSTAStatus = "Wi-Fi connected — no HUD discovery yet; use Retry display"
-            }
+            self.hudU2WSTAStatus = "Wi-Fi connected, but HUD sent no discovery — use Retry HUD display once"
+            self.logger.log("HUD/U2W STA", "no discovery after 8s; no automatic mode-6 retry was sent")
         }
     }
 

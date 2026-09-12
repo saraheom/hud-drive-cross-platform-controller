@@ -1,0 +1,20 @@
+HUD Controller v90.35.3.7 — Known-Good Mode-6 Sequence
+
+U2W requirement: v8.14.3 (unchanged; no adapter reflash needed)
+
+Field-driven runtime changes:
+- Start path is mode6 -> 300 ms -> NISSAN68 credentials -> wait.
+- No mode4 bounce before normal Start.
+- A positive STA event no longer sends another mode6 command.
+- Post-connect behavior is read-only U2W discovery/client monitoring for 8 seconds.
+- No automatic mode6 retry after link-up.
+- Retry HUD display performs exactly one controlled viewer recreation:
+  mode4 -> 900 ms -> mode6 -> 300 ms -> credentials.
+- BLE nested-STX resynchronization from v90.35.3.4 remains unchanged.
+- MJPEG server hardening remains U2W v8.14.3.
+
+Local validation:
+- Python/static regression suite: 325 passed
+- Swift syntax parse: 181 files, 0 failures
+- YAML parse: 10 files, 0 failures
+- GitHub Actions / Xcode 26 remains authoritative for full iOS compilation and XCTest.
