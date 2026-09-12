@@ -22,14 +22,26 @@ struct HudMapModeCanvas: View {
                     leftWidget
                         .frame(width: size.width * 0.20, height: size.height)
                         .scaleEffect(settings.leftScale)
+                        .offset(
+                            x: CGFloat(settings.leftOffsetX),
+                            y: CGFloat(settings.leftOffsetY)
+                        )
 
                     centerWidget
                         .frame(width: size.width * 0.58, height: size.height)
                         .scaleEffect(settings.centerScale)
+                        .offset(
+                            x: CGFloat(settings.centerOffsetX),
+                            y: CGFloat(settings.centerOffsetY)
+                        )
 
                     rightWidget
                         .frame(width: size.width * 0.22, height: size.height)
                         .scaleEffect(settings.rightScale)
+                        .offset(
+                            x: CGFloat(settings.rightOffsetX),
+                            y: CGFloat(settings.rightOffsetY)
+                        )
                 }
             }
             .frame(width: size.width, height: size.height)
@@ -123,7 +135,10 @@ struct HudMapModeCanvas: View {
 
             if settings.showTurningStreet {
                 Text(nonempty(snapshot.turningStreet, fallback: "Upcoming road"))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(
+                        size: CGFloat(11 * settings.turningStreetScale),
+                        weight: .semibold
+                    ))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.60)
@@ -132,14 +147,25 @@ struct HudMapModeCanvas: View {
 
             if settings.showManeuver {
                 Image(systemName: snapshot.maneuver.symbol)
-                    .font(.system(size: 34, weight: .bold))
+                    .font(.system(
+                        size: CGFloat(34 * settings.maneuverArrowScale),
+                        weight: symbolWeight(settings.maneuverArrowThickness)
+                    ))
                     .foregroundStyle(.white)
                     .frame(height: 40)
+                    .offset(
+                        x: CGFloat(settings.maneuverOffsetX),
+                        y: CGFloat(settings.maneuverOffsetY)
+                    )
             }
 
             if settings.showDistance {
                 Text(nonempty(snapshot.distanceText, fallback: "—"))
-                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .font(.system(
+                        size: CGFloat(19 * settings.distanceScale),
+                        weight: .bold,
+                        design: .rounded
+                    ))
                     .minimumScaleFactor(0.55)
                     .lineLimit(1)
             }
@@ -147,23 +173,40 @@ struct HudMapModeCanvas: View {
             if settings.showLaneGuidance {
                 laneGuidanceRow
                     .frame(height: 25)
+                    .scaleEffect(settings.laneScale)
+                    .offset(
+                        x: CGFloat(settings.laneOffsetX),
+                        y: CGFloat(settings.laneOffsetY)
+                    )
             }
 
             if settings.showETA || settings.showTimeLeft {
                 VStack(spacing: 0) {
                     if settings.showETA {
                         Text("ETA \(nonempty(snapshot.etaText, fallback: "—"))")
-                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .font(.system(
+                                size: CGFloat(9.5 * settings.etaScale),
+                                weight: .semibold,
+                                design: .rounded
+                            ))
                             .lineLimit(1)
                             .minimumScaleFactor(0.65)
                     }
                     if settings.showTimeLeft {
                         Text(nonempty(snapshot.timeLeftText, fallback: "—"))
-                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                            .font(.system(
+                                size: CGFloat(9.5 * settings.etaScale),
+                                weight: .medium,
+                                design: .rounded
+                            ))
                             .foregroundStyle(.white.opacity(0.64))
                             .lineLimit(1)
                     }
                 }
+                .offset(
+                    x: CGFloat(settings.etaOffsetX),
+                    y: CGFloat(settings.etaOffsetY)
+                )
             }
 
             Spacer(minLength: 8)
@@ -184,14 +227,29 @@ struct HudMapModeCanvas: View {
         if values.isEmpty {
             Color.clear
         } else {
-            HStack(spacing: 3) {
+            HStack(spacing: CGFloat(settings.laneSpacing)) {
                 ForEach(Array(values.enumerated()), id: \.offset) { _, value in
                     Image(systemName: laneSymbol(for: abs(value)))
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(value > 0 ? .white : .white.opacity(0.26))
+                        .font(.system(
+                            size: 11,
+                            weight: symbolWeight(settings.laneArrowThickness)
+                        ))
+                        .foregroundStyle(value > 0 ? .white : .white.opacity(0.22))
+                        .scaleEffect(value > 0 ? settings.laneActiveEmphasis : 1.0)
                         .frame(maxWidth: .infinity)
                 }
             }
+        }
+    }
+
+    private func symbolWeight(_ thickness: Double) -> Font.Weight {
+        switch thickness {
+        case ..<1.25: return .regular
+        case ..<1.50: return .medium
+        case ..<1.75: return .semibold
+        case ..<2.00: return .bold
+        case ..<2.25: return .heavy
+        default: return .black
         }
     }
 

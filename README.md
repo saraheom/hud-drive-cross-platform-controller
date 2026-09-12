@@ -1,3 +1,15 @@
+# HUD Controller v90.35.3.8 — physical Map UI layout calibration
+
+This app-only revision keeps the proven **v90.35.3.7 + U2W v8.14.3** live relay transport unchanged and adds the requested in-car visual calibration controls for the rendered 480×240 HUD frame. The normal start path remains mode 6 once → NISSAN68 credentials once → wait; no U2W reflash is required.
+
+New persisted controls include bounded 2-pixel X/Y movement for the full left, center-map, and right widgets; maneuver-arrow size and boldness; turning-street and distance text scaling; lane-arrow size/boldness/spacing/active-lane emphasis; ETA/time-left scaling; and separate fine positioning for maneuver, lane guidance, and ETA/time-left. Reset controls are included for each calibration group. These controls update both the phone preview and the live JPEG sent through the U2W relay.
+
+OBD2-first speed remains intentionally deferred for this car test. Route Guidance parsing, lane decoding, CarPlay MainVideo acquisition, BLE/U2W transport, and the 5 fps relay cadence are unchanged.
+
+See `docs/V90_35_3_8_MAP_UI_LAYOUT_CALIBRATION.md` and `V90_35_3_8_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.7 — known-good mode-6 sequencing
 
 This app-only relay stability revision keeps U2W v8.14.3 unchanged and restores the control ordering from the first successful physical HUD-as-STA test: send mode 6 once, send NISSAN68 credentials once, then wait. It deliberately does not send another mode-6 command when Wi-Fi status=1 arrives.

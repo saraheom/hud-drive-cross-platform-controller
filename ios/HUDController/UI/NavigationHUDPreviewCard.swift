@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// v90.35.3.6 custom Map Mode + live U2W relay IP-soft-connect/frame-resync control surface.
+/// v90.35.3.8 custom Map Mode + live U2W relay layout-calibration control surface.
 ///
 /// The preferred physical path keeps the iPhone on the Carlinkit AP, places the
 /// HUD in stock KivicCast STA mode 6, and relays rendered 480x240 JPEG frames
@@ -37,6 +37,8 @@ struct NavigationHUDPreviewCard: View {
                 mapAppearanceControls
                 mapCropControls
                 sizeControls
+                widgetPositionControls
+                rightSideFineTuningControls
                 componentControls
                 obdProbeControls
 
@@ -159,7 +161,7 @@ struct NavigationHUDPreviewCard: View {
                 LabeledContent("Reason", value: state.hudU2WSTAReason)
             }
 
-            Text("Requires U2W v8.14.3. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. v90.35.3.6 no longer erases the HUD's saved STA network before joining: it briefly returns to mode 4, enters mode 6, and overwrites NISSAN68 credentials non-destructively. A valid HUD DHCP address is treated as link-up even if this firmware reports status 6 / Empty network, so KivicCast discovery can still be forced. If the image is absent, use Retry HUD display rather than restarting the relay.")
+            Text("Requires U2W v8.14.3. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. v90.35.3.8 preserves the proven v90.35.3.7 start sequence: mode 6 once, credentials once, then wait. The layout controls below change only the 480×240 rendered JPEG and do not alter the relay transport.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -314,6 +316,216 @@ struct NavigationHUDPreviewCard: View {
         }
     }
 
+    private var widgetPositionControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Physical HUD position")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button("Reset all") {
+                    state.mapModeSettings.resetWidgetOffsets()
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+            }
+
+            Text("Each arrow moves the selected 480×240 region by 2 pixels. Whole-widget movement is bounded to ±20 px horizontally and ±12 px vertically so a widget cannot be lost off-screen.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            positionPad(
+                title: "Left widget",
+                icon: "speedometer",
+                x: \.leftOffsetX,
+                y: \.leftOffsetY,
+                xRange: -20...20,
+                yRange: -12...12
+            )
+            positionPad(
+                title: "Center map",
+                icon: "map",
+                x: \.centerOffsetX,
+                y: \.centerOffsetY,
+                xRange: -20...20,
+                yRange: -12...12
+            )
+            positionPad(
+                title: "Right widget",
+                icon: "arrow.turn.up.right",
+                x: \.rightOffsetX,
+                y: \.rightOffsetY,
+                xRange: -20...20,
+                yRange: -12...12
+            )
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var rightSideFineTuningControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Right-side maneuver / lane calibration")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button("Reset styling") {
+                    state.mapModeSettings.resetRightStyling()
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+            }
+
+            tuningSlider(
+                icon: "arrow.turn.up.right",
+                title: "Turn arrow size",
+                value: Binding(
+                    get: { state.mapModeSettings.maneuverArrowScale },
+                    set: { state.mapModeSettings.maneuverArrowScale = $0 }
+                ),
+                range: 0.80...1.40,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+            tuningSlider(
+                icon: "bold",
+                title: "Turn arrow boldness",
+                value: Binding(
+                    get: { state.mapModeSettings.maneuverArrowThickness },
+                    set: { state.mapModeSettings.maneuverArrowThickness = $0 }
+                ),
+                range: 1.00...2.50,
+                step: 0.25,
+                format: { String(format: "%.2fx", $0) }
+            )
+            tuningSlider(
+                icon: "textformat.size",
+                title: "Street text size",
+                value: Binding(
+                    get: { state.mapModeSettings.turningStreetScale },
+                    set: { state.mapModeSettings.turningStreetScale = $0 }
+                ),
+                range: 0.80...1.30,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+            tuningSlider(
+                icon: "ruler",
+                title: "Distance size",
+                value: Binding(
+                    get: { state.mapModeSettings.distanceScale },
+                    set: { state.mapModeSettings.distanceScale = $0 }
+                ),
+                range: 0.80...1.30,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+
+            Divider().opacity(0.35)
+
+            tuningSlider(
+                icon: "point.3.connected.trianglepath.dotted",
+                title: "Lane arrow size",
+                value: Binding(
+                    get: { state.mapModeSettings.laneScale },
+                    set: { state.mapModeSettings.laneScale = $0 }
+                ),
+                range: 0.80...1.50,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+            tuningSlider(
+                icon: "bold",
+                title: "Lane boldness",
+                value: Binding(
+                    get: { state.mapModeSettings.laneArrowThickness },
+                    set: { state.mapModeSettings.laneArrowThickness = $0 }
+                ),
+                range: 1.00...2.50,
+                step: 0.25,
+                format: { String(format: "%.2fx", $0) }
+            )
+            tuningSlider(
+                icon: "arrow.left.and.right",
+                title: "Lane spacing",
+                value: Binding(
+                    get: { state.mapModeSettings.laneSpacing },
+                    set: { state.mapModeSettings.laneSpacing = $0 }
+                ),
+                range: 1...8,
+                step: 1,
+                format: { "\(Int($0)) px" }
+            )
+            tuningSlider(
+                icon: "sparkles",
+                title: "Active lane emphasis",
+                value: Binding(
+                    get: { state.mapModeSettings.laneActiveEmphasis },
+                    set: { state.mapModeSettings.laneActiveEmphasis = $0 }
+                ),
+                range: 1.00...1.35,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+
+            Divider().opacity(0.35)
+
+            tuningSlider(
+                icon: "clock",
+                title: "ETA / time-left size",
+                value: Binding(
+                    get: { state.mapModeSettings.etaScale },
+                    set: { state.mapModeSettings.etaScale = $0 }
+                ),
+                range: 0.80...1.40,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+
+            HStack {
+                Text("Fine position")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Reset fine position") {
+                    state.mapModeSettings.resetRightComponentOffsets()
+                }
+                .font(.caption2)
+                .buttonStyle(.bordered)
+            }
+
+            positionPad(
+                title: "Turn arrow",
+                icon: "arrow.turn.up.right",
+                x: \.maneuverOffsetX,
+                y: \.maneuverOffsetY,
+                xRange: -12...12,
+                yRange: -10...10
+            )
+            positionPad(
+                title: "Lane guidance",
+                icon: "arrow.triangle.branch",
+                x: \.laneOffsetX,
+                y: \.laneOffsetY,
+                xRange: -12...12,
+                yRange: -10...10
+            )
+            positionPad(
+                title: "ETA / time left",
+                icon: "clock",
+                x: \.etaOffsetX,
+                y: \.etaOffsetY,
+                xRange: -12...12,
+                yRange: -10...10
+            )
+
+            Text("Boldness maps to progressively heavier SF Symbol weights. All of these controls are persisted and are applied to both the on-phone preview and the live 480×240 JPEG sent to U2W.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     private var componentControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Visible components")
@@ -358,6 +570,94 @@ struct NavigationHUDPreviewCard: View {
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     }
 
+
+    private func positionPad(
+        title: String,
+        icon: String,
+        x: ReferenceWritableKeyPath<HudMapModeSettings, Double>,
+        y: ReferenceWritableKeyPath<HudMapModeSettings, Double>,
+        xRange: ClosedRange<Double>,
+        yRange: ClosedRange<Double>
+    ) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Label(title, systemImage: icon)
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text("x \(Int(state.mapModeSettings[keyPath: x])) • y \(Int(state.mapModeSettings[keyPath: y]))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 6) {
+                Spacer()
+                nudgeButton("arrow.up", keyPath: y, delta: -2, range: yRange)
+                Spacer()
+            }
+            HStack(spacing: 6) {
+                nudgeButton("arrow.left", keyPath: x, delta: -2, range: xRange)
+                Spacer()
+                Button {
+                    state.mapModeSettings[keyPath: x] = 0
+                    state.mapModeSettings[keyPath: y] = 0
+                } label: {
+                    Image(systemName: "scope")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Center \(title)")
+                Spacer()
+                nudgeButton("arrow.right", keyPath: x, delta: 2, range: xRange)
+            }
+            HStack(spacing: 6) {
+                Spacer()
+                nudgeButton("arrow.down", keyPath: y, delta: 2, range: yRange)
+                Spacer()
+            }
+        }
+        .padding(8)
+        .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func nudgeButton(
+        _ systemName: String,
+        keyPath: ReferenceWritableKeyPath<HudMapModeSettings, Double>,
+        delta: Double,
+        range: ClosedRange<Double>
+    ) -> some View {
+        Button {
+            let current = state.mapModeSettings[keyPath: keyPath]
+            state.mapModeSettings[keyPath: keyPath] = min(range.upperBound, max(range.lowerBound, current + delta))
+        } label: {
+            Image(systemName: systemName)
+                .frame(width: 22, height: 18)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    private func tuningSlider(
+        icon: String,
+        title: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double,
+        format: (Double) -> String
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .frame(width: 18)
+            Text(title)
+                .font(.caption)
+                .frame(width: 114, alignment: .leading)
+            Slider(value: value, in: range, step: step)
+                .tint(accent)
+            Text(format(value.wrappedValue))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 48, alignment: .trailing)
+        }
+    }
 
     private func cropSlider(
         icon: String,

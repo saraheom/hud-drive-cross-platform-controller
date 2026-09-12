@@ -1,0 +1,21 @@
+HUD Controller v90.35.3.8 — Map UI Layout Calibration
+
+U2W requirement: v8.14.3 (unchanged; no adapter reflash needed)
+
+Scope:
+- App-only 480x240 presentation controls.
+- Proven v90.35.3.7 mode-6 start sequence is intentionally unchanged.
+- Added bounded 2-pixel left/center/right widget positioning.
+- Added maneuver arrow size/boldness and fine position.
+- Added turning-street and distance size controls.
+- Added lane size/boldness/spacing/active-lane emphasis and fine position.
+- Added ETA/time-left size and fine position.
+- Added reset controls for widget offsets, right-side component offsets, and right-side styling.
+- OBD2-first speed remains deferred.
+
+Local validation:
+- Python/static regression suite: 329 passed
+- Swift syntax parse: 182 files, 0 failures
+- YAML parse: 10 files, 0 failures
+- ZIP integrity: verified after packaging
+- GitHub Actions / Xcode 26 remains authoritative for full iOS compilation and XCTest.
