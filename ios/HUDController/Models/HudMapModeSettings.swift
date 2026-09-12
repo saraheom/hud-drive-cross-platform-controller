@@ -51,6 +51,7 @@ final class HudMapModeSettings {
     var laneArrowThickness: Double { didSet { defaults.set(laneArrowThickness, forKey: "HUD.MapMode.laneArrowThickness") } }
     var laneSpacing: Double { didSet { defaults.set(laneSpacing, forKey: "HUD.MapMode.laneSpacing") } }
     var laneActiveEmphasis: Double { didSet { defaults.set(laneActiveEmphasis, forKey: "HUD.MapMode.laneActiveEmphasis") } }
+    var laneInactiveGray: Double { didSet { defaults.set(laneInactiveGray, forKey: "HUD.MapMode.laneInactiveGray") } }
     var laneOffsetX: Double { didSet { defaults.set(laneOffsetX, forKey: "HUD.MapMode.laneOffsetX") } }
     var laneOffsetY: Double { didSet { defaults.set(laneOffsetY, forKey: "HUD.MapMode.laneOffsetY") } }
 
@@ -63,6 +64,8 @@ final class HudMapModeSettings {
     var sourceMapZoom: Double { didSet { defaults.set(sourceMapZoom, forKey: "HUD.MapMode.sourceMapZoom") } }
     var sourceMapOffsetX: Double { didSet { defaults.set(sourceMapOffsetX, forKey: "HUD.MapMode.sourceMapOffsetX") } }
     var sourceMapOffsetY: Double { didSet { defaults.set(sourceMapOffsetY, forKey: "HUD.MapMode.sourceMapOffsetY") } }
+    var mapFadeHorizontal: Double { didSet { defaults.set(mapFadeHorizontal, forKey: "HUD.MapMode.mapFadeHorizontal") } }
+    var mapFadeVertical: Double { didSet { defaults.set(mapFadeVertical, forKey: "HUD.MapMode.mapFadeVertical") } }
 
     var showSpeed: Bool { didSet { defaults.set(showSpeed, forKey: "HUD.MapMode.showSpeed") } }
     var showSpeedLimit: Bool { didSet { defaults.set(showSpeedLimit, forKey: "HUD.MapMode.showSpeedLimit") } }
@@ -115,6 +118,7 @@ final class HudMapModeSettings {
         laneArrowThickness = min(2.50, max(1.00, double("HUD.MapMode.laneArrowThickness", default: 1.75)))
         laneSpacing = min(8, max(1, double("HUD.MapMode.laneSpacing", default: 3)))
         laneActiveEmphasis = min(1.35, max(1.00, double("HUD.MapMode.laneActiveEmphasis", default: 1.10)))
+        laneInactiveGray = min(0.80, max(0.12, double("HUD.MapMode.laneInactiveGray", default: 0.40)))
         laneOffsetX = min(12, max(-12, double("HUD.MapMode.laneOffsetX", default: 0)))
         laneOffsetY = min(10, max(-10, double("HUD.MapMode.laneOffsetY", default: 0)))
 
@@ -127,6 +131,8 @@ final class HudMapModeSettings {
         sourceMapZoom = min(2.60, max(0.80, double("HUD.MapMode.sourceMapZoom", default: 1.55)))
         sourceMapOffsetX = min(1.0, max(-1.0, double("HUD.MapMode.sourceMapOffsetX", default: 0.22)))
         sourceMapOffsetY = min(1.0, max(-1.0, double("HUD.MapMode.sourceMapOffsetY", default: 0.0)))
+        mapFadeHorizontal = min(0.35, max(0.0, double("HUD.MapMode.mapFadeHorizontal", default: 0.045)))
+        mapFadeVertical = min(0.35, max(0.0, double("HUD.MapMode.mapFadeVertical", default: 0.0)))
 
         showSpeed = bool("HUD.MapMode.showSpeed", default: true)
         showSpeedLimit = bool("HUD.MapMode.showSpeedLimit", default: true)
@@ -170,6 +176,7 @@ final class HudMapModeSettings {
         laneArrowThickness = 1.75
         laneSpacing = 3
         laneActiveEmphasis = 1.10
+        laneInactiveGray = 0.40
         etaScale = 1.0
     }
 }

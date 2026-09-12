@@ -1,14 +1,16 @@
 import SwiftUI
 
-/// v90.35.3.9.1 custom Map Mode + reliability + layout-calibration control surface.
+/// v90.35.3.10 compact Map Mode + relay + layout-calibration control surface.
 ///
 /// The preferred physical path keeps the iPhone on the Carlinkit AP, places the
 /// HUD in stock KivicCast STA mode 6, and relays rendered 480x240 JPEG frames
-/// through U2W v8.15 to the HUD with session-scoped STA/MJPEG recovery.
+/// through U2W v8.15.1 to the HUD with session-scoped STA/MJPEG recovery.
 struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
     @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = "NISSAN68"
     @AppStorage("HUD.U2WHomeProbe.password") private var u2wPassword = ""
+    @State private var showRelayDiagnostics = false
+    @State private var showMapCustomization = false
 
     private let accent = HudTheme.accent
 
@@ -31,23 +33,26 @@ struct NavigationHUDPreviewCard: View {
                         .stroke(.white.opacity(0.08), lineWidth: 1)
                 }
 
-                liveSourceControls
-                hudU2WSTAHomeDiagnostic
-                physicalCastControls
-                mapAppearanceControls
-                mapCropControls
-                sizeControls
-                widgetPositionControls
-                rightSideFineTuningControls
-                componentControls
-                obdProbeControls
+                mapModeRelayControls
 
-                HStack(alignment: .top, spacing: 7) {
-                    Image(systemName: "info.circle")
-                    Text("U2W v8.15 keeps the v8.11 800×480 MainVideo exporter but uses a rotation-safe HTTP follower, session-scoped HUD relay status, and persistent relay daemons. The iPhone renders this 480×240 custom HUD image, sends JPEG frames to 192.168.50.2:15331, and the HUD pulls the changing MJPEG stream from U2W while remaining in stock STA mode 6. The legacy mode-5 path below remains only for comparison.")
-                        .font(.caption)
+                DisclosureGroup(isExpanded: $showMapCustomization) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        mapAppearanceControls
+                        mapCropControls
+                        sizeControls
+                        widgetPositionControls
+                        rightSideFineTuningControls
+                        componentControls
+                        obdProbeControls
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Label("Map Mode image customization", systemImage: "slider.horizontal.3")
+                        .font(.subheadline.weight(.semibold))
                 }
-                .foregroundStyle(.secondary)
+                .tint(accent)
+                .padding(10)
+                .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
             }
         }
     }
@@ -67,151 +72,74 @@ struct NavigationHUDPreviewCard: View {
     }
 
 
-    private var liveSourceControls: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Live U2W map source")
-                        .font(.subheadline.weight(.semibold))
-                    Text(state.mainVideo.status)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(state.mainVideo.connected ? "LIVE" : "OFFLINE")
-                        .font(.caption.bold())
-                        .foregroundStyle(state.mainVideo.connected ? .green : .secondary)
-                    Text("\(state.mainVideo.frameCount) frames • \(state.mainVideo.sourceSize)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Button("Reconnect U2W video") {
-                state.mainVideo.reconnect(reason: "Map Mode UI")
-            }
-            .buttonStyle(.bordered)
-
-            Text("Requires U2W v8.11 MainVideo Live on 192.168.50.2. The live preview remains independent of ScreenCaptureKit/OCR.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private var hudU2WSTAHomeDiagnostic: some View {
+    private var mapModeRelayControls: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Live iPhone → U2W → HUD relay")
-                        .font(.subheadline.weight(.semibold))
-                    Text("Mode 6 • HUD and iPhone stay on the Carlinkit AP • 5 fps JPEG relay")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+            TextField("CarPlay adapter Wi-Fi name", text: $u2wSSID)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            SecureField("CarPlay adapter Wi-Fi password", text: $u2wPassword)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            if state.hudU2WLiveRelayActive {
+                Button("Disable Map Mode", role: .destructive) {
+                    state.stopHUDU2WSTAHomeProbe()
                 }
-                Spacer()
-                Text(state.hudU2WSTAConnected ? "CONNECTED" : "IDLE")
-                    .font(.caption.bold())
-                    .foregroundStyle(state.hudU2WSTAConnected ? .green : .secondary)
-            }
-
-            TextField("U2W / Carlinkit SSID", text: $u2wSSID)
-                .textFieldStyle(.roundedBorder)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-
-            SecureField("U2W / Carlinkit Wi-Fi password", text: $u2wPassword)
-                .textFieldStyle(.roundedBorder)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-
-            HStack(spacing: 8) {
-                Button("Start live U2W relay") {
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button("Enable Map Mode") {
                     state.startHUDU2WSTAHomeProbe(ssid: u2wSSID, password: u2wPassword)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(accent)
-                .disabled(state.hudU2WLiveRelayActive || u2wSSID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || u2wPassword.isEmpty)
-
-                Button("Request status") {
-                    state.requestHUDU2WSTAStatus()
-                }
-                .buttonStyle(.bordered)
+                .disabled(
+                    u2wSSID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    u2wPassword.isEmpty
+                )
             }
 
-            Button("Retry HUD display") {
-                state.retryHUDU2WKivicDisplay()
-            }
-            .buttonStyle(.bordered)
-            .disabled(!state.hudU2WLiveRelayActive)
-
-            Button("Stop relay + restore HUD", role: .destructive) {
-                state.stopHUDU2WSTAHomeProbe()
-            }
-            .buttonStyle(.bordered)
-
-            LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
-            LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
-            LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
-            LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
-            LabeledContent("Last JPEG", value: state.hudU2WFrameRelay.lastFrameBytes == 0 ? "—" : "\(state.hudU2WFrameRelay.lastFrameBytes) bytes")
-            if !state.hudU2WSTAReason.isEmpty {
-                LabeledContent("Reason", value: state.hudU2WSTAReason)
-            }
-
-            Text("Requires U2W v8.15. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. v90.35.3.9.1 preserves the proven start sequence: mode 6 once, credentials once, then wait. Layout controls change only the 480×240 rendered JPEG; the new freshness watchdog automatically reconnects MainVideo if decoded pixels stop advancing.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private var physicalCastControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Legacy mode-5 physical HUD test")
-                .font(.subheadline.weight(.semibold))
-
-            HStack(spacing: 10) {
-                if state.mapModeActive {
-                    Button("Disable Map Mode") {
-                        state.disableMapMode()
+            DisclosureGroup(isExpanded: $showRelayDiagnostics) {
+                VStack(alignment: .leading, spacing: 7) {
+                    LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
+                    LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
+                    LabeledContent("MainVideo", value: state.mainVideo.status)
+                    LabeledContent("Video frames", value: "\(state.mainVideo.frameCount) • \(state.mainVideo.sourceSize)")
+                    LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
+                    LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
+                    LabeledContent("Last JPEG", value: state.hudU2WFrameRelay.lastFrameBytes == 0 ? "—" : "\(state.hudU2WFrameRelay.lastFrameBytes) bytes")
+                    if !state.hudU2WSTAReason.isEmpty {
+                        LabeledContent("Reason", value: state.hudU2WSTAReason)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                } else {
-                    Button("Enable Map Mode on HUD") {
-                        state.enableMapMode()
+
+                    HStack(spacing: 8) {
+                        Button("Request status") {
+                            state.requestHUDU2WSTAStatus()
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button("Retry HUD display") {
+                            state.retryHUDU2WKivicDisplay()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!state.hudU2WLiveRelayActive)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(accent)
-                    .disabled(state.hudU2WLiveRelayActive)
+
+                    Button("Reconnect U2W video") {
+                        state.mainVideo.reconnect(reason: "Map Mode UI")
+                    }
+                    .buttonStyle(.bordered)
                 }
-
-                Spacer(minLength: 8)
-
-                Text(state.mapModeActive ? "ON" : "OFF")
-                    .font(.caption.bold())
-                    .foregroundStyle(state.mapModeActive ? .green : .secondary)
-            }
-
-            Text(state.mapModeStatus)
                 .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if state.hudU2WLiveRelayActive {
-                Text("Disabled while the live U2W relay is active. Mode 5 would replace the HUD's mode-6 STA session and interrupt the relay.")
-                    .font(.caption2)
+                .padding(.top, 6)
+            } label: {
+                Label("Status & diagnostics", systemImage: "waveform.path.ecg")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-
-            if state.mapModeActive {
-                Text("After the HUD AP starts, join HUDWAY Drive Wi-Fi on the iPhone. The app freezes the latest real U2W map frame plus route snapshot before Carlinkit becomes unreachable, then the HUD should discover the MJPEG stream automatically.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            .tint(accent)
         }
         .padding(10)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
@@ -277,6 +205,33 @@ struct NavigationHUDPreviewCard: View {
                 ),
                 range: -1.0...1.0
             )
+
+            tuningSlider(
+                icon: "arrow.left.and.right.circle",
+                title: "Horizontal fade",
+                value: Binding(
+                    get: { state.mapModeSettings.mapFadeHorizontal },
+                    set: { state.mapModeSettings.mapFadeHorizontal = $0 }
+                ),
+                range: 0.0...0.35,
+                step: 0.01,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+            tuningSlider(
+                icon: "arrow.up.and.down.circle",
+                title: "Vertical fade",
+                value: Binding(
+                    get: { state.mapModeSettings.mapFadeVertical },
+                    set: { state.mapModeSettings.mapFadeVertical = $0 }
+                ),
+                range: 0.0...0.35,
+                step: 0.01,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+
+            Text("Fade controls adjust how far the center map dissolves into black from the horizontal and vertical edges. 0% disables that axis; larger values widen the fade boundary.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             Text("Defaults are tuned from the 800×480 Google Maps frame recovered in your v8.10 dump. Adjust these while the live preview is connected if your current CarPlay layout differs.")
                 .font(.caption2)
@@ -443,6 +398,17 @@ struct NavigationHUDPreviewCard: View {
                 range: 1.00...2.50,
                 step: 0.25,
                 format: { String(format: "%.2fx", $0) }
+            )
+            tuningSlider(
+                icon: "circle.lefthalf.filled",
+                title: "Inactive lane gray",
+                value: Binding(
+                    get: { state.mapModeSettings.laneInactiveGray },
+                    set: { state.mapModeSettings.laneInactiveGray = $0 }
+                ),
+                range: 0.12...0.80,
+                step: 0.04,
+                format: { String(format: "%.0f%%", $0 * 100) }
             )
             tuningSlider(
                 icon: "arrow.left.and.right",

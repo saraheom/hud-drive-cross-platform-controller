@@ -82,24 +82,18 @@ struct HudMapModeCanvas: View {
     }
 
     private var usSpeedLimitSign: some View {
-        VStack(spacing: -1) {
-            Text("SPEED")
-                .font(.system(size: 6.5, weight: .bold))
-            Text("LIMIT")
-                .font(.system(size: 6.5, weight: .bold))
-            Text(snapshot.speedLimitMph > 0 ? "\(snapshot.speedLimitMph)" : "—")
-                .font(.system(size: 20, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.6)
-        }
-        .foregroundStyle(.black)
-        .frame(width: 42, height: 50)
-        .background(.white)
-        .overlay {
-            RoundedRectangle(cornerRadius: 2)
-                .stroke(.black, lineWidth: 1.5)
-                .padding(2)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 3))
+        Text(snapshot.speedLimitMph > 0 ? "\(snapshot.speedLimitMph)" : "—")
+            .font(.system(size: 24, weight: .bold, design: .rounded))
+            .minimumScaleFactor(0.60)
+            .foregroundStyle(.black)
+            .frame(width: 42, height: 34)
+            .background(.white)
+            .overlay {
+                RoundedRectangle(cornerRadius: 2)
+                    .stroke(.black, lineWidth: 1.5)
+                    .padding(2)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 
     @ViewBuilder
@@ -124,6 +118,16 @@ struct HudMapModeCanvas: View {
             }
             .padding(.vertical, 12)
             .padding(.horizontal, 4)
+            .mask(edgeFadeMask(
+                fraction: settings.mapFadeHorizontal,
+                startPoint: .leading,
+                endPoint: .trailing
+            ))
+            .mask(edgeFadeMask(
+                fraction: settings.mapFadeVertical,
+                startPoint: .top,
+                endPoint: .bottom
+            ))
         } else {
             Color.clear
         }
@@ -234,11 +238,34 @@ struct HudMapModeCanvas: View {
                             size: 11,
                             weight: symbolWeight(settings.laneArrowThickness)
                         ))
-                        .foregroundStyle(value > 0 ? .white : .white.opacity(0.22))
+                        .foregroundStyle(value > 0 ? .white : Color(white: settings.laneInactiveGray))
                         .scaleEffect(value > 0 ? settings.laneActiveEmphasis : 1.0)
                         .frame(maxWidth: .infinity)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func edgeFadeMask(
+        fraction: Double,
+        startPoint: UnitPoint,
+        endPoint: UnitPoint
+    ) -> some View {
+        let f = min(0.35, max(0.0, fraction))
+        if f <= 0.001 {
+            Color.white
+        } else {
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.00),
+                    .init(color: .white, location: f),
+                    .init(color: .white, location: 1.0 - f),
+                    .init(color: .clear, location: 1.00)
+                ],
+                startPoint: startPoint,
+                endPoint: endPoint
+            )
         }
     }
 
@@ -287,18 +314,6 @@ private struct HudMapModeSourceCrop: View {
                 )
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .clipped()
-                .mask {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0.00),
-                            .init(color: .white, location: 0.045),
-                            .init(color: .white, location: 0.955),
-                            .init(color: .clear, location: 1.00)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                }
         }
         .background(Color.black)
     }
@@ -378,18 +393,6 @@ private struct HudMapModeSchematic: View {
                 }
                 .foregroundStyle(label)
                 .position(x: size.width * 0.91, y: size.height * 0.13)
-            }
-            .mask {
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.00),
-                        .init(color: .white, location: 0.05),
-                        .init(color: .white, location: 0.95),
-                        .init(color: .clear, location: 1.00)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
             }
         }
     }

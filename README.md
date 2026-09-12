@@ -1,3 +1,19 @@
+# HUD Controller v90.35.3.10 — compact Map Mode UI + visual calibration
+
+Paired adapter update: **U2W v8.15.1 No Known-Image Primer**. This release keeps the v90.35.3.9.1 map-video/navigation/ambient reliability behavior and only refines Map Mode presentation, startup priming, and UI density.
+
+New Map Mode controls: inactive lane arrows remain grayscale but their gray level is adjustable from dark to bright; selected/recommended lanes remain white. Center-map edge fade is independently adjustable horizontally and vertically. The custom speed-limit sign is reduced to a white rectangle with the black limit number only.
+
+The normal Map Mode control surface is simplified to CarPlay-adapter Wi-Fi name/password plus one **Enable/Disable Map Mode** button. Relay/video diagnostics are collapsed by default. The legacy mode-5 control block is removed from the visible UI. All Map Mode image-calibration controls are grouped under one collapsed disclosure. Standard `HudDescription` explanatory blocks across the app now start collapsed while keeping their disclosure chevron.
+
+The app prewarms one real 480×240 iPhone-rendered frame before entering HUD mode 6. Paired U2W v8.15.1 removes the old v8.13 known-image primer entirely: the HUD MJPEG connection waits for a valid live iPhone frame and primes the decoder with that live frame instead. If live input pauses, U2W holds the HUD's previous image rather than substituting the known test image.
+
+The proven v90.35.3.9.1 ambient-light reconnect behavior is unchanged, including no software Power ON during normal headlight-powered Dashboard startup. OBD2-first speed remains deferred.
+
+See `docs/V90_35_3_10_MAP_MODE_UI_REFINEMENT.md`, `V90_35_3_10_BUILD_VERIFY.txt`, and `u2w/v8.15.1_NoFallbackPrimer/README.md`.
+
+---
+
 # HUD Controller v90.35.3.9.1 — MapVideo / Navigation / targeted Dashboard reconnect recovery
 
 This paired release uses **U2W v8.15** and keeps the v90.35.3.9 map-video and Route Guidance reliability fixes while narrowing the ambient-light change to the physical Dashboard reconnect problem. The previously finalized Center/day-night state machine is restored unchanged. Normal headlight OFF→ON cycles also keep the established **Already-On Minimal / no software Power ON** behavior so the old startup blink does not return.

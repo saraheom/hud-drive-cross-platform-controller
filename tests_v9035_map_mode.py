@@ -22,9 +22,10 @@ def test_map_mode_settings_and_component_controls():
 
 def test_us_speed_limit_and_right_widget_order():
     canvas = read("ios/HUDController/MapMode/HudMapModeCanvas.swift")
-    assert 'Text("SPEED")' in canvas
-    assert 'Text("LIMIT")' in canvas
+    assert 'Text("SPEED")' not in canvas
+    assert 'Text("LIMIT")' not in canvas
     assert "usSpeedLimitSign" in canvas
+    assert '.frame(width: 42, height: 34)' in canvas
     # Right widget code order must remain street -> maneuver -> distance -> lanes -> ETA/time.
     indices = [
         canvas.index("settings.showTurningStreet"),

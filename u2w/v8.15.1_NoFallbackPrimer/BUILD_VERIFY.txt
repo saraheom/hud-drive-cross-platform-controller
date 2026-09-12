@@ -1,0 +1,19 @@
+U2W v8.15.1 — No Known-Image Primer build verification
+
+Base requirement:
+- U2W v8.15 Reliability already installed
+- exact adapter product/version: U2W / 2021.03.06.1343
+
+Change:
+- HUD MJPEG cast relay waits for live baseline 480×240 JPEG
+- first live frame is sent three times as the decoder primer
+- no v8.13 known-image frame is transmitted
+- temporary live-frame gaps hold the HUD's last image instead of sending fallback
+
+Validation:
+- source installer/uninstaller/start/stop/status scripts pass sh -n
+- u2whud_cast_relay: ELF32 ARM EABI5 soft-float, statically linked, no dynamic section
+- encrypted update/uninstall payload member lists decrypt-verified by build_images.py
+
+Update SHA-256: 41aaa480d26cfc5c7495fc5e6757d3fec79544a50199e26112d98e972dcb8c64
+Uninstall SHA-256: 020305466e5e7008db27519704fa7981d998a532aa52572b7dbfc370272bc4fb

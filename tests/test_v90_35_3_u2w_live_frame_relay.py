@@ -9,5 +9,7 @@ def test_v90353_live_relay_sources():
     assert 'sourceMapImage: self.mainVideo.latestFrame' in app
     assert '15331' in relay
     assert 'UInt32(jpeg.count).bigEndian' in relay
-    assert 'Live iPhone → U2W → HUD relay' in ui
+    assert 'CarPlay adapter Wi-Fi name' in ui
+    assert 'Status & diagnostics' in ui
+    assert 'Button("Enable Map Mode")' in ui
     assert 'Frames sent' in ui

@@ -632,7 +632,7 @@ final class AppState {
 
 
 
-    // MARK: - v90.35.3.9 live relay session status + rotation-safe MainVideo
+    // MARK: - v90.35.3.10 live relay prewarm + v8.15.1 no-fallback primer
     // U2W v8.15 keeps the proven mode-6 join sequence while making relay status session-scoped.
 
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
@@ -679,7 +679,7 @@ final class AppState {
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
         hudU2WLiveRelayActive = false
-        hudU2WSTAStatus = "Starting U2W v8.15 live relay…"
+        hudU2WSTAStatus = "Starting U2W v8.15.1 live relay…"
         logger.log("HUD/U2W STA", "live relay start ssid=\(cleanSSID); iPhone remains on U2W AP")
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
@@ -691,22 +691,37 @@ final class AppState {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 let text = String(data: data.prefix(320), encoding: .utf8) ?? ""
-                self.logger.log("HUD/U2W STA", "U2W v8.15 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
+                self.logger.log("HUD/U2W STA", "U2W v8.15.1 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
                 guard (200...299).contains(code) else {
-                    self.hudU2WSTAStatus = "U2W v8.15 start failed (HTTP \(code))"
+                    self.hudU2WSTAStatus = "U2W v8.15.1 start failed (HTTP \(code))"
                     return
                 }
             } catch {
-                self.hudU2WSTAStatus = "U2W v8.15 unreachable"
+                self.hudU2WSTAStatus = "U2W v8.15.1 unreachable"
                 self.hudU2WSTAReason = error.localizedDescription
                 self.logger.log("HUD/U2W STA", "U2W relay start request failed: \(error.localizedDescription)")
                 return
             }
 
             guard !Task.isCancelled else { return }
+            let prewarmStartCount = self.hudU2WFrameRelay.sentFrameCount
             self.hudU2WFrameRelay.start()
             self.hudU2WLiveRelayActive = true
             self.startHUDU2WRelayFrameLoop()
+
+            // v90.35.3.10 prewarms one real iPhone-rendered 480×240 frame before
+            // asking the HUD to enter KivicCast STA mode. U2W v8.15.1 then primes
+            // the stock decoder with this live frame instead of the old known image.
+            self.hudU2WSTAStatus = "Preparing first HUD frame…"
+            for _ in 0..<20 {
+                guard !Task.isCancelled else { return }
+                if self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            self.logger.log(
+                "HUD/U2W STA",
+                "relay prewarm complete newFrame=\(self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount) sentCount=\(self.hudU2WFrameRelay.sentFrameCount)"
+            )
 
             // v90.35.3.7 intentionally restores the exact control ordering from the
             // first successful physical v8.13 home test: enter mode 6 once, send the

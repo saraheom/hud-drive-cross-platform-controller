@@ -23,7 +23,7 @@ struct HudCard<Content: View>: View {
 /// removing context when the user wants it.
 struct HudDescription: View {
     let text: String
-    @State private var isExpanded = true
+    @State private var isExpanded = false
 
     init(_ text: String) {
         self.text = text

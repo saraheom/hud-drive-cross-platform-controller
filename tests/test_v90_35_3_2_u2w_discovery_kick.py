@@ -19,7 +19,9 @@ def test_start_is_guarded_while_relay_active():
     app=(ROOT/'ios/HUDController/App/AppState.swift').read_text()
     assert 'if hudU2WLiveRelayActive {' in app
     ui=(ROOT/'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
-    assert '.disabled(state.hudU2WLiveRelayActive ||' in ui
+    assert 'if state.hudU2WLiveRelayActive {' in ui
+    assert 'Button("Disable Map Mode"' in ui
+    assert 'Button("Enable Map Mode")' in ui
 
 def test_bundled_u2w_v8142_exists_and_is_idempotent():
     b=ROOT/'u2w/v8.14.2_HUD_LiveFrameRelay_DiscoveryKick'

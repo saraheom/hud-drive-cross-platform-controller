@@ -1,0 +1,41 @@
+HUD Controller v90.35.3.10 — compact Map Mode UI + no-known-image primer
+
+Paired U2W requirement: v8.15.1 No Known-Image Primer (delta over v8.15 Reliability)
+
+Runtime/UI scope:
+- v90.35.3.9.1 MainVideo freshness watchdog, Route Guidance holdover, Stop→Start relay reliability retained
+- v90.35.3.9.1 finalized ambient behavior retained unchanged
+- inactive lane arrows remain grayscale; persisted gray brightness adjustable 12–80%; active lane remains white
+- independent horizontal and vertical center-map fade widths, each 0–35%
+- custom speed-limit sign is a white rectangle with black numeric limit only
+- compact Map Mode surface: CarPlay adapter SSID/password + Enable/Disable Map Mode
+- relay/video status + recovery controls collapsed under Status & diagnostics by default
+- legacy mode-5 control surface removed from visible UI
+- all Map Mode image customization grouped under a collapsed disclosure
+- standard HudDescription explanatory prose across the app starts collapsed by default
+- relay prewarms one newly rendered 480×240 JPEG before entering stock mode 6
+- OBD2-first speed remains deferred
+
+Paired U2W v8.15.1 scope:
+- requires existing v8.15 Reliability base marker
+- changes HUD MJPEG cast relay only (plus CGI version labels/status)
+- old v8.13 known-image primer is never transmitted
+- waits for a valid baseline 480×240 live JPEG from iPhone
+- primes the stock decoder with three copies of that actual live frame
+- holds the HUD's last frame when live input is temporarily unavailable rather than substituting fallback art
+
+U2W v8.15.1 update SHA-256:
+41aaa480d26cfc5c7495fc5e6757d3fec79544a50199e26112d98e972dcb8c64
+
+U2W v8.15.1 uninstall SHA-256:
+020305466e5e7008db27519704fa7981d998a532aa52572b7dbfc370272bc4fb
+
+Local validation:
+- Python/static regression suite: 341 passed
+- Swift syntax parse: 183 files, 0 failures
+- YAML parse: 10 files, 0 failures
+- U2W shell/CGI sh -n: clean
+- U2W cast helper: ELF32 ARM EABI5 soft-float static executable, no dynamic section
+- U2W encrypted update/uninstall payloads decrypt-verified by build_images.py
+
+GitHub Actions / Xcode 26 remains authoritative for full iOS compilation and XCTest.
