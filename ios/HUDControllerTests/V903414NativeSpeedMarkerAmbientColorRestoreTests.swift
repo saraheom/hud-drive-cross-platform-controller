@@ -43,10 +43,16 @@ final class V903414NativeSpeedMarkerAmbientColorRestoreTests: XCTestCase {
         XCTAssertTrue(ambient.contains("for id in group.memberIDs { setColor(id, color: color) }"))
     }
 
-    func testVehicleUIShowsNativeMarkerState() throws {
+    func testVehicleUIKeepsProductionMarkerStateWithoutTemporaryProbe() throws {
         let ui = try source("HUDController/UI/VehicleView.swift")
         XCTAssertTrue(ui.contains("LabeledContent(\"Native speed marker\""))
         XCTAssertTrue(ui.contains("nativeSpeedMarkerStatus"))
-        XCTAssertTrue(ui.contains("temporary probe"))
+
+        // v90.35.2 intentionally removes the temporary D0-D3 speed-marker
+        // diagnostic block from Vehicle while keeping the production marker
+        // state and reassertion path intact. Do not regress that cleanup.
+        XCTAssertFalse(ui.localizedCaseInsensitiveContains("speed marker probe"))
+        XCTAssertFalse(ui.localizedCaseInsensitiveContains("temporary probe"))
+        XCTAssertFalse(ui.contains("probeSpeedGauge"))
     }
 }

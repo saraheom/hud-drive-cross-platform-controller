@@ -1,0 +1,19 @@
+HUD Controller v90.35.2.1 — CI regression alignment
+Date: 2026-09-11
+
+Runtime delta from v90.35.2: NONE.
+
+GitHub Actions run 93896706821 successfully compiled the iOS app and reached the
+unit-test stage. The only failing test was:
+V903414NativeSpeedMarkerAmbientColorRestoreTests.testVehicleUIShowsNativeMarkerState
+
+Reason:
+v90.35.2 intentionally removed the visible temporary Speed Marker Probe block from
+Vehicle at the user's request, but this older regression still asserted that
+VehicleView contained the string "temporary probe".
+
+Fix:
+- Keep assertions that the production Native speed marker state remains visible.
+- Assert that temporary speed-marker probe UI strings remain absent.
+- No runtime source, BLE protocol, HUD-STA diagnostic, Map Mode, navigation, OBD,
+  ambient-light, or U2W behavior is changed.
