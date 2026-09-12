@@ -1,0 +1,7 @@
+v90.35.3.3 local validation
+- Swift syntax parse: 181 files, 0 failures
+- Python/static regression suite: 321/321 passed
+- YAML parse: 10 files OK
+- Focused HudProtocol executable replay: nested/interleaved Wi-Fi STA status frame recovered (1 frame, buffer drained)
+- U2W requirement: existing v8.14.2; no adapter reflash required
+- Xcode 26 CI/TestFlight remains authoritative for Apple-framework compile/runtime validation

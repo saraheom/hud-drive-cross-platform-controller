@@ -1,3 +1,15 @@
+# v90.35.3.3 — HUD STA clean-reset + BLE frame resynchronization
+
+This release keeps the validated iPhone → U2W → HUD live-JPEG relay and targets the latest field failure where the HUD remained in Joining / Empty network even though U2W frame ingress was healthy.
+
+The latest BLE log contained an interrupted firmware/version frame followed by a new Wi-Fi event STX before the first frame ended. The old parser could swallow that nested event. Since STX is escaped inside valid HUD payloads, v90.35.3.3 safely resynchronizes on an unescaped nested STX.
+
+A fresh Start also performs a deterministic stock-style STA reset: mode 4 → empty STA credentials/security 0 → 1.8 s settle → mode 6 → fresh `NISSAN68` credentials/security 2. Reset-phase/stale EMPTY events are ignored so they cannot overwrite the new join attempt. One credentials-only refresh is allowed if status=1 is still absent.
+
+**Adapter:** keep U2W v8.14.2 installed. No U2W reflash is required for this app revision.
+
+---
+
 # v90.35.3.2 — Post-association KivicCast discovery kick
 
 Field logs from v90.35.3.1 showed that the HUD could receive `status=1 connected` with a valid `192.168.50.x` address while U2W saw **no UDP/15320 discovery at all**. The viewer was being launched in mode 6 before STA/DHCP had completed, so it could finish association after its one-shot discovery attempt had already failed. v90.35.3.2 therefore re-primes mode 6 only after the positive STA event, verifies the live MJPEG TCP connection through U2W status, and performs one bounded retry if necessary.

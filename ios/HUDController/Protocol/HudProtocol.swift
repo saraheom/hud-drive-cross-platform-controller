@@ -107,19 +107,62 @@ enum HudProtocol {
 
     static func extractFrames(from buffer: inout Data) -> [Data] {
         var frames: [Data] = []
+
+        // HUD notifications can interleave when one protocol frame is split across
+        // BLE notifications and another event is emitted before the first frame's
+        // continuation arrives. Literal STX/ETX/ESC bytes inside a valid frame are
+        // escaped by the wire protocol, so an *unescaped* STX before ETX is an
+        // authoritative new-frame boundary. Resynchronize to that newer STX instead
+        // of swallowing the nested event into the older incomplete frame.
         while true {
-            guard let stxIndex = buffer.firstIndex(of: stx) else {
+            guard let firstSTX = buffer.firstIndex(of: stx) else {
                 buffer.removeAll()
                 break
             }
-            if stxIndex > buffer.startIndex {
-                buffer.removeSubrange(buffer.startIndex..<stxIndex)
+            if firstSTX > buffer.startIndex {
+                buffer.removeSubrange(buffer.startIndex..<firstSTX)
             }
-            guard let etxIndex = buffer.dropFirst().firstIndex(of: etx) else { break }
-            let endExclusive = buffer.index(after: etxIndex)
-            let frame = buffer.subdata(in: buffer.startIndex..<endExclusive)
-            frames.append(frame)
-            buffer.removeSubrange(buffer.startIndex..<endExclusive)
+            guard buffer.count >= 2 else { break }
+
+            var index = buffer.index(after: buffer.startIndex)
+            var escaped = false
+            var restartedAtNestedSTX = false
+            var completed = false
+
+            while index < buffer.endIndex {
+                let byte = buffer[index]
+                if escaped {
+                    escaped = false
+                    index = buffer.index(after: index)
+                    continue
+                }
+                if byte == esc {
+                    escaped = true
+                    index = buffer.index(after: index)
+                    continue
+                }
+                if byte == stx {
+                    // Drop the interrupted/incomplete frame and preserve the newer
+                    // frame from its STX onward. Any later continuation of the old
+                    // frame has no STX and will be discarded as noise after the new
+                    // complete frame is extracted.
+                    buffer.removeSubrange(buffer.startIndex..<index)
+                    restartedAtNestedSTX = true
+                    break
+                }
+                if byte == etx {
+                    let endExclusive = buffer.index(after: index)
+                    frames.append(buffer.subdata(in: buffer.startIndex..<endExclusive))
+                    buffer.removeSubrange(buffer.startIndex..<endExclusive)
+                    completed = true
+                    break
+                }
+                index = buffer.index(after: index)
+            }
+
+            if restartedAtNestedSTX || completed { continue }
+            // No unescaped ETX yet: keep this frame buffered for the next BLE chunk.
+            break
         }
         return frames
     }
