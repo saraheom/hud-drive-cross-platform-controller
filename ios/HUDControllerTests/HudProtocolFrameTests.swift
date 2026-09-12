@@ -15,7 +15,7 @@ final class HudProtocolFrameTests: XCTestCase {
 
     func testExtractLeavesIncompleteFrameBuffered() {
         // Keep a syntactically valid incomplete frame. A trailing raw STX would
-        // intentionally resynchronize to that newer STX under the v90.35.3.3 parser.
+        // intentionally resynchronize to that newer STX under the v90.35.3.5 parser.
         var buffer = Data([0x02, 0x01, 0x04])
         let frames = HudProtocol.extractFrames(from: &buffer)
 

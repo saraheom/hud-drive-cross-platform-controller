@@ -183,50 +183,51 @@ final class AppState {
         bluetooth.onWiFiSTAStatusEvent = { [weak self] status, reason, address in
             guard let self else { return }
 
-            // The deliberate clean-reset sequence below emits EMPTY/DISCONNECTED
-            // status while old STA state is being erased. Those events belong to the
-            // reset generation, not the new NISSAN68 join attempt.
-            if self.hudU2WSTAResetInProgress {
-                self.logger.log(
-                    "HUD/U2W STA",
-                    "reset-phase event ignored status=\(status) address=\(address.isEmpty ? "—" : address) reason=\(reason.isEmpty ? "—" : reason)"
-                )
-                return
-            }
+            // Field evidence from v90.35.3.4: the HUD can report stock status=6
+            // ("Empty network") while simultaneously returning a valid DHCP address
+            // such as 192.168.50.100. U2W's ARP table also shows that peer. Therefore
+            // status=6 is not a reliable link-layer disconnect signal on this firmware.
+            // Treat a valid IPv4 address as a "soft connected" STA link and continue
+            // to the KivicCast viewer/discovery stage instead of waiting forever for
+            // status=1. Status=1 remains the definitive positive state.
+            let hasAddress = self.isUsableHUDSTAAddress(address)
+            let linkUp = status == 1 || (self.hudU2WLiveRelayActive && hasAddress && status == 6)
 
-            // A delayed EMPTY response from the intentional clear can arrive after
-            // the real credentials have already been queued. Ignore it briefly so it
-            // cannot overwrite a fresh Joining/Connected state. Likewise, once a
-            // positive status=1 has been observed, a later EMPTY event is stale and
-            // must not demote the live session.
-            if status == 6,
-               Date() < self.hudU2WIgnoreEmptyStatusUntil || self.hudU2WSTAConnected {
-                self.logger.log(
-                    "HUD/U2W STA",
-                    "stale EMPTY event ignored connected=\(self.hudU2WSTAConnected) address=\(address.isEmpty ? "—" : address) reason=\(reason.isEmpty ? "—" : reason)"
-                )
-                return
+            self.hudU2WSTAConnected = linkUp
+            if !address.isEmpty {
+                self.hudU2WSTAAddress = address
             }
-
-            // Physical v8.13 test proved stock status=1 means connected even when
-            // this firmware omits the optional address field.
-            self.hudU2WSTAConnected = status == 1
-            self.hudU2WSTAAddress = address
             self.hudU2WSTAReason = reason
+
             switch status {
             case 1:
                 self.hudU2WSTAStatus = self.hudU2WLiveRelayActive ? "Wi-Fi connected — starting HUD display…" : "Connected"
-                if self.hudU2WLiveRelayActive, self.hudU2WKivicKickCount == 0 {
-                    self.primeHUDU2WKivicViewer(reason: "STA connected")
-                }
-            case 2: self.hudU2WSTAStatus = "Disconnected"
-            case 3: self.hudU2WSTAStatus = "HUD requested hotspot"
-            case 4: self.hudU2WSTAStatus = "Address search timeout"
-            case 5: self.hudU2WSTAStatus = "Invalid network info"
-            case 6: self.hudU2WSTAStatus = "Empty network info"
-            default: self.hudU2WSTAStatus = "Status \(status)"
+            case 2:
+                self.hudU2WSTAStatus = "Disconnected"
+            case 3:
+                self.hudU2WSTAStatus = "HUD requested hotspot"
+            case 4:
+                self.hudU2WSTAStatus = "Address search timeout"
+            case 5:
+                self.hudU2WSTAStatus = "Invalid network info"
+            case 6 where linkUp:
+                self.hudU2WSTAStatus = "Wi-Fi IP acquired — starting HUD display…"
+            case 6:
+                self.hudU2WSTAStatus = "Joining U2W Wi-Fi…"
+            default:
+                self.hudU2WSTAStatus = "Status \(status)"
             }
-            self.logger.log("HUD/U2W STA", "event status=\(status) connected=\(self.hudU2WSTAConnected) address=\(address.isEmpty ? "—" : address) reason=\(reason.isEmpty ? "—" : reason)")
+
+            if self.hudU2WLiveRelayActive, linkUp, self.hudU2WKivicKickCount == 0 {
+                self.primeHUDU2WKivicViewer(
+                    reason: status == 1 ? "STA status=1 connected" : "STA has DHCP address despite status=6"
+                )
+            }
+
+            self.logger.log(
+                "HUD/U2W STA",
+                "event status=\(status) linkUp=\(linkUp) address=\(address.isEmpty ? "—" : address) reason=\(reason.isEmpty ? "—" : reason)"
+            )
         }
 
         speedEngine.onSpeedStateChanged = { [weak ambientLight] speedMph, limitMph, available in
@@ -630,7 +631,7 @@ final class AppState {
 
 
 
-    // MARK: - v90.35.3.3 live relay STA clean reset + BLE frame resynchronization
+    // MARK: - v90.35.3.5 live relay IP-soft-connect recovery + BLE frame resynchronization
 
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -647,10 +648,16 @@ final class AppState {
             return
         }
         if hudU2WLiveRelayActive {
-            hudU2WSTAStatus = hudU2WSTAConnected ? "Relay already active — retrying HUD display…" : "Relay already active — waiting for Wi-Fi"
-            if hudU2WSTAConnected {
+            let linkUp = hudU2WSTAConnected || isUsableHUDSTAAddress(hudU2WSTAAddress)
+            hudU2WSTAStatus = linkUp ? "Relay already active — retrying HUD display…" : "Relay already active — refreshing Wi-Fi join"
+            if linkUp {
                 primeHUDU2WKivicViewer(reason: "manual Start while active", force: true)
             } else {
+                bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W active recovery → IOS_KIVICCAST_STA_MODE(6)")
+                bluetooth.enqueue(
+                    HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
+                    label: "HUD/U2W active recovery → Wi-Fi STA credentials for \(cleanSSID)"
+                )
                 requestHUDU2WSTAStatus()
             }
             return
@@ -706,62 +713,62 @@ final class AppState {
             self.hudU2WLiveRelayActive = true
             self.startHUDU2WRelayFrameLoop()
 
-            // v90.35.3.3: always begin from a deterministic HUD STA state. Field
-            // testing showed repeated mode-6/mode-4 cycles can leave the firmware in
-            // EMPTY_NETWORK_INFO even though the correct credentials are subsequently
-            // resent. Match the stock app's explicit empty-network command once, wait
-            // for that asynchronous state to settle, then enter mode 6 with the real
-            // credentials. Rehydration remains suppressed for the whole relay session.
-            self.hudU2WSTAResetInProgress = true
-            self.hudU2WSTAStatus = "Resetting HUD Wi-Fi state…"
-            self.logger.log("HUD/U2W STA", "clean STA reset BEGIN before joining \(cleanSSID)")
-            self.bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W clean reset → IOS_HUD_MODE(4)")
+            // v90.35.3.5: do NOT erase the saved STA network before joining.
+            // The v90.35.3.4 field log proved that the empty-credentials reset itself
+            // reliably drives this HUD into status=6 "Empty network" and can keep it
+            // there even after correct credentials are resent. Return briefly to stock
+            // HUD mode, then enter STA KivicCast mode and overwrite the credentials
+            // non-destructively. This matches the sequence that previously reached
+            // status=1 and displayed the map.
+            self.hudU2WSTAStatus = "Preparing HUD Wi-Fi…"
+            self.bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W non-destructive reset → IOS_HUD_MODE(4)")
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+
+            self.hudU2WSTAConnected = false
+            self.hudU2WSTAReason = ""
+            self.hudU2WSTAStatus = "Joining \(cleanSSID)…"
+            self.logger.log("HUD/U2W STA", "entering mode 6 without clearing saved STA credentials")
+            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → IOS_KIVICCAST_STA_MODE(6)")
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
             self.bluetooth.enqueue(
-                HudCommands.wifiSTAMode(ssid: "", password: "", security: 0),
-                label: "HUD/U2W clean reset → clear stale STA network"
-            )
-            try? await Task.sleep(for: .milliseconds(1800))
-            guard !Task.isCancelled else { return }
-            self.hudU2WSTAResetInProgress = false
-            self.hudU2WIgnoreEmptyStatusUntil = Date().addingTimeInterval(2.5)
-            self.hudU2WSTAConnected = false
-            self.hudU2WSTAAddress = ""
-            self.hudU2WSTAReason = ""
-            self.logger.log("HUD/U2W STA", "clean STA reset END; entering mode 6 with fresh credentials")
-
-            self.hudU2WSTAStatus = "Joining \(cleanSSID)…"
-            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → IOS_KIVICCAST_STA_MODE(6)")
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            self.bluetooth.enqueue(
                 HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
-                label: "HUD/U2W live relay → fresh Wi-Fi STA credentials for \(cleanSSID)"
+                label: "HUD/U2W live relay → Wi-Fi STA credentials for \(cleanSSID)"
             )
 
-            try? await Task.sleep(for: .seconds(3.0))
+            // Allow association/DHCP to settle, then ask for status. If this firmware
+            // returns status=6 together with a valid 192.168.50.x address, the status
+            // callback treats that as link-up and immediately kicks the KivicCast viewer.
+            try? await Task.sleep(for: .seconds(4.0))
             guard !Task.isCancelled else { return }
             self.requestHUDU2WSTAStatus()
+
+            try? await Task.sleep(for: .seconds(4.0))
+            guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
+
+            // One non-destructive credentials refresh only. Never send empty SSID here.
+            self.hudU2WSTAStatus = "Still joining — refreshing credentials once…"
+            self.bluetooth.enqueue(
+                HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
+                label: "HUD/U2W live relay → one-shot Wi-Fi credential refresh for \(cleanSSID)"
+            )
             try? await Task.sleep(for: .seconds(4.0))
             guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
             self.requestHUDU2WSTAStatus()
-
-            // One credentials-only refresh is safer than another mode transition if
-            // the firmware has not reported status=1 yet. The robust frame parser can
-            // now recover a nested/interleaved status packet if the HUD emits one.
-            try? await Task.sleep(for: .seconds(3.0))
-            guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
-            self.hudU2WSTAStatus = "Still joining — refreshing STA credentials once…"
-            self.hudU2WIgnoreEmptyStatusUntil = Date().addingTimeInterval(1.5)
-            self.bluetooth.enqueue(
-                HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
-                label: "HUD/U2W live relay → one-shot STA credential refresh for \(cleanSSID)"
-            )
-            try? await Task.sleep(for: .seconds(3.0))
-            guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
-            self.requestHUDU2WSTAStatus()
         }
+    }
+
+    private func isUsableHUDSTAAddress(_ address: String) -> Bool {
+        let parts = address.split(separator: ".")
+        guard parts.count == 4,
+              parts.allSatisfy({ part in
+                  guard let value = Int(part) else { return false }
+                  return (0...255).contains(value)
+              }) else {
+            return false
+        }
+        return address != "0.0.0.0"
     }
 
     func retryHUDU2WKivicDisplay() {
@@ -769,11 +776,18 @@ final class AppState {
             hudU2WSTAStatus = "Start the live relay first"
             return
         }
-        guard hudU2WSTAConnected else {
-            hudU2WSTAStatus = "Relay active — waiting for HUD Wi-Fi"
+        let linkUp = hudU2WSTAConnected || isUsableHUDSTAAddress(hudU2WSTAAddress)
+        guard linkUp else {
+            // Allow a forced viewer prime as a diagnostic even if the HUD status
+            // packet is ambiguous; field logs show the STA can have DHCP while
+            // reporting status=6.
+            hudU2WSTAStatus = "Forcing HUD display discovery…"
+            bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W manual display retry → force IOS_KIVICCAST_STA_MODE(6)")
+            bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD/U2W manual display retry → KeepAlive")
             requestHUDU2WSTAStatus()
             return
         }
+        hudU2WSTAConnected = true
         primeHUDU2WKivicViewer(reason: "manual display retry", force: true)
     }
 
