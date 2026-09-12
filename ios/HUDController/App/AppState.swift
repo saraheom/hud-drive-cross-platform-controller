@@ -32,6 +32,8 @@ final class AppState {
     private(set) var hudU2WSTAConnected = false
     private var hudU2WSTAStatusTask: Task<Void, Never>?
     private var hudU2WRelayFrameTask: Task<Void, Never>?
+    private var hudU2WKivicKickTask: Task<Void, Never>?
+    private var hudU2WKivicKickCount = 0
     private(set) var hudU2WLiveRelayActive = false
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
@@ -184,7 +186,15 @@ final class AppState {
             self.hudU2WSTAAddress = address
             self.hudU2WSTAReason = reason
             switch status {
-            case 1: self.hudU2WSTAStatus = "Connected"
+            case 1:
+                self.hudU2WSTAStatus = self.hudU2WLiveRelayActive ? "Wi-Fi connected — starting HUD display…" : "Connected"
+                // Mode 6 can launch its KivicCast viewer before DHCP finishes. In the
+                // field this left Wi-Fi connected but produced no UDP/15320 discovery.
+                // Re-prime mode 6 only after the positive STA event so discovery runs
+                // on the already-established 192.168.50.x interface.
+                if self.hudU2WLiveRelayActive, self.hudU2WKivicKickCount == 0 {
+                    self.primeHUDU2WKivicViewer(reason: "STA connected")
+                }
             case 2: self.hudU2WSTAStatus = "Disconnected"
             case 3: self.hudU2WSTAStatus = "HUD requested hotspot"
             case 4: self.hudU2WSTAStatus = "Address search timeout"
@@ -596,7 +606,7 @@ final class AppState {
 
 
 
-    // MARK: - v90.35.3.1 live iPhone -> U2W -> HUD relay stability
+    // MARK: - v90.35.3.2 live iPhone -> U2W -> HUD relay discovery stability
 
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -610,6 +620,15 @@ final class AppState {
         }
         guard !cleanSSID.isEmpty, !password.isEmpty else {
             hudU2WSTAStatus = "Enter U2W SSID and password"
+            return
+        }
+        if hudU2WLiveRelayActive {
+            hudU2WSTAStatus = hudU2WSTAConnected ? "Relay already active — retrying HUD display…" : "Relay already active — waiting for Wi-Fi"
+            if hudU2WSTAConnected {
+                primeHUDU2WKivicViewer(reason: "manual Start while active", force: true)
+            } else {
+                requestHUDU2WSTAStatus()
+            }
             return
         }
 
@@ -627,12 +646,14 @@ final class AppState {
 
         hudU2WSTAStatusTask?.cancel()
         hudU2WRelayFrameTask?.cancel()
+        hudU2WKivicKickTask?.cancel()
         hudU2WFrameRelay.stop(reason: "new relay session")
+        hudU2WKivicKickCount = 0
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
         hudU2WLiveRelayActive = false
-        hudU2WSTAStatus = "Starting U2W v8.14.1 live relay…"
+        hudU2WSTAStatus = "Starting U2W v8.14.2 live relay…"
         logger.log("HUD/U2W STA", "live relay start ssid=\(cleanSSID); iPhone remains on U2W AP")
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
@@ -644,13 +665,13 @@ final class AppState {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 let text = String(data: data.prefix(320), encoding: .utf8) ?? ""
-                self.logger.log("HUD/U2W STA", "U2W v8.14.1 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
+                self.logger.log("HUD/U2W STA", "U2W v8.14.2 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
                 guard (200...299).contains(code) else {
-                    self.hudU2WSTAStatus = "U2W v8.14.1 start failed (HTTP \(code))"
+                    self.hudU2WSTAStatus = "U2W v8.14.2 start failed (HTTP \(code))"
                     return
                 }
             } catch {
-                self.hudU2WSTAStatus = "U2W v8.14.1 unreachable"
+                self.hudU2WSTAStatus = "U2W v8.14.2 unreachable"
                 self.hudU2WSTAReason = error.localizedDescription
                 self.logger.log("HUD/U2W STA", "U2W relay start request failed: \(error.localizedDescription)")
                 return
@@ -674,6 +695,82 @@ final class AppState {
             try? await Task.sleep(for: .seconds(4.0))
             guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
             self.requestHUDU2WSTAStatus()
+        }
+    }
+
+    func retryHUDU2WKivicDisplay() {
+        guard hudU2WLiveRelayActive else {
+            hudU2WSTAStatus = "Start the live relay first"
+            return
+        }
+        guard hudU2WSTAConnected else {
+            hudU2WSTAStatus = "Relay active — waiting for HUD Wi-Fi"
+            requestHUDU2WSTAStatus()
+            return
+        }
+        primeHUDU2WKivicViewer(reason: "manual display retry", force: true)
+    }
+
+    private func primeHUDU2WKivicViewer(reason: String, force: Bool = false) {
+        guard hudU2WLiveRelayActive, bluetooth.state == .connected else { return }
+        if !force, hudU2WKivicKickCount > 0 { return }
+        hudU2WKivicKickTask?.cancel()
+        hudU2WKivicKickTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive, self.hudU2WSTAConnected else { return }
+            self.hudU2WKivicKickCount += 1
+            let attempt = self.hudU2WKivicKickCount
+            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → post-connect KivicCast viewer prime #\(attempt)")
+            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD/U2W live relay → post-connect KeepAlive")
+            self.hudU2WSTAStatus = "Wi-Fi connected — requesting HUD stream…"
+            self.logger.log("HUD/U2W STA", "post-connect mode-6 viewer prime #\(attempt) reason=\(reason)")
+
+            try? await Task.sleep(for: .milliseconds(1400))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+            let streamReady = await self.u2wReportsHUDStreamClient()
+            if streamReady {
+                self.hudU2WSTAStatus = "Connected — HUD stream active"
+                self.logger.log("HUD/U2W STA", "U2W confirms KivicCast discovery/MJPEG client")
+                return
+            }
+
+            // One bounded retry handles the observed viewer-start-before-DHCP race
+            // without repeatedly restarting the U2W daemons or rewriting credentials.
+            if attempt < 2, self.hudU2WSTAConnected {
+                self.hudU2WSTAStatus = "Wi-Fi connected — retrying HUD display…"
+                self.hudU2WKivicKickCount += 1
+                let retry = self.hudU2WKivicKickCount
+                self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → KivicCast viewer retry #\(retry)")
+                self.bluetooth.enqueue(HudCommands.keepAlive(), label: "HUD/U2W live relay → retry KeepAlive")
+                self.logger.log("HUD/U2W STA", "no U2W discovery/client yet; viewer retry #\(retry)")
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+                if await self.u2wReportsHUDStreamClient() {
+                    self.hudU2WSTAStatus = "Connected — HUD stream active"
+                } else {
+                    self.hudU2WSTAStatus = "Wi-Fi connected — no HUD stream yet; use Retry display"
+                }
+            } else {
+                self.hudU2WSTAStatus = "Wi-Fi connected — no HUD stream yet; use Retry display"
+            }
+        }
+    }
+
+    private func u2wReportsHUDStreamClient() async -> Bool {
+        guard let url = URL(string: "http://192.168.50.2/cgi-bin/u2whud-status.cgi") else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 2
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let text = String(data: data, encoding: .utf8) else { return false }
+            let established = text.contains("hud_mjpeg_established=YES")
+            self.logger.log("HUD/U2W STA", "relay status mjpegEstablished=\(established) discoverySeen=\(text.contains("discovery-packet-received"))")
+            return established
+        } catch {
+            self.logger.log("HUD/U2W STA", "relay status query failed: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -713,6 +810,9 @@ final class AppState {
         hudU2WSTAStatusTask = nil
         hudU2WRelayFrameTask?.cancel()
         hudU2WRelayFrameTask = nil
+        hudU2WKivicKickTask?.cancel()
+        hudU2WKivicKickTask = nil
+        hudU2WKivicKickCount = 0
         hudU2WFrameRelay.stop(reason: "relay stopped")
         hudU2WLiveRelayActive = false
         hudU2WSTAConnected = false
@@ -721,11 +821,12 @@ final class AppState {
         hudU2WSTAStatus = "Stopping…"
 
         if bluetooth.state == .connected {
-            bluetooth.enqueue(
-                HudCommands.wifiSTAMode(ssid: "", password: "", security: 0),
-                label: "HUD/U2W live relay → clear Wi-Fi STA credentials"
-            )
-            bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W live relay → restore IOS_HUD_MODE(4)")
+            // Do not erase the saved STA credentials on every stop. Field logs showed
+            // the asynchronous "Empty network" response from that clear command could
+            // bleed into the next start and poison rapid retry attempts. Mode 4 is
+            // sufficient to leave KivicCast; the next start can reuse/overwrite the
+            // credentials normally.
+            bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W live relay → restore IOS_HUD_MODE(4) (preserve STA credentials)")
             restoreDashboardOperatingMode(reason: "HUD/U2W live relay stopped")
         }
 

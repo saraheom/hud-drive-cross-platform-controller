@@ -1,0 +1,10 @@
+U2W v8.14.2 local validation
+shell_syntax=PASS
+install_image_sha256=730ece72f768d722741495ce6216229d23ceb61b815855d58e58f6f880e934c7
+uninstall_image_sha256=e2789060f4467490b12c521e50eb28c58a41f91df0bcee487ed58788f9ae5de7
+discovery_binary=/mnt/data/u2w_v8142_build/source/u2whud_discovery: ELF 32-bit LSB executable, ARM, EABI5 version 1 (SYSV), statically linked, not stripped
+idempotent_start=YES
+persistent_discovery=UDP/15320
+mjpeg_server=TCP/15330
+frame_ingress=TCP/15331
+status_current_mjpeg_signal=hud_mjpeg_established

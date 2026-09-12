@@ -1,0 +1,6 @@
+v90.35.3.2 local validation
+paired_u2w=v8.14.2 discovery kick/idempotent start
+post_sta_mode6_prime=YES
+bounded_kivic_retry=YES
+repeated_start_guard=YES
+stop_preserves_sta_credentials=YES
