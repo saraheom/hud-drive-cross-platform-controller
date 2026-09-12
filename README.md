@@ -1,3 +1,15 @@
+# v90.35.2 — HUD-as-STA → U2W home diagnostic
+
+v90.35.2 adds a no-CarPlay home diagnostic for the shared-network architecture. The iPhone stays connected to the existing U2W/Carlinkit AP while the HUD is commanded over BLE into stock `IOS_KIVICCAST_STA_MODE` (mode 6) and receives the U2W SSID/password using the recovered `WifiSTAModeCommandPacket`. The app now parses the returned `WifiSTAStatusEventPacket`, including status, reason and assigned IP.
+
+Paired **U2W v8.13** leaves the normal U2W AP unchanged and serves a known 480×240 KivicCast image directly from `192.168.50.2`. This test therefore determines whether the HUD can join the same U2W AP as a second station and pull the cast stream without moving the iPhone to HUDWAY Wi-Fi.
+
+Requested UI cleanup is included: Navigation uses the original green app accent again, and the temporary Vehicle **Speed Marker Probe** card is removed from the visible UI. Production speed/speed-limit behavior is unchanged.
+
+See `docs/V90_35_2_HUD_STA_U2W_HOME_DIAGNOSTIC.md`.
+
+---
+
 # v90.35.1.1 — CI regression alignment for OFF-only time/weather rehydration
 
 The first v90.35.1 GitHub Actions run compiled successfully and reached the full unit-test phase. It executed 266 tests; the only failures were three stale assertions in `V903416TimeWeatherColdOffSpeedGaugeProbeTests` that still expected the removed v90.34.16 cold-session ON → OFF edge. v90.35 intentionally changed that behavior to an OFF-only delayed reassert after the September 11 field test showed the transient ON could leave the panel visible.
@@ -6,7 +18,9 @@ This hotfix updates that legacy test to enforce the current OFF-only invariant. 
 
 See `V90_35_1_1_BUILD_VERIFY.txt`.
 
+
 ---
+
 
 # v90.35.1 — live U2W MainVideo map crop + source-theme filters
 

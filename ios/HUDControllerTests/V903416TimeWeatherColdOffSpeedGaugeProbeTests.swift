@@ -38,9 +38,9 @@ final class V903416TimeWeatherColdOffSpeedGaugeProbeTests: XCTestCase {
         XCTAssertTrue(speed.contains("runSpeedGaugeEdgeProbe"))
         XCTAssertTrue(speed.contains("runStockFreerideGaugeEdgeProbe"))
         XCTAssertTrue(speed.contains("Speedo\", center: \"Simple\", right: \"Weather"))
-        XCTAssertTrue(ui.contains("D0 — Gauge ON + zero threshold"))
-        XCTAssertTrue(ui.contains("D3 — Exact stock Freeride + gauge edge (parked)"))
-        XCTAssertTrue(ui.contains("Restore current HUD"))
+        XCTAssertFalse(ui.contains("D0 — Gauge ON + zero threshold"))
+        XCTAssertFalse(ui.contains("D3 — Exact stock Freeride + gauge edge (parked)"))
+        XCTAssertFalse(ui.contains("Restore current HUD"))
     }
 
     func testColdOffSynchronizationIsOffOnlyAfterFinalRehydration() throws {

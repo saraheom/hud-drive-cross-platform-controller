@@ -33,8 +33,9 @@ def test_d0_d3_expanded_probe_sequences_are_present_and_do_not_mutate_matcher_st
     assert "live matcher state untouched" in speed
 
 
-def test_vehicle_ui_exposes_d0_d3_and_full_restore():
+def test_speed_gauge_probe_engine_remains_but_temporary_vehicle_ui_is_removed():
     ui = read("ios/HUDController/UI/VehicleView.swift")
+    speed = read("ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
     for label in [
         'Button("D0 — Gauge ON + zero threshold")',
         'Button("D1 — Gauge ON + full stock speed chain")',
@@ -42,25 +43,19 @@ def test_vehicle_ui_exposes_d0_d3_and_full_restore():
         'Button("D3 — Exact stock Freeride + gauge edge (parked)")',
         'Button("Restore current HUD")',
     ]:
-        assert label in ui
-    assert "state.restoreHUDAfterSpeedMarkerProbe()" in ui
-    assert "DisplaySpeedGauge" in ui
-    assert "parked-only" in ui
+        assert label not in ui
+    assert "func runSpeedGaugeZeroProbe" in speed
+    assert "func runSpeedGaugeEdgeProbe" in speed
 
-
-def test_time_weather_off_gets_one_cold_session_on_to_off_edge_after_phase3():
+def test_time_weather_off_cold_session_is_off_only_after_phase3():
     app = read("ios/HUDController/App/AppState.swift")
     assert "private var timeWeatherColdOffSyncTask" in app
     assert "private func scheduleTimeWeatherColdOffSynchronization(reason: String)" in app
     assert "guard !settings.showTimeWeather else { return }" in app
     assert "Task.sleep(for: .milliseconds(650))" in app
-    assert "HudCommands.timeWeather(true)" in app
-    assert "Task.sleep(for: .milliseconds(350))" in app
-    assert "HudCommands.timeWeather(false)" in app
-    assert "persisted setting remains OFF" in app
-    phase3 = app[app.index("self.reassertDisplayCriticalState(reason: reason)"):]
-    assert phase3.index("self.reassertDisplayCriticalState(reason: reason)") < phase3.index("self.scheduleTimeWeatherColdOffSynchronization(reason: reason)")
-
+    assert "Cold-session delayed OFF-only reassert" in app
+    assert "no transient ON packet sent" in app
+    assert "Cold-session time/weather sync edge -> transient ON" not in app
 
 def test_time_weather_sync_is_cancelled_on_disconnect_and_new_rehydration():
     app = read("ios/HUDController/App/AppState.swift")

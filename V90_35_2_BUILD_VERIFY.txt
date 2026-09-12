@@ -1,0 +1,26 @@
+HUD Controller v90.35.2 - HUD-as-STA -> U2W home diagnostic
+
+Base: v90.35.1.1
+
+Runtime additions:
+- Stock IOS_KIVICCAST_STA_MODE (6) BLE path
+- Stock WifiSTAModeCommandPacket (2/16/0): writeUTF SSID + writeUTF password + int32 security
+- Stock WifiSTAStatusCommandPacket (2/17/0)
+- WifiSTAStatusEventPacket parser (3/6/0): int32 status + UTF reason + UTF address
+- One-button U2W v8.13 server arm over 192.168.50.2 before HUD STA join
+- Stop/restore path clears STA credentials and restores IOS_HUD_MODE (4)
+
+Requested UI changes:
+- iOS 26 Navigation tint restored to HudTheme.accent green
+- Custom Map Mode control accent restored to HudTheme.accent green
+- Vehicle temporary Speed Marker Probe card removed; production speed-limit logic unchanged
+
+Validation in this environment:
+- Swift parse: 179 files, 0 failures
+- Python/static regression suite: 310 passed
+- YAML parse: 10 files
+- v90.35.2 diagnostic static checks: PASS
+- Full Xcode/iOS framework compile: not available on Linux; GitHub Actions Xcode 26 remains authoritative
+
+Paired U2W image:
+- v8.13 install SHA256: 4c0ddbb083c6ff3d09caa7a6651dd0acab288c7e2d36336fdb342297c43b9fc7

@@ -26,14 +26,14 @@ def test_temporary_probe_reproduces_original_automatic_sequence_without_mutating
     assert "func restoreLiveSpeedLimitStateAfterMarkerProbe()" in speed
 
 
-def test_vehicle_ui_exposes_temporary_abc_marker_probe():
+def test_temporary_marker_probe_ui_is_removed_but_diagnostic_engine_remains():
     ui = read("ios/HUDController/UI/VehicleView.swift")
-    assert 'section("SPEED MARKER PROBE — TEMPORARY")' in ui
-    assert 'Button("A — Exact original Automatic/TRAVEL sequence")' in ui
-    assert 'Button("B — Original sequence + restore square sign")' in ui
-    assert 'Button("C — Current production sequence")' in ui
-    assert 'Button("Restore current HUD")' in ui
-    assert "does not change the selected speed-limit source" in ui
+    speed = read("ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
+    assert 'section("SPEED MARKER PROBE — TEMPORARY")' not in ui
+    assert 'Button("A — Exact original Automatic/TRAVEL sequence")' not in ui
+    assert 'Button("Restore current HUD")' not in ui
+    assert "func runOriginalAutomaticMarkerProbe" in speed
+    assert "func restoreLiveSpeedLimitStateAfterMarkerProbe" in speed
 
 
 def test_dashboard_profile_application_notifies_appstate_for_time_weather_reassert():

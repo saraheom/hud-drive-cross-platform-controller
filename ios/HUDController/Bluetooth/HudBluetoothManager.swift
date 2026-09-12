@@ -32,6 +32,7 @@ final class HudBluetoothManager: NSObject {
     private(set) var hudAmbientLastUpdated: Date?
 
     var onOBDConnectionEvent: ((Bool, String) -> Void)?
+    var onWiFiSTAStatusEvent: ((Int, String, String) -> Void)?
     var onTransportReady: (() -> Void)?
     var onTransportDisconnected: (() -> Void)?
     var onHUDSessionReset: (() -> Void)?
@@ -309,6 +310,19 @@ final class HudBluetoothManager: NSObject {
         }
     }
 
+    private func readJavaUTF(_ body: Data, index: inout Int) -> String? {
+        guard body.count >= index + 2 else { return nil }
+        let length = Int(body[index]) << 8 | Int(body[index + 1])
+        index += 2
+        guard body.count >= index + length else { return nil }
+        let data = body.subdata(in: index..<(index + length))
+        index += length
+        // STA reason/address strings observed in this protocol are ASCII/UTF-8.
+        // javaWriteUTF differs only for NUL/non-ASCII edge cases, which do not
+        // apply to IPv4 addresses and firmware reason strings.
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
     private func parseVehicleEvent(_ frame: Data) {
         guard let body = HudProtocol.unescape(frame), body.count >= 3 else { return }
 
@@ -337,6 +351,19 @@ final class HudBluetoothManager: NSObject {
                 logger.log("HUD SESSION", "Firmware hello/version event detected; HUD state may have reset")
                 onHUDSessionReset?()
             }
+        }
+
+        // Decompiled WifiSTAStatusEventPacket:
+        // EventPacket(command=3, p1=6, p2=0)
+        // payload = int32 status + writeUTF(reason) + writeUTF(address).
+        if body[0] == 3, body[1] == 6, body[2] == 0, body.count >= 7 {
+            let status = (Int(body[3]) << 24) | (Int(body[4]) << 16) | (Int(body[5]) << 8) | Int(body[6])
+            var index = 7
+            let reason = readJavaUTF(body, index: &index) ?? ""
+            let address = readJavaUTF(body, index: &index) ?? ""
+            logger.log("HUD WIFI STA", "status=\(status) reason=\(reason.isEmpty ? "—" : reason) address=\(address.isEmpty ? "—" : address)")
+            onWiFiSTAStatusEvent?(status, reason, address)
+            return
         }
 
         // Decompiled OBDConnectionEventPacket:

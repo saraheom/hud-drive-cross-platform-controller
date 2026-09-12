@@ -53,11 +53,27 @@ enum HudCommands {
 
     /// Stock KivicModeCommandPacket: p1=7, p2=0, int32 mode.
     /// Firmware constants recovered from HudLauncher:
-    /// 4 = IOS_HUD_MODE, 5 = IOS_KIVICCAST_MODE.
+    /// 4 = IOS_HUD_MODE, 5 = IOS_KIVICCAST_MODE, 6 = IOS_KIVICCAST_STA_MODE.
     /// Wi-Fi exposure bootstraps mode 5 to initialize the iOS casting AP, then
     /// returns to mode 4 so the native HUD renderer can continue showing lanes.
     static func kivicMode(_ mode: Int32) -> Data {
         HudProtocol.frame(command: 2, p1: 7, p2: 0, payload: HudProtocol.int32(mode))
+    }
+
+
+    /// Stock WifiSTAModeCommandPacket: p1=16, p2=0.
+    /// payload = writeUTF(ssid) + writeUTF(password) + writeInt(security).
+    /// Recovered stock app uses security=2 for WPA/WPA2 pre-shared-key networks.
+    static func wifiSTAMode(ssid: String, password: String, security: Int32 = 2) -> Data {
+        var payload = HudProtocol.javaWriteUTF(ssid)
+        payload.append(HudProtocol.javaWriteUTF(password))
+        payload.append(HudProtocol.int32(security))
+        return HudProtocol.frame(command: 2, p1: 16, p2: 0, payload: payload)
+    }
+
+    /// Stock WifiSTAStatusCommandPacket: p1=17, p2=0, no payload.
+    static func wifiSTAStatusRequest() -> Data {
+        HudProtocol.frame(command: 2, p1: 17, p2: 0)
     }
 
     /// Stock HudHotspotBasebandCommandPacket: p1=21, p2=0,

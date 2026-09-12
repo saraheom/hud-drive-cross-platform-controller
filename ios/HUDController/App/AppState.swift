@@ -25,6 +25,11 @@ final class AppState {
     private(set) var mapModeActive = false
     private(set) var mapModeStatus = "Map Mode off"
     private(set) var mapModeLastNetworkEvent = "Cast server idle"
+    private(set) var hudU2WSTAStatus = "Not tested"
+    private(set) var hudU2WSTAAddress = ""
+    private(set) var hudU2WSTAReason = ""
+    private(set) var hudU2WSTAConnected = false
+    private var hudU2WSTAStatusTask: Task<Void, Never>?
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
     private var hudRehydrateTask: Task<Void, Never>?
@@ -166,6 +171,23 @@ final class AppState {
             }
         }
 
+        bluetooth.onWiFiSTAStatusEvent = { [weak self] status, reason, address in
+            guard let self else { return }
+            self.hudU2WSTAConnected = status == 1 && !address.isEmpty
+            self.hudU2WSTAAddress = address
+            self.hudU2WSTAReason = reason
+            switch status {
+            case 1: self.hudU2WSTAStatus = "Connected"
+            case 2: self.hudU2WSTAStatus = "Disconnected"
+            case 3: self.hudU2WSTAStatus = "HUD requested hotspot"
+            case 4: self.hudU2WSTAStatus = "Address search timeout"
+            case 5: self.hudU2WSTAStatus = "Invalid network info"
+            case 6: self.hudU2WSTAStatus = "Empty network info"
+            default: self.hudU2WSTAStatus = "Status \(status)"
+            }
+            self.logger.log("HUD/U2W STA", "event status=\(status) connected=\(self.hudU2WSTAConnected) address=\(address.isEmpty ? "—" : address) reason=\(reason.isEmpty ? "—" : reason)")
+        }
+
         speedEngine.onSpeedStateChanged = { [weak ambientLight] speedMph, limitMph, available in
             ambientLight?.updateOverspeedWarning(
                 gpsSpeedMph: speedMph,
@@ -214,6 +236,9 @@ final class AppState {
             self.timeWeatherPostDashboardTask = nil
             self.timeWeatherColdOffSyncTask?.cancel()
             self.timeWeatherColdOffSyncTask = nil
+            self.hudU2WSTAStatusTask?.cancel()
+            self.hudU2WSTAStatusTask = nil
+            self.hudU2WSTAConnected = false
             self.laneGuidanceRefreshTask?.cancel()
             self.laneGuidanceRefreshTask = nil
             self.laneRightSideProbeActive = false
@@ -559,6 +584,106 @@ final class AppState {
     }
 
 
+
+    // MARK: - v90.35.2 HUD-as-STA -> U2W home bridge diagnostic
+
+    func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
+        let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard bluetooth.state == .connected else {
+            hudU2WSTAStatus = "Connect HUD over BLE first"
+            return
+        }
+        guard !mapModeActive else {
+            hudU2WSTAStatus = "Disable legacy Map Mode first"
+            return
+        }
+        guard !cleanSSID.isEmpty, !password.isEmpty else {
+            hudU2WSTAStatus = "Enter U2W SSID and password"
+            return
+        }
+
+        hudU2WSTAStatusTask?.cancel()
+        hudU2WSTAConnected = false
+        hudU2WSTAAddress = ""
+        hudU2WSTAReason = ""
+        hudU2WSTAStatus = "Starting U2W v8.13 cast server…"
+        logger.log("HUD/U2W STA", "home probe start ssid=\(cleanSSID); iPhone remains on U2W AP")
+
+        hudU2WSTAStatusTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let url = URL(string: "http://192.168.50.2/cgi-bin/u2whud-start.cgi")!
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 4
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let text = String(data: data.prefix(240), encoding: .utf8) ?? ""
+                self.logger.log("HUD/U2W STA", "U2W v8.13 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\\n", with: " | "))")
+                guard (200...299).contains(code) else {
+                    self.hudU2WSTAStatus = "U2W v8.13 start failed (HTTP \(code))"
+                    return
+                }
+            } catch {
+                self.hudU2WSTAStatus = "U2W v8.13 unreachable"
+                self.hudU2WSTAReason = error.localizedDescription
+                self.logger.log("HUD/U2W STA", "U2W start request failed: \(error.localizedDescription)")
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            self.hudU2WSTAStatus = "Joining \(cleanSSID)…"
+            self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W home probe → IOS_KIVICCAST_STA_MODE(6)")
+            self.bluetooth.enqueue(
+                HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
+                label: "HUD/U2W home probe → Wi-Fi STA credentials for \(cleanSSID)"
+            )
+
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            self.requestHUDU2WSTAStatus()
+            try? await Task.sleep(for: .seconds(4.0))
+            guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
+            self.requestHUDU2WSTAStatus()
+        }
+    }
+
+    func requestHUDU2WSTAStatus() {
+        guard bluetooth.state == .connected else {
+            hudU2WSTAStatus = "HUD BLE disconnected"
+            return
+        }
+        bluetooth.enqueue(HudCommands.wifiSTAStatusRequest(), label: "HUD/U2W home probe → request STA status")
+        logger.log("HUD/U2W STA", "Requested stock WifiSTAStatusEventPacket")
+    }
+
+    func stopHUDU2WSTAHomeProbe() {
+        hudU2WSTAStatusTask?.cancel()
+        hudU2WSTAStatusTask = nil
+        hudU2WSTAConnected = false
+        hudU2WSTAAddress = ""
+        hudU2WSTAReason = ""
+        hudU2WSTAStatus = "Stopping…"
+
+        if bluetooth.state == .connected {
+            bluetooth.enqueue(
+                HudCommands.wifiSTAMode(ssid: "", password: "", security: 0),
+                label: "HUD/U2W home probe → clear Wi-Fi STA credentials"
+            )
+            bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W home probe → restore IOS_HUD_MODE(4)")
+            restoreDashboardOperatingMode(reason: "HUD/U2W STA home probe stopped")
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let url = URL(string: "http://192.168.50.2/cgi-bin/u2whud-stop.cgi") {
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 3
+                _ = try? await URLSession.shared.data(for: request)
+            }
+            self.hudU2WSTAStatus = "Stopped — normal HUD mode restored"
+            self.logger.log("HUD/U2W STA", "home probe stopped; mode 4 restore requested")
+        }
+    }
 
     // MARK: - Navigation presentation / lane guidance
 

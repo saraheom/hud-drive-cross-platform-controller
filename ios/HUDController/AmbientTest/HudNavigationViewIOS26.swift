@@ -80,7 +80,7 @@ struct HudNavigationView: View {
             .background(HudTheme.background.ignoresSafeArea())
             .navigationTitle("Navigation")
         }
-        .tint(Color(red: 0.20, green: 0.64, blue: 1.00))
+        .tint(HudTheme.accent)
     }
 }
 #endif

@@ -39,7 +39,7 @@ def test_vehicle_ui_exposes_native_marker_state_and_manual_widget_reasserts():
     assert 'reassertOriginalSpeedMarker(reason: "Freeride widget profile applied")' in ui
     assert 'reassertOriginalSpeedMarker(reason: "Navigation widget profile applied")' in ui
     assert "DisplaySpeedWarning threshold" in ui
-    assert "temporary probe" in ui
+    assert "temporary probe" not in ui.lower()
 
 
 def test_manual_color_write_restores_resolved_preferred_brightness():

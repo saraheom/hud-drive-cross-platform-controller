@@ -2,7 +2,6 @@ import SwiftUI
 
 struct VehicleView: View {
     @Bindable var state: AppState
-    @State private var speedMarkerProbeLimitMph = 25
 
     var body: some View {
         NavigationStack {
@@ -130,79 +129,14 @@ struct VehicleView: View {
                             HudDescription("""
                             \(state.speedEngine.sourceMode.shortDescription)
 
-                            Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Switching sources clears the previous sign until the selected matcher produces a fresh result. Speed warning follows the posted speed limit automatically. For a confirmed posted limit, the app now reasserts the original HUDWAY DisplaySpeedWarning threshold after Freeride/Navigation renderer changes. This is the stock DisplaySpeedWarning path used by HUDWAY Drive; v90.34.16 no longer assumes that packet alone owns the small red arc and adds direct probes for the recovered DisplaySpeedGauge state. The temporary probe below can reproduce the original Automatic/TRAVEL branch sequence without changing live speed-limit logic. Display-only/inferred limits remain intentionally ineligible for the native warning/marker.
+                            Speed engine and speed-limit sign settings are saved immediately and restored after app relaunch. Switching sources clears the previous sign until the selected matcher produces a fresh result. Speed warning follows the posted speed limit automatically. For a confirmed posted limit, the app now reasserts the original HUDWAY DisplaySpeedWarning threshold after Freeride/Navigation renderer changes. This is the stock DisplaySpeedWarning path used by HUDWAY Drive. Display-only/inferred limits remain intentionally ineligible for the native warning/marker.
 
                             Current keeps the decompiled HUDWAY matcher unchanged. OSM Trace preserves the rolling explicit-maxspeed matcher used in the latest road test for direct A/B comparison. Improved + Philly GIS loads nearby drivable OSM roads, strengthens road continuity, and inside Philadelphia cross-checks the City’s public Street Speed Limits and Residential Streets layers. Outside Philadelphia, the improved mode automatically continues with improved OSM only. Ambient-light overspeed warning controls now live entirely in the Ambient tab and consume this selected speed-limit result.
                             """)
                         }
                     }
 
-                    section("SPEED MARKER PROBE — TEMPORARY") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Stepper(
-                                "Test threshold: \(speedMarkerProbeLimitMph) mph",
-                                value: $speedMarkerProbeLimitMph,
-                                in: 5...100,
-                                step: 5
-                            )
 
-                            Button("A — Exact original Automatic/TRAVEL sequence") {
-                                state.speedEngine.runOriginalAutomaticMarkerProbe(
-                                    limitMph: speedMarkerProbeLimitMph,
-                                    restoreProductionSign: false
-                                )
-                            }
-                            .buttonStyle(.borderedProminent)
-
-                            Button("B — Original sequence + restore square sign") {
-                                state.speedEngine.runOriginalAutomaticMarkerProbe(
-                                    limitMph: speedMarkerProbeLimitMph,
-                                    restoreProductionSign: true
-                                )
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("C — Current production sequence") {
-                                state.speedEngine.runCurrentProductionMarkerProbe(
-                                    limitMph: speedMarkerProbeLimitMph
-                                )
-                            }
-                            .buttonStyle(.bordered)
-
-                            Divider()
-
-                            Button("D0 — Gauge ON + zero threshold") {
-                                state.speedEngine.runSpeedGaugeZeroProbe()
-                            }
-                            .buttonStyle(.borderedProminent)
-
-                            Button("D1 — Gauge ON + full stock speed chain") {
-                                state.speedEngine.runSpeedGaugeStockChainProbe(limitMph: speedMarkerProbeLimitMph)
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("D2 — Gauge OFF→ON edge + stock chain") {
-                                state.speedEngine.runSpeedGaugeEdgeProbe(limitMph: speedMarkerProbeLimitMph)
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("D3 — Exact stock Freeride + gauge edge (parked)") {
-                                state.speedEngine.runStockFreerideGaugeEdgeProbe(limitMph: speedMarkerProbeLimitMph)
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("Restore current HUD") {
-                                state.restoreHUDAfterSpeedMarkerProbe()
-                            }
-                            .buttonStyle(.bordered)
-
-                            LabeledContent("Probe status", value: state.speedEngine.speedMarkerProbeStatus)
-
-                            HudDescription("""
-                            This block is diagnostic only. It does not change the selected speed-limit source, cached road limit, warning eligibility, or saved settings. A/B/C retain the v90.34.15 comparisons. D0 sends DisplaySpeed ON + DisplaySpeedGauge ON with limit/threshold zero; this directly tests your observation that the original HUD keeps a small red segment near zero even with no speed limit. D1 adds the later stock setSpeedTolerance packet (limit=test, tolerance=0, style=0) that follows the Automatic/TRAVEL threshold during the original Android applyHUDSettings sequence. D2 first forces DisplaySpeedGauge OFF→ON, then runs D1. D3 is parked-only: it temporarily applies the physically observed stock Freeride profile Speedo | Simple | Weather, then runs the D2 sequence. Tap Restore current HUD after D3 or whenever you finish testing; it reapplies your normal dashboards/time-weather state, turns the experimental gauge boolean back OFF, and restores the live speed-limit state.
-                            """)
-                        }
-                    }
                 }
                 .padding()
             }

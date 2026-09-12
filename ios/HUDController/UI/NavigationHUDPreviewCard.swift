@@ -7,8 +7,10 @@ import SwiftUI
 /// user then joins the HUDWAY Drive Wi-Fi on the iPhone for the physical test.
 struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
+    @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = "NISSAN68"
+    @AppStorage("HUD.U2WHomeProbe.password") private var u2wPassword = ""
 
-    private let accent = Color(red: 0.20, green: 0.64, blue: 1.00)
+    private let accent = HudTheme.accent
 
     var body: some View {
         HudCard {
@@ -30,6 +32,7 @@ struct NavigationHUDPreviewCard: View {
                 }
 
                 liveSourceControls
+                hudU2WSTAHomeDiagnostic
                 physicalCastControls
                 mapAppearanceControls
                 mapCropControls
@@ -39,7 +42,7 @@ struct NavigationHUDPreviewCard: View {
 
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "info.circle")
-                    Text("U2W v8.11 exposes the real 800×480 CarPlay MainVideo stream. Follow source shows those pixels unchanged; Dark HUD / Light HUD apply an optional display filter. Because the current physical cast still uses the HUDWAY mode-5 Wi-Fi AP, enabling Map Mode freezes the latest real U2W frame before the iPhone changes Wi-Fi. Live-on-HUD requires the separate shared-network experiment to prove the HUD can coexist on the U2W AP.")
+                    Text("U2W v8.11 exposes the real 800×480 CarPlay MainVideo stream. v8.13 adds the separate home bridge diagnostic: the HUD joins the U2W AP in stock mode 6 and U2W serves a known KivicCast test image. The legacy Map Mode button below still uses the older mode-5 iPhone-to-HUD handoff and remains available only for comparison.")
                         .font(.caption)
                 }
                 .foregroundStyle(.secondary)
@@ -96,9 +99,68 @@ struct NavigationHUDPreviewCard: View {
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    private var hudU2WSTAHomeDiagnostic: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("HUD → U2W Wi-Fi home diagnostic")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Mode 6 • HUD joins the Carlinkit AP; iPhone stays on U2W Wi-Fi")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(state.hudU2WSTAConnected ? "CONNECTED" : "IDLE")
+                    .font(.caption.bold())
+                    .foregroundStyle(state.hudU2WSTAConnected ? .green : .secondary)
+            }
+
+            TextField("U2W / Carlinkit SSID", text: $u2wSSID)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            SecureField("U2W / Carlinkit Wi-Fi password", text: $u2wPassword)
+                .textFieldStyle(.roundedBorder)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            HStack(spacing: 8) {
+                Button("Start home bridge test") {
+                    state.startHUDU2WSTAHomeProbe(ssid: u2wSSID, password: u2wPassword)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(accent)
+                .disabled(u2wSSID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || u2wPassword.isEmpty)
+
+                Button("Request status") {
+                    state.requestHUDU2WSTAStatus()
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Button("Stop test + restore HUD", role: .destructive) {
+                state.stopHUDU2WSTAHomeProbe()
+            }
+            .buttonStyle(.bordered)
+
+            LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
+            LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "—" : state.hudU2WSTAAddress)
+            if !state.hudU2WSTAReason.isEmpty {
+                LabeledContent("Reason", value: state.hudU2WSTAReason)
+            }
+
+            Text("Requires U2W v8.13. Keep the iPhone connected to the Carlinkit/U2W Wi-Fi. This button starts the known-image KivicCast server on 192.168.50.2, puts the HUD in IOS_KIVICCAST_STA_MODE (6), and asks the HUD to join the same U2W AP. Do not manually join HUDWAY Drive Wi-Fi and do not use the legacy Map Mode button during this home test.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     private var physicalCastControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Physical HUD test")
+            Text("Legacy mode-5 physical HUD test")
                 .font(.subheadline.weight(.semibold))
 
             HStack(spacing: 10) {

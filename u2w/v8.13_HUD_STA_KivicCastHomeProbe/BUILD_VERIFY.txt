@@ -1,0 +1,18 @@
+U2W HUD-as-STA KivicCast Home Probe v8.13 - build verification
+
+Target: U2W / software_version 2021.03.06.1343
+
+Verified:
+- ARM helper: ELF 32-bit LSB executable, ARM, EABI5 version 1 (SYSV), statically linked, not stripped
+- Known JPEG: JPEG image data, JFIF standard 1.01, aspect ratio, density 1x1, segment length 16, baseline, precision 8, 480x240, components 3
+- KivicCast advertised IP/URL: 192.168.50.2 / http://192.168.50.2:15330
+- U2W wlan0/AP is not reconfigured by install/start scripts
+- Shell syntax: PASS
+- AES-128-CBC image round-trip: PASS in build_images.py
+- Install image SHA256: 4c0ddbb083c6ff3d09caa7a6651dd0acab288c7e2d36336fdb342297c43b9fc7
+- Uninstall image SHA256: 725c289926bd7ecf8cc81f5cc7caa594e52f54f17ae76f1a50a942377316dbd2
+
+Not physically validated here:
+- HUD association to U2W AP while iPhone remains associated
+- returned WifiSTAStatusEventPacket/address
+- KVMJPEG discovery and physical HUD image rendering
