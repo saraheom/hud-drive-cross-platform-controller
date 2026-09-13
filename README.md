@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.11.1 — CI alignment only
+
+This is the same production runtime as **v90.35.3.11**. GitHub Actions compiled the app successfully but one stale `SpeedUnitTests` assertion rejected the new passive OBD diagnostic help text because it contains the literal `km/h`. The test now verifies that actual GPS/speed-limit UI bindings remain mph while allowing diagnostic prose to mention both mph and km/h candidate encodings. No files under `ios/HUDController/` were changed. Paired adapter remains **U2W v8.15.1 No Known-Image Primer**.
+
+See `V90_35_3_11_1_CI_ALIGNMENT.md`.
+
+---
+
 # HUD Controller v90.35.3.11 — road-test OBD trace + speed-sign tuning + STA persistence probe
 
 Paired adapter remains **U2W v8.15.1 No Known-Image Primer**; no adapter-side changes are required for this app revision. v90.35.3.10.1 Map Mode streaming, live-map crop/fade controls, grayscale lane tuning, compact UI, navigation holdover, and finalized ambient-light behavior are retained.
