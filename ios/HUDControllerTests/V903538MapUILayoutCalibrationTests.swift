@@ -38,7 +38,7 @@ final class V903538MapUILayoutCalibrationTests: XCTestCase {
     func testNavigationUIExposesBoundedTwoPixelNudgesAndStylingControls() throws {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         XCTAssertTrue(ui.contains("Physical HUD position"))
-        XCTAssertTrue(ui.contains("Right-side maneuver / lane calibration"))
+        XCTAssertTrue(ui.contains("Right-side component size / spacing"))
         XCTAssertTrue(ui.contains("Turn arrow boldness"))
         XCTAssertTrue(ui.contains("Lane boldness"))
         XCTAssertTrue(ui.contains("Active lane emphasis"))

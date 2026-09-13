@@ -17,7 +17,8 @@ final class V903539ReliabilityTests: XCTestCase {
 
     func testMainVideoFreshnessWatchdogCanRecoverFrozenCrop() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(video.contains("staleFrameInterval: TimeInterval = 10.0"))
+        XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 3.0"))
+        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 12.0"))
         XCTAssertTrue(video.contains("U2W VIDEO WATCH"))
         XCTAssertTrue(video.contains("workerGeneration"))
         XCTAssertTrue(video.contains("self.workerGeneration == generation"))

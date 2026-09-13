@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.13.1.1 — CI alignment only
+
+This is the same runtime as **v90.35.3.13.1** and uses the same **U2W v8.17 LatestFrame** image. The GitHub Actions Xcode 26 build succeeded, but two legacy source-string XCTest assertions still expected the pre-v90.35.3.13 Map Mode section title and the old 10-second MainVideo watchdog constant. Those tests are now aligned with the intentional v90.35.3.13 behavior: **Right-side component size / spacing** and a **3-second decoder-stall watchdog** with a **12-second source-silence allowance**.
+
+No files under `ios/HUDController/` were changed in this CI-alignment revision. MainVideo, OBD forensics, Route Guidance, ambient lighting, and the 5 fps HUD relay are byte-for-byte unchanged from v90.35.3.13.1. No U2W reflash is required.
+
+See `V90_35_3_13_1_1_CI_ALIGNMENT.md`.
+
+---
+
 # HUD Controller v90.35.3.13.1 — OBD forensics + v90.35.3.13 live MainVideo
 
 This is an **app-only** follow-up to v90.35.3.13. Keep **U2W v8.17 LatestFrame** installed; no adapter reflash is required. The content-blind CarPlay crop, latest-frame MainVideo decoder, and physical 5 fps HUD relay are unchanged.

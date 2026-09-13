@@ -1,0 +1,16 @@
+HUD Controller v90.35.3.13.1.1 — CI alignment only
+
+Runtime scope:
+- identical production app source to v90.35.3.13.1
+- identical U2W v8.17 LatestFrame image
+- only two stale XCTest source-string assertions updated
+
+CI failure being corrected:
+- app build step succeeded
+- 282 XCTest cases ran
+- 280 passed / 2 stale string assertions failed
+- corrected expectations:
+  * Right-side component size / spacing
+  * decoderStaleFrameInterval = 3.0 and sourceStaleInterval = 12.0
+
+No U2W reflash required.
