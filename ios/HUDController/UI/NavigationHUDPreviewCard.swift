@@ -113,6 +113,7 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
                     LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
                     LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
+                    LabeledContent("HUD cadence", value: "5 fps • latest frame")
                     LabeledContent("Last JPEG", value: state.hudU2WFrameRelay.lastFrameBytes == 0 ? "—" : "\(state.hudU2WFrameRelay.lastFrameBytes) bytes")
                     if !state.hudU2WSTAReason.isEmpty {
                         LabeledContent("Reason", value: state.hudU2WSTAReason)
@@ -208,7 +209,7 @@ struct NavigationHUDPreviewCard: View {
 
     private var mapCropControls: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text("Live map crop")
+            Text("Live CarPlay crop")
                 .font(.subheadline.weight(.semibold))
 
             cropSlider(
@@ -266,7 +267,7 @@ struct NavigationHUDPreviewCard: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            Text("Defaults are tuned from the 800×480 Google Maps frame recovered in your v8.10 dump. Adjust these while the live preview is connected if your current CarPlay layout differs.")
+            Text("The crop is intentionally content-blind: the exact same configured rectangle is taken from every live 800×480 CarPlay frame, whether the head unit is showing Dashboard, Google Maps, Apple Maps, Music, or another CarPlay screen.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -398,7 +399,7 @@ struct NavigationHUDPreviewCard: View {
     private var rightSideFineTuningControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Right-side maneuver / lane calibration")
+                Text("Right-side component size / spacing")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Button("Reset styling") {
@@ -415,7 +416,7 @@ struct NavigationHUDPreviewCard: View {
                     get: { state.mapModeSettings.maneuverArrowScale },
                     set: { state.mapModeSettings.maneuverArrowScale = $0 }
                 ),
-                range: 0.80...1.40,
+                range: 0.60...1.60,
                 step: 0.05,
                 format: { String(format: "%.0f%%", $0 * 100) }
             )
@@ -437,7 +438,7 @@ struct NavigationHUDPreviewCard: View {
                     get: { state.mapModeSettings.turningStreetScale },
                     set: { state.mapModeSettings.turningStreetScale = $0 }
                 ),
-                range: 0.80...1.30,
+                range: 0.60...1.60,
                 step: 0.05,
                 format: { String(format: "%.0f%%", $0 * 100) }
             )
@@ -448,7 +449,7 @@ struct NavigationHUDPreviewCard: View {
                     get: { state.mapModeSettings.distanceScale },
                     set: { state.mapModeSettings.distanceScale = $0 }
                 ),
-                range: 0.80...1.30,
+                range: 0.60...1.60,
                 step: 0.05,
                 format: { String(format: "%.0f%%", $0 * 100) }
             )
@@ -462,7 +463,7 @@ struct NavigationHUDPreviewCard: View {
                     get: { state.mapModeSettings.laneScale },
                     set: { state.mapModeSettings.laneScale = $0 }
                 ),
-                range: 0.80...1.50,
+                range: 0.60...1.70,
                 step: 0.05,
                 format: { String(format: "%.0f%%", $0 * 100) }
             )
@@ -520,9 +521,49 @@ struct NavigationHUDPreviewCard: View {
                     get: { state.mapModeSettings.etaScale },
                     set: { state.mapModeSettings.etaScale = $0 }
                 ),
-                range: 0.80...1.40,
+                range: 0.60...1.60,
                 step: 0.05,
                 format: { String(format: "%.0f%%", $0 * 100) }
+            )
+
+            Divider().opacity(0.35)
+
+            Text("Vertical component spacing")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            tuningSlider(
+                icon: "arrow.up.and.down",
+                title: "Street → maneuver",
+                value: Binding(
+                    get: { state.mapModeSettings.streetToManeuverSpacing },
+                    set: { state.mapModeSettings.streetToManeuverSpacing = $0 }
+                ),
+                range: 0...20,
+                step: 1,
+                format: { "\(Int($0)) px" }
+            )
+            tuningSlider(
+                icon: "arrow.up.and.down",
+                title: "Maneuver → lanes",
+                value: Binding(
+                    get: { state.mapModeSettings.maneuverToLaneSpacing },
+                    set: { state.mapModeSettings.maneuverToLaneSpacing = $0 }
+                ),
+                range: 0...20,
+                step: 1,
+                format: { "\(Int($0)) px" }
+            )
+            tuningSlider(
+                icon: "arrow.up.and.down",
+                title: "Lanes → ETA",
+                value: Binding(
+                    get: { state.mapModeSettings.laneToETASpacing },
+                    set: { state.mapModeSettings.laneToETASpacing = $0 }
+                ),
+                range: 0...20,
+                step: 1,
+                format: { "\(Int($0)) px" }
             )
 
             HStack {
@@ -562,7 +603,7 @@ struct NavigationHUDPreviewCard: View {
                 yRange: -10...10
             )
 
-            Text("Boldness maps to progressively heavier SF Symbol weights. All of these controls are persisted and are applied to both the on-phone preview and the live 480×240 JPEG sent to U2W.")
+            Text("Size, spacing, boldness, and fine-position controls are persisted and applied to both the on-phone preview and the live 480×240 JPEG sent to U2W.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

@@ -1,0 +1,19 @@
+HUD Controller v90.35.3.13 + U2W v8.17 — build verification
+
+Change scope:
+- MainVideo source/decode freshness and latest-frame behavior
+- U2W MainVideo rolling-generation guard
+- content-blind center CarPlay crop documentation/UI wording
+- right-widget size-range and vertical-gap customization
+- physical HUD relay cadence intentionally remains 5 fps (200 ms)
+
+Local/static validation:
+- Swift syntax parse: modified MainVideo client, settings, canvas, and Navigation preview card
+- Python repository regression/static tests
+- U2W v8.17 streamer is static ELF32 ARM EABI5 soft-float with no dynamic section
+- install/uninstall shell syntax checked with sh -n
+- U2W encrypted images decrypt-verified by build_images.py
+- install image SHA-256: 6313ac3ec24a8a44456ae18c0a8c7f4a05b39d573479aa72b8bbff844045b19b
+- uninstall image SHA-256: 396524a1ce72ec7f39a555b054f5727e31260d6b331ed71e2f68fba2284d4ee3
+
+Full iOS type-check/build/XCTest remains authoritative in the existing GitHub Actions Xcode 26 workflow.

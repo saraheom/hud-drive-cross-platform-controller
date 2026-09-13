@@ -21,7 +21,7 @@ check('no OCR/screenshare imports in main video client', 'import ScreenCaptureKi
 check('source image enters canvas and renderer', 'sourceMapImage' in canvas and 'sourceMapImage' in renderer)
 check('follow/dark/light real-pixel filtering', 'case .followSource' in canvas and '.brightness(-0.30)' in canvas and '.brightness(0.08)' in canvas)
 check('crop persistence', all(x in settings for x in ['sourceMapZoom','sourceMapOffsetX','sourceMapOffsetY']))
-check('live status UI', 'Live U2W map source' in ui and 'state.mainVideo.frameCount' in ui and 'Reconnect U2W video' in ui)
+check('live status UI', 'LabeledContent("MainVideo"' in ui and 'state.mainVideo.frameCount' in ui and 'Reconnect U2W video' in ui)
 check('freeze before wifi handoff', app.index('mapModeFrozenSourceImage = mainVideo.latestFrame') < app.index('mainVideo.stop(reason: "Map Mode HUD-WiFi handoff') if 'Map Mode HUD-WiFi handoff' in app else app.index('mapModeFrozenSourceImage = mainVideo.latestFrame') < app.index('mainVideo.stop(reason: "Map Mode HUD-Wi-Fi handoff'))
 check('resume video after map mode', 'mainVideo.start(reason: "Map Mode disabled — resume U2W main video")' in app)
 check('bundled u2w v811 image', (R/'u2w/v8.11_MainVideoLive/U2W_Update_v8.11_MainVideoLive.img').exists())

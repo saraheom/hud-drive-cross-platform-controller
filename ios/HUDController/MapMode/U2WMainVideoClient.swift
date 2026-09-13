@@ -5,12 +5,13 @@ import VideoToolbox
 import CoreMedia
 import CoreImage
 
-/// v90.35.1 live main-CarPlay-video client for U2W v8.11.
+/// v90.35.3.13 live MainVideo client for U2W v8.17.
 ///
-/// The adapter exposes the already-existing CarPlay H.264 stream as Annex-B at
-/// /cgi-bin/u2wvideo-main-stream.cgi. This class never requests ScreenCaptureKit
-/// and never performs OCR. It decodes frames locally with VideoToolbox and keeps
-/// only the latest UIImage for the Map Mode center crop.
+/// The adapter exposes the existing CarPlay H.264 stream as Annex-B at
+/// /cgi-bin/u2wvideo-main-stream.cgi. This path is deliberately content-blind:
+/// whatever CarPlay is currently drawing is decoded, and Map Mode crops the
+/// configured rectangle from the newest available frame. No app/map/dashboard
+/// validation and no OCR are involved.
 @MainActor
 @Observable
 final class U2WMainVideoClient {
@@ -26,14 +27,18 @@ final class U2WMainVideoClient {
     private var workerGeneration = 0
     private var running = false
     private var freshnessTask: Task<Void, Never>?
+    private var connectedAt: Date?
     private var lastDecodedFrameAt: Date?
     private var lastReceivedBytesAt: Date?
     private var lastFreshnessReconnectAt: Date?
-    // v90.35.3.12 / U2W v8.16: reconnecting now bootstraps at the newest
-    // decoder-safe GOP rather than byte zero. Give the live source enough time
-    // to cross an exporter generation before invoking the emergency reconnect.
-    private let staleFrameInterval: TimeInterval = 10.0
-    private let freshnessReconnectCooldown: TimeInterval = 12.0
+
+    // A decoder that is receiving bytes but not producing images is unhealthy
+    // quickly enough that a 10-second frozen HUD is unnecessary. Source silence
+    // gets a longer allowance because a truly static CarPlay frame can compress
+    // down to very little traffic.
+    private let decoderStaleFrameInterval: TimeInterval = 3.0
+    private let sourceStaleInterval: TimeInterval = 12.0
+    private let freshnessReconnectCooldown: TimeInterval = 4.0
 
     init(logger: LogManager) {
         self.logger = logger
@@ -43,6 +48,7 @@ final class U2WMainVideoClient {
         guard !running else { return }
         running = true
         status = "Connecting to U2W main video…"
+        connectedAt = nil
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
         logger.log("U2W VIDEO", "Start reason=\(reason)")
@@ -54,14 +60,24 @@ final class U2WMainVideoClient {
         worker?.stop()
         workerGeneration &+= 1
         let generation = workerGeneration
+        connectedAt = nil
+        lastDecodedFrameAt = nil
+        lastReceivedBytesAt = nil
+
         let worker = U2WMainVideoStreamWorker(
             endpoint: URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-main-stream.cgi")!
         )
         worker.onStatus = { [weak self] message, isConnected in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
+                let wasConnected = self.connected
                 self.status = message
                 self.connected = isConnected
+                if isConnected, !wasConnected || self.connectedAt == nil {
+                    self.connectedAt = Date()
+                } else if !isConnected {
+                    self.connectedAt = nil
+                }
                 self.logger.log("U2W VIDEO", message)
             }
         }
@@ -75,16 +91,24 @@ final class U2WMainVideoClient {
         worker.onFrame = { [weak self] image in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
+                // Single-frame mailbox: every newly published frame simply replaces
+                // the prior one. Nothing downstream can build a video backlog.
                 self.latestFrame = image
                 self.lastDecodedFrameAt = Date()
                 self.frameCount += 1
                 self.sourceSize = "\(Int(image.size.width))×\(Int(image.size.height))"
-                if self.frameCount == 1 || self.frameCount % 120 == 0 {
+                if self.frameCount == 1 || self.frameCount % 75 == 0 {
                     self.logger.log(
                         "U2W VIDEO",
-                        "Decoded frame #\(self.frameCount) source=\(self.sourceSize)"
+                        "Live frame #\(self.frameCount) source=\(self.sourceSize)"
                     )
                 }
+            }
+        }
+        worker.onDiagnostic = { [weak self] message in
+            Task { @MainActor [weak self] in
+                guard let self, self.running, self.workerGeneration == generation else { return }
+                self.logger.log("U2W VIDEO DEC", message)
             }
         }
         self.worker = worker
@@ -99,27 +123,40 @@ final class U2WMainVideoClient {
             while !Task.isCancelled, self.running {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, self.running, self.connected,
-                      let lastDecodedFrameAt = self.lastDecodedFrameAt else { continue }
+                      let connectedAt = self.connectedAt else { continue }
+
                 let now = Date()
-                let age = now.timeIntervalSince(lastDecodedFrameAt)
-                guard age >= self.staleFrameInterval else { continue }
+                let referenceFrameTime = self.lastDecodedFrameAt ?? connectedAt
+                let frameAge = now.timeIntervalSince(referenceFrameTime)
+                let byteAge = self.lastReceivedBytesAt.map { now.timeIntervalSince($0) } ?? .infinity
+                let bytesAreFresh = byteAge < 1.5
+
+                let decoderStalled = bytesAreFresh && frameAge >= self.decoderStaleFrameInterval
+                let sourceStalled = !bytesAreFresh && frameAge >= self.sourceStaleInterval
+                guard decoderStalled || sourceStalled else { continue }
+
                 if let lastFreshnessReconnectAt = self.lastFreshnessReconnectAt,
                    now.timeIntervalSince(lastFreshnessReconnectAt) < self.freshnessReconnectCooldown {
                     continue
                 }
+
                 self.lastFreshnessReconnectAt = now
+                let detail: String
+                if decoderStalled {
+                    detail = "H.264 bytes fresh (byteAge=\(String(format: "%.1f", byteAge))s), no live image for \(String(format: "%.1f", frameAge))s"
+                } else {
+                    detail = "source silent for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s, no live image for \(String(format: "%.1f", frameAge))s"
+                }
                 self.status = "U2W main video stale — reconnecting…"
-                let byteAge = self.lastReceivedBytesAt.map { now.timeIntervalSince($0) } ?? .infinity
-                let sourceDetail = byteAge < self.staleFrameInterval
-                    ? "H.264 bytes still arriving (byteAge=\(String(format: "%.1f", byteAge))s) — decoder stalled"
-                    : "no H.264 bytes for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s — source/follower stalled"
                 self.logger.log(
                     "U2W VIDEO WATCH",
-                    "No decoded frame for \(String(format: "%.1f", age))s; \(sourceDetail); reconnecting at v8.16 live edge"
+                    "\(detail); hard-resetting decoder and reconnecting at v8.17 latest GOP"
                 )
                 self.connected = false
+                self.connectedAt = nil
                 self.lastDecodedFrameAt = nil
-                self.startWorker(reason: "freshness watchdog")
+                self.lastReceivedBytesAt = nil
+                self.startWorker(reason: decoderStalled ? "decoder freshness watchdog" : "source freshness watchdog")
             }
         }
     }
@@ -133,6 +170,7 @@ final class U2WMainVideoClient {
         worker = nil
         workerGeneration &+= 1
         connected = false
+        connectedAt = nil
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
         status = "U2W main video stopped"
@@ -145,6 +183,7 @@ final class U2WMainVideoClient {
             return
         }
         connected = false
+        connectedAt = nil
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
         lastFreshnessReconnectAt = Date()
@@ -154,13 +193,15 @@ final class U2WMainVideoClient {
     }
 }
 
-/// URLSession streaming worker. Kept outside the @MainActor observable object so
-/// H.264 parsing and VideoToolbox submission do not run on the UI actor.
+/// URLSession streaming worker. H.264 parsing and VideoToolbox submission are
+/// intentionally kept off the main actor. The delegate queue is serial so access
+/// units are fed to the decoder in wire order.
 private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
     let endpoint: URL
     var onStatus: ((String, Bool) -> Void)?
     var onBytes: ((Int) -> Void)?
     var onFrame: ((UIImage) -> Void)?
+    var onDiagnostic: ((String) -> Void)?
 
     private let parser = AnnexBH264Parser()
     private let decoder = H264VideoToolboxDecoder()
@@ -174,6 +215,9 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         super.init()
         decoder.onFrame = { [weak self] image in
             self?.onFrame?(image)
+        }
+        decoder.onDiagnostic = { [weak self] message in
+            self?.onDiagnostic?(message)
         }
     }
 
@@ -210,6 +254,7 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         var request = URLRequest(url: endpoint)
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         task = session.dataTask(with: request)
         task?.resume()
         onStatus?("Opening U2W H.264 stream…", false)
@@ -223,7 +268,7 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
             self?.openStream()
         }
         reconnectWorkItem = item
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0, execute: item)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0, execute: item)
     }
 
     func urlSession(
@@ -254,6 +299,7 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         didCompleteWithError error: Error?
     ) {
         guard running else { return }
+        decoder.discardPendingAccessUnit()
         scheduleReconnect(error?.localizedDescription ?? "stream ended")
     }
 }
@@ -274,7 +320,6 @@ private final class AnnexBH264Parser {
         let starts = startCodes(in: buffer)
         guard starts.count >= 2 else {
             if buffer.count > 4 * 1024 * 1024 {
-                // Corrupt/non-Annex-B input should not grow without bound.
                 buffer.removeAll(keepingCapacity: true)
             }
             return []
@@ -318,8 +363,20 @@ private final class AnnexBH264Parser {
     }
 }
 
+/// Low-latency H.264 decoder.
+///
+/// v90.35.3.12 submitted every slice NAL as if it were a complete frame and
+/// requested asynchronous VideoToolbox decompression. Multi-slice pictures can
+/// therefore poison the decoder, while a fast producer can build a large async
+/// backlog that later appears as a burst of stale frames. This decoder instead:
+/// - groups slices into one H.264 access unit (AUD and first_mb_in_slice aware),
+/// - submits one CMSampleBuffer per picture,
+/// - decodes synchronously so VideoToolbox cannot accumulate a hidden queue,
+/// - requires a fresh IDR after every decoder reset, and
+/// - publishes at most 15 images/s while always replacing the latest mailbox.
 private final class H264VideoToolboxDecoder {
     var onFrame: ((UIImage) -> Void)?
+    var onDiagnostic: ((String) -> Void)?
 
     private var sps: Data?
     private var pps: Data?
@@ -327,7 +384,18 @@ private final class H264VideoToolboxDecoder {
     private var decompressionSession: VTDecompressionSession?
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
+    private var pendingAccessUnit: [Data] = []
+    private var pendingHasVCL = false
+    private var needsIDR = true
+    private var submittedAccessUnits = 0
+    private var decodeErrors = 0
+
+    private let publishLock = NSLock()
+    private var lastPublishedUptime: TimeInterval = 0
+    private let minimumPublishInterval: TimeInterval = 1.0 / 15.0
+
     func reset() {
+        discardPendingAccessUnit()
         if let decompressionSession {
             VTDecompressionSessionInvalidate(decompressionSession)
         }
@@ -335,27 +403,63 @@ private final class H264VideoToolboxDecoder {
         formatDescription = nil
         sps = nil
         pps = nil
+        needsIDR = true
+        submittedAccessUnits = 0
+        decodeErrors = 0
+        publishLock.lock()
+        lastPublishedUptime = 0
+        publishLock.unlock()
+    }
+
+    func discardPendingAccessUnit() {
+        pendingAccessUnit.removeAll(keepingCapacity: true)
+        pendingHasVCL = false
     }
 
     func consume(_ nal: Data) {
         guard let first = nal.first else { return }
         let type = first & 0x1F
+
         switch type {
-        case 7:
+        case 7: // SPS
+            flushAccessUnit()
             if sps != nal {
                 sps = nal
                 rebuildSessionIfPossible()
             }
-        case 8:
+        case 8: // PPS
+            flushAccessUnit()
             if pps != nal {
                 pps = nal
                 rebuildSessionIfPossible()
             }
-        case 1, 5:
-            decodeSlice(nal)
+        case 9: // Access Unit Delimiter
+            flushAccessUnit()
+        case 6: // SEI normally belongs to the picture that follows it.
+            if pendingHasVCL {
+                flushAccessUnit()
+            }
+            pendingAccessUnit.append(nal)
+        case 1, 5: // non-IDR / IDR VCL
+            if pendingHasVCL, Self.firstMbInSliceIsZero(nal) == true {
+                flushAccessUnit()
+            }
+            pendingAccessUnit.append(nal)
+            pendingHasVCL = true
         default:
             break
         }
+    }
+
+    private func flushAccessUnit() {
+        guard pendingHasVCL else {
+            pendingAccessUnit.removeAll(keepingCapacity: true)
+            return
+        }
+        let accessUnit = pendingAccessUnit
+        pendingAccessUnit.removeAll(keepingCapacity: true)
+        pendingHasVCL = false
+        decodeAccessUnit(accessUnit)
     }
 
     private func rebuildSessionIfPossible() {
@@ -385,13 +489,17 @@ private final class H264VideoToolboxDecoder {
                 }
             }
         }
-        guard status == noErr, let videoDescription = description else { return }
+        guard status == noErr, let videoDescription = description else {
+            onDiagnostic?("Could not build H.264 format description status=\(status)")
+            return
+        }
 
         if let decompressionSession {
             VTDecompressionSessionInvalidate(decompressionSession)
         }
         decompressionSession = nil
         formatDescription = videoDescription
+        needsIDR = true
 
         var callback = VTDecompressionOutputCallbackRecord(
             decompressionOutputCallback: { outputRefCon, _, status, _, imageBuffer, _, _ in
@@ -418,18 +526,30 @@ private final class H264VideoToolboxDecoder {
             outputCallback: &callback,
             decompressionSessionOut: &session
         )
-        if createStatus == noErr {
+        if createStatus == noErr, let session {
             decompressionSession = session
+            onDiagnostic?("Decoder session ready; waiting for current IDR")
+        } else {
+            onDiagnostic?("Decoder session creation failed status=\(createStatus)")
         }
     }
 
-    private func decodeSlice(_ nal: Data) {
+    private func decodeAccessUnit(_ nals: [Data]) {
         guard let decompressionSession, let formatDescription else { return }
+        let hasIDR = nals.contains { ($0.first ?? 0) & 0x1F == 5 }
+        if needsIDR {
+            guard hasIDR else { return }
+            needsIDR = false
+        }
 
-        var avcc = Data(count: 4)
-        let length = UInt32(nal.count).bigEndian
-        withUnsafeBytes(of: length) { avcc.replaceSubrange(0..<4, with: $0) }
-        avcc.append(nal)
+        var avcc = Data()
+        avcc.reserveCapacity(nals.reduce(0) { $0 + $1.count + 4 })
+        for nal in nals {
+            var length = UInt32(nal.count).bigEndian
+            withUnsafeBytes(of: &length) { avcc.append(contentsOf: $0) }
+            avcc.append(nal)
+        }
+        guard !avcc.isEmpty else { return }
 
         var blockBuffer: CMBlockBuffer?
         let blockStatus = CMBlockBufferCreateWithMemoryBlock(
@@ -443,7 +563,10 @@ private final class H264VideoToolboxDecoder {
             flags: 0,
             blockBufferOut: &blockBuffer
         )
-        guard blockStatus == noErr, let blockBuffer else { return }
+        guard blockStatus == noErr, let blockBuffer else {
+            onDiagnostic?("CMBlockBuffer create failed status=\(blockStatus)")
+            return
+        }
 
         let copyStatus: OSStatus = avcc.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return -1 }
@@ -454,7 +577,10 @@ private final class H264VideoToolboxDecoder {
                 dataLength: avcc.count
             )
         }
-        guard copyStatus == noErr else { return }
+        guard copyStatus == noErr else {
+            onDiagnostic?("CMBlockBuffer copy failed status=\(copyStatus)")
+            return
+        }
 
         var sampleBuffer: CMSampleBuffer?
         var sampleSize = avcc.count
@@ -469,21 +595,101 @@ private final class H264VideoToolboxDecoder {
             sampleSizeArray: &sampleSize,
             sampleBufferOut: &sampleBuffer
         )
-        guard sampleStatus == noErr, let sampleBuffer else { return }
+        guard sampleStatus == noErr, let sampleBuffer else {
+            onDiagnostic?("CMSampleBuffer create failed status=\(sampleStatus)")
+            return
+        }
 
+        submittedAccessUnits += 1
         var infoFlags = VTDecodeInfoFlags()
-        VTDecompressionSessionDecodeFrame(
+        let decodeStatus = VTDecompressionSessionDecodeFrame(
             decompressionSession,
             sampleBuffer: sampleBuffer,
-            flags: VTDecodeFrameFlags(rawValue: 1 << 0),
+            flags: VTDecodeFrameFlags(rawValue: 0),
             frameRefcon: nil,
             infoFlagsOut: &infoFlags
         )
+
+        if decodeStatus != noErr {
+            decodeErrors += 1
+            needsIDR = true
+            onDiagnostic?(
+                "Decode error status=\(decodeStatus) au=\(submittedAccessUnits) errors=\(decodeErrors); waiting for fresh IDR"
+            )
+        } else if submittedAccessUnits == 1 || submittedAccessUnits % 300 == 0 {
+            onDiagnostic?("Decoded access unit #\(submittedAccessUnits) nals=\(nals.count)")
+        }
     }
 
     private func publish(_ pixelBuffer: CVImageBuffer) {
+        let now = ProcessInfo.processInfo.systemUptime
+        publishLock.lock()
+        let shouldPublish = lastPublishedUptime == 0 || now - lastPublishedUptime >= minimumPublishInterval
+        if shouldPublish {
+            lastPublishedUptime = now
+        }
+        publishLock.unlock()
+        guard shouldPublish else { return }
+
         let image = CIImage(cvImageBuffer: pixelBuffer)
         guard let cgImage = ciContext.createCGImage(image, from: image.extent) else { return }
         onFrame?(UIImage(cgImage: cgImage))
+    }
+
+    /// H.264 slice_header begins with first_mb_in_slice, an unsigned Exp-Golomb
+    /// value. A value of zero marks the first slice of a new picture. We remove
+    /// emulation-prevention bytes before reading the RBSP bits.
+    private static func firstMbInSliceIsZero(_ nal: Data) -> Bool? {
+        guard nal.count > 1 else { return nil }
+        let payload = Array(nal.dropFirst())
+        var rbsp: [UInt8] = []
+        rbsp.reserveCapacity(payload.count)
+        var zeroCount = 0
+        for byte in payload {
+            if zeroCount >= 2, byte == 0x03 {
+                zeroCount = 0
+                continue
+            }
+            rbsp.append(byte)
+            if byte == 0 {
+                zeroCount += 1
+            } else {
+                zeroCount = 0
+            }
+        }
+        guard let value = readUnsignedExpGolomb(rbsp) else { return nil }
+        return value == 0
+    }
+
+    private static func readUnsignedExpGolomb(_ bytes: [UInt8]) -> UInt32? {
+        var bitIndex = 0
+        var leadingZeroBits = 0
+
+        func readBit() -> UInt8? {
+            guard bitIndex < bytes.count * 8 else { return nil }
+            let byte = bytes[bitIndex / 8]
+            let shift = 7 - (bitIndex % 8)
+            bitIndex += 1
+            return (byte >> shift) & 1
+        }
+
+        var sawStopBit = false
+        while let bit = readBit() {
+            if bit == 1 {
+                sawStopBit = true
+                break
+            }
+            leadingZeroBits += 1
+            if leadingZeroBits > 31 { return nil }
+        }
+        guard sawStopBit else { return nil }
+        if leadingZeroBits == 0 { return 0 }
+
+        var suffix: UInt32 = 0
+        for _ in 0..<leadingZeroBits {
+            guard let bit = readBit() else { return nil }
+            suffix = (suffix << 1) | UInt32(bit)
+        }
+        return ((UInt32(1) << UInt32(leadingZeroBits)) - 1) + suffix
     }
 }

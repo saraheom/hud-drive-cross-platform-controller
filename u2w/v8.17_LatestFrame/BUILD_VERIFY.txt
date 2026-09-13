@@ -1,0 +1,19 @@
+U2W v8.17 Latest-Frame MainVideo — build verification
+
+Target: U2W software 2021.03.06.1343
+Prerequisite: v8.16 LiveEdgeMainVideo + v8.11 MainVideo exporter marker
+Change scope: MainVideo CGI streamer only
+
+Validation:
+- v8.17 streamer: ELF32 ARM EABI5 soft-float, statically linked
+- no dynamic section / DT_NEEDED runtime dependencies
+- installer/uninstaller pass `sh -n`
+- encrypted install/uninstall containers decrypt-verify and tar members are checked by build_images.py
+- uninstall payload is the exact v8.16 streamer binary from the v90.35.3.12 baseline
+- Route Guidance, Now Playing, MainVideo exporter, and HUD JPEG relay are not modified
+
+Install image SHA-256:
+6313ac3ec24a8a44456ae18c0a8c7f4a05b39d573479aa72b8bbff844045b19b
+
+Uninstall image SHA-256:
+396524a1ce72ec7f39a555b054f5727e31260d6b331ed71e2f68fba2284d4ee3

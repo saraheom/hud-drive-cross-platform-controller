@@ -59,6 +59,13 @@ final class HudMapModeSettings {
     var etaOffsetX: Double { didSet { defaults.set(etaOffsetX, forKey: "HUD.MapMode.etaOffsetX") } }
     var etaOffsetY: Double { didSet { defaults.set(etaOffsetY, forKey: "HUD.MapMode.etaOffsetY") } }
 
+    // Independent vertical gaps between the four right-side content blocks.
+    // These are explicit spacing controls rather than implicit Y offsets, so
+    // resizing one component does not force the user to recalibrate every item.
+    var streetToManeuverSpacing: Double { didSet { defaults.set(streetToManeuverSpacing, forKey: "HUD.MapMode.streetToManeuverSpacing") } }
+    var maneuverToLaneSpacing: Double { didSet { defaults.set(maneuverToLaneSpacing, forKey: "HUD.MapMode.maneuverToLaneSpacing") } }
+    var laneToETASpacing: Double { didSet { defaults.set(laneToETASpacing, forKey: "HUD.MapMode.laneToETASpacing") } }
+
     // Real U2W 800×480 MainVideo crop calibration. Values are expressed in the
     // center widget's local coordinates so they remain independent of widget size.
     var sourceMapZoom: Double { didSet { defaults.set(sourceMapZoom, forKey: "HUD.MapMode.sourceMapZoom") } }
@@ -113,14 +120,14 @@ final class HudMapModeSettings {
         rightOffsetX = min(20, max(-20, double("HUD.MapMode.rightOffsetX", default: 0)))
         rightOffsetY = min(12, max(-12, double("HUD.MapMode.rightOffsetY", default: 0)))
 
-        maneuverArrowScale = min(1.40, max(0.80, double("HUD.MapMode.maneuverArrowScale", default: 1.0)))
+        maneuverArrowScale = min(1.60, max(0.60, double("HUD.MapMode.maneuverArrowScale", default: 1.0)))
         maneuverArrowThickness = min(2.50, max(1.00, double("HUD.MapMode.maneuverArrowThickness", default: 1.75)))
         maneuverOffsetX = min(12, max(-12, double("HUD.MapMode.maneuverOffsetX", default: 0)))
         maneuverOffsetY = min(10, max(-10, double("HUD.MapMode.maneuverOffsetY", default: 0)))
-        turningStreetScale = min(1.30, max(0.80, double("HUD.MapMode.turningStreetScale", default: 1.0)))
-        distanceScale = min(1.30, max(0.80, double("HUD.MapMode.distanceScale", default: 1.0)))
+        turningStreetScale = min(1.60, max(0.60, double("HUD.MapMode.turningStreetScale", default: 1.0)))
+        distanceScale = min(1.60, max(0.60, double("HUD.MapMode.distanceScale", default: 1.0)))
 
-        laneScale = min(1.50, max(0.80, double("HUD.MapMode.laneScale", default: 1.0)))
+        laneScale = min(1.70, max(0.60, double("HUD.MapMode.laneScale", default: 1.0)))
         laneArrowThickness = min(2.50, max(1.00, double("HUD.MapMode.laneArrowThickness", default: 1.75)))
         laneSpacing = min(8, max(1, double("HUD.MapMode.laneSpacing", default: 3)))
         laneActiveEmphasis = min(1.35, max(1.00, double("HUD.MapMode.laneActiveEmphasis", default: 1.10)))
@@ -128,9 +135,12 @@ final class HudMapModeSettings {
         laneOffsetX = min(12, max(-12, double("HUD.MapMode.laneOffsetX", default: 0)))
         laneOffsetY = min(10, max(-10, double("HUD.MapMode.laneOffsetY", default: 0)))
 
-        etaScale = min(1.40, max(0.80, double("HUD.MapMode.etaScale", default: 1.0)))
+        etaScale = min(1.60, max(0.60, double("HUD.MapMode.etaScale", default: 1.0)))
         etaOffsetX = min(12, max(-12, double("HUD.MapMode.etaOffsetX", default: 0)))
         etaOffsetY = min(10, max(-10, double("HUD.MapMode.etaOffsetY", default: 0)))
+        streetToManeuverSpacing = min(20, max(0, double("HUD.MapMode.streetToManeuverSpacing", default: 4)))
+        maneuverToLaneSpacing = min(20, max(0, double("HUD.MapMode.maneuverToLaneSpacing", default: 4)))
+        laneToETASpacing = min(20, max(0, double("HUD.MapMode.laneToETASpacing", default: 4)))
         // Defaults are tuned to the physical 800×480 Google Maps / CarPlay
         // Dashboard frame from the v8.10 dump: map region is primarily left of
         // the media pane, after the vertical CarPlay launcher rail.
@@ -191,5 +201,8 @@ final class HudMapModeSettings {
         laneActiveEmphasis = 1.10
         laneInactiveGray = 0.40
         etaScale = 1.0
+        streetToManeuverSpacing = 4
+        maneuverToLaneSpacing = 4
+        laneToETASpacing = 4
     }
 }

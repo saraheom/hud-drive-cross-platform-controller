@@ -25,16 +25,14 @@ def test_us_speed_limit_and_right_widget_order():
     assert 'Text("SPEED")' not in canvas
     assert 'Text("LIMIT")' not in canvas
     assert "usSpeedLimitSign" in canvas
-    assert '.frame(width: 42, height: 34)' in canvas
-    # Right widget code order must remain street -> maneuver -> distance -> lanes -> ETA/time.
-    indices = [
-        canvas.index("settings.showTurningStreet"),
-        canvas.index("settings.showManeuver"),
-        canvas.index("settings.showDistance"),
-        canvas.index("settings.showLaneGuidance"),
-        canvas.index("settings.showETA || settings.showTimeLeft"),
-    ]
-    assert indices == sorted(indices)
+    assert 'width: 42' in canvas and 'settings.speedLimitSignHeightScale' in canvas
+    # Right widget block order must remain street -> maneuver/distance -> lanes -> ETA/time.
+    right = canvas[canvas.index("private var rightWidget"):canvas.index("private var effectiveLaneValues")]
+    street = right.index("if settings.showTurningStreet {")
+    maneuver = right.index("if settings.showManeuver || settings.showDistance {")
+    lanes = right.index("if settings.showLaneGuidance {")
+    eta = right.index("if settings.showETA || settings.showTimeLeft {")
+    assert street < maneuver < lanes < eta
 
 
 def test_kivic_cast_transport_and_restore():

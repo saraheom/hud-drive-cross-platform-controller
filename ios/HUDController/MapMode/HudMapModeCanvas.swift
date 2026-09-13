@@ -108,6 +108,9 @@ struct HudMapModeCanvas: View {
         if settings.showMap {
             Group {
                 if let sourceMapImage {
+                    // Deliberately content-blind: crop the same configured rectangle
+                    // from every live CarPlay frame. Dashboard, Maps, Music, or any
+                    // other CarPlay screen is treated identically.
                     HudMapModeSourceCrop(
                         image: sourceMapImage,
                         appearance: settings.mapAppearance,
@@ -141,7 +144,7 @@ struct HudMapModeCanvas: View {
     }
 
     private var rightWidget: some View {
-        VStack(alignment: .center, spacing: 4) {
+        VStack(alignment: .center, spacing: 0) {
             Spacer(minLength: 8)
 
             if settings.showTurningStreet {
@@ -152,43 +155,59 @@ struct HudMapModeCanvas: View {
                     ))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.60)
+                    .minimumScaleFactor(0.50)
                     .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            if settings.showManeuver {
-                Image(systemName: snapshot.maneuver.symbol)
-                    .font(.system(
-                        size: CGFloat(34 * settings.maneuverArrowScale),
-                        weight: symbolWeight(settings.maneuverArrowThickness)
-                    ))
-                    .foregroundStyle(.white)
-                    .frame(height: 40)
-                    .offset(
-                        x: CGFloat(settings.maneuverOffsetX),
-                        y: CGFloat(settings.maneuverOffsetY)
-                    )
+            if settings.showTurningStreet && (settings.showManeuver || settings.showDistance) {
+                Color.clear.frame(height: CGFloat(settings.streetToManeuverSpacing))
             }
 
-            if settings.showDistance {
-                Text(nonempty(snapshot.distanceText, fallback: "—"))
-                    .font(.system(
-                        size: CGFloat(19 * settings.distanceScale),
-                        weight: .bold,
-                        design: .rounded
-                    ))
-                    .minimumScaleFactor(0.55)
-                    .lineLimit(1)
+            if settings.showManeuver || settings.showDistance {
+                VStack(spacing: 2) {
+                    if settings.showManeuver {
+                        Image(systemName: snapshot.maneuver.symbol)
+                            .font(.system(
+                                size: CGFloat(34 * settings.maneuverArrowScale),
+                                weight: symbolWeight(settings.maneuverArrowThickness)
+                            ))
+                            .foregroundStyle(.white)
+                            .frame(height: CGFloat(40 * max(1.0, settings.maneuverArrowScale)))
+                            .offset(
+                                x: CGFloat(settings.maneuverOffsetX),
+                                y: CGFloat(settings.maneuverOffsetY)
+                            )
+                    }
+
+                    if settings.showDistance {
+                        Text(nonempty(snapshot.distanceText, fallback: "—"))
+                            .font(.system(
+                                size: CGFloat(19 * settings.distanceScale),
+                                weight: .bold,
+                                design: .rounded
+                            ))
+                            .minimumScaleFactor(0.50)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            if (settings.showManeuver || settings.showDistance) && settings.showLaneGuidance {
+                Color.clear.frame(height: CGFloat(settings.maneuverToLaneSpacing))
             }
 
             if settings.showLaneGuidance {
                 laneGuidanceRow
-                    .frame(height: 25)
+                    .frame(height: CGFloat(25 * max(1.0, settings.laneScale)))
                     .scaleEffect(settings.laneScale)
                     .offset(
                         x: CGFloat(settings.laneOffsetX),
                         y: CGFloat(settings.laneOffsetY)
                     )
+            }
+
+            if settings.showLaneGuidance && (settings.showETA || settings.showTimeLeft) {
+                Color.clear.frame(height: CGFloat(settings.laneToETASpacing))
             }
 
             if settings.showETA || settings.showTimeLeft {
@@ -201,7 +220,7 @@ struct HudMapModeCanvas: View {
                                 design: .rounded
                             ))
                             .lineLimit(1)
-                            .minimumScaleFactor(0.65)
+                            .minimumScaleFactor(0.55)
                     }
                     if settings.showTimeLeft {
                         Text(nonempty(snapshot.timeLeftText, fallback: "—"))

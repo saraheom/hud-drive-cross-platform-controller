@@ -1,0 +1,2 @@
+U2W_Update_v8.17_LatestFrame.img 2777 6313ac3ec24a8a44456ae18c0a8c7f4a05b39d573479aa72b8bbff844045b19b ['tmp/once.sh', 'tmp/u2w_mainvideo_streamer']
+U2W_Update_v8.17_LatestFrame_UNINSTALL.img 2221 396524a1ce72ec7f39a555b054f5727e31260d6b331ed71e2f68fba2284d4ee3 ['tmp/once.sh', 'tmp/u2w_mainvideo_streamer_v816']
