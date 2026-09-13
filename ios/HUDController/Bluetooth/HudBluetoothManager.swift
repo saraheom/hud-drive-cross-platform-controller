@@ -45,6 +45,18 @@ final class HudBluetoothManager: NSObject {
     }
     private(set) var obdSpeedTraceStatus = "Armed — waiting for speed samples"
 
+    // v90.35.3.12: use the HUD firmware's own diagnostic transport to pull
+    // LOG_CATEGORY_OBD after a drive. This does not connect the iPhone to the
+    // OBD dongle; it requests the same ZIP the stock HUDWAY bug-report screen
+    // downloads from the HUD over this existing BLE link.
+    private(set) var obdDiagnosticStatus = "Not requested"
+    private(set) var obdDiagnosticLogURL: URL?
+    private(set) var obdDiagnosticTransferActive = false
+    private var obdDiagnosticChunks: [Int: Data] = [:]
+    private var obdDiagnosticExpectedChunkCount = 0
+    private var obdDiagnosticExpectedTotalBytes = 0
+    private var obdDiagnosticCategory = ""
+
     var onOBDConnectionEvent: ((Bool, String) -> Void)?
     var onWiFiSTAStatusEvent: ((Int, String, String) -> Void)?
     var onTransportReady: (() -> Void)?
@@ -348,6 +360,127 @@ final class HudBluetoothManager: NSObject {
     }
 
 
+    func requestOBDDiagnosticLogs(maxLastFilesCount: Int32 = 2) {
+        guard state == .connected else {
+            obdDiagnosticStatus = "HUD BLE disconnected"
+            return
+        }
+        obdDiagnosticChunks.removeAll(keepingCapacity: true)
+        obdDiagnosticExpectedChunkCount = 0
+        obdDiagnosticExpectedTotalBytes = 0
+        obdDiagnosticCategory = "LOG_CATEGORY_OBD"
+        obdDiagnosticLogURL = nil
+        obdDiagnosticTransferActive = true
+        obdDiagnosticStatus = "Requesting HUD OBD diagnostic ZIP…"
+        logger.log("OBD HUD LOG", "Request LOG_CATEGORY_OBD maxLastFilesCount=\(maxLastFilesCount)")
+        enqueue(
+            HudCommands.requestOBDDiagnosticLogs(maxLastFilesCount: maxLastFilesCount),
+            label: "Request HUD OBD diagnostic logs"
+        )
+    }
+
+    func cancelOBDDiagnosticLogs() {
+        guard state == .connected else { return }
+        enqueue(HudCommands.cancelDiagnosticLogTransfer(), label: "Cancel HUD diagnostic log transfer")
+        obdDiagnosticTransferActive = false
+        obdDiagnosticStatus = "Transfer cancelled"
+        logger.log("OBD HUD LOG", "Transfer cancelled by user")
+    }
+
+    func requestRemainingDiagnosticLogTypes() {
+        guard state == .connected else {
+            obdDiagnosticStatus = "HUD BLE disconnected"
+            return
+        }
+        enqueue(HudCommands.requestRemainingDiagnosticLogs(), label: "Request remaining HUD diagnostic log types")
+        logger.log("OBD HUD LOG", "Requested remaining-log bitmap")
+    }
+
+    private func int32BE(_ data: Data, index: inout Int) -> Int? {
+        guard data.count >= index + 4 else { return nil }
+        let value = (Int(data[index]) << 24) | (Int(data[index + 1]) << 16) |
+            (Int(data[index + 2]) << 8) | Int(data[index + 3])
+        index += 4
+        return value
+    }
+
+    private func handleDiagnosticPacket(_ body: Data) -> Bool {
+        guard body.count >= 3, body[0] == 5, body[1] == 1 else { return false }
+
+        // CrushLogDiagnosticEventPacket: DiagnosticPacket(1,1)
+        // UTF category + totalSize + allChunkCount + chunkIndex + chunkSize + bytes.
+        if body[2] == 1 {
+            var index = 3
+            guard let category = readJavaUTF(body, index: &index),
+                  let totalSize = int32BE(body, index: &index),
+                  let allChunks = int32BE(body, index: &index),
+                  let chunkIndex = int32BE(body, index: &index),
+                  let chunkSize = int32BE(body, index: &index),
+                  chunkSize >= 0, body.count >= index + chunkSize else {
+                logger.log("OBD HUD LOG", "Malformed diagnostic chunk payloadBytes=\(max(0, body.count - 3))")
+                return true
+            }
+            let chunk = body.subdata(in: index..<(index + chunkSize))
+            logger.log(
+                "OBD HUD LOG",
+                "chunk category=\(category) index=\(chunkIndex + 1)/\(allChunks) bytes=\(chunkSize) total=\(totalSize)"
+            )
+            guard category == "LOG_CATEGORY_OBD" else { return true }
+            if !obdDiagnosticTransferActive {
+                obdDiagnosticTransferActive = true
+                obdDiagnosticChunks.removeAll(keepingCapacity: true)
+            }
+            obdDiagnosticCategory = category
+            obdDiagnosticExpectedChunkCount = max(0, allChunks)
+            obdDiagnosticExpectedTotalBytes = max(0, totalSize)
+            if chunkIndex >= 0 { obdDiagnosticChunks[chunkIndex] = chunk }
+            let received = obdDiagnosticChunks.count
+            obdDiagnosticStatus = "Receiving HUD OBD ZIP • \(received)/\(max(1, allChunks)) chunks"
+
+            if allChunks > 0, received == allChunks {
+                var zip = Data()
+                zip.reserveCapacity(max(0, totalSize))
+                for i in 0..<allChunks {
+                    guard let part = obdDiagnosticChunks[i] else { return true }
+                    zip.append(part)
+                }
+                if totalSize > 0, zip.count > totalSize {
+                    zip = Data(zip.prefix(totalSize))
+                }
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+                let filename = "HUD_OBD_Diagnostic_\(formatter.string(from: Date())).zip"
+                do {
+                    let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+                        ?? FileManager.default.temporaryDirectory
+                    let url = base.appendingPathComponent(filename)
+                    try zip.write(to: url, options: .atomic)
+                    obdDiagnosticLogURL = url
+                    obdDiagnosticTransferActive = false
+                    obdDiagnosticStatus = "HUD OBD ZIP ready • \(zip.count) bytes"
+                    logger.log("OBD HUD LOG", "Saved \(url.lastPathComponent) bytes=\(zip.count) expected=\(totalSize)")
+                } catch {
+                    obdDiagnosticTransferActive = false
+                    obdDiagnosticStatus = "Could not save HUD OBD ZIP"
+                    logger.log("OBD HUD LOG", "Save failed: \(error.localizedDescription)")
+                }
+            }
+            return true
+        }
+
+        // RemainDiagnosticLogEventPacket: DiagnosticPacket(1,4), int32 bitmap.
+        if body[2] == 4 {
+            var index = 3
+            if let bitmap = int32BE(body, index: &index) {
+                let hasOBD = (bitmap & 2) != 0
+                logger.log("OBD HUD LOG", "Remaining diagnostic bitmap=\(bitmap) obd=\(hasOBD ? 1 : 0)")
+                obdDiagnosticStatus = hasOBD ? "HUD reports OBD diagnostic logs available" : "HUD reports no stored OBD diagnostic logs"
+            }
+            return true
+        }
+        return true
+    }
+
     func updateOBDTraceReferenceSpeed(gpsMph: Int) {
         obdTraceReferenceSpeedMph = max(0, gpsMph)
         guard obdSpeedTraceEnabled else { return }
@@ -457,6 +590,7 @@ final class HudBluetoothManager: NSObject {
 
     private func parseVehicleEvent(_ frame: Data) {
         guard let body = HudProtocol.unescape(frame), body.count >= 3 else { return }
+        if handleDiagnosticPacket(body) { return }
         tracePossibleOBDSpeedFrame(body)
 
         // Decompiled OBDIIStatusEventPacket: EventPacket(command=3,p1=7,p2=1),

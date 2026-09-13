@@ -294,6 +294,29 @@ enum HudCommands {
         return HudProtocol.frame(command: 0, p1: 7, p2: 2, payload: payload)
     }
 
+    // MARK: - Built-in HUD diagnostic log transfer
+
+    /// Decompiled CrushLogRequestDiagnosticPacket:
+    /// DiagnosticPacket(command=5, p1=1, p2=0)
+    /// payload = int32 maxLastFilesCount + writeUTF(logCategory).
+    /// The stock HUDWAY app uses LOG_CATEGORY_OBD to download the HUD's own
+    /// OBD-II diagnostic ZIP over the existing HUD BLE transport.
+    static func requestOBDDiagnosticLogs(maxLastFilesCount: Int32 = 2) -> Data {
+        var payload = HudProtocol.int32(maxLastFilesCount)
+        payload.append(HudProtocol.javaWriteUTF("LOG_CATEGORY_OBD"))
+        return HudProtocol.frame(command: 5, p1: 1, p2: 0, payload: payload)
+    }
+
+    /// Decompiled CrushLogCancelSendRequestPacket: DiagnosticPacket(1,3).
+    static func cancelDiagnosticLogTransfer() -> Data {
+        HudProtocol.frame(command: 5, p1: 1, p2: 3)
+    }
+
+    /// Decompiled RemainDiagnosticRequestPacket: DiagnosticPacket(1,5).
+    static func requestRemainingDiagnosticLogs() -> Data {
+        HudProtocol.frame(command: 5, p1: 1, p2: 5)
+    }
+
     /// Decompiled SpeedNotificationPacket (Notification category 14).
     static func speedNotification(kmh: Int) -> Data {
         notificationPacket(

@@ -1,0 +1,12 @@
+U2W v8.16 MainVideo Live Edge — build verification
+
+Target: U2W software 2021.03.06.1343
+Prerequisites: v8.15 Reliability + v8.15.1 No Known-Image Primer + v8.11 MainVideo exporter marker
+Change scope: MainVideo CGI streamer only
+
+Validation:
+- freestanding ELF32 ARM EABI5 soft-float static executable
+- no DT_NEEDED runtime dependencies
+- installer/uninstaller pass sh -n
+- encrypted update container decrypt-verifies and tar member list is checked by build_images.py
+- route/media and HUD JPEG relay binaries/CGIs are not modified by this update

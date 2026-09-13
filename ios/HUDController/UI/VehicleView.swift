@@ -43,7 +43,33 @@ struct VehicleView: View {
                                 set: { state.bluetooth.obdSpeedTraceEnabled = $0 }
                             ))
                             LabeledContent("OBD trace", value: state.bluetooth.obdSpeedTraceStatus)
-                            HudDescription("Road-test instrumentation only. This is passive: the iPhone does not connect to the OBD adapter and does not send extra PID requests. While enabled, the log annotates HUD→iPhone BLE frames as OBD TRACE / OBD TRACE RX and compares numeric payload candidates against simultaneous GPS mph/km/h. Leave this ON for tomorrow's drive so we can determine whether true OBD driving velocity is exposed over the existing HUD BLE path.")
+                            HudDescription("Road-test instrumentation only. This is passive: the iPhone does not connect to the OBD adapter and does not send extra PID requests. While enabled, the log annotates HUD→iPhone BLE frames as OBD TRACE / OBD TRACE RX and compares numeric payload candidates against simultaneous GPS mph/km/h.")
+
+                            Divider()
+                            Text("HUD OBD diagnostic capture").font(.headline)
+                            LabeledContent("Diagnostic ZIP", value: state.bluetooth.obdDiagnosticStatus)
+                            HStack {
+                                Button("Request latest HUD OBD logs") {
+                                    state.bluetooth.requestOBDDiagnosticLogs(maxLastFilesCount: 2)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(state.bluetooth.state != .connected || state.bluetooth.obdDiagnosticTransferActive)
+
+                                if state.bluetooth.obdDiagnosticTransferActive {
+                                    Button("Cancel") { state.bluetooth.cancelOBDDiagnosticLogs() }
+                                        .buttonStyle(.bordered)
+                                }
+                            }
+                            if let url = state.bluetooth.obdDiagnosticLogURL {
+                                ShareLink(item: url) {
+                                    Label("Share HUD OBD diagnostic ZIP", systemImage: "square.and.arrow.up")
+                                }
+                            }
+                            Button("Check whether HUD has stored OBD logs") {
+                                state.bluetooth.requestRemainingDiagnosticLogTypes()
+                            }
+                            .buttonStyle(.bordered)
+                            HudDescription("New read-only OBD investigation path. The decompiled stock HUDWAY app can request LOG_CATEGORY_OBD from the HUD itself as a chunked ZIP over the existing HUD BLE connection. Do the drive normally, then while parked and before powering the HUD off, tap Request latest HUD OBD logs and wait for the Share button. This may expose the HUD's internal PID/velocity records even though OBD_DRIVING_VELOCITY cannot overlay mode 6.")
 
                             Divider()
                             Text("Freeride HUD widgets").font(.headline)

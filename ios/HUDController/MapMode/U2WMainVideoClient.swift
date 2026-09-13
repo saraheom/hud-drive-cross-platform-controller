@@ -19,6 +19,7 @@ final class U2WMainVideoClient {
     private(set) var frameCount = 0
     private(set) var connected = false
     private(set) var sourceSize = "—"
+    private(set) var receivedBytes: Int64 = 0
 
     private let logger: LogManager
     private var worker: U2WMainVideoStreamWorker?
@@ -26,9 +27,13 @@ final class U2WMainVideoClient {
     private var running = false
     private var freshnessTask: Task<Void, Never>?
     private var lastDecodedFrameAt: Date?
+    private var lastReceivedBytesAt: Date?
     private var lastFreshnessReconnectAt: Date?
-    private let staleFrameInterval: TimeInterval = 3.0
-    private let freshnessReconnectCooldown: TimeInterval = 6.0
+    // v90.35.3.12 / U2W v8.16: reconnecting now bootstraps at the newest
+    // decoder-safe GOP rather than byte zero. Give the live source enough time
+    // to cross an exporter generation before invoking the emergency reconnect.
+    private let staleFrameInterval: TimeInterval = 10.0
+    private let freshnessReconnectCooldown: TimeInterval = 12.0
 
     init(logger: LogManager) {
         self.logger = logger
@@ -39,6 +44,7 @@ final class U2WMainVideoClient {
         running = true
         status = "Connecting to U2W main video…"
         lastDecodedFrameAt = nil
+        lastReceivedBytesAt = nil
         logger.log("U2W VIDEO", "Start reason=\(reason)")
         startWorker(reason: reason)
         startFreshnessWatchdog()
@@ -57,6 +63,13 @@ final class U2WMainVideoClient {
                 self.status = message
                 self.connected = isConnected
                 self.logger.log("U2W VIDEO", message)
+            }
+        }
+        worker.onBytes = { [weak self] count in
+            Task { @MainActor [weak self] in
+                guard let self, self.running, self.workerGeneration == generation else { return }
+                self.receivedBytes += Int64(count)
+                self.lastReceivedBytesAt = Date()
             }
         }
         worker.onFrame = { [weak self] image in
@@ -96,9 +109,13 @@ final class U2WMainVideoClient {
                 }
                 self.lastFreshnessReconnectAt = now
                 self.status = "U2W main video stale — reconnecting…"
+                let byteAge = self.lastReceivedBytesAt.map { now.timeIntervalSince($0) } ?? .infinity
+                let sourceDetail = byteAge < self.staleFrameInterval
+                    ? "H.264 bytes still arriving (byteAge=\(String(format: "%.1f", byteAge))s) — decoder stalled"
+                    : "no H.264 bytes for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s — source/follower stalled"
                 self.logger.log(
                     "U2W VIDEO WATCH",
-                    "No decoded frame for \(String(format: "%.1f", age))s while HTTP stream remained connected; restarting source"
+                    "No decoded frame for \(String(format: "%.1f", age))s; \(sourceDetail); reconnecting at v8.16 live edge"
                 )
                 self.connected = false
                 self.lastDecodedFrameAt = nil
@@ -117,6 +134,7 @@ final class U2WMainVideoClient {
         workerGeneration &+= 1
         connected = false
         lastDecodedFrameAt = nil
+        lastReceivedBytesAt = nil
         status = "U2W main video stopped"
         logger.log("U2W VIDEO", "Stop reason=\(reason)")
     }
@@ -128,6 +146,7 @@ final class U2WMainVideoClient {
         }
         connected = false
         lastDecodedFrameAt = nil
+        lastReceivedBytesAt = nil
         lastFreshnessReconnectAt = Date()
         status = "Reconnecting U2W main video…"
         logger.log("U2W VIDEO", "Reconnect reason=\(reason)")
@@ -140,6 +159,7 @@ final class U2WMainVideoClient {
 private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
     let endpoint: URL
     var onStatus: ((String, Bool) -> Void)?
+    var onBytes: ((Int) -> Void)?
     var onFrame: ((UIImage) -> Void)?
 
     private let parser = AnnexBH264Parser()
@@ -222,6 +242,7 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        onBytes?(data.count)
         for nal in parser.append(data) {
             decoder.consume(nal)
         }

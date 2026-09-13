@@ -1,0 +1,18 @@
+HUD Controller v90.35.3.12 — Live-edge MainVideo + HUD OBD diagnostic capture
+
+Runtime changes:
+- U2WMainVideoClient: 10 s decoded-frame watchdog, 12 s cooldown, incoming H.264 byte tracking.
+- HudBluetoothManager/HudCommands/VehicleView: stock HUD diagnostic LOG_CATEGORY_OBD request, chunk reassembly, shareable ZIP.
+- Existing speed-sign customization and mode 6→4 STA persistence test retained.
+- Paired U2W v8.16 changes only the MainVideo stream CGI; route/media and HUD JPEG relay stay frozen.
+
+Local validation:
+- Python/static tests: 349 passed
+- Swift syntax parse: 183 files, 0 failures
+- GitHub Actions YAML parse: 8 files, 0 failures
+- U2W streamer: ELF32 ARM EABI5 soft-float, statically linked, no DT_NEEDED
+- U2W install/uninstall scripts: sh -n clean
+- encrypted U2W images decrypt-verified by build_images.py
+- repo/U2W ZIP integrity: unzip -t clean
+
+GitHub Actions/Xcode 26 remains authoritative for full iOS compile/XCTest.

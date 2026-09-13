@@ -1,3 +1,18 @@
+# HUD Controller v90.35.3.12 — U2W v8.16 live-edge map + HUD OBD diagnostic capture
+
+This road-test build keeps the proven mode-6 JPEG relay, route/media fixes, ambient-light behavior, speed-limit sign customization, and mode 6 → mode 4 STA persistence test unchanged.
+
+New in this revision:
+
+- **U2W v8.16 MainVideo live-edge streamer:** each new HTTP connection seeds VideoToolbox with the latest SPS/PPS and newest IDR, then follows from that IDR rather than replaying byte zero. At EOF it reopens the pathname so exporter generation replacement cannot strand a stale file descriptor.
+- **iOS MainVideo source diagnostics:** the emergency stale-frame watchdog is relaxed to 10 s with a 12 s cooldown and separately tracks incoming H.264 bytes vs decoded frames.
+- **HUD-native OBD diagnostic download:** the Vehicle tab can request `LOG_CATEGORY_OBD` using the stock HUDWAY diagnostic packet protocol and reassemble the returned chunked ZIP for sharing. This does not open a second OBD connection.
+- Existing **mode 6 → mode 4 Wi-Fi association test** remains available under Map Mode Status & diagnostics.
+
+See `docs/V90_35_3_12_LIVE_EDGE_OBD_DIAGNOSTIC.md`.
+
+---
+
 # HUD Controller v90.35.3.11.1 — CI alignment only
 
 This is the same production runtime as **v90.35.3.11**. GitHub Actions compiled the app successfully but one stale `SpeedUnitTests` assertion rejected the new passive OBD diagnostic help text because it contains the literal `km/h`. The test now verifies that actual GPS/speed-limit UI bindings remain mph while allowing diagnostic prose to mention both mph and km/h candidate encodings. No files under `ios/HUDController/` were changed. Paired adapter remains **U2W v8.15.1 No Known-Image Primer**.

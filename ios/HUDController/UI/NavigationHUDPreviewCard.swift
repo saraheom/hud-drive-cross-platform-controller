@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 /// v90.35.3.11 road-test Map Mode + OBD/STA instrumentation control surface.
 ///
@@ -109,6 +110,7 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
                     LabeledContent("MainVideo", value: state.mainVideo.status)
                     LabeledContent("Video frames", value: "\(state.mainVideo.frameCount) • \(state.mainVideo.sourceSize)")
+                    LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
                     LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
                     LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
                     LabeledContent("Last JPEG", value: state.hudU2WFrameRelay.lastFrameBytes == 0 ? "—" : "\(state.hudU2WFrameRelay.lastFrameBytes) bytes")
