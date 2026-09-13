@@ -1,0 +1,19 @@
+HUD Controller v90.35.3.13.1 — OBD forensics on v90.35.3.13 / U2W v8.17
+
+Change scope:
+- app-only OBD diagnostic forensic logging and raw BLE capture
+- forced RX logging window around existing OBD_DRIVING_VELOCITY visual probes
+- no MainVideo/Map Mode behavior change from v90.35.3.13
+- physical HUD relay cadence remains 5 fps (200 ms)
+- U2W v8.17 remains unchanged; no new adapter image is required
+
+Local/static validation:
+- Python repository regression/static tests: 355 passed
+- Swift syntax parse: 183 files, 0 failures
+- GitHub Actions YAML parse: 10 files, 0 failures
+- U2W v8.17 install image byte-identical to v90.35.3.13 baseline
+  SHA-256 6313ac3ec24a8a44456ae18c0a8c7f4a05b39d573479aa72b8bbff844045b19b
+- U2W v8.17 uninstall image byte-identical to v90.35.3.13 baseline
+  SHA-256 396524a1ce72ec7f39a555b054f5727e31260d6b331ed71e2f68fba2284d4ee3
+
+Full iOS type-check/build/XCTest remains authoritative in the existing GitHub Actions Xcode 26 workflow.

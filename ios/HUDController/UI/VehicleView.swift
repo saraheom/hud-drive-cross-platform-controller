@@ -48,6 +48,7 @@ struct VehicleView: View {
                             Divider()
                             Text("HUD OBD diagnostic capture").font(.headline)
                             LabeledContent("Diagnostic ZIP", value: state.bluetooth.obdDiagnosticStatus)
+                            LabeledContent("Returned categories", value: state.bluetooth.obdDiagnosticObservedCategories)
                             HStack {
                                 Button("Request latest HUD OBD logs") {
                                     state.bluetooth.requestOBDDiagnosticLogs(maxLastFilesCount: 2)
@@ -56,7 +57,7 @@ struct VehicleView: View {
                                 .disabled(state.bluetooth.state != .connected || state.bluetooth.obdDiagnosticTransferActive)
 
                                 if state.bluetooth.obdDiagnosticTransferActive {
-                                    Button("Cancel") { state.bluetooth.cancelOBDDiagnosticLogs() }
+                                    Button("Stop & save raw") { state.bluetooth.cancelOBDDiagnosticLogs() }
                                         .buttonStyle(.bordered)
                                 }
                             }
@@ -65,11 +66,16 @@ struct VehicleView: View {
                                     Label("Share HUD OBD diagnostic ZIP", systemImage: "square.and.arrow.up")
                                 }
                             }
+                            if let url = state.bluetooth.obdDiagnosticRawCaptureURL {
+                                ShareLink(item: url) {
+                                    Label("Share raw HUD BLE capture", systemImage: "waveform.badge.magnifyingglass")
+                                }
+                            }
                             Button("Check whether HUD has stored OBD logs") {
                                 state.bluetooth.requestRemainingDiagnosticLogTypes()
                             }
                             .buttonStyle(.bordered)
-                            HudDescription("New read-only OBD investigation path. The decompiled stock HUDWAY app can request LOG_CATEGORY_OBD from the HUD itself as a chunked ZIP over the existing HUD BLE connection. Do the drive normally, then while parked and before powering the HUD off, tap Request latest HUD OBD logs and wait for the Share button. This may expose the HUD's internal PID/velocity records even though OBD_DRIVING_VELOCITY cannot overlay mode 6.")
+                            HudDescription("v90.35.3.13.1 adds a bounded, read-only forensic capture around the stock LOG_CATEGORY_OBD request. It saves the exact HUD BLE byte stream before the diagnostic parser touches it, logs the category actually returned by the HUD, declared/available chunk sizes, raw packet headers, GPS-correlated numeric candidates, and common PID 0x0D / ELM signatures. If the ZIP parser never completes, tap Stop & save raw before powering the HUD off and share the .bin plus the normal HUD log. No second OBD connection or extra PID request is made by this capture.")
 
                             Divider()
                             Text("Freeride HUD widgets").font(.headline)

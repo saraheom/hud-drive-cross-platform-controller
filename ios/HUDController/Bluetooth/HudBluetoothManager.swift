@@ -51,11 +51,32 @@ final class HudBluetoothManager: NSObject {
     // downloads from the HUD over this existing BLE link.
     private(set) var obdDiagnosticStatus = "Not requested"
     private(set) var obdDiagnosticLogURL: URL?
+    private(set) var obdDiagnosticRawCaptureURL: URL?
+    private(set) var obdDiagnosticObservedCategories = "—"
     private(set) var obdDiagnosticTransferActive = false
     private var obdDiagnosticChunks: [Int: Data] = [:]
     private var obdDiagnosticExpectedChunkCount = 0
     private var obdDiagnosticExpectedTotalBytes = 0
     private var obdDiagnosticCategory = ""
+
+    // v90.35.3.13.1 OBD forensics. Keep an exact bounded copy of the BLE byte
+    // stream while the stock HUD diagnostic transfer is active. This is strictly
+    // observational: it does not alter framing, de-duplicate notifications, or
+    // reinterpret a non-OBD category as OBD. The capture can therefore be replayed
+    // offline if the existing parser rejects a packet.
+    private var obdDiagnosticRawBLE = Data()
+    private var obdDiagnosticRawCaptureOverflowLogged = false
+    private var obdDiagnosticObservedCategorySet = Set<String>()
+    private var obdDiagnosticForensicFrameCount = 0
+    private var obdDiagnosticMalformedFrameCount = 0
+    private let obdDiagnosticRawCaptureLimitBytes = 8 * 1024 * 1024
+
+    // Short forced logging window around the stock OBD_DRIVING_VELOCITY probe.
+    // During this window every HUD RX body is logged with simultaneous GPS speed,
+    // rather than applying the normal passive-trace rate limiting.
+    private var obdSpeedProbeForensicsUntil = Date.distantPast
+    private var obdSpeedProbeForensicsLabel = ""
+    private var obdSpeedProbeForensicsFrameCount = 0
 
     var onOBDConnectionEvent: ((Bool, String) -> Void)?
     var onWiFiSTAStatusEvent: ((Int, String, String) -> Void)?
@@ -365,14 +386,25 @@ final class HudBluetoothManager: NSObject {
             obdDiagnosticStatus = "HUD BLE disconnected"
             return
         }
+        if obdDiagnosticTransferActive, !obdDiagnosticRawBLE.isEmpty {
+            saveOBDDiagnosticRawCapture(reason: "new request replaced previous capture")
+        }
         obdDiagnosticChunks.removeAll(keepingCapacity: true)
         obdDiagnosticExpectedChunkCount = 0
         obdDiagnosticExpectedTotalBytes = 0
         obdDiagnosticCategory = "LOG_CATEGORY_OBD"
         obdDiagnosticLogURL = nil
+        obdDiagnosticRawCaptureURL = nil
+        obdDiagnosticRawBLE.removeAll(keepingCapacity: true)
+        obdDiagnosticRawCaptureOverflowLogged = false
+        obdDiagnosticObservedCategorySet.removeAll(keepingCapacity: true)
+        obdDiagnosticObservedCategories = "—"
+        obdDiagnosticForensicFrameCount = 0
+        obdDiagnosticMalformedFrameCount = 0
         obdDiagnosticTransferActive = true
-        obdDiagnosticStatus = "Requesting HUD OBD diagnostic ZIP…"
+        obdDiagnosticStatus = "Requesting HUD OBD diagnostic ZIP + raw capture…"
         logger.log("OBD HUD LOG", "Request LOG_CATEGORY_OBD maxLastFilesCount=\(maxLastFilesCount)")
+        logger.log("OBD HUD RAW", "BEGIN requested=LOG_CATEGORY_OBD capBytes=\(obdDiagnosticRawCaptureLimitBytes) gps=\(obdTraceReferenceSpeedMph)mph")
         enqueue(
             HudCommands.requestOBDDiagnosticLogs(maxLastFilesCount: maxLastFilesCount),
             label: "Request HUD OBD diagnostic logs"
@@ -380,11 +412,53 @@ final class HudBluetoothManager: NSObject {
     }
 
     func cancelOBDDiagnosticLogs() {
-        guard state == .connected else { return }
-        enqueue(HudCommands.cancelDiagnosticLogTransfer(), label: "Cancel HUD diagnostic log transfer")
+        if state == .connected {
+            enqueue(HudCommands.cancelDiagnosticLogTransfer(), label: "Cancel HUD diagnostic log transfer")
+        }
+        saveOBDDiagnosticRawCapture(reason: "user stopped transfer")
         obdDiagnosticTransferActive = false
-        obdDiagnosticStatus = "Transfer cancelled"
-        logger.log("OBD HUD LOG", "Transfer cancelled by user")
+        obdDiagnosticStatus = obdDiagnosticRawCaptureURL == nil
+            ? "Transfer stopped"
+            : "Transfer stopped • raw capture ready"
+        logger.log("OBD HUD LOG", "Transfer stopped by user; raw capture saved if any bytes were received")
+    }
+
+    private func captureOBDDiagnosticRawBLE(_ data: Data) {
+        guard obdDiagnosticTransferActive, !data.isEmpty else { return }
+        let remaining = obdDiagnosticRawCaptureLimitBytes - obdDiagnosticRawBLE.count
+        if remaining > 0 {
+            obdDiagnosticRawBLE.append(contentsOf: data.prefix(remaining))
+        }
+        if data.count > remaining, !obdDiagnosticRawCaptureOverflowLogged {
+            obdDiagnosticRawCaptureOverflowLogged = true
+            logger.log(
+                "OBD HUD RAW",
+                "Raw BLE capture reached \(obdDiagnosticRawCaptureLimitBytes) byte safety cap; logging continues but binary capture is truncated"
+            )
+        }
+    }
+
+    private func saveOBDDiagnosticRawCapture(reason: String) {
+        guard !obdDiagnosticRawBLE.isEmpty else {
+            logger.log("OBD HUD RAW", "No raw BLE bytes to save reason=\(reason)")
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let filename = "HUD_OBD_RawBLE_\(formatter.string(from: Date())).bin"
+        do {
+            let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+                ?? FileManager.default.temporaryDirectory
+            let url = base.appendingPathComponent(filename)
+            try obdDiagnosticRawBLE.write(to: url, options: .atomic)
+            obdDiagnosticRawCaptureURL = url
+            logger.log(
+                "OBD HUD RAW",
+                "Saved \(url.lastPathComponent) bytes=\(obdDiagnosticRawBLE.count) frames=\(obdDiagnosticForensicFrameCount) malformed=\(obdDiagnosticMalformedFrameCount) categories=\(obdDiagnosticObservedCategories) reason=\(reason)"
+            )
+        } catch {
+            logger.log("OBD HUD RAW", "Raw capture save failed: \(error.localizedDescription)")
+        }
     }
 
     func requestRemainingDiagnosticLogTypes() {
@@ -404,6 +478,117 @@ final class HudBluetoothManager: NSObject {
         return value
     }
 
+    private func recordObservedDiagnosticCategory(_ category: String) {
+        guard !category.isEmpty else { return }
+        obdDiagnosticObservedCategorySet.insert(category)
+        obdDiagnosticObservedCategories = obdDiagnosticObservedCategorySet.sorted().joined(separator: ", ")
+    }
+
+    private func obdDiagnosticSignatureHits(_ payload: Data) -> [String] {
+        guard !payload.isEmpty else { return [] }
+        let bytes = [UInt8](payload)
+        var hits: [String] = []
+
+        func add(_ value: String) {
+            if !hits.contains(value) { hits.append(value) }
+        }
+        if bytes.count >= 2 {
+            for i in 0..<(bytes.count - 1) {
+                if bytes[i] == 0x41, bytes[i + 1] == 0x0D { add("41 0D@\(i)") }
+                if bytes[i] == 0x01, bytes[i + 1] == 0x0D { add("01 0D@\(i)") }
+            }
+        }
+        if bytes.count >= 4 {
+            for i in 0...(bytes.count - 4) where bytes[i] == 0x50 && bytes[i + 1] == 0x4B {
+                add("ZIP/PK@\(i)")
+            }
+        }
+        let upperASCII = String(decoding: payload, as: UTF8.self).uppercased()
+        for token in ["010D", "410D", "ELM327", "ELM", "ATZ", "ATE0", "ATI", "OBDII", "OBD-II"] {
+            if upperASCII.contains(token) { add("ascii:\(token)") }
+        }
+        let speedCandidates = obdTraceScalarCandidates(payload: payload)
+        for candidate in speedCandidates.prefix(8) { add("speed:\(candidate)") }
+        return hits
+    }
+
+    private func logDiagnosticFrameForensics(_ frame: Data, body: Data) {
+        guard obdDiagnosticTransferActive, body.count >= 3 else { return }
+        obdDiagnosticForensicFrameCount += 1
+        let command = Int(body[0])
+        let p1 = Int(body[1])
+        let p2 = Int(body[2])
+        let kmh = Int((Double(obdTraceReferenceSpeedMph) * 1.609344).rounded())
+
+        if command == 5, p1 == 1, p2 == 1 {
+            var index = 3
+            let category = readJavaUTF(body, index: &index)
+            let totalSize = category == nil ? nil : int32BE(body, index: &index)
+            let allChunks = totalSize == nil ? nil : int32BE(body, index: &index)
+            let chunkIndex = allChunks == nil ? nil : int32BE(body, index: &index)
+            let chunkSize = chunkIndex == nil ? nil : int32BE(body, index: &index)
+            let available = max(0, body.count - index)
+            if let category { recordObservedDiagnosticCategory(category) }
+            let scanPayload = index < body.count ? body.subdata(in: index..<body.count) : Data()
+            let hits = obdDiagnosticSignatureHits(scanPayload)
+            let categoryText = category ?? "<unreadable>"
+            let totalText = totalSize.map { String($0) } ?? "?"
+            let chunksText = allChunks.map { String($0) } ?? "?"
+            let indexText = chunkIndex.map { String($0 + 1) } ?? "?"
+            let declaredText = chunkSize.map { String($0) } ?? "?"
+            logger.log(
+                "OBD HUD RAW",
+                "event#\(obdDiagnosticForensicFrameCount) category=\(categoryText) requested=\(obdDiagnosticCategory) total=\(totalText) chunk=\(indexText)/\(chunksText) declared=\(declaredText) available=\(available) wireBytes=\(frame.count) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh hits=[\(hits.joined(separator: ","))]"
+            )
+            if let category, category != obdDiagnosticCategory {
+                logger.log("OBD HUD RAW", "CATEGORY MISMATCH requested=\(obdDiagnosticCategory) received=\(category)")
+            }
+        } else {
+            let payload = body.count > 3 ? body.subdata(in: 3..<body.count) : Data()
+            let hits = obdDiagnosticSignatureHits(payload)
+            logger.log(
+                "OBD HUD RAW",
+                "event#\(obdDiagnosticForensicFrameCount) hdr=\(command)/\(p1)/\(p2) wireBytes=\(frame.count) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh hits=[\(hits.joined(separator: ","))] body=\(HudProtocol.hex(body.prefix(96)))"
+            )
+        }
+    }
+
+    func beginOBDSpeedProbeForensics(duration: TimeInterval = 14.0, label: String) {
+        obdSpeedProbeForensicsUntil = Date().addingTimeInterval(max(1.0, duration))
+        obdSpeedProbeForensicsLabel = label
+        obdSpeedProbeForensicsFrameCount = 0
+        logger.log(
+            "OBD PROBE FORENSICS",
+            "BEGIN label=\(label) duration=\(String(format: "%.1f", duration))s gps=\(obdTraceReferenceSpeedMph)mph"
+        )
+    }
+
+    func endOBDSpeedProbeForensics(reason: String) {
+        guard obdSpeedProbeForensicsUntil > .distantPast else { return }
+        logger.log(
+            "OBD PROBE FORENSICS",
+            "END label=\(obdSpeedProbeForensicsLabel) frames=\(obdSpeedProbeForensicsFrameCount) reason=\(reason)"
+        )
+        obdSpeedProbeForensicsUntil = .distantPast
+        obdSpeedProbeForensicsLabel = ""
+    }
+
+    private func logOBDSpeedProbeForensics(_ body: Data) {
+        guard Date() <= obdSpeedProbeForensicsUntil, body.count >= 3 else { return }
+        obdSpeedProbeForensicsFrameCount += 1
+        let command = Int(body[0])
+        let p1 = Int(body[1])
+        let p2 = Int(body[2])
+        let payload = body.count > 3 ? body.subdata(in: 3..<body.count) : Data()
+        let kmh = Int((Double(obdTraceReferenceSpeedMph) * 1.609344).rounded())
+        let candidates = obdTraceScalarCandidates(payload: payload)
+        let signatures = obdDiagnosticSignatureHits(payload)
+        logger.log(
+            "OBD PROBE RX",
+            "label=\(obdSpeedProbeForensicsLabel) seq=\(obdSpeedProbeForensicsFrameCount) hdr=\(command)/\(p1)/\(p2) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh candidates=[\(candidates.joined(separator: ","))] signatures=[\(signatures.joined(separator: ","))] body=\(HudProtocol.hex(body.prefix(128)))"
+        )
+    }
+
     private func handleDiagnosticPacket(_ body: Data) -> Bool {
         guard body.count >= 3, body[0] == 5, body[1] == 1 else { return false }
 
@@ -411,21 +596,45 @@ final class HudBluetoothManager: NSObject {
         // UTF category + totalSize + allChunkCount + chunkIndex + chunkSize + bytes.
         if body[2] == 1 {
             var index = 3
-            guard let category = readJavaUTF(body, index: &index),
-                  let totalSize = int32BE(body, index: &index),
+            guard let category = readJavaUTF(body, index: &index) else {
+                obdDiagnosticMalformedFrameCount += 1
+                logger.log("OBD HUD LOG", "Malformed diagnostic chunk: category UTF unreadable bodyBytes=\(body.count) head=\(HudProtocol.hex(body.prefix(96)))")
+                return true
+            }
+            recordObservedDiagnosticCategory(category)
+            guard let totalSize = int32BE(body, index: &index),
                   let allChunks = int32BE(body, index: &index),
                   let chunkIndex = int32BE(body, index: &index),
-                  let chunkSize = int32BE(body, index: &index),
-                  chunkSize >= 0, body.count >= index + chunkSize else {
-                logger.log("OBD HUD LOG", "Malformed diagnostic chunk payloadBytes=\(max(0, body.count - 3))")
+                  let chunkSize = int32BE(body, index: &index) else {
+                obdDiagnosticMalformedFrameCount += 1
+                logger.log("OBD HUD LOG", "Malformed diagnostic header category=\(category) bodyBytes=\(body.count) remaining=\(max(0, body.count-index))")
+                return true
+            }
+            let available = max(0, body.count - index)
+            guard chunkSize >= 0, available >= chunkSize else {
+                obdDiagnosticMalformedFrameCount += 1
+                logger.log(
+                    "OBD HUD LOG",
+                    "Malformed diagnostic chunk category=\(category) total=\(totalSize) chunk=\(chunkIndex + 1)/\(allChunks) declared=\(chunkSize) available=\(available) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph head=\(HudProtocol.hex(body.prefix(128)))"
+                )
                 return true
             }
             let chunk = body.subdata(in: index..<(index + chunkSize))
+            let extraBytes = available - chunkSize
+            let hits = obdDiagnosticSignatureHits(chunk)
             logger.log(
                 "OBD HUD LOG",
-                "chunk category=\(category) index=\(chunkIndex + 1)/\(allChunks) bytes=\(chunkSize) total=\(totalSize)"
+                "chunk category=\(category) requested=\(obdDiagnosticCategory) index=\(chunkIndex + 1)/\(allChunks) bytes=\(chunkSize) total=\(totalSize) extra=\(extraBytes) hits=[\(hits.joined(separator: ","))]"
             )
-            guard category == "LOG_CATEGORY_OBD" else { return true }
+            if extraBytes > 0 {
+                logger.log("OBD HUD RAW", "Chunk has \(extraBytes) trailing bytes beyond declared payload; preserved in raw BLE capture")
+            }
+            guard category == "LOG_CATEGORY_OBD" else {
+                if obdDiagnosticTransferActive {
+                    obdDiagnosticStatus = "HUD returned \(category) • raw capture active"
+                }
+                return true
+            }
             if !obdDiagnosticTransferActive {
                 obdDiagnosticTransferActive = true
                 obdDiagnosticChunks.removeAll(keepingCapacity: true)
@@ -456,12 +665,14 @@ final class HudBluetoothManager: NSObject {
                     let url = base.appendingPathComponent(filename)
                     try zip.write(to: url, options: .atomic)
                     obdDiagnosticLogURL = url
+                    saveOBDDiagnosticRawCapture(reason: "OBD ZIP completed")
                     obdDiagnosticTransferActive = false
                     obdDiagnosticStatus = "HUD OBD ZIP ready • \(zip.count) bytes"
                     logger.log("OBD HUD LOG", "Saved \(url.lastPathComponent) bytes=\(zip.count) expected=\(totalSize)")
                 } catch {
+                    saveOBDDiagnosticRawCapture(reason: "OBD ZIP save failed")
                     obdDiagnosticTransferActive = false
-                    obdDiagnosticStatus = "Could not save HUD OBD ZIP"
+                    obdDiagnosticStatus = "Could not save HUD OBD ZIP • raw capture retained"
                     logger.log("OBD HUD LOG", "Save failed: \(error.localizedDescription)")
                 }
             }
@@ -590,6 +801,8 @@ final class HudBluetoothManager: NSObject {
 
     private func parseVehicleEvent(_ frame: Data) {
         guard let body = HudProtocol.unescape(frame), body.count >= 3 else { return }
+        logDiagnosticFrameForensics(frame, body: body)
+        logOBDSpeedProbeForensics(body)
         if handleDiagnosticPacket(body) { return }
         tracePossibleOBDSpeedFrame(body)
 
@@ -785,6 +998,14 @@ extension HudBluetoothManager: CBCentralManagerDelegate {
             self.currentChunks.removeAll()
             self.writing = false
             let reason = error?.localizedDescription ?? "no error"
+            if self.obdDiagnosticTransferActive {
+                self.saveOBDDiagnosticRawCapture(reason: "HUD BLE disconnected: \(reason)")
+                self.obdDiagnosticTransferActive = false
+                if self.obdDiagnosticRawCaptureURL != nil {
+                    self.obdDiagnosticStatus = "HUD disconnected • raw capture saved"
+                }
+            }
+            self.endOBDSpeedProbeForensics(reason: "HUD BLE disconnected")
             self.logger.log("BLE", "Disconnected: \(reason)")
             self.onTransportDisconnected?()
 
@@ -862,6 +1083,7 @@ extension HudBluetoothManager: CBPeripheralDelegate {
             guard let data = characteristic.value else { return }
             self.lastRX = HudProtocol.hex(data)
             self.logger.log("RX CHUNK", self.lastRX)
+            self.captureOBDDiagnosticRawBLE(data)
 
             self.rxBuffer.append(data)
             let frames = HudProtocol.extractFrames(from: &self.rxBuffer)

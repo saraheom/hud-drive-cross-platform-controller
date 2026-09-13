@@ -1000,6 +1000,7 @@ final class AppState {
         hudU2WNativeOBDProbeTask?.cancel()
         hudU2WNativeOBDProbeActive = true
         hudU2WNativeOBDProbeStatus = "Phase 1/2 — OBD item only; custom GPS speed hidden"
+        bluetooth.beginOBDSpeedProbeForensics(duration: 13.5, label: "manual mode-6 OBD_DRIVING_VELOCITY")
         logger.log(
             "OBD MAP PROBE",
             "BEGIN relay-mode6: hide custom GPS speed; request stock OBD_DRIVING_VELOCITY itemIndex=10 position=0; leave fullscreen unchanged for first 6s"
@@ -1041,6 +1042,7 @@ final class AppState {
         hudU2WNativeOBDProbeTask = nil
         let wasActive = hudU2WNativeOBDProbeActive
         hudU2WNativeOBDProbeActive = false
+        bluetooth.endOBDSpeedProbeForensics(reason: reason)
         guard bluetooth.state == .connected else {
             hudU2WNativeOBDProbeStatus = "Stopped locally — HUD BLE disconnected"
             return
@@ -1833,6 +1835,7 @@ final class AppState {
             return
         }
 
+        bluetooth.beginOBDSpeedProbeForensics(duration: 5.5, label: "automatic Map Mode OBD overlay")
         mapModeOBDOverlayTask = Task { @MainActor [weak self] in
             guard let self else { return }
             // KivicCast normally hides the stock widget layer. Reassert the

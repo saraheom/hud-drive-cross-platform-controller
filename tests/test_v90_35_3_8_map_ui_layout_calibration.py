@@ -29,7 +29,7 @@ def test_canvas_applies_tuning_without_transport_changes():
 
 def test_ui_has_two_pixel_bounded_position_controls_and_boldness():
     for token in [
-        "Physical HUD position", "Right-side maneuver / lane calibration",
+        "Physical HUD position", "Right-side component size / spacing",
         "Turn arrow boldness", "Lane boldness", "Active lane emphasis",
         "delta: -2", "delta: 2", "xRange: -20...20", "yRange: -12...12",
     ]:

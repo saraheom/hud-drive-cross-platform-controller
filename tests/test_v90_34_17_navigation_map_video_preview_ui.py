@@ -22,7 +22,7 @@ def test_evolved_preview_exposes_independent_size_crop_and_component_controls():
         'title: "Left widget"',
         'title: "Center map"',
         'title: "Right widget"',
-        'Text("Live map crop")',
+        'Text("Live CarPlay crop")',
         'title: "Map zoom"',
         'title: "Crop X"',
         'title: "Crop Y"',

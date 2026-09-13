@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.13.1 — OBD forensics + v90.35.3.13 live MainVideo
+
+This is an **app-only** follow-up to v90.35.3.13. Keep **U2W v8.17 LatestFrame** installed; no adapter reflash is required. The content-blind CarPlay crop, latest-frame MainVideo decoder, and physical 5 fps HUD relay are unchanged.
+
+The Vehicle tab now preserves a bounded raw HUD BLE capture before the stock diagnostic parser, reports the diagnostic categories actually returned by the HUD, logs detailed chunk framing/mismatch information, scans for PID `0x0D` / ELM signatures and GPS-correlated numeric candidates, and saves `HUD_OBD_RawBLE_<timestamp>.bin` when the transfer completes or **Stop & save raw** is pressed. The existing native `OBD_DRIVING_VELOCITY` probes also get a short forced `OBD PROBE RX` logging window. No production OBD speed decoding is enabled yet.
+
+See `docs/V90_35_3_13_1_OBD_FORENSICS.md` and `V90_35_3_13_1_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.12 — U2W v8.16 live-edge map + HUD OBD diagnostic capture
 
 This road-test build keeps the proven mode-6 JPEG relay, route/media fixes, ambient-light behavior, speed-limit sign customization, and mode 6 → mode 4 STA persistence test unchanged.
