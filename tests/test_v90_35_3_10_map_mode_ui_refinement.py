@@ -30,7 +30,8 @@ def test_map_edge_fade_is_independently_adjustable():
 def test_speed_limit_sign_is_number_only_rectangle():
     assert 'Text("SPEED")' not in CANVAS
     assert 'Text("LIMIT")' not in CANVAS
-    assert '.frame(width: 42, height: 34)' in CANVAS
+    assert 'width: 42' in CANVAS
+    assert 'speedLimitSignHeightScale' in CANVAS
     assert 'foregroundStyle(.black)' in CANVAS
     assert '.background(.white)' in CANVAS
 

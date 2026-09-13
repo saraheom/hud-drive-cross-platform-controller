@@ -38,6 +38,26 @@ final class AppState {
     private var hudU2WSTAResetInProgress = false
     private var hudU2WIgnoreEmptyStatusUntil = Date.distantPast
     private(set) var hudU2WLiveRelayActive = false
+
+    // v90.35.3.11 read-only/temporary topology experiment: while the proven
+    // U2W relay infrastructure stays alive, switch the physical HUD from mode 6
+    // back to mode 4 and ask the stock WifiSTAStatusEventPacket whether the HUD
+    // retained its 192.168.50.x station association. No credentials are cleared.
+    private(set) var hudSTAPersistenceTestStatus = "Not tested"
+    private(set) var hudSTAPersistenceTestActive = false
+    private var hudSTAPersistenceTestTask: Task<Void, Never>?
+    private var hudSTAPersistenceTestExpectedAddress = ""
+    private var hudSTAPersistenceTestSawStatusEvent = false
+    private var hudSTAPersistenceTestLastLinkUp = false
+    private var hudSTAPersistenceTestLastAddress = ""
+
+    // Optional visual probe for tomorrow's road test. This does not decode OBD
+    // speed into the iPhone. It temporarily hides the JPEG's GPS speed and asks
+    // the stock HUD layer for OBD_DRIVING_VELOCITY so we can learn whether mode 6
+    // can composite the HUD's internally decoded true vehicle speed over KivicCast.
+    private(set) var hudU2WNativeOBDProbeActive = false
+    private(set) var hudU2WNativeOBDProbeStatus = "Not running"
+    private var hudU2WNativeOBDProbeTask: Task<Void, Never>?
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
     private var hudRehydrateTask: Task<Void, Never>?
@@ -225,18 +245,34 @@ final class AppState {
                 )
             }
 
+            if self.hudSTAPersistenceTestActive {
+                self.hudSTAPersistenceTestSawStatusEvent = true
+                self.hudSTAPersistenceTestLastLinkUp = linkUp
+                self.hudSTAPersistenceTestLastAddress = address
+                let expected = self.hudSTAPersistenceTestExpectedAddress
+                let sameAddress = !expected.isEmpty && address == expected
+                self.hudSTAPersistenceTestStatus = linkUp
+                    ? "Mode 4 status event: STA still up at \(address.isEmpty ? "unknown IP" : address)\(sameAddress ? " • same IP" : "")"
+                    : "Mode 4 status event: STA reported down (status \(status))"
+                self.logger.log(
+                    "HUD STA TEST",
+                    "mode4 statusEvent=\(status) linkUp=\(linkUp ? 1 : 0) address=\(address.isEmpty ? "—" : address) expected=\(expected.isEmpty ? "—" : expected) reason=\(reason.isEmpty ? "—" : reason)"
+                )
+            }
+
             self.logger.log(
                 "HUD/U2W STA",
                 "event status=\(status) linkUp=\(linkUp) address=\(address.isEmpty ? "—" : address) reason=\(reason.isEmpty ? "—" : reason)"
             )
         }
 
-        speedEngine.onSpeedStateChanged = { [weak ambientLight] speedMph, limitMph, available in
+        speedEngine.onSpeedStateChanged = { [weak ambientLight, weak bluetooth] speedMph, limitMph, available in
             ambientLight?.updateOverspeedWarning(
                 gpsSpeedMph: speedMph,
                 speedLimitMph: limitMph,
                 limitAvailable: available
             )
+            bluetooth?.updateOBDTraceReferenceSpeed(gpsMph: speedMph)
         }
 
         nowPlaying.onTrackChanged = { [weak self] artist, track in
@@ -281,6 +317,13 @@ final class AppState {
             self.timeWeatherColdOffSyncTask = nil
             self.hudU2WSTAStatusTask?.cancel()
             self.hudU2WSTAStatusTask = nil
+            self.hudSTAPersistenceTestTask?.cancel()
+            self.hudSTAPersistenceTestTask = nil
+            self.hudSTAPersistenceTestActive = false
+            self.hudU2WNativeOBDProbeTask?.cancel()
+            self.hudU2WNativeOBDProbeTask = nil
+            self.hudU2WNativeOBDProbeActive = false
+            self.hudU2WNativeOBDProbeStatus = "Stopped — HUD BLE disconnected"
             self.hudU2WRelayFrameTask?.cancel()
             self.hudU2WRelayFrameTask = nil
             self.hudU2WFrameRelay.stop(reason: "HUD BLE transport disconnected")
@@ -632,7 +675,7 @@ final class AppState {
 
 
 
-    // MARK: - v90.35.3.10 live relay prewarm + v8.15.1 no-fallback primer
+    // MARK: - v90.35.3.11 road-test relay + v8.15.1 no-fallback primer
     // U2W v8.15 keeps the proven mode-6 join sequence while making relay status session-scoped.
 
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
@@ -929,12 +972,192 @@ final class AppState {
                     snapshot: snapshot,
                     settings: self.mapModeSettings,
                     sourceMapImage: self.mainVideo.latestFrame,
-                    suppressCustomSpeedForNativeOBDProbe: false
+                    suppressCustomSpeedForNativeOBDProbe: self.hudU2WNativeOBDProbeActive
                 ) {
                     self.hudU2WFrameRelay.sendFrame(frame)
                 }
                 try? await Task.sleep(for: .milliseconds(200))
             }
+        }
+    }
+
+
+
+    func startHUDU2WNativeOBDSpeedProbe() {
+        guard hudU2WLiveRelayActive else {
+            hudU2WNativeOBDProbeStatus = "Enable Map Mode first"
+            return
+        }
+        guard bluetooth.state == .connected else {
+            hudU2WNativeOBDProbeStatus = "HUD BLE disconnected"
+            return
+        }
+        guard obd.connected else {
+            hudU2WNativeOBDProbeStatus = "HUD-side OBD not confirmed connected"
+            return
+        }
+
+        hudU2WNativeOBDProbeTask?.cancel()
+        hudU2WNativeOBDProbeActive = true
+        hudU2WNativeOBDProbeStatus = "Phase 1/2 — OBD item only; custom GPS speed hidden"
+        logger.log(
+            "OBD MAP PROBE",
+            "BEGIN relay-mode6: hide custom GPS speed; request stock OBD_DRIVING_VELOCITY itemIndex=10 position=0; leave fullscreen unchanged for first 6s"
+        )
+
+        // Phase 1 is intentionally minimally invasive: ask for the stock OBD item
+        // without changing fullscreen/viewer state. If mode 6 already composites
+        // that layer, a true OBD number can appear immediately.
+        bluetooth.enqueue(
+            HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)),
+            label: "Relay OBD probe phase 1 → OBD_DRIVING_VELOCITY position 0"
+        )
+        bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe phase 1 → KeepAlive")
+
+        hudU2WNativeOBDProbeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard let self, !Task.isCancelled, self.hudU2WNativeOBDProbeActive else { return }
+
+            // Phase 2 mirrors the older stock-layer visibility experiment only if
+            // phase 1 did not visibly prove an overlay. This is still temporary and
+            // never rewrites firmware or re-sends mode 6.
+            self.hudU2WNativeOBDProbeStatus = "Phase 2/2 — stock layer exposed for 6s"
+            self.logger.log("OBD MAP PROBE", "PHASE2 fullScreen(false) + OBD_DRIVING_VELOCITY; no mode6 rewrite")
+            self.bluetooth.enqueue(HudCommands.fullScreen(false), label: "Relay OBD probe phase 2 → expose stock HUD layer")
+            self.bluetooth.enqueue(
+                HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)),
+                label: "Relay OBD probe phase 2 → OBD_DRIVING_VELOCITY position 0"
+            )
+            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe phase 2 → KeepAlive")
+
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled, self.hudU2WNativeOBDProbeActive else { return }
+            self.stopHUDU2WNativeOBDSpeedProbe(reason: "12s two-phase probe complete")
+        }
+    }
+
+    func stopHUDU2WNativeOBDSpeedProbe(reason: String = "manual") {
+        hudU2WNativeOBDProbeTask?.cancel()
+        hudU2WNativeOBDProbeTask = nil
+        let wasActive = hudU2WNativeOBDProbeActive
+        hudU2WNativeOBDProbeActive = false
+        guard bluetooth.state == .connected else {
+            hudU2WNativeOBDProbeStatus = "Stopped locally — HUD BLE disconnected"
+            return
+        }
+        if wasActive {
+            bluetooth.enqueue(
+                HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.none.rawValue)),
+                label: "Relay OBD probe → clear stock OBD custom item"
+            )
+            bluetooth.enqueue(HudCommands.fullScreen(true), label: "Relay OBD probe → restore full screen")
+            bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe → restore KeepAlive")
+        }
+        hudU2WNativeOBDProbeStatus = "Stopped — custom GPS speed restored"
+        logger.log("OBD MAP PROBE", "END reason=\(reason); restored custom JPEG speed and cleared stock OBD slot")
+    }
+
+    func runHUDMode4STAPersistenceTest() {
+        guard hudU2WLiveRelayActive else {
+            hudSTAPersistenceTestStatus = "Enable Map Mode first"
+            return
+        }
+        guard bluetooth.state == .connected else {
+            hudSTAPersistenceTestStatus = "HUD BLE disconnected"
+            return
+        }
+        guard isUsableHUDSTAAddress(hudU2WSTAAddress) else {
+            hudSTAPersistenceTestStatus = "Wait for a valid HUD STA IP before testing"
+            return
+        }
+
+        hudSTAPersistenceTestTask?.cancel()
+        hudSTAPersistenceTestExpectedAddress = hudU2WSTAAddress
+        hudSTAPersistenceTestSawStatusEvent = false
+        hudSTAPersistenceTestLastLinkUp = false
+        hudSTAPersistenceTestLastAddress = ""
+        hudSTAPersistenceTestActive = true
+        hudSTAPersistenceTestStatus = "Switching HUD mode 6 → 4; relay infrastructure stays running…"
+        logger.log(
+            "HUD STA TEST",
+            "BEGIN expectedIP=\(hudSTAPersistenceTestExpectedAddress) relayActive=1; sending mode4 only and preserving U2W/frame ingress"
+        )
+
+        // Keep U2W daemons and the iPhone frame-ingress loop running. Only switch
+        // the HUD renderer to stock mode 4. This directly tests whether STA is a
+        // renderer-independent association on this firmware.
+        bluetooth.enqueue(HudCommands.kivicMode(4), label: "STA persistence test → IOS_HUD_MODE(4) only")
+        restoreDashboardOperatingMode(reason: "mode 6→4 STA persistence test")
+
+        hudSTAPersistenceTestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var elapsed = 0.0
+            for interval in [1.5, 1.5, 3.0] {
+                let ns = UInt64(interval * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: ns)
+                elapsed += interval
+                guard !Task.isCancelled, self.hudSTAPersistenceTestActive else { return }
+                self.bluetooth.enqueue(
+                    HudCommands.wifiSTAStatusRequest(),
+                    label: "STA persistence test → request status after mode4 @\(String(format: "%.1f", elapsed))s"
+                )
+                self.logger.log("HUD STA TEST", "requested WifiSTA status after mode4 checkpoint=\(String(format: "%.1f", elapsed))s")
+            }
+
+            try? await Task.sleep(for: .seconds(1.0))
+            guard !Task.isCancelled, self.hudSTAPersistenceTestActive else { return }
+            let expected = self.hudSTAPersistenceTestExpectedAddress
+            if !self.hudSTAPersistenceTestSawStatusEvent {
+                self.hudSTAPersistenceTestStatus = "Inconclusive: HUD emitted no STA status event in mode 4"
+                self.logger.log("HUD STA TEST", "RESULT inconclusive no-status-event expectedIP=\(expected)")
+            } else if self.hudSTAPersistenceTestLastLinkUp {
+                let same = self.hudSTAPersistenceTestLastAddress == expected
+                self.hudSTAPersistenceTestStatus = same
+                    ? "PASS candidate: STA survived mode 4 at same IP \(expected)"
+                    : "STA remained up, but IP changed to \(self.hudSTAPersistenceTestLastAddress)"
+                self.logger.log(
+                    "HUD STA TEST",
+                    "RESULT sta-survived linkUp=1 expectedIP=\(expected) observedIP=\(self.hudSTAPersistenceTestLastAddress) sameIP=\(same ? 1 : 0)"
+                )
+            } else {
+                self.hudSTAPersistenceTestStatus = "FAIL candidate: HUD reported STA disconnected in mode 4"
+                self.logger.log("HUD STA TEST", "RESULT sta-dropped linkUp=0 expectedIP=\(expected)")
+            }
+            self.hudSTAPersistenceTestActive = false
+            self.hudSTAPersistenceTestTask = nil
+        }
+    }
+
+    func restoreHUDMode6AfterSTAPersistenceTest() {
+        guard hudU2WLiveRelayActive, bluetooth.state == .connected else {
+            hudSTAPersistenceTestStatus = "Enable Map Mode relay first"
+            return
+        }
+        hudSTAPersistenceTestTask?.cancel()
+        hudSTAPersistenceTestTask = nil
+        hudSTAPersistenceTestActive = false
+        hudU2WKivicKickTask?.cancel()
+        hudU2WKivicKickCount = 0
+        hudSTAPersistenceTestStatus = "Sending mode 6 only — no Wi-Fi credentials…"
+        logger.log("HUD STA TEST", "MODE6-ONLY restore requested; intentionally not sending WifiSTAMode credentials")
+        bluetooth.enqueue(HudCommands.kivicMode(6), label: "STA persistence test → mode6-only restore (no credentials)")
+
+        hudSTAPersistenceTestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for attempt in 1...6 {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+                let relay = await self.u2wHUDRelayStatus()
+                if relay.established {
+                    self.hudSTAPersistenceTestStatus = "Mode 6-only restore succeeded — HUD stream active in \(attempt)s"
+                    self.logger.log("HUD STA TEST", "MODE6-ONLY RESULT success seconds=\(attempt) session=\(relay.sessionID)")
+                    self.hudSTAPersistenceTestTask = nil
+                    return
+                }
+            }
+            self.hudSTAPersistenceTestStatus = "Mode 6-only restore did not stream within 6s; use Retry HUD display or Disable/Enable"
+            self.logger.log("HUD STA TEST", "MODE6-ONLY RESULT no-stream-within-6s")
+            self.hudSTAPersistenceTestTask = nil
         }
     }
 
@@ -950,6 +1173,13 @@ final class AppState {
     func stopHUDU2WSTAHomeProbe() {
         hudU2WSTAStatusTask?.cancel()
         hudU2WSTAStatusTask = nil
+        hudSTAPersistenceTestTask?.cancel()
+        hudSTAPersistenceTestTask = nil
+        hudSTAPersistenceTestActive = false
+        hudU2WNativeOBDProbeTask?.cancel()
+        hudU2WNativeOBDProbeTask = nil
+        hudU2WNativeOBDProbeActive = false
+        hudU2WNativeOBDProbeStatus = "Not running"
         hudU2WRelayFrameTask?.cancel()
         hudU2WRelayFrameTask = nil
         hudU2WKivicKickTask?.cancel()

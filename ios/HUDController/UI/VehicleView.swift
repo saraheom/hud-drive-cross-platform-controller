@@ -38,6 +38,13 @@ struct VehicleView: View {
                                 value: state.obd.supportedPIDs.isEmpty ? "—" : state.obd.supportedPIDs
                             )
 
+                            Toggle("OBD speed protocol trace", isOn: Binding(
+                                get: { state.bluetooth.obdSpeedTraceEnabled },
+                                set: { state.bluetooth.obdSpeedTraceEnabled = $0 }
+                            ))
+                            LabeledContent("OBD trace", value: state.bluetooth.obdSpeedTraceStatus)
+                            HudDescription("Road-test instrumentation only. This is passive: the iPhone does not connect to the OBD adapter and does not send extra PID requests. While enabled, the log annotates HUD→iPhone BLE frames as OBD TRACE / OBD TRACE RX and compares numeric payload candidates against simultaneous GPS mph/km/h. Leave this ON for tomorrow's drive so we can determine whether true OBD driving velocity is exposed over the existing HUD BLE path.")
+
                             Divider()
                             Text("Freeride HUD widgets").font(.headline)
                             Picker("Freeride left", selection: Binding(

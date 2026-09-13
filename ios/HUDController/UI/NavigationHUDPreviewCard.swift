@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// v90.35.3.10 compact Map Mode + relay + layout-calibration control surface.
+/// v90.35.3.11 road-test Map Mode + OBD/STA instrumentation control surface.
 ///
 /// The preferred physical path keeps the iPhone on the Carlinkit AP, places the
 /// HUD in stock KivicCast STA mode 6, and relays rendered 480x240 JPEG frames
@@ -10,6 +10,7 @@ struct NavigationHUDPreviewCard: View {
     @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = "NISSAN68"
     @AppStorage("HUD.U2WHomeProbe.password") private var u2wPassword = ""
     @State private var showRelayDiagnostics = false
+    @State private var showSTAPersistenceTest = false
     @State private var showMapCustomization = false
 
     private let accent = HudTheme.accent
@@ -40,6 +41,7 @@ struct NavigationHUDPreviewCard: View {
                         mapAppearanceControls
                         mapCropControls
                         sizeControls
+                        speedLimitSignControls
                         widgetPositionControls
                         rightSideFineTuningControls
                         componentControls
@@ -131,6 +133,35 @@ struct NavigationHUDPreviewCard: View {
                         state.mainVideo.reconnect(reason: "Map Mode UI")
                     }
                     .buttonStyle(.bordered)
+
+                    DisclosureGroup(isExpanded: $showSTAPersistenceTest) {
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text(state.hudSTAPersistenceTestStatus)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+
+                            Button("Test mode 6 → 4 STA persistence") {
+                                state.runHUDMode4STAPersistenceTest()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!state.hudU2WLiveRelayActive || state.hudSTAPersistenceTestActive)
+
+                            Button("Return Map Mode — mode 6 only") {
+                                state.restoreHUDMode6AfterSTAPersistenceTest()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!state.hudU2WLiveRelayActive)
+
+                            Text("Experimental road-test only. The first button leaves U2W/frame ingress running, sends HUD mode 4, then requests stock STA status at several checkpoints without clearing credentials. The second sends only mode 6—no SSID/password—to test whether an existing association can resume Map Mode immediately.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 5)
+                    } label: {
+                        Label("Mode 6 → 4 Wi-Fi association test", systemImage: "wifi.router")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .tint(accent)
                 }
                 .font(.caption)
                 .padding(.top, 6)
@@ -269,6 +300,51 @@ struct NavigationHUDPreviewCard: View {
                 )
             )
         }
+    }
+
+
+    private var speedLimitSignControls: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("Speed-limit sign")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button("Reset") {
+                    state.mapModeSettings.resetSpeedLimitStyling()
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+            }
+
+            tuningSlider(
+                icon: "rectangle.compress.vertical",
+                title: "Sign height",
+                value: Binding(
+                    get: { state.mapModeSettings.speedLimitSignHeightScale },
+                    set: { state.mapModeSettings.speedLimitSignHeightScale = $0 }
+                ),
+                range: 0.80...2.00,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+            tuningSlider(
+                icon: "textformat.size",
+                title: "Number font size",
+                value: Binding(
+                    get: { state.mapModeSettings.speedLimitFontScale },
+                    set: { state.mapModeSettings.speedLimitFontScale = $0 }
+                ),
+                range: 0.70...1.60,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+
+            Text("The sign width, white fill, black border, and black numeral remain fixed. Only vertical height and numeral size are adjustable.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var widgetPositionControls: some View {
@@ -518,17 +594,29 @@ struct NavigationHUDPreviewCard: View {
     }
 
     private var obdProbeControls: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Toggle(
-                "Native OBD speed overlay experiment",
-                isOn: Binding(
-                    get: { state.mapModeSettings.nativeOBDSpeedOverlayExperiment },
-                    set: { state.mapModeSettings.nativeOBDSpeedOverlayExperiment = $0 }
-                )
-            )
-            .tint(accent)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("OBD speed road-test probe")
+                .font(.subheadline.weight(.semibold))
 
-            Text("When ON and OBD is connected, the physical MJPEG frame intentionally leaves the custom speed number blank. After the HUD starts streaming, the app sends the recovered OBD_DRIVING_VELOCITY item (index 10) and re-opens the stock HUD layer. If a speed number appears there, it came from the HUD's true OBD path rather than GPS. The in-app preview still shows the speed for layout tuning.")
+            LabeledContent("HUD-side OBD", value: state.obd.connected ? "Connected" : "Not confirmed")
+            LabeledContent("Visual probe", value: state.hudU2WNativeOBDProbeStatus)
+
+            HStack(spacing: 8) {
+                Button("Start 12s native OBD speed probe") {
+                    state.startHUDU2WNativeOBDSpeedProbe()
+                }
+                .buttonStyle(.bordered)
+                .disabled(!state.hudU2WLiveRelayActive || !state.obd.connected || state.hudU2WNativeOBDProbeActive)
+
+                if state.hudU2WNativeOBDProbeActive {
+                    Button("Stop", role: .destructive) {
+                        state.stopHUDU2WNativeOBDSpeedProbe()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            Text("Optional experiment for tomorrow's drive. For 12 seconds the iPhone-rendered GPS speed number is intentionally blank while the app asks for OBD_DRIVING_VELOCITY (item 10). The first 6 seconds leave the viewer/fullscreen state untouched; the second 6 seconds temporarily exposes the stock HUD layer. If a live speed number appears in that blank area, it is strong evidence that mode 6 can overlay the HUD's internally decoded OBD speed without sending that value back to iOS. The probe auto-restores the normal custom speed and does not re-send mode 6.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

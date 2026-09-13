@@ -1,3 +1,17 @@
+# HUD Controller v90.35.3.11 — road-test OBD trace + speed-sign tuning + STA persistence probe
+
+Paired adapter remains **U2W v8.15.1 No Known-Image Primer**; no adapter-side changes are required for this app revision. v90.35.3.10.1 Map Mode streaming, live-map crop/fade controls, grayscale lane tuning, compact UI, navigation holdover, and finalized ambient-light behavior are retained.
+
+For tomorrow's combined drive test, this revision adds three deliberately isolated diagnostics/customization features. First, passive **OBD speed protocol tracing** annotates HUD→iPhone BLE packets against simultaneous GPS mph/km/h without opening a second OBD connection or sending extra PID requests. `OBD TRACE`, `OBD TRACE RX`, and `OBD STATUS` log entries preserve raw payload bytes plus plausible u8/u16/u32/float candidates that track vehicle speed. A separate optional 12-second visual probe temporarily blanks the custom GPS speed and asks the HUD for stock `OBD_DRIVING_VELOCITY`; phase 1 leaves fullscreen untouched, and phase 2 briefly exposes the stock HUD layer.
+
+Second, the Map Mode speed-limit sign now has persisted **Sign height** (80–200%) and **Number font size** (70–160%) controls. Width, white fill, black border, and black number remain fixed.
+
+Third, a collapsed **Mode 6 → 4 Wi-Fi association test** keeps U2W/frame ingress running, switches only the HUD renderer to mode 4, and requests stock STA status at 1.5/3/6 seconds. A separate mode-6-only return button sends no SSID/password, allowing one drive to test whether the HUD's U2W association survives normal HUD mode.
+
+See `docs/V90_35_3_11_ROAD_TEST_INSTRUMENTATION.md` and `V90_35_3_11_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.10.1 — compact Map Mode UI + visual calibration
 
 Paired adapter update: **U2W v8.15.1 No Known-Image Primer**. This release keeps the v90.35.3.9.1 map-video/navigation/ambient reliability behavior and only refines Map Mode presentation, startup priming, and UI density.

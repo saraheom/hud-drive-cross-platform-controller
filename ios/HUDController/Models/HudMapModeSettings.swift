@@ -67,6 +67,12 @@ final class HudMapModeSettings {
     var mapFadeHorizontal: Double { didSet { defaults.set(mapFadeHorizontal, forKey: "HUD.MapMode.mapFadeHorizontal") } }
     var mapFadeVertical: Double { didSet { defaults.set(mapFadeVertical, forKey: "HUD.MapMode.mapFadeVertical") } }
 
+    // Left-side speed-limit sign fine tuning. Width remains fixed so the sign
+    // keeps its regulatory-sign silhouette while users can make it taller and
+    // independently enlarge/reduce the numeric speed value.
+    var speedLimitSignHeightScale: Double { didSet { defaults.set(speedLimitSignHeightScale, forKey: "HUD.MapMode.speedLimitSignHeightScale") } }
+    var speedLimitFontScale: Double { didSet { defaults.set(speedLimitFontScale, forKey: "HUD.MapMode.speedLimitFontScale") } }
+
     var showSpeed: Bool { didSet { defaults.set(showSpeed, forKey: "HUD.MapMode.showSpeed") } }
     var showSpeedLimit: Bool { didSet { defaults.set(showSpeedLimit, forKey: "HUD.MapMode.showSpeedLimit") } }
     var showMap: Bool { didSet { defaults.set(showMap, forKey: "HUD.MapMode.showMap") } }
@@ -133,6 +139,8 @@ final class HudMapModeSettings {
         sourceMapOffsetY = min(1.0, max(-1.0, double("HUD.MapMode.sourceMapOffsetY", default: 0.0)))
         mapFadeHorizontal = min(0.35, max(0.0, double("HUD.MapMode.mapFadeHorizontal", default: 0.045)))
         mapFadeVertical = min(0.35, max(0.0, double("HUD.MapMode.mapFadeVertical", default: 0.0)))
+        speedLimitSignHeightScale = min(2.00, max(0.80, double("HUD.MapMode.speedLimitSignHeightScale", default: 1.0)))
+        speedLimitFontScale = min(1.60, max(0.70, double("HUD.MapMode.speedLimitFontScale", default: 1.0)))
 
         showSpeed = bool("HUD.MapMode.showSpeed", default: true)
         showSpeedLimit = bool("HUD.MapMode.showSpeedLimit", default: true)
@@ -165,6 +173,11 @@ final class HudMapModeSettings {
         laneOffsetY = 0
         etaOffsetX = 0
         etaOffsetY = 0
+    }
+
+    func resetSpeedLimitStyling() {
+        speedLimitSignHeightScale = 1.0
+        speedLimitFontScale = 1.0
     }
 
     func resetRightStyling() {

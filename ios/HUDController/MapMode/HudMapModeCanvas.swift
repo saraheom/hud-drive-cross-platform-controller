@@ -83,10 +83,17 @@ struct HudMapModeCanvas: View {
 
     private var usSpeedLimitSign: some View {
         Text(snapshot.speedLimitMph > 0 ? "\(snapshot.speedLimitMph)" : "—")
-            .font(.system(size: 24, weight: .bold, design: .rounded))
-            .minimumScaleFactor(0.60)
+            .font(.system(
+                size: CGFloat(24 * settings.speedLimitFontScale),
+                weight: .bold,
+                design: .rounded
+            ))
+            .minimumScaleFactor(0.55)
             .foregroundStyle(.black)
-            .frame(width: 42, height: 34)
+            .frame(
+                width: 42,
+                height: CGFloat(34 * settings.speedLimitSignHeightScale)
+            )
             .background(.white)
             .overlay {
                 RoundedRectangle(cornerRadius: 2)

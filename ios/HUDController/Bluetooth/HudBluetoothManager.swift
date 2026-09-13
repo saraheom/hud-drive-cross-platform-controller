@@ -31,6 +31,20 @@ final class HudBluetoothManager: NSObject {
     private(set) var hudAmbientRawValue: Int?
     private(set) var hudAmbientLastUpdated: Date?
 
+    // v90.35.3.11 temporary/passive road-test instrumentation. The HUD already
+    // owns the OBD adapter connection; this trace never opens a second OBD BLE
+    // connection and never sends OBD requests. It only annotates HUD->iPhone RX
+    // frames against the app's simultaneous GPS speed so we can identify any
+    // hidden driving-velocity payload that may be exposed by this firmware.
+    var obdSpeedTraceEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(obdSpeedTraceEnabled, forKey: "HUD.OBD.speedProtocolTraceEnabled")
+            obdSpeedTraceStatus = obdSpeedTraceEnabled ? "Armed — passive HUD RX correlation" : "Disabled"
+            logger.log("OBD TRACE", obdSpeedTraceEnabled ? "Passive OBD speed protocol trace enabled" : "Passive OBD speed protocol trace disabled")
+        }
+    }
+    private(set) var obdSpeedTraceStatus = "Armed — waiting for speed samples"
+
     var onOBDConnectionEvent: ((Bool, String) -> Void)?
     var onWiFiSTAStatusEvent: ((Int, String, String) -> Void)?
     var onTransportReady: (() -> Void)?
@@ -46,6 +60,12 @@ final class HudBluetoothManager: NSObject {
     private var currentLabel = ""
     private var writing = false
     private var rxBuffer = Data()
+
+    private var obdTraceReferenceSpeedMph = 0
+    private var obdTraceConnected = false
+    private var obdTraceLastHeartbeatAt = Date.distantPast
+    private var obdTraceLastFrameSignatureByKey: [String: String] = [:]
+    private var obdTraceLastFrameAtByKey: [String: Date] = [:]
 
     private let savedPeripheralIDKey = "HUD.savedPeripheralIdentifier"
     private let savedPeripheralNameKey = "HUD.savedPeripheralName"
@@ -75,6 +95,10 @@ final class HudBluetoothManager: NSObject {
 
     init(logger: LogManager) {
         self.logger = logger
+        let defaults = UserDefaults.standard
+        self.obdSpeedTraceEnabled = defaults.object(forKey: "HUD.OBD.speedProtocolTraceEnabled") == nil
+            ? true
+            : defaults.bool(forKey: "HUD.OBD.speedProtocolTraceEnabled")
         super.init()
         central = CBCentralManager(delegate: self, queue: nil, options: [
             CBCentralManagerOptionRestoreIdentifierKey: "HUDControllerCentral"
@@ -323,8 +347,128 @@ final class HudBluetoothManager: NSObject {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+
+    func updateOBDTraceReferenceSpeed(gpsMph: Int) {
+        obdTraceReferenceSpeedMph = max(0, gpsMph)
+        guard obdSpeedTraceEnabled else { return }
+        let now = Date()
+        guard now.timeIntervalSince(obdTraceLastHeartbeatAt) >= 1.0 else { return }
+        obdTraceLastHeartbeatAt = now
+        let kmh = Int((Double(obdTraceReferenceSpeedMph) * 1.609344).rounded())
+        obdSpeedTraceStatus = "Tracing • GPS \(obdTraceReferenceSpeedMph) mph / \(kmh) km/h • OBD \(obdTraceConnected ? "connected" : "not confirmed")"
+        logger.log(
+            "OBD TRACE",
+            "reference gps=\(obdTraceReferenceSpeedMph)mph \(kmh)kmh hudOBDConnected=\(obdTraceConnected ? 1 : 0)"
+        )
+    }
+
+    private func obdTraceScalarCandidates(payload: Data) -> [String] {
+        guard !payload.isEmpty else { return [] }
+        let bytes = [UInt8](payload)
+        let mph = obdTraceReferenceSpeedMph
+        let kmh = Int((Double(mph) * 1.609344).rounded())
+        var matches: [String] = []
+
+        func add(_ text: String) {
+            if !matches.contains(text) { matches.append(text) }
+        }
+        func closeToSpeed(_ value: Int) -> String? {
+            if mph > 0, abs(value - mph) <= 3 { return "mph" }
+            if kmh > 0, abs(value - kmh) <= 5 { return "kmh" }
+            return nil
+        }
+
+        for i in bytes.indices {
+            let v = Int(bytes[i])
+            if let basis = closeToSpeed(v) {
+                add("u8@\(i)=\(v)≈\(basis)")
+            }
+        }
+        if bytes.count >= 2 {
+            for i in 0..<(bytes.count - 1) {
+                let be = (Int(bytes[i]) << 8) | Int(bytes[i + 1])
+                let le = (Int(bytes[i + 1]) << 8) | Int(bytes[i])
+                if be <= 300, let basis = closeToSpeed(be) { add("u16be@\(i)=\(be)≈\(basis)") }
+                if le <= 300, let basis = closeToSpeed(le) { add("u16le@\(i)=\(le)≈\(basis)") }
+            }
+        }
+        if bytes.count >= 4 {
+            for i in 0...(bytes.count - 4) {
+                let be = (UInt32(bytes[i]) << 24) | (UInt32(bytes[i + 1]) << 16) | (UInt32(bytes[i + 2]) << 8) | UInt32(bytes[i + 3])
+                let le = (UInt32(bytes[i + 3]) << 24) | (UInt32(bytes[i + 2]) << 16) | (UInt32(bytes[i + 1]) << 8) | UInt32(bytes[i])
+                if be <= 300, let basis = closeToSpeed(Int(be)) { add("u32be@\(i)=\(be)≈\(basis)") }
+                if le <= 300, let basis = closeToSpeed(Int(le)) { add("u32le@\(i)=\(le)≈\(basis)") }
+
+                let fbe = Float(bitPattern: be)
+                let fle = Float(bitPattern: le)
+                if fbe.isFinite, fbe >= 0, fbe <= 300 {
+                    let rounded = Int(fbe.rounded())
+                    if let basis = closeToSpeed(rounded) { add("f32be@\(i)=\(String(format: "%.2f", fbe))≈\(basis)") }
+                }
+                if fle.isFinite, fle >= 0, fle <= 300 {
+                    let rounded = Int(fle.rounded())
+                    if let basis = closeToSpeed(rounded) { add("f32le@\(i)=\(String(format: "%.2f", fle))≈\(basis)") }
+                }
+            }
+        }
+
+        if let ascii = String(data: payload, encoding: .ascii) {
+            let trimmed = ascii.trimmingCharacters(in: .controlCharacters.union(.whitespacesAndNewlines))
+            if !trimmed.isEmpty, trimmed.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value < 127 }) {
+                add("ascii=\(trimmed.prefix(48))")
+            }
+        }
+        return matches
+    }
+
+    private func tracePossibleOBDSpeedFrame(_ body: Data) {
+        guard obdSpeedTraceEnabled, body.count >= 3 else { return }
+        let command = Int(body[0])
+        let p1 = Int(body[1])
+        let p2 = Int(body[2])
+        let payload = body.count > 3 ? body.subdata(in: 3..<body.count) : Data()
+        let key = "\(command)/\(p1)/\(p2)"
+        let signature = HudProtocol.hex(body)
+        let now = Date()
+        let matches = obdTraceScalarCandidates(payload: payload)
+
+        // Known high-rate housekeeping frames are already decoded elsewhere.
+        // Keep them out of the forensic stream unless a scalar happens to track
+        // the simultaneous GPS speed. OBD-family events (p1=7/100) are always kept.
+        let housekeeping = (p1 == 1 && p2 == 1) || (p1 == 5 && p2 == 0) ||
+            (p1 == 6 && p2 == 0) || (p1 == 30 && p2 == 0)
+        let force = p1 == 7 || p1 == 100 || !matches.isEmpty
+        if housekeeping && !force { return }
+
+        let lastSignature = obdTraceLastFrameSignatureByKey[key]
+        let lastAt = obdTraceLastFrameAtByKey[key] ?? .distantPast
+        if !force, lastSignature == signature, now.timeIntervalSince(lastAt) < 2.0 { return }
+        if force, lastSignature == signature, now.timeIntervalSince(lastAt) < 0.5 { return }
+        obdTraceLastFrameSignatureByKey[key] = signature
+        obdTraceLastFrameAtByKey[key] = now
+
+        let kmh = Int((Double(obdTraceReferenceSpeedMph) * 1.609344).rounded())
+        let candidateText = matches.isEmpty ? "none" : matches.joined(separator: ",")
+        logger.log(
+            "OBD TRACE RX",
+            "hdr=\(key) payloadBytes=\(payload.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh candidates=[\(candidateText)] payload=\(HudProtocol.hex(payload))"
+        )
+    }
+
     private func parseVehicleEvent(_ frame: Data) {
         guard let body = HudProtocol.unescape(frame), body.count >= 3 else { return }
+        tracePossibleOBDSpeedFrame(body)
+
+        // Decompiled OBDIIStatusEventPacket: EventPacket(command=3,p1=7,p2=1),
+        // payload = int32 status + int32 error. This is connection/update status,
+        // not vehicle speed, but logging it separates true OBD-family traffic
+        // from any unknown dynamic payload discovered during the drive.
+        if body[0] == 3, body[1] == 7, body[2] == 1, body.count >= 11 {
+            let status = (Int(body[3]) << 24) | (Int(body[4]) << 16) | (Int(body[5]) << 8) | Int(body[6])
+            let error = (Int(body[7]) << 24) | (Int(body[8]) << 16) | (Int(body[9]) << 8) | Int(body[10])
+            logger.log("OBD STATUS", "status=\(status) error=\(error)")
+            return
+        }
 
         // Experimental brightness diagnostic. Captured traffic contains
         // event command=3, p1=30, p2=0 followed by a big-endian int32.
@@ -384,6 +528,7 @@ final class HudBluetoothManager: NSObject {
         let supported = String(data: textData, encoding: .utf8) ?? ""
         index += length
         let connected = body[index] != 0
+        obdTraceConnected = connected
 
         logger.log("OBD EVENT", "connected=\(connected), supported=\(supported)")
         onOBDConnectionEvent?(connected, supported)
