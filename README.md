@@ -1,3 +1,15 @@
+# HUD Controller v90.35.3.14 — MainVideo FD reselection + Route Guidance holdover + OBD diagnostic reassembly
+
+This release builds directly on **v90.35.3.13.3** and preserves the three-preset Map Mode designer, including the one-time migration of the existing pre-designer layout into Preset 1. It is paired with **U2W v8.18 MainVideo FD Reselection**.
+
+The iOS app now keeps an active Google Maps/Apple Maps route through bounded temporary Route Guidance transport or malformed-JSON outages instead of immediately dropping the physical HUD to Freeride. The HUD OBD diagnostic path now has a notification-aware large-frame reassembler that can keep a diagnostic frame open while ordinary HUD events are interleaved. No production OBD vehicle-speed source is enabled yet.
+
+U2W v8.18 replaces only the MainVideo preload exporter shim and its status CGI. It validates a candidate fd using an Annex-B SPS/PPS/IDR bootstrap, invalidates the selected fd when it is closed or begins carrying implausible/non-H.264 content, and can promote a newly validated fd. The existing **v8.17 latest-frame HTTP streamer remains installed and unchanged**. A full Carlinkit power cycle is required after installing or uninstalling v8.18.
+
+See `docs/V90_35_3_14_MAINVIDEO_FD_RESELECT_ROUTE_HOLDOVER_OBD_REASSEMBLY.md`, `V90_35_3_14_BUILD_VERIFY.txt`, and `u2w/v8.18_MainVideoFDReselect/README.md`.
+
+---
+
 # HUD Controller v90.35.3.13.1.1 — CI alignment only
 
 This is the same runtime as **v90.35.3.13.1** and uses the same **U2W v8.17 LatestFrame** image. The GitHub Actions Xcode 26 build succeeded, but two legacy source-string XCTest assertions still expected the pre-v90.35.3.13 Map Mode section title and the old 10-second MainVideo watchdog constant. Those tests are now aligned with the intentional v90.35.3.13 behavior: **Right-side component size / spacing** and a **3-second decoder-stall watchdog** with a **12-second source-silence allowance**.
