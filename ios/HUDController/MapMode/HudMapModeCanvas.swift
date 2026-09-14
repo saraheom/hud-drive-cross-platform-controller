@@ -31,8 +31,8 @@ struct HudMapModeCanvas: View {
                         .frame(width: size.width * 0.58, height: size.height)
                         .scaleEffect(settings.centerScale)
                         .offset(
-                            x: CGFloat(settings.centerOffsetX),
-                            y: CGFloat(settings.centerOffsetY)
+                            x: CGFloat(settings.centerOffsetX + settings.designerMapOffsetX),
+                            y: CGFloat(settings.centerOffsetY + settings.designerMapOffsetY)
                         )
 
                     rightWidget
@@ -64,6 +64,11 @@ struct HudMapModeCanvas: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.60))
                 }
+                .scaleEffect(settings.speedScale)
+                .offset(
+                    x: CGFloat(settings.designerSpeedOffsetX / max(0.01, settings.leftScale)),
+                    y: CGFloat(settings.designerSpeedOffsetY / max(0.01, settings.leftScale))
+                )
             } else if settings.showSpeed && suppressCustomSpeedForNativeOBDProbe {
                 // Deliberately reserve the left speed area during the physical
                 // OBD-overlay experiment. Any number visible on the HUD is then
@@ -101,6 +106,10 @@ struct HudMapModeCanvas: View {
                     .padding(2)
             }
             .clipShape(RoundedRectangle(cornerRadius: 3))
+            .offset(
+                x: CGFloat(settings.designerSpeedLimitOffsetX / max(0.01, settings.leftScale)),
+                y: CGFloat(settings.designerSpeedLimitOffsetY / max(0.01, settings.leftScale))
+            )
     }
 
     @ViewBuilder
@@ -157,6 +166,10 @@ struct HudMapModeCanvas: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.50)
                     .frame(maxWidth: .infinity, alignment: .center)
+                    .offset(
+                        x: CGFloat(settings.designerStreetOffsetX / max(0.01, settings.rightScale)),
+                        y: CGFloat(settings.designerStreetOffsetY / max(0.01, settings.rightScale))
+                    )
             }
 
             if settings.showTurningStreet && (settings.showManeuver || settings.showDistance) {
@@ -174,8 +187,8 @@ struct HudMapModeCanvas: View {
                             .foregroundStyle(.white)
                             .frame(height: CGFloat(40 * max(1.0, settings.maneuverArrowScale)))
                             .offset(
-                                x: CGFloat(settings.maneuverOffsetX),
-                                y: CGFloat(settings.maneuverOffsetY)
+                                x: CGFloat(settings.maneuverOffsetX + settings.designerManeuverOffsetX / max(0.01, settings.rightScale)),
+                                y: CGFloat(settings.maneuverOffsetY + settings.designerManeuverOffsetY / max(0.01, settings.rightScale))
                             )
                     }
 
@@ -188,6 +201,10 @@ struct HudMapModeCanvas: View {
                             ))
                             .minimumScaleFactor(0.50)
                             .lineLimit(1)
+                            .offset(
+                                x: CGFloat(settings.designerDistanceOffsetX / max(0.01, settings.rightScale)),
+                                y: CGFloat(settings.designerDistanceOffsetY / max(0.01, settings.rightScale))
+                            )
                     }
                 }
             }
@@ -201,8 +218,8 @@ struct HudMapModeCanvas: View {
                     .frame(height: CGFloat(25 * max(1.0, settings.laneScale)))
                     .scaleEffect(settings.laneScale)
                     .offset(
-                        x: CGFloat(settings.laneOffsetX),
-                        y: CGFloat(settings.laneOffsetY)
+                        x: CGFloat(settings.laneOffsetX + settings.designerLaneOffsetX / max(0.01, settings.rightScale)),
+                        y: CGFloat(settings.laneOffsetY + settings.designerLaneOffsetY / max(0.01, settings.rightScale))
                     )
             }
 
@@ -221,16 +238,24 @@ struct HudMapModeCanvas: View {
                             ))
                             .lineLimit(1)
                             .minimumScaleFactor(0.55)
+                            .offset(
+                                x: CGFloat(settings.designerETAOffsetX / max(0.01, settings.rightScale)),
+                                y: CGFloat(settings.designerETAOffsetY / max(0.01, settings.rightScale))
+                            )
                     }
                     if settings.showTimeLeft {
                         Text(nonempty(snapshot.timeLeftText, fallback: "—"))
                             .font(.system(
-                                size: CGFloat(9.5 * settings.etaScale),
+                                size: CGFloat(9.5 * settings.etaScale * settings.timeLeftScale),
                                 weight: .medium,
                                 design: .rounded
                             ))
                             .foregroundStyle(.white.opacity(0.64))
                             .lineLimit(1)
+                            .offset(
+                                x: CGFloat(settings.designerTimeLeftOffsetX / max(0.01, settings.rightScale)),
+                                y: CGFloat(settings.designerTimeLeftOffsetY / max(0.01, settings.rightScale))
+                            )
                     }
                 }
                 .offset(

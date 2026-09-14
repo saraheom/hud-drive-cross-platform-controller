@@ -13,6 +13,9 @@ struct NavigationHUDPreviewCard: View {
     @State private var showRelayDiagnostics = false
     @State private var showSTAPersistenceTest = false
     @State private var showMapCustomization = false
+    @State private var selectedDesignerComponent: HudMapDesignerComponent = .map
+    @State private var designerDragOrigin = CGSize.zero
+    @State private var designerDragging = false
 
     private let accent = HudTheme.accent
 
@@ -35,10 +38,12 @@ struct NavigationHUDPreviewCard: View {
                         .stroke(.white.opacity(0.08), lineWidth: 1)
                 }
 
+                presetQuickSwitch
                 mapModeRelayControls
 
                 DisclosureGroup(isExpanded: $showMapCustomization) {
                     VStack(alignment: .leading, spacing: 14) {
+                        layoutDesignerControls
                         mapAppearanceControls
                         mapCropControls
                         sizeControls
@@ -72,6 +77,267 @@ struct NavigationHUDPreviewCard: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+
+    private var presetQuickSwitch: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("Map design presets", systemImage: "square.grid.3x1.below.line.grid.1x2")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("auto-saved")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Picker(
+                "Map design preset",
+                selection: Binding(
+                    get: { state.mapModeSettings.activePresetIndex },
+                    set: { state.mapModeSettings.selectPreset($0) }
+                )
+            ) {
+                ForEach(0..<3, id: \.self) { index in
+                    Text(state.mapModeSettings.presetTitle(index)).tag(index)
+                }
+            }
+            .pickerStyle(.segmented)
+            .tint(accent)
+
+            if state.mapModeSettings.activePresetIndex == 0 {
+                Text("Preset 1 was initialized from the Map Mode customization already stored on this phone. Updating to this repo does not replace that layout.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var layoutDesignerControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Map Mode layout designer")
+                        .font(.subheadline.weight(.semibold))
+                    Text("480×240 physical HUD canvas • select a component, then drag")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Menu {
+                    ForEach(0..<3, id: \.self) { index in
+                        if index != state.mapModeSettings.activePresetIndex {
+                            Button("Copy into \(state.mapModeSettings.presetTitle(index))") {
+                                state.mapModeSettings.duplicateCurrentPreset(to: index)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Duplicate", systemImage: "doc.on.doc")
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(HudMapDesignerComponent.allCases) { component in
+                        Button {
+                            selectedDesignerComponent = component
+                            designerDragging = false
+                        } label: {
+                            Label(component.title, systemImage: component.systemImage)
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(selectedDesignerComponent == component ? accent : Color.gray)
+                    }
+                }
+            }
+
+            ZStack {
+                HudMapModeCanvas(
+                    snapshot: state.mapModePreviewSnapshot,
+                    settings: state.mapModeSettings,
+                    sourceMapImage: state.mapModePreviewSourceImage,
+                    previewLanePlaceholder: true,
+                    suppressCustomSpeedForNativeOBDProbe: false
+                )
+
+                GeometryReader { proxy in
+                    Canvas { context, size in
+                        let gridColor = Color.white.opacity(0.13)
+                        let guideColor = Color.white.opacity(0.22)
+                        for fraction in [0.25, 0.50, 0.75] {
+                            var v = Path()
+                            v.move(to: CGPoint(x: size.width * CGFloat(fraction), y: 0))
+                            v.addLine(to: CGPoint(x: size.width * CGFloat(fraction), y: size.height))
+                            context.stroke(v, with: .color(gridColor), lineWidth: 0.6)
+                        }
+                        for fraction in [0.25, 0.50, 0.75] {
+                            var h = Path()
+                            h.move(to: CGPoint(x: 0, y: size.height * CGFloat(fraction)))
+                            h.addLine(to: CGPoint(x: size.width, y: size.height * CGFloat(fraction)))
+                            context.stroke(h, with: .color(gridColor), lineWidth: 0.6)
+                        }
+                        for fraction in [0.20, 0.78] {
+                            var v = Path()
+                            v.move(to: CGPoint(x: size.width * CGFloat(fraction), y: 0))
+                            v.addLine(to: CGPoint(x: size.width * CGFloat(fraction), y: size.height))
+                            context.stroke(v, with: .color(guideColor), lineWidth: 1.0)
+                        }
+                    }
+                    .allowsHitTesting(false)
+
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 1)
+                                .onChanged { value in
+                                    if !designerDragging {
+                                        let current = state.mapModeSettings.designerOffset(for: selectedDesignerComponent)
+                                        designerDragOrigin = CGSize(width: CGFloat(current.x), height: CGFloat(current.y))
+                                        designerDragging = true
+                                    }
+                                    let sx = 480.0 / max(1.0, Double(proxy.size.width))
+                                    let sy = 240.0 / max(1.0, Double(proxy.size.height))
+                                    let x = snapDesignerPixel(Double(designerDragOrigin.width) + Double(value.translation.width) * sx)
+                                    let y = snapDesignerPixel(Double(designerDragOrigin.height) + Double(value.translation.height) * sy)
+                                    state.mapModeSettings.setDesignerOffset(selectedDesignerComponent, x: x, y: y)
+                                }
+                                .onEnded { _ in
+                                    designerDragging = false
+                                }
+                        )
+
+                    VStack {
+                        HStack {
+                            Label("Move: \(selectedDesignerComponent.title)", systemImage: selectedDesignerComponent.systemImage)
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(.black.opacity(0.70), in: Capsule())
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                    .padding(7)
+                    .allowsHitTesting(false)
+                }
+            }
+            .aspectRatio(2.0, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(accent.opacity(0.45), lineWidth: 1)
+            }
+
+            let selectedOffset = state.mapModeSettings.designerOffset(for: selectedDesignerComponent)
+            HStack(spacing: 8) {
+                Label(
+                    "x \(Int(selectedOffset.x)) • y \(Int(selectedOffset.y))",
+                    systemImage: "move.3d"
+                )
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button {
+                    adjustSelectedDesigner(dx: -2, dy: 0)
+                } label: { Image(systemName: "arrow.left") }
+                Button {
+                    adjustSelectedDesigner(dx: 0, dy: -2)
+                } label: { Image(systemName: "arrow.up") }
+                Button {
+                    adjustSelectedDesigner(dx: 0, dy: 2)
+                } label: { Image(systemName: "arrow.down") }
+                Button {
+                    adjustSelectedDesigner(dx: 2, dy: 0)
+                } label: { Image(systemName: "arrow.right") }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .frame(width: 18)
+                Text("Selected size")
+                    .font(.caption)
+                    .frame(width: 86, alignment: .leading)
+                Slider(
+                    value: Binding(
+                        get: { state.mapModeSettings.designerScale(for: selectedDesignerComponent) },
+                        set: { state.mapModeSettings.setDesignerScale(selectedDesignerComponent, value: $0) }
+                    ),
+                    in: designerScaleRange,
+                    step: 0.05
+                )
+                .tint(accent)
+                Text(String(format: "%.0f%%", state.mapModeSettings.designerScale(for: selectedDesignerComponent) * 100))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 42, alignment: .trailing)
+            }
+
+            HStack(spacing: 8) {
+                Button("Reset selected position") {
+                    state.mapModeSettings.resetDesignerOffset(selectedDesignerComponent)
+                }
+                .buttonStyle(.bordered)
+
+                Button("Reset all free-move offsets") {
+                    state.mapModeSettings.resetAllDesignerOffsets()
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+            }
+            .font(.caption)
+
+            HStack(spacing: 8) {
+                Button("Restore pre-designer layout") {
+                    state.mapModeSettings.restoreImportedLayout()
+                    selectedDesignerComponent = .map
+                }
+                .buttonStyle(.bordered)
+
+                Text("Restores the exact Map Mode settings captured when this 3-preset designer was first installed, then saves them into the active preset.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Drag positions snap to 2 physical HUD pixels and are bounded to the 480×240 design envelope. The renderer still clips the final frame at the physical HUD edge. Existing detailed crop, spacing, boldness, visibility, and calibration controls remain available below and are stored independently in each preset.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var designerScaleRange: ClosedRange<Double> {
+        switch selectedDesignerComponent {
+        case .speed, .timeLeft: return 0.50...1.80
+        case .speedLimit: return 0.80...2.00
+        case .map: return 0.60...1.45
+        case .turningStreet, .maneuver, .distance, .eta: return 0.60...1.60
+        case .lanes: return 0.60...1.70
+        }
+    }
+
+    private func snapDesignerPixel(_ value: Double) -> Double {
+        (value / 2.0).rounded() * 2.0
+    }
+
+    private func adjustSelectedDesigner(dx: Double, dy: Double) {
+        let current = state.mapModeSettings.designerOffset(for: selectedDesignerComponent)
+        state.mapModeSettings.setDesignerOffset(
+            selectedDesignerComponent,
+            x: snapDesignerPixel(current.x + dx),
+            y: snapDesignerPixel(current.y + dy)
+        )
     }
 
 

@@ -1,0 +1,31 @@
+HUD Controller v90.35.3.13.3 — Map Mode 3-preset designer verification
+
+Base:
+- v90.35.3.13.2.1 MainVideo / HUD viewer / OBD framing stabilization + Xcode 26 MainActor CI alignment
+- U2W v8.17 LatestFrame unchanged
+
+Production files changed:
+- ios/HUDController/Models/HudMapModeSettings.swift
+- ios/HUDController/MapMode/HudMapModeCanvas.swift
+- ios/HUDController/UI/NavigationHUDPreviewCard.swift
+
+Designer behavior:
+- Three auto-saved Map Mode presets
+- First-launch migration captures the exact existing Map Mode customization into Preset 1 before loading any preset
+- Presets 2/3 start as copies of that migrated layout
+- Separate pre-designer recovery snapshot is retained
+- Direct 480x240 drag editor for Speed, Speed limit, Map, Street, Maneuver, Distance, Lanes, ETA, Time left
+- 2-pixel snapping, bounded movement, precision nudge buttons, per-selected-component sizing
+- Designer movement is layered on existing calibration so zero new offsets preserve the previous rendering exactly
+- Existing crop/visibility/right-side tuning/calibration controls remain available and are included per preset
+- No OBD speed-limit warning visual added yet
+
+Validation:
+- pytest: 362 passed
+- Swift syntax parse: 184 files, 0 failures
+- HudMapModeSettings.swift native Swift type-check: passed
+- GitHub Actions YAML parse: 8 files, 0 failures
+- U2W v8.17 install SHA-256 unchanged: 6313ac3ec24a8a44456ae18c0a8c7f4a05b39d573479aa72b8bbff844045b19b
+- U2W v8.17 uninstall SHA-256 unchanged: 396524a1ce72ec7f39a555b054f5727e31260d6b331ed71e2f68fba2284d4ee3
+
+Full Xcode 26 compile/XCTest remains the GitHub Actions validation step.
