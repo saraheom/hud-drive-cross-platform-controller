@@ -8,7 +8,8 @@ U2W = ROOT/'u2w/v8.15_Reliability'
 
 
 def test_route_transport_faults_hold_last_valid_navigation():
-    assert 'transportFailureHoldoverInterval: TimeInterval = 45.0' in ROUTE
+    assert 'transportFailureHoldoverInterval: TimeInterval = 90.0' in ROUTE
+    assert 'malformedResponseHoldoverInterval: TimeInterval = 180.0' in ROUTE
     assert 'CARPLAY RGD HOLD' in ROUTE
     assert 'Route feed interrupted — holding last guidance' in ROUTE
     assert 'confirmations < 2' in ROUTE

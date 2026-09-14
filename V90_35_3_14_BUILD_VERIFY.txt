@@ -1,0 +1,42 @@
+HUD Controller v90.35.3.14 + U2W v8.18 — verification
+Date: 2026-09-14
+
+Base:
+  v90.35.3.13.3 Map Mode 3-preset designer
+
+Production iOS changes:
+  ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift
+    - network/HTTP active-route holdover: 90 s
+    - reachable malformed HTTP-200 JSON active-route holdover: 180 s
+    - valid decoded inactive-route confirmation behavior preserved
+  ios/HUDController/Bluetooth/HudBluetoothManager.swift
+    - notification-aware large diagnostic-frame assembler
+    - ordinary interleaved HUD events remain on normal parser path
+    - raw BLE capture remains pre-parser
+
+U2W changes:
+  u2w/v8.18_MainVideoFDReselect/
+    - validated SPS/PPS/IDR fd promotion
+    - close() lifetime invalidation
+    - content watchdog and fd reselection
+    - exact v8.11 rollback payload
+    - v8.17 streamer intentionally untouched
+
+Preserved:
+  v90.35.3.13.3 three-preset Map Mode designer
+  current-layout -> Preset 1 migration
+  5 FPS physical Map Mode cadence
+  content-blind MainVideo crop
+  navigation/media/ambient features outside scoped fixes
+
+Local validation:
+  368 pytest tests passed
+  v90.35.3.14 static release checks passed
+  184 Swift files parsed with Swift 6.2.1, 0 syntax failures
+  8 GitHub Actions workflow YAML files parsed, 0 failures
+  U2W install/uninstall shell syntax passed
+  U2W ARM shim is ELF32 ARM EABI5 soft-float shared object
+  U2W encrypted image decrypt/build/checksum verification passed
+  native LD_PRELOAD close/reuse and content-watchdog reselection smoke tests passed
+
+Full Xcode 26 build/XCTest is intentionally left to the iOS GitHub Actions CI environment.

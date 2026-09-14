@@ -138,7 +138,13 @@ final class RouteGuidanceAdapterClient {
     /// v90.35.3.9: a malformed/partial CGI response is a transport fault, not proof
     /// that CarPlay navigation ended. Preserve the last valid guidance long enough
     /// for U2W to recover instead of immediately dropping the physical HUD to Freeride.
-    private let transportFailureHoldoverInterval: TimeInterval = 45.0
+    private let transportFailureHoldoverInterval: TimeInterval = 90.0
+    /// A HTTP-200 response whose JSON is temporarily malformed proves the U2W
+    /// endpoint is still reachable.  Field logs on MLK Drive showed this can last
+    /// longer than the old 45 s transport holdover while Google Maps continues the
+    /// same route.  Keep the last valid route substantially longer for this narrow
+    /// failure mode; only a successfully decoded inactive route is authoritative.
+    private let malformedResponseHoldoverInterval: TimeInterval = 180.0
     private let pollInterval: Duration = .milliseconds(750)
     private var pollTask: Task<Void, Never>?
     private var snapshots: [SourceKind: TimedSnapshot] = [:]
@@ -255,30 +261,58 @@ final class RouteGuidanceAdapterClient {
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 throw URLError(.badServerResponse)
             }
-            let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
-            successCounter += 1
-            lastError = ""
-            ingest(snapshot, at: Date())
+
+            // Decode faults are intentionally handled separately from reachability.
+            // A HTTP-200 payload proves the exporter/adapter is present even if one
+            // atomic JSON publication was observed mid-write or otherwise malformed.
+            do {
+                let snapshot = try JSONDecoder().decode(Snapshot.self, from: data)
+                successCounter += 1
+                lastError = ""
+                ingest(snapshot, at: Date())
+                return
+            } catch {
+                let now = Date()
+                lastError = error.localizedDescription
+                if shouldHoldLastActiveRoute(now: now, maximumAge: malformedResponseHoldoverInterval) {
+                    if transportHoldoverStartedAt == nil {
+                        transportHoldoverStartedAt = now
+                        logger.log(
+                            "CARPLAY RGD HOLD",
+                            "Malformed HTTP-200 Route Guidance payload while active route is retained; holding up to \(Int(malformedResponseHoldoverInterval))s bytes=\(data.count) error=\(error.localizedDescription)"
+                        )
+                    }
+                    status = "Route feed malformed — holding last guidance"
+                    if requestCounter <= 3 || requestCounter % 20 == 0 {
+                        logger.log(
+                            "CARPLAY RGD",
+                            "Poll decode failed request=\(requestCounter) during reachable holdover bytes=\(data.count): \(error.localizedDescription)"
+                        )
+                    }
+                    return
+                }
+
+                transportHoldoverStartedAt = nil
+                status = "U2W route payload invalid — HUD returned to Freeride"
+                pruneAndSelect(now: now)
+                if requestCounter <= 3 || requestCounter % 20 == 0 {
+                    logger.log("CARPLAY RGD", "Poll decode failed request=\(requestCounter): \(error.localizedDescription)")
+                }
+                return
+            }
         } catch {
             let now = Date()
             lastError = error.localizedDescription
 
-            // v90.35.3.9 transport holdover. If the currently selected source had
-            // a valid active route, a timeout or JSON decode error cannot by itself
-            // mean navigation ended. Keep the last maneuver/ETA/lane state while the
-            // exporter recovers. A valid decoded inactive payload still exits quickly
-            // through ingest() below.
-            if let selectedKind,
-               let timed = snapshots[selectedKind],
-               timed.snapshot.active,
-               timed.snapshot.routeState != 0,
-               let lastEndpointSuccessAt,
-               now.timeIntervalSince(lastEndpointSuccessAt) <= transportFailureHoldoverInterval {
+            // Network/HTTP failures get a bounded holdover. A decoded inactive
+            // payload still exits promptly through ingest(), so extending this does
+            // not delay a normal Google Maps route end.
+            if shouldHoldLastActiveRoute(now: now, maximumAge: transportFailureHoldoverInterval) {
                 if transportHoldoverStartedAt == nil {
                     transportHoldoverStartedAt = now
                     logger.log(
                         "CARPLAY RGD HOLD",
-                        "Transport fault while \(selectedKind.rawValue) route active; holding last HUD guidance up to \(Int(transportFailureHoldoverInterval))s error=\(error.localizedDescription)"
+                        "Transport fault while active route is retained; holding last HUD guidance up to \(Int(transportFailureHoldoverInterval))s error=\(error.localizedDescription)"
                     )
                 }
                 status = "Route feed interrupted — holding last guidance"
@@ -295,6 +329,15 @@ final class RouteGuidanceAdapterClient {
                 logger.log("CARPLAY RGD", "Poll failed request=\(requestCounter): \(error.localizedDescription)")
             }
         }
+    }
+
+    private func shouldHoldLastActiveRoute(now: Date, maximumAge: TimeInterval) -> Bool {
+        guard let selectedKind,
+              let timed = snapshots[selectedKind],
+              timed.snapshot.active,
+              timed.snapshot.routeState != 0,
+              let lastEndpointSuccessAt else { return false }
+        return now.timeIntervalSince(lastEndpointSuccessAt) <= maximumAge
     }
 
     private func ingest(_ snapshot: Snapshot, at now: Date) {

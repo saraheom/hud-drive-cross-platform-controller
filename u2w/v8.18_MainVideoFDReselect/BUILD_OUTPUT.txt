@@ -1,0 +1,2 @@
+U2W_Update_v8.18_MainVideoFDReselect.img 8019 b8654c36c9b8ae53df46ce19a46224ab9bbe5fd86c0ccc316323f6a68916a093 ['tmp/once.sh', 'tmp/libu2w_mainvideo_live.so', 'tmp/u2wvideo-status-v818.cgi']
+U2W_Update_v8.18_MainVideoFDReselect_UNINSTALL.img 4727 2d5227e637285601a55a18a8c08da793e1d23f720c2dfb0595e24f9d969134b6 ['tmp/once.sh', 'tmp/libu2w_mainvideo_live_v811.so', 'tmp/u2wvideo-status-v811.cgi']

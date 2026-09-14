@@ -1,0 +1,45 @@
+U2W v8.18 MainVideo FD reselection — build verification
+Date: 2026-09-14
+
+Target:
+  software_version=2021.03.06.1343
+  product_type=U2W
+  requires v8.11 MainVideo base marker
+  requires v8.17 LatestFrame marker
+
+Installed files:
+  /usr/lib/u2wvideo/libu2w_mainvideo_live.so
+  /etc/boa/cgi-bin/u2wvideo-status.cgi
+
+Not replaced:
+  /etc/boa/cgi-bin/u2wvideo-main-stream.cgi   (v8.17 remains active)
+  Route Guidance exporter / media exporter
+  HUD JPEG ingress/discovery/cast relay
+
+ARM shim:
+  ELF32 little-endian ARM EABI5 shared object
+  soft-float ABI
+  hooks write/send/writev/sendmsg/fwrite/close
+  SHA-1  4ab551a525055cc47964e3dda28eec3273d91793
+  SHA-256 adcf4ee17e460ab6ef42466e9c6b9075894e952f014bb84acac66c776465a843
+
+Exact rollback v8.11 shim:
+  SHA-1  7ab8e227893277c9c1135a398e24e41c8f84d4df
+  SHA-256 f2ac899e4a03fad537a306a66664ce2c29d9e549e35c46883cbf6aed34a99d1f
+
+Install image:
+  U2W_Update_v8.18_MainVideoFDReselect.img
+  SHA-256 b8654c36c9b8ae53df46ce19a46224ab9bbe5fd86c0ccc316323f6a68916a093
+
+Uninstall image:
+  U2W_Update_v8.18_MainVideoFDReselect_UNINSTALL.img
+  SHA-256 2d5227e637285601a55a18a8c08da793e1d23f720c2dfb0595e24f9d969134b6
+
+Validation performed:
+  - encrypted image decrypt round-trip succeeded
+  - install tar members verified
+  - uninstall tar members verified
+  - shell syntax checks passed
+  - ARM ELF header/ABI inspected
+  - host-native LD_PRELOAD smoke test: close + numeric-fd reuse -> new validated fd promoted
+  - host-native LD_PRELOAD smoke test: no-close oversized-SPS content watchdog -> old fd invalidated and new validated fd promoted
