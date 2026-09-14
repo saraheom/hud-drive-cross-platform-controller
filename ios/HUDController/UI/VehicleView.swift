@@ -75,7 +75,7 @@ struct VehicleView: View {
                                 state.bluetooth.requestRemainingDiagnosticLogTypes()
                             }
                             .buttonStyle(.bordered)
-                            HudDescription("v90.35.3.13.1 adds a bounded, read-only forensic capture around the stock LOG_CATEGORY_OBD request. It saves the exact HUD BLE byte stream before the diagnostic parser touches it, logs the category actually returned by the HUD, declared/available chunk sizes, raw packet headers, GPS-correlated numeric candidates, and common PID 0x0D / ELM signatures. If the ZIP parser never completes, tap Stop & save raw before powering the HUD off and share the .bin plus the normal HUD log. No second OBD connection or extra PID request is made by this capture.")
+                            HudDescription("v90.35.3.13.2 keeps the bounded read-only LOG_CATEGORY_OBD forensic capture and hardens its framing. Only the three legal HUD escape pairs are accepted, immediate duplicate continuation notifications are suppressed for parsing while still preserved in the raw capture, and only exact-length diagnostic chunks are admitted to an archive. If the HUD returns LOG_CATEGORY_CRUSH instead of the requested OBD label, a structurally valid returned archive is now retained rather than discarded. If an archive still does not complete, tap Stop & save raw and share the .bin plus the normal HUD log. No second OBD connection or extra PID request is made by this capture.")
 
                             Divider()
                             Text("Freeride HUD widgets").font(.headline)

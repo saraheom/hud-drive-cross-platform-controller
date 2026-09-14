@@ -34,6 +34,7 @@ final class AppState {
     private var hudU2WRelayFrameTask: Task<Void, Never>?
     private var hudU2WKivicKickTask: Task<Void, Never>?
     private var hudU2WKivicKickCount = 0
+    private var hudU2WAutomaticViewerRecoveryCount = 0
     private var hudU2WLastManualDisplayRetryAt = Date.distantPast
     private var hudU2WSTAResetInProgress = false
     private var hudU2WIgnoreEmptyStatusUntil = Date.distantPast
@@ -718,6 +719,7 @@ final class AppState {
         hudU2WKivicKickTask?.cancel()
         hudU2WFrameRelay.stop(reason: "new relay session")
         hudU2WKivicKickCount = 0
+        hudU2WAutomaticViewerRecoveryCount = 0
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
@@ -865,61 +867,109 @@ final class AppState {
         let clientSeen: Bool
         let liveFrameSent: Bool
         let sessionID: String
+        let sessionScoped: Bool
+
+        /// `hud_mjpeg_established` is a process-wide netstat observation and can
+        /// remain true for a stale socket from the prior relay session. With
+        /// v8.15.1 session fields present, success requires the *current* relay
+        /// session to have accepted a HUD client and sent at least one live frame.
+        var currentSessionReady: Bool {
+            sessionScoped ? (clientSeen && liveFrameSent) : established
+        }
     }
 
     private func primeHUDU2WKivicViewer(reason: String, force: Bool = false) {
         guard hudU2WLiveRelayActive, bluetooth.state == .connected else { return }
         if !force, hudU2WKivicKickCount > 0 { return }
 
-        // "Prime" now means monitor only. The stock viewer was already created by the
-        // initial mode-6 transition. The field regression in v90.35.3.6 showed that
-        // sending mode 6 again immediately after status=1 can suppress discovery.
+        // v90.35.3.13.2: monitor the session-scoped v8.15.1 flags. A generic
+        // ESTABLISHED socket can belong to the prior session and must not be used
+        // as proof that the current HUD viewer actually attached.
         hudU2WKivicKickTask?.cancel()
         hudU2WKivicKickTask = Task { @MainActor [weak self] in
             guard let self else { return }
             self.hudU2WKivicKickCount += 1
-            self.hudU2WSTAStatus = "Wi-Fi connected — waiting for HUD discovery…"
-            self.logger.log("HUD/U2W STA", "link-up confirmed; leaving mode 6 untouched reason=\(reason)")
+            self.hudU2WSTAStatus = "Wi-Fi connected — waiting for current HUD viewer…"
+            self.logger.log("HUD/U2W STA", "link-up confirmed; monitoring current relay session reason=\(reason)")
 
-            var lastRelay = HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—")
-            for attempt in 1...8 {
-                try? await Task.sleep(for: .seconds(1))
+            var lastRelay = HUDU2WRelayStatus(
+                established: false,
+                discoverySeen: false,
+                clientSeen: false,
+                liveFrameSent: false,
+                sessionID: "—",
+                sessionScoped: true
+            )
+
+            func monitorCurrentSession(seconds: Int, phase: String) async -> Bool {
+                for attempt in 1...seconds {
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return false }
+                    let relay = await self.u2wHUDRelayStatus()
+                    lastRelay = relay
+                    if relay.currentSessionReady {
+                        self.hudU2WSTAStatus = "Connected — current HUD stream active"
+                        self.logger.log(
+                            "HUD/U2W STA",
+                            "CURRENT SESSION READY phase=\(phase) session=\(relay.sessionID) client=\(relay.clientSeen) liveFrame=\(relay.liveFrameSent) genericEstablished=\(relay.established)"
+                        )
+                        return true
+                    }
+                    if relay.clientSeen {
+                        self.hudU2WSTAStatus = "HUD contacted current video server — waiting for first live frame…"
+                    } else if relay.discoverySeen {
+                        self.hudU2WSTAStatus = "Current HUD discovery received — waiting for video connection…"
+                    } else {
+                        self.hudU2WSTAStatus = "Wi-Fi connected — waiting for current HUD viewer… (\(attempt)/\(seconds))"
+                    }
+                }
+                return false
+            }
+
+            if await monitorCurrentSession(seconds: 8, phase: "initial") { return }
+
+            // The field test already proved that the STA association survives mode
+            // 6 -> mode 4 and that mode-6-only restore works without re-sending Wi-Fi
+            // credentials. Use exactly one automatic viewer recreation if the STA is
+            // up but the current relay session never receives a HUD client/frame.
+            if self.hudU2WAutomaticViewerRecoveryCount == 0,
+               self.hudU2WSTAConnected || self.isUsableHUDSTAAddress(self.hudU2WSTAAddress) {
+                self.hudU2WAutomaticViewerRecoveryCount = 1
+                self.hudU2WSTAStatus = "HUD viewer did not attach — rebuilding viewer once…"
+                self.logger.log(
+                    "HUD/U2W STA",
+                    "AUTO VIEWER RECOVERY mode4→mode6 only session=\(lastRelay.sessionID) discovery=\(lastRelay.discoverySeen) client=\(lastRelay.clientSeen) liveFrame=\(lastRelay.liveFrameSent) genericEstablished=\(lastRelay.established); preserving STA credentials"
+                )
+                self.bluetooth.enqueue(
+                    HudCommands.kivicMode(4),
+                    label: "HUD/U2W auto viewer recovery → IOS_HUD_MODE(4) preserve STA"
+                )
+                try? await Task.sleep(for: .milliseconds(900))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
-                let relay = await self.u2wHUDRelayStatus()
-                lastRelay = relay
-                if relay.established {
-                    self.hudU2WSTAStatus = "Connected — HUD stream active"
-                    self.logger.log("HUD/U2W STA", "U2W confirms active MJPEG client without post-connect mode-6 rewrite")
-                    return
-                }
-                if relay.clientSeen {
-                    self.hudU2WSTAStatus = relay.liveFrameSent
-                        ? "HUD video client contacted U2W — waiting for display…"
-                        : "HUD contacted video server — waiting for first frame…"
-                } else if relay.discoverySeen {
-                    self.hudU2WSTAStatus = "HUD discovery received — waiting for video connection…"
-                } else {
-                    self.hudU2WSTAStatus = "Wi-Fi connected — waiting for HUD discovery… (\(attempt)/8)"
-                }
+                self.bluetooth.enqueue(
+                    HudCommands.kivicMode(6),
+                    label: "HUD/U2W auto viewer recovery → IOS_KIVICCAST_STA_MODE(6) no credentials"
+                )
+                if await monitorCurrentSession(seconds: 8, phase: "auto mode4→mode6") { return }
             }
 
             if lastRelay.clientSeen {
-                self.hudU2WSTAStatus = "HUD contacted U2W, but video stream is not established — use Retry HUD display once"
+                self.hudU2WSTAStatus = "Current HUD client connected, but no live frame was confirmed — use Retry HUD display once"
             } else if lastRelay.discoverySeen {
-                self.hudU2WSTAStatus = "HUD discovery reached U2W, but video client did not connect — use Retry HUD display once"
+                self.hudU2WSTAStatus = "Current HUD discovery reached U2W, but video client did not connect — use Retry HUD display once"
             } else {
-                self.hudU2WSTAStatus = "Wi-Fi connected, but HUD sent no discovery — use Retry HUD display once"
+                self.hudU2WSTAStatus = "Wi-Fi connected, but current session saw no HUD discovery/client — use Retry HUD display once"
             }
             self.logger.log(
                 "HUD/U2W STA",
-                "8s viewer monitor ended session=\(lastRelay.sessionID) discovery=\(lastRelay.discoverySeen) client=\(lastRelay.clientSeen) established=\(lastRelay.established); no automatic mode-6 retry was sent"
+                "viewer monitor ended session=\(lastRelay.sessionID) discovery=\(lastRelay.discoverySeen) client=\(lastRelay.clientSeen) liveFrame=\(lastRelay.liveFrameSent) genericEstablished=\(lastRelay.established) autoRecovery=\(self.hudU2WAutomaticViewerRecoveryCount)"
             )
         }
     }
 
     private func u2wHUDRelayStatus() async -> HUDU2WRelayStatus {
         guard let url = URL(string: "http://192.168.50.2/cgi-bin/u2whud-status.cgi") else {
-            return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—")
+            return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—", sessionScoped: true)
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 2
@@ -927,7 +977,7 @@ final class AppState {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   let text = String(data: data, encoding: .utf8) else {
-                return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—")
+                return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—", sessionScoped: true)
             }
             func field(_ key: String) -> String? {
                 text.split(whereSeparator: \.isNewline)
@@ -946,16 +996,17 @@ final class AppState {
                 liveFrameSent: hasSessionFields
                     ? field("session_live_frame_sent") == "YES"
                     : (text.contains("live-frame-sent") || text.contains("live_frame_sent=YES")),
-                sessionID: field("session_id") ?? "legacy"
+                sessionID: field("session_id") ?? "legacy",
+                sessionScoped: hasSessionFields
             )
             self.logger.log(
                 "HUD/U2W STA",
-                "relay status session=\(status.sessionID) mjpegEstablished=\(status.established) discoverySeen=\(status.discoverySeen) clientSeen=\(status.clientSeen) liveFrameSent=\(status.liveFrameSent)"
+                "relay status session=\(status.sessionID) mjpegEstablished=\(status.established) discoverySeen=\(status.discoverySeen) clientSeen=\(status.clientSeen) liveFrameSent=\(status.liveFrameSent) currentSessionReady=\(status.currentSessionReady)"
             )
             return status
         } catch {
             self.logger.log("HUD/U2W STA", "relay status query failed: \(error.localizedDescription)")
-            return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—")
+            return HUDU2WRelayStatus(established: false, discoverySeen: false, clientSeen: false, liveFrameSent: false, sessionID: "—", sessionScoped: true)
         }
     }
 
@@ -1150,8 +1201,8 @@ final class AppState {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
                 let relay = await self.u2wHUDRelayStatus()
-                if relay.established {
-                    self.hudSTAPersistenceTestStatus = "Mode 6-only restore succeeded — HUD stream active in \(attempt)s"
+                if relay.currentSessionReady {
+                    self.hudSTAPersistenceTestStatus = "Mode 6-only restore succeeded — current HUD stream active in \(attempt)s"
                     self.logger.log("HUD STA TEST", "MODE6-ONLY RESULT success seconds=\(attempt) session=\(relay.sessionID)")
                     self.hudSTAPersistenceTestTask = nil
                     return
@@ -1187,6 +1238,7 @@ final class AppState {
         hudU2WKivicKickTask?.cancel()
         hudU2WKivicKickTask = nil
         hudU2WKivicKickCount = 0
+        hudU2WAutomaticViewerRecoveryCount = 0
         hudU2WSTAResetInProgress = false
         hudU2WIgnoreEmptyStatusUntil = .distantPast
         hudU2WFrameRelay.stop(reason: "relay stopped")

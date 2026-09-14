@@ -3,9 +3,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_app_does_not_bounce_mode6_after_link_up():
     s = (ROOT/'ios/HUDController/App/AppState.swift').read_text()
-    assert 'leaving mode 6 untouched' in s
-    assert 'no automatic mode-6 retry was sent' in s
-    assert 'for attempt in 1...8' in s
+    assert 'AUTO VIEWER RECOVERY mode4→mode6 only' in s
+    assert 'hudU2WAutomaticViewerRecoveryCount == 0' in s
+    assert 'monitorCurrentSession(seconds: 8' in s
     assert 'HUD discovery received — waiting for video connection' in s
 
 def test_relay_status_tracks_client_and_live_frame():

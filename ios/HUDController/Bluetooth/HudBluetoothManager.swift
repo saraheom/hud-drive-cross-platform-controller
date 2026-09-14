@@ -58,8 +58,10 @@ final class HudBluetoothManager: NSObject {
     private var obdDiagnosticExpectedChunkCount = 0
     private var obdDiagnosticExpectedTotalBytes = 0
     private var obdDiagnosticCategory = ""
+    private var obdDiagnosticRequestedCategory = "LOG_CATEGORY_OBD"
+    private var obdDiagnosticChunkConflictCount = 0
 
-    // v90.35.3.13.1 OBD forensics. Keep an exact bounded copy of the BLE byte
+    // v90.35.3.13.2 OBD forensics. Keep an exact bounded copy of the BLE byte
     // stream while the stock HUD diagnostic transfer is active. This is strictly
     // observational: it does not alter framing, de-duplicate notifications, or
     // reinterpret a non-OBD category as OBD. The capture can therefore be replayed
@@ -69,6 +71,9 @@ final class HudBluetoothManager: NSObject {
     private var obdDiagnosticObservedCategorySet = Set<String>()
     private var obdDiagnosticForensicFrameCount = 0
     private var obdDiagnosticMalformedFrameCount = 0
+    private var obdDiagnosticLastForwardedBLEFragment: Data?
+    private var obdDiagnosticLastForwardedBLEFragmentAt = Date.distantPast
+    private var obdDiagnosticSuppressedDuplicateFragments = 0
     private let obdDiagnosticRawCaptureLimitBytes = 8 * 1024 * 1024
 
     // Short forced logging window around the stock OBD_DRIVING_VELOCITY probe.
@@ -392,7 +397,9 @@ final class HudBluetoothManager: NSObject {
         obdDiagnosticChunks.removeAll(keepingCapacity: true)
         obdDiagnosticExpectedChunkCount = 0
         obdDiagnosticExpectedTotalBytes = 0
-        obdDiagnosticCategory = "LOG_CATEGORY_OBD"
+        obdDiagnosticRequestedCategory = "LOG_CATEGORY_OBD"
+        obdDiagnosticCategory = ""
+        obdDiagnosticChunkConflictCount = 0
         obdDiagnosticLogURL = nil
         obdDiagnosticRawCaptureURL = nil
         obdDiagnosticRawBLE.removeAll(keepingCapacity: true)
@@ -401,6 +408,9 @@ final class HudBluetoothManager: NSObject {
         obdDiagnosticObservedCategories = "—"
         obdDiagnosticForensicFrameCount = 0
         obdDiagnosticMalformedFrameCount = 0
+        obdDiagnosticLastForwardedBLEFragment = nil
+        obdDiagnosticLastForwardedBLEFragmentAt = .distantPast
+        obdDiagnosticSuppressedDuplicateFragments = 0
         obdDiagnosticTransferActive = true
         obdDiagnosticStatus = "Requesting HUD OBD diagnostic ZIP + raw capture…"
         logger.log("OBD HUD LOG", "Request LOG_CATEGORY_OBD maxLastFilesCount=\(maxLastFilesCount)")
@@ -435,6 +445,42 @@ final class HudBluetoothManager: NSObject {
                 "OBD HUD RAW",
                 "Raw BLE capture reached \(obdDiagnosticRawCaptureLimitBytes) byte safety cap; logging continues but binary capture is truncated"
             )
+        }
+    }
+
+    private func shouldSuppressDuplicateDiagnosticBLEFragment(_ data: Data) -> Bool {
+        guard obdDiagnosticTransferActive, !data.isEmpty else { return false }
+        let now = Date()
+        defer {
+            obdDiagnosticLastForwardedBLEFragment = data
+            obdDiagnosticLastForwardedBLEFragmentAt = now
+        }
+
+        // Field capture showed continuation notifications repeated verbatim two to
+        // six times in immediate succession. Preserve every byte in the raw capture,
+        // but feed only the first copy to the protocol frame assembler. Never
+        // suppress a fragment that starts a fresh framed HUD event.
+        guard data.first != HudProtocol.stx,
+              data == obdDiagnosticLastForwardedBLEFragment,
+              now.timeIntervalSince(obdDiagnosticLastForwardedBLEFragmentAt) < 0.20 else {
+            return false
+        }
+        obdDiagnosticSuppressedDuplicateFragments += 1
+        if obdDiagnosticSuppressedDuplicateFragments == 1 || obdDiagnosticSuppressedDuplicateFragments % 50 == 0 {
+            logger.log(
+                "OBD HUD RAW",
+                "Suppressed duplicate BLE continuation fragment count=\(obdDiagnosticSuppressedDuplicateFragments) bytes=\(data.count); raw capture still retains every notification"
+            )
+        }
+        return true
+    }
+
+    private func isPlausibleDiagnosticCategory(_ category: String) -> Bool {
+        guard category.hasPrefix("LOG_CATEGORY_"), category.count <= 64 else { return false }
+        return category.unicodeScalars.allSatisfy { scalar in
+            scalar.value == 0x5F ||
+            (0x30...0x39).contains(scalar.value) ||
+            (0x41...0x5A).contains(scalar.value)
         }
     }
 
@@ -538,10 +584,10 @@ final class HudBluetoothManager: NSObject {
             let declaredText = chunkSize.map { String($0) } ?? "?"
             logger.log(
                 "OBD HUD RAW",
-                "event#\(obdDiagnosticForensicFrameCount) category=\(categoryText) requested=\(obdDiagnosticCategory) total=\(totalText) chunk=\(indexText)/\(chunksText) declared=\(declaredText) available=\(available) wireBytes=\(frame.count) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh hits=[\(hits.joined(separator: ","))]"
+                "event#\(obdDiagnosticForensicFrameCount) category=\(categoryText) requested=\(obdDiagnosticRequestedCategory) total=\(totalText) chunk=\(indexText)/\(chunksText) declared=\(declaredText) available=\(available) wireBytes=\(frame.count) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh hits=[\(hits.joined(separator: ","))]"
             )
-            if let category, category != obdDiagnosticCategory {
-                logger.log("OBD HUD RAW", "CATEGORY MISMATCH requested=\(obdDiagnosticCategory) received=\(category)")
+            if let category, category != obdDiagnosticRequestedCategory {
+                logger.log("OBD HUD RAW", "CATEGORY MISMATCH requested=\(obdDiagnosticRequestedCategory) received=\(category)")
             }
         } else {
             let payload = body.count > 3 ? body.subdata(in: 3..<body.count) : Data()
@@ -602,6 +648,14 @@ final class HudBluetoothManager: NSObject {
                 return true
             }
             recordObservedDiagnosticCategory(category)
+            guard isPlausibleDiagnosticCategory(category) else {
+                obdDiagnosticMalformedFrameCount += 1
+                logger.log(
+                    "OBD HUD LOG",
+                    "Rejected diagnostic category bytes category=\(category.debugDescription) bodyBytes=\(body.count) head=\(HudProtocol.hex(body.prefix(96)))"
+                )
+                return true
+            }
             guard let totalSize = int32BE(body, index: &index),
                   let allChunks = int32BE(body, index: &index),
                   let chunkIndex = int32BE(body, index: &index),
@@ -610,69 +664,110 @@ final class HudBluetoothManager: NSObject {
                 logger.log("OBD HUD LOG", "Malformed diagnostic header category=\(category) bodyBytes=\(body.count) remaining=\(max(0, body.count-index))")
                 return true
             }
+
             let available = max(0, body.count - index)
-            guard chunkSize >= 0, available >= chunkSize else {
+            let plausibleHeader = totalSize > 0 && totalSize <= 32 * 1024 * 1024 &&
+                allChunks > 0 && allChunks <= 200_000 &&
+                chunkIndex >= 0 && chunkIndex < allChunks &&
+                chunkSize >= 0 && chunkSize <= 64 * 1024
+
+            // A diagnostic event has no bytes after its declared chunk. The field
+            // trace showed repeated/interleaved 20-byte BLE notifications could make
+            // `available > chunkSize`; accepting the first N bytes silently stored a
+            // corrupted ZIP chunk. Require an exact body length instead.
+            guard plausibleHeader, available == chunkSize else {
                 obdDiagnosticMalformedFrameCount += 1
                 logger.log(
                     "OBD HUD LOG",
-                    "Malformed diagnostic chunk category=\(category) total=\(totalSize) chunk=\(chunkIndex + 1)/\(allChunks) declared=\(chunkSize) available=\(available) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph head=\(HudProtocol.hex(body.prefix(128)))"
+                    "Rejected diagnostic fragment category=\(category) total=\(totalSize) chunk=\(chunkIndex + 1)/\(allChunks) declared=\(chunkSize) available=\(available) exact=\(available == chunkSize ? 1 : 0) gps=\(obdTraceReferenceSpeedMph)mph head=\(HudProtocol.hex(body.prefix(128)))"
                 )
                 return true
             }
+
             let chunk = body.subdata(in: index..<(index + chunkSize))
-            let extraBytes = available - chunkSize
             let hits = obdDiagnosticSignatureHits(chunk)
             logger.log(
                 "OBD HUD LOG",
-                "chunk category=\(category) requested=\(obdDiagnosticCategory) index=\(chunkIndex + 1)/\(allChunks) bytes=\(chunkSize) total=\(totalSize) extra=\(extraBytes) hits=[\(hits.joined(separator: ","))]"
+                "VALID chunk category=\(category) requested=\(obdDiagnosticRequestedCategory) index=\(chunkIndex + 1)/\(allChunks) bytes=\(chunkSize) total=\(totalSize) hits=[\(hits.joined(separator: ","))]"
             )
-            if extraBytes > 0 {
-                logger.log("OBD HUD RAW", "Chunk has \(extraBytes) trailing bytes beyond declared payload; preserved in raw BLE capture")
+
+            // The 2026-09-14 HUD returned LOG_CATEGORY_CRUSH even though the request
+            // explicitly named LOG_CATEGORY_OBD. Do not discard a structurally valid
+            // returned archive merely because its category label differs. Lock onto
+            // the first valid returned category/shape and keep that transfer isolated.
+            if obdDiagnosticCategory.isEmpty {
+                obdDiagnosticCategory = category
+                obdDiagnosticExpectedChunkCount = allChunks
+                obdDiagnosticExpectedTotalBytes = totalSize
+                obdDiagnosticChunks.removeAll(keepingCapacity: true)
+                logger.log(
+                    "OBD HUD LOG",
+                    "Accepted returned diagnostic stream category=\(category) requested=\(obdDiagnosticRequestedCategory) chunks=\(allChunks) total=\(totalSize)"
+                )
             }
-            guard category == "LOG_CATEGORY_OBD" else {
-                if obdDiagnosticTransferActive {
-                    obdDiagnosticStatus = "HUD returned \(category) • raw capture active"
-                }
+
+            guard category == obdDiagnosticCategory,
+                  allChunks == obdDiagnosticExpectedChunkCount,
+                  totalSize == obdDiagnosticExpectedTotalBytes else {
+                logger.log(
+                    "OBD HUD LOG",
+                    "Ignoring different diagnostic stream category=\(category) total=\(totalSize) chunks=\(allChunks); active=\(obdDiagnosticCategory) total=\(obdDiagnosticExpectedTotalBytes) chunks=\(obdDiagnosticExpectedChunkCount)"
+                )
                 return true
             }
-            if !obdDiagnosticTransferActive {
-                obdDiagnosticTransferActive = true
-                obdDiagnosticChunks.removeAll(keepingCapacity: true)
-            }
-            obdDiagnosticCategory = category
-            obdDiagnosticExpectedChunkCount = max(0, allChunks)
-            obdDiagnosticExpectedTotalBytes = max(0, totalSize)
-            if chunkIndex >= 0 { obdDiagnosticChunks[chunkIndex] = chunk }
-            let received = obdDiagnosticChunks.count
-            obdDiagnosticStatus = "Receiving HUD OBD ZIP • \(received)/\(max(1, allChunks)) chunks"
 
-            if allChunks > 0, received == allChunks {
-                var zip = Data()
-                zip.reserveCapacity(max(0, totalSize))
+            if let existing = obdDiagnosticChunks[chunkIndex] {
+                if existing != chunk {
+                    obdDiagnosticChunkConflictCount += 1
+                    logger.log(
+                        "OBD HUD LOG",
+                        "Chunk conflict index=\(chunkIndex + 1)/\(allChunks) existingBytes=\(existing.count) newBytes=\(chunk.count) conflicts=\(obdDiagnosticChunkConflictCount); retaining first exact frame"
+                    )
+                }
+            } else {
+                obdDiagnosticChunks[chunkIndex] = chunk
+            }
+
+            let received = obdDiagnosticChunks.count
+            let label = category == obdDiagnosticRequestedCategory
+                ? category
+                : "\(category) (requested OBD)"
+            obdDiagnosticStatus = "Receiving HUD \(label) ZIP • \(received)/\(allChunks) exact chunks"
+
+            if received == allChunks {
+                var archive = Data()
+                archive.reserveCapacity(totalSize)
                 for i in 0..<allChunks {
                     guard let part = obdDiagnosticChunks[i] else { return true }
-                    zip.append(part)
+                    archive.append(part)
                 }
-                if totalSize > 0, zip.count > totalSize {
-                    zip = Data(zip.prefix(totalSize))
+                guard archive.count == totalSize else {
+                    logger.log("OBD HUD LOG", "Complete chunk set length mismatch assembled=\(archive.count) expected=\(totalSize)")
+                    return true
                 }
+
                 let formatter = DateFormatter()
                 formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-                let filename = "HUD_OBD_Diagnostic_\(formatter.string(from: Date())).zip"
+                let safeCategory = category.replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "_", options: .regularExpression)
+                let extensionName = archive.starts(with: [0x50, 0x4B]) ? "zip" : "bin"
+                let filename = "HUD_Diagnostic_\(safeCategory)_\(formatter.string(from: Date())).\(extensionName)"
                 do {
                     let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
                         ?? FileManager.default.temporaryDirectory
                     let url = base.appendingPathComponent(filename)
-                    try zip.write(to: url, options: .atomic)
+                    try archive.write(to: url, options: .atomic)
                     obdDiagnosticLogURL = url
-                    saveOBDDiagnosticRawCapture(reason: "OBD ZIP completed")
+                    saveOBDDiagnosticRawCapture(reason: "diagnostic archive completed")
                     obdDiagnosticTransferActive = false
-                    obdDiagnosticStatus = "HUD OBD ZIP ready • \(zip.count) bytes"
-                    logger.log("OBD HUD LOG", "Saved \(url.lastPathComponent) bytes=\(zip.count) expected=\(totalSize)")
+                    obdDiagnosticStatus = "HUD \(category) archive ready • \(archive.count) bytes"
+                    logger.log(
+                        "OBD HUD LOG",
+                        "Saved \(url.lastPathComponent) bytes=\(archive.count) requested=\(obdDiagnosticRequestedCategory) conflicts=\(obdDiagnosticChunkConflictCount)"
+                    )
                 } catch {
-                    saveOBDDiagnosticRawCapture(reason: "OBD ZIP save failed")
+                    saveOBDDiagnosticRawCapture(reason: "diagnostic archive save failed")
                     obdDiagnosticTransferActive = false
-                    obdDiagnosticStatus = "Could not save HUD OBD ZIP • raw capture retained"
+                    obdDiagnosticStatus = "Could not save HUD diagnostic archive • raw capture retained"
                     logger.log("OBD HUD LOG", "Save failed: \(error.localizedDescription)")
                 }
             }
@@ -1082,8 +1177,13 @@ extension HudBluetoothManager: CBPeripheralDelegate {
         Task { @MainActor in
             guard let data = characteristic.value else { return }
             self.lastRX = HudProtocol.hex(data)
-            self.logger.log("RX CHUNK", self.lastRX)
+            // Preserve every diagnostic notification in the bounded binary capture
+            // before any de-duplication. Exact immediate continuation duplicates are
+            // intentionally omitted from both the frame parser and verbose RX CHUNK
+            // text log so a forensic download cannot flood the main actor/log UI.
             self.captureOBDDiagnosticRawBLE(data)
+            if self.shouldSuppressDuplicateDiagnosticBLEFragment(data) { return }
+            self.logger.log("RX CHUNK", self.lastRX)
 
             self.rxBuffer.append(data)
             let frames = HudProtocol.extractFrames(from: &self.rxBuffer)

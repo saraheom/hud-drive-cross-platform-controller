@@ -87,6 +87,19 @@ enum HudProtocol {
         }
     }
 
+    /// The HUD wire protocol has exactly three legal escape pairs:
+    /// 02 -> 7D 7F, 03 -> 7D 7E, and 7D -> 7D 00. Treating every byte after
+    /// 7D as escaped can hide a real nested STX when a diagnostic BLE fragment
+    /// is dropped/interleaved.
+    private static func decodedEscapeFollower(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case stx ^ esc: return stx
+        case etx ^ esc: return etx
+        case esc ^ esc: return esc
+        default: return nil
+        }
+    }
+
     static func unescape(_ packet: Data) -> Data? {
         guard packet.count >= 2, packet.first == stx, packet.last == etx else { return nil }
         let bytes = [UInt8](packet)
@@ -95,8 +108,9 @@ enum HudProtocol {
         while i < bytes.count - 1 {
             if bytes[i] == esc {
                 i += 1
-                guard i < bytes.count - 1 else { return nil }
-                out.append(bytes[i] ^ esc)
+                guard i < bytes.count - 1,
+                      let decoded = decodedEscapeFollower(bytes[i]) else { return nil }
+                out.append(decoded)
             } else {
                 out.append(bytes[i])
             }
@@ -125,20 +139,24 @@ enum HudProtocol {
             guard buffer.count >= 2 else { break }
 
             var index = buffer.index(after: buffer.startIndex)
-            var escaped = false
             var restartedAtNestedSTX = false
             var completed = false
 
             while index < buffer.endIndex {
                 let byte = buffer[index]
-                if escaped {
-                    escaped = false
-                    index = buffer.index(after: index)
-                    continue
-                }
                 if byte == esc {
-                    escaped = true
-                    index = buffer.index(after: index)
+                    let next = buffer.index(after: index)
+                    // Escape pair split across BLE notifications: keep the frame
+                    // buffered until the follower arrives.
+                    guard next < buffer.endIndex else { break }
+                    if decodedEscapeFollower(buffer[next]) != nil {
+                        index = buffer.index(after: next)
+                        continue
+                    }
+                    // Invalid escape follower means this 7D cannot legally shield
+                    // the next byte. Advance over the corrupt/dangling ESC only so
+                    // a following literal STX can resynchronize the stream.
+                    index = next
                     continue
                 }
                 if byte == stx {

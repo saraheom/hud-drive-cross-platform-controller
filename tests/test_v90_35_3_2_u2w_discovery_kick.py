@@ -4,8 +4,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_post_connect_viewer_is_not_reprimed_after_sta_link_up():
     app=(ROOT/'ios/HUDController/App/AppState.swift').read_text()
     assert 'known-good join sequence: mode 6 once' in app
-    assert 'leaving mode 6 untouched' in app
-    assert 'no automatic mode-6 retry was sent' in app
+    assert 'AUTO VIEWER RECOVERY mode4→mode6 only' in app
+    assert 'hudU2WAutomaticViewerRecoveryCount == 0' in app
     assert 'field("hud_mjpeg_established") == "YES"' in app
     assert 'Retry HUD display' in (ROOT/'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 

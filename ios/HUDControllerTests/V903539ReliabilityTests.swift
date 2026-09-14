@@ -17,11 +17,13 @@ final class V903539ReliabilityTests: XCTestCase {
 
     func testMainVideoFreshnessWatchdogCanRecoverFrozenCrop() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 3.0"))
+        XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 5.0"))
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 12.0"))
         XCTAssertTrue(video.contains("U2W VIDEO WATCH"))
         XCTAssertTrue(video.contains("workerGeneration"))
         XCTAssertTrue(video.contains("self.workerGeneration == generation"))
+        XCTAssertTrue(video.contains("preserving last-known-good decoder"))
+        XCTAssertTrue(video.contains("prepareForStreamRestart"))
     }
 
     func testAmbientReconnectRecoveryDoesNotReintroduceHeadlightPowerOnBlink() throws {
@@ -41,5 +43,7 @@ final class V903539ReliabilityTests: XCTestCase {
         XCTAssertTrue(app.contains("session_client_seen"))
         XCTAssertTrue(app.contains("session_live_frame_sent"))
         XCTAssertTrue(app.contains("U2W v8.15"))
+        XCTAssertTrue(app.contains("currentSessionReady"))
+        XCTAssertTrue(app.contains("AUTO VIEWER RECOVERY mode4→mode6 only"))
     }
 }

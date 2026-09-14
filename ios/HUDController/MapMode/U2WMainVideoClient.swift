@@ -5,7 +5,7 @@ import VideoToolbox
 import CoreMedia
 import CoreImage
 
-/// v90.35.3.13 live MainVideo client for U2W v8.17.
+/// v90.35.3.13.2 stabilized MainVideo client for U2W v8.17.
 ///
 /// The adapter exposes the existing CarPlay H.264 stream as Annex-B at
 /// /cgi-bin/u2wvideo-main-stream.cgi. This path is deliberately content-blind:
@@ -36,9 +36,9 @@ final class U2WMainVideoClient {
     // quickly enough that a 10-second frozen HUD is unnecessary. Source silence
     // gets a longer allowance because a truly static CarPlay frame can compress
     // down to very little traffic.
-    private let decoderStaleFrameInterval: TimeInterval = 3.0
+    private let decoderStaleFrameInterval: TimeInterval = 5.0
     private let sourceStaleInterval: TimeInterval = 12.0
-    private let freshnessReconnectCooldown: TimeInterval = 4.0
+    private let freshnessReconnectCooldown: TimeInterval = 8.0
 
     init(logger: LogManager) {
         self.logger = logger
@@ -147,16 +147,22 @@ final class U2WMainVideoClient {
                 } else {
                     detail = "source silent for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s, no live image for \(String(format: "%.1f", frameAge))s"
                 }
-                self.status = "U2W main video stale — reconnecting…"
+                self.status = "U2W main video stale — reseeding latest GOP…"
                 self.logger.log(
                     "U2W VIDEO WATCH",
-                    "\(detail); hard-resetting decoder and reconnecting at v8.17 latest GOP"
+                    "\(detail); reseeding this worker at v8.17 latest GOP while preserving last-known-good VideoToolbox parameter sets"
                 )
                 self.connected = false
                 self.connectedAt = nil
                 self.lastDecodedFrameAt = nil
                 self.lastReceivedBytesAt = nil
-                self.startWorker(reason: decoderStalled ? "decoder freshness watchdog" : "source freshness watchdog")
+                if let worker = self.worker {
+                    worker.reconnectAtLiveEdge(
+                        reason: decoderStalled ? "decoder freshness watchdog" : "source freshness watchdog"
+                    )
+                } else {
+                    self.startWorker(reason: decoderStalled ? "decoder freshness watchdog" : "source freshness watchdog")
+                }
             }
         }
     }
@@ -189,7 +195,11 @@ final class U2WMainVideoClient {
         lastFreshnessReconnectAt = Date()
         status = "Reconnecting U2W main video…"
         logger.log("U2W VIDEO", "Reconnect reason=\(reason)")
-        startWorker(reason: "reconnect / \(reason)")
+        if let worker {
+            worker.reconnectAtLiveEdge(reason: "manual / \(reason)")
+        } else {
+            startWorker(reason: "reconnect / \(reason)")
+        }
     }
 }
 
@@ -209,6 +219,13 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
     private var task: URLSessionDataTask?
     private var running = false
     private var reconnectWorkItem: DispatchWorkItem?
+    private let delegateQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInitiated
+        queue.name = "HUD.U2WMainVideo.Serial"
+        return queue
+    }()
 
     init(endpoint: URL) {
         self.endpoint = endpoint
@@ -228,10 +245,8 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 60 * 60 * 6
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        let queue = OperationQueue()
-        queue.maxConcurrentOperationCount = 1
-        queue.qualityOfService = .userInitiated
-        session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
+        decoder.reset()
+        session = URLSession(configuration: configuration, delegate: self, delegateQueue: delegateQueue)
         openStream()
     }
 
@@ -250,7 +265,7 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
     private func openStream() {
         guard running, let session else { return }
         parser.reset()
-        decoder.reset()
+        decoder.prepareForStreamRestart()
         var request = URLRequest(url: endpoint)
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
@@ -260,12 +275,34 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         onStatus?("Opening U2W H.264 stream…", false)
     }
 
+    func reconnectAtLiveEdge(reason: String) {
+        guard running else { return }
+        delegateQueue.addOperation { [weak self] in
+            guard let self, self.running else { return }
+            self.reconnectWorkItem?.cancel()
+            self.reconnectWorkItem = nil
+            let previous = self.task
+            self.task = nil
+            previous?.cancel()
+            self.onDiagnostic?("Stream reseed requested reason=\(reason); retaining accepted SPS/PPS decoder state")
+            self.openStream()
+        }
+    }
+
+    private func isCurrent(_ dataTask: URLSessionDataTask) -> Bool {
+        task?.taskIdentifier == dataTask.taskIdentifier
+    }
+
     private func scheduleReconnect(_ detail: String) {
         guard running else { return }
         onStatus?("U2W video unavailable — retrying: \(detail)", false)
         reconnectWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            self?.openStream()
+            guard let self else { return }
+            self.delegateQueue.addOperation { [weak self] in
+                guard let self, self.running else { return }
+                self.openStream()
+            }
         }
         reconnectWorkItem = item
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0, execute: item)
@@ -277,6 +314,10 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         didReceive response: URLResponse,
         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
+        guard isCurrent(dataTask) else {
+            completionHandler(.cancel)
+            return
+        }
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             completionHandler(.cancel)
             scheduleReconnect("HTTP \(http.statusCode)")
@@ -287,6 +328,7 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard isCurrent(dataTask) else { return }
         onBytes?(data.count)
         for nal in parser.append(data) {
             decoder.consume(nal)
@@ -298,7 +340,8 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         task: URLSessionTask,
         didCompleteWithError error: Error?
     ) {
-        guard running else { return }
+        guard running, self.task?.taskIdentifier == task.taskIdentifier else { return }
+        self.task = nil
         decoder.discardPendingAccessUnit()
         scheduleReconnect(error?.localizedDescription ?? "stream ended")
     }
@@ -331,7 +374,13 @@ private final class AnnexBH264Parser {
             let next = starts[index + 1]
             let payloadStart = current.offset + current.length
             guard next.offset > payloadStart else { continue }
-            output.append(buffer.subdata(in: payloadStart..<next.offset))
+            var nal = buffer.subdata(in: payloadStart..<next.offset)
+            // Annex-B permits trailing_zero_8bits before the next start code.
+            // VideoToolbox parameter-set creation is less forgiving than ffmpeg,
+            // so keep those transport/alignment zeros out of the NAL payload.
+            while nal.last == 0 { nal.removeLast() }
+            guard !nal.isEmpty else { continue }
+            output.append(nal)
         }
 
         let keepFrom = starts[starts.count - 1].offset
@@ -378,8 +427,16 @@ private final class H264VideoToolboxDecoder {
     var onFrame: ((UIImage) -> Void)?
     var onDiagnostic: ((String) -> Void)?
 
-    private var sps: Data?
-    private var pps: Data?
+    // Candidate parameter sets are staged separately from the accepted pair.
+    // A malformed/partial SPS/PPS must never replace the last-known-good decoder
+    // state. This directly addresses the field loop where one bad candidate left
+    // CMVideoFormatDescriptionCreateFromH264ParameterSets returning -12712 on every
+    // 3-second reconnect.
+    private var activeSPS: Data?
+    private var activePPS: Data?
+    private var pendingSPS: Data?
+    private var pendingPPS: Data?
+    private var lastRejectedParameterSetSignature = ""
     private var formatDescription: CMVideoFormatDescription?
     private var decompressionSession: VTDecompressionSession?
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
@@ -401,14 +458,29 @@ private final class H264VideoToolboxDecoder {
         }
         decompressionSession = nil
         formatDescription = nil
-        sps = nil
-        pps = nil
+        activeSPS = nil
+        activePPS = nil
+        pendingSPS = nil
+        pendingPPS = nil
+        lastRejectedParameterSetSignature = ""
         needsIDR = true
         submittedAccessUnits = 0
         decodeErrors = 0
         publishLock.lock()
         lastPublishedUptime = 0
         publishLock.unlock()
+    }
+
+    /// A new HTTP connection starts at U2W v8.17's latest SPS/PPS + IDR. Keep
+    /// any already-accepted VideoToolbox session alive until a replacement pair
+    /// has actually been validated and a new session has been created.
+    func prepareForStreamRestart() {
+        discardPendingAccessUnit()
+        pendingSPS = nil
+        pendingPPS = nil
+        needsIDR = true
+        submittedAccessUnits = 0
+        decodeErrors = 0
     }
 
     func discardPendingAccessUnit() {
@@ -423,16 +495,10 @@ private final class H264VideoToolboxDecoder {
         switch type {
         case 7: // SPS
             flushAccessUnit()
-            if sps != nal {
-                sps = nal
-                rebuildSessionIfPossible()
-            }
+            stageParameterSet(nal, type: 7)
         case 8: // PPS
             flushAccessUnit()
-            if pps != nal {
-                pps = nal
-                rebuildSessionIfPossible()
-            }
+            stageParameterSet(nal, type: 8)
         case 9: // Access Unit Delimiter
             flushAccessUnit()
         case 6: // SEI normally belongs to the picture that follows it.
@@ -462,11 +528,123 @@ private final class H264VideoToolboxDecoder {
         decodeAccessUnit(accessUnit)
     }
 
-    private func rebuildSessionIfPossible() {
-        guard let sps, let pps else { return }
+    private func stageParameterSet(_ rawNAL: Data, type: UInt8) {
+        guard let nal = Self.sanitizedParameterSet(rawNAL, expectedType: type) else {
+            onDiagnostic?("Rejected malformed H.264 parameter set type=\(type) bytes=\(rawNAL.count)")
+            return
+        }
 
-        var description: CMVideoFormatDescription?
-        let status: OSStatus = sps.withUnsafeBytes { spsRaw in
+        if type == 7 {
+            if nal == activeSPS {
+                pendingSPS = nil
+                return
+            }
+            pendingSPS = nal
+        } else {
+            if nal == activePPS {
+                pendingPPS = nil
+                return
+            }
+            pendingPPS = nal
+        }
+        promoteValidParameterSetPairIfPossible()
+    }
+
+    private func promoteValidParameterSetPairIfPossible() {
+        var candidates: [(Data, Data, String)] = []
+        if let pendingSPS, let pendingPPS {
+            candidates.append((pendingSPS, pendingPPS, "pending+pending"))
+        }
+        if let pendingSPS, let activePPS {
+            candidates.append((pendingSPS, activePPS, "pendingSPS+activePPS"))
+        }
+        if let activeSPS, let pendingPPS {
+            candidates.append((activeSPS, pendingPPS, "activeSPS+pendingPPS"))
+        }
+
+        // The first decoder session needs both parameter sets from the stream.
+        // Once a good pair exists, one side may legitimately remain unchanged.
+        guard !candidates.isEmpty else { return }
+
+        for (candidateSPS, candidatePPS, source) in candidates {
+            let signature = "\(Self.parameterSetSignature(candidateSPS))/\(Self.parameterSetSignature(candidatePPS))"
+            var description: CMVideoFormatDescription?
+            let status = Self.createFormatDescription(
+                sps: candidateSPS,
+                pps: candidatePPS,
+                output: &description
+            )
+            guard status == noErr, let videoDescription = description else {
+                if signature != lastRejectedParameterSetSignature {
+                    lastRejectedParameterSetSignature = signature
+                    onDiagnostic?(
+                        "Rejected SPS/PPS candidate status=\(status) source=\(source) \(signature); preserving last-known-good decoder"
+                    )
+                }
+                continue
+            }
+
+            var callback = VTDecompressionOutputCallbackRecord(
+                decompressionOutputCallback: { outputRefCon, _, status, _, imageBuffer, _, _ in
+                    guard status == noErr,
+                          let outputRefCon,
+                          let imageBuffer else { return }
+                    let decoder = Unmanaged<H264VideoToolboxDecoder>
+                        .fromOpaque(outputRefCon)
+                        .takeUnretainedValue()
+                    decoder.publish(imageBuffer)
+                },
+                decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque()
+            )
+
+            let attributes: [CFString: Any] = [
+                kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA)
+            ]
+            var candidateSession: VTDecompressionSession?
+            let createStatus = VTDecompressionSessionCreate(
+                allocator: kCFAllocatorDefault,
+                formatDescription: videoDescription,
+                decoderSpecification: nil,
+                imageBufferAttributes: attributes as CFDictionary,
+                outputCallback: &callback,
+                decompressionSessionOut: &candidateSession
+            )
+            guard createStatus == noErr, let candidateSession else {
+                if signature != lastRejectedParameterSetSignature {
+                    lastRejectedParameterSetSignature = signature
+                    onDiagnostic?(
+                        "Rejected SPS/PPS decoder session status=\(createStatus) source=\(source) \(signature); preserving last-known-good decoder"
+                    )
+                }
+                continue
+            }
+
+            // Atomic promotion: only now retire the prior VideoToolbox session.
+            let previousSession = decompressionSession
+            decompressionSession = candidateSession
+            formatDescription = videoDescription
+            activeSPS = candidateSPS
+            activePPS = candidatePPS
+            if pendingSPS == candidateSPS { pendingSPS = nil }
+            if pendingPPS == candidatePPS { pendingPPS = nil }
+            lastRejectedParameterSetSignature = ""
+            needsIDR = true
+            if let previousSession {
+                VTDecompressionSessionInvalidate(previousSession)
+            }
+            onDiagnostic?(
+                "Decoder session ready source=\(source) \(signature); waiting for current IDR"
+            )
+            return
+        }
+    }
+
+    private static func createFormatDescription(
+        sps: Data,
+        pps: Data,
+        output: inout CMVideoFormatDescription?
+    ) -> OSStatus {
+        sps.withUnsafeBytes { spsRaw in
             pps.withUnsafeBytes { ppsRaw in
                 guard
                     let spsBase = spsRaw.bindMemory(to: UInt8.self).baseAddress,
@@ -483,55 +661,38 @@ private final class H264VideoToolboxDecoder {
                             parameterSetPointers: pointerBuffer.baseAddress!,
                             parameterSetSizes: sizeBuffer.baseAddress!,
                             nalUnitHeaderLength: 4,
-                            formatDescriptionOut: &description
+                            formatDescriptionOut: &output
                         )
                     }
                 }
             }
         }
-        guard status == noErr, let videoDescription = description else {
-            onDiagnostic?("Could not build H.264 format description status=\(status)")
-            return
-        }
+    }
 
-        if let decompressionSession {
-            VTDecompressionSessionInvalidate(decompressionSession)
-        }
-        decompressionSession = nil
-        formatDescription = videoDescription
-        needsIDR = true
+    private static func sanitizedParameterSet(_ rawNAL: Data, expectedType: UInt8) -> Data? {
+        var nal = rawNAL
 
-        var callback = VTDecompressionOutputCallbackRecord(
-            decompressionOutputCallback: { outputRefCon, _, status, _, imageBuffer, _, _ in
-                guard status == noErr,
-                      let outputRefCon,
-                      let imageBuffer else { return }
-                let decoder = Unmanaged<H264VideoToolboxDecoder>
-                    .fromOpaque(outputRefCon)
-                    .takeUnretainedValue()
-                decoder.publish(imageBuffer)
-            },
-            decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque()
-        )
-
-        let attributes: [CFString: Any] = [
-            kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA)
-        ]
-        var session: VTDecompressionSession?
-        let createStatus = VTDecompressionSessionCreate(
-            allocator: kCFAllocatorDefault,
-            formatDescription: videoDescription,
-            decoderSpecification: nil,
-            imageBufferAttributes: attributes as CFDictionary,
-            outputCallback: &callback,
-            decompressionSessionOut: &session
-        )
-        if createStatus == noErr, let session {
-            decompressionSession = session
-            onDiagnostic?("Decoder session ready; waiting for current IDR")
-        } else {
-            onDiagnostic?("Decoder session creation failed status=\(createStatus)")
+        // Be tolerant if a caller accidentally includes an Annex-B prefix.
+        if nal.starts(with: [0, 0, 0, 1]) {
+            nal.removeFirst(4)
+        } else if nal.starts(with: [0, 0, 1]) {
+            nal.removeFirst(3)
         }
+        while nal.last == 0 { nal.removeLast() }
+
+        guard let first = nal.first,
+              first & 0x80 == 0,
+              first & 0x1F == expectedType else { return nil }
+        // Real CarPlay SPS/PPS are tiny. The generous bound rejects accidental
+        // multi-NAL/garbage candidates without constraining legitimate profiles.
+        guard nal.count >= 2, nal.count <= 4096 else { return nil }
+        return nal
+    }
+
+    private static func parameterSetSignature(_ data: Data) -> String {
+        let prefix = data.prefix(8).map { String(format: "%02X", $0) }.joined()
+        let suffix = data.suffix(min(4, data.count)).map { String(format: "%02X", $0) }.joined()
+        return "len=\(data.count),head=\(prefix),tail=\(suffix)"
     }
 
     private func decodeAccessUnit(_ nals: [Data]) {
@@ -616,8 +777,22 @@ private final class H264VideoToolboxDecoder {
             onDiagnostic?(
                 "Decode error status=\(decodeStatus) au=\(submittedAccessUnits) errors=\(decodeErrors); waiting for fresh IDR"
             )
-        } else if submittedAccessUnits == 1 || submittedAccessUnits % 300 == 0 {
-            onDiagnostic?("Decoded access unit #\(submittedAccessUnits) nals=\(nals.count)")
+            if decodeErrors >= 3, let activeSPS, let activePPS {
+                // A VideoToolbox session can become poisoned after repeated bad
+                // access units even though the accepted parameter sets remain good.
+                // Recreate only the decoder session; do not throw away the known-good
+                // SPS/PPS or reconnect the HTTP stream just for this condition.
+                pendingSPS = activeSPS
+                pendingPPS = activePPS
+                decodeErrors = 0
+                onDiagnostic?("Rebuilding decoder from last-known-good SPS/PPS after repeated decode errors")
+                promoteValidParameterSetPairIfPossible()
+            }
+        } else {
+            decodeErrors = 0
+            if submittedAccessUnits == 1 || submittedAccessUnits % 300 == 0 {
+                onDiagnostic?("Decoded access unit #\(submittedAccessUnits) nals=\(nals.count)")
+            }
         }
     }
 

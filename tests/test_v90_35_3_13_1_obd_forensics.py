@@ -17,7 +17,7 @@ def test_category_and_chunk_forensics_are_logged():
     assert 'CATEGORY MISMATCH' in BT
     assert 'declared=' in BT and 'available=' in BT
     assert 'obdDiagnosticObservedCategories' in BT
-    assert 'Malformed diagnostic chunk category=' in BT
+    assert 'Rejected diagnostic fragment category=' in BT
 
 
 def test_speed_pid_and_elm_signatures_are_scanned():

@@ -60,4 +60,25 @@ final class HudProtocolFrameTests: XCTestCase {
         XCTAssertEqual(frames.count, 1)
         XCTAssertEqual(frames[0], Data([0x02, 0x01, 0x7D, 0x7F, 0x03]))
     }
+    func testInvalidEscapeDoesNotHideNestedSTX() {
+        // A dropped/interleaved diagnostic fragment can leave a dangling 0x7D
+        // immediately before a fresh frame. Only 7F/7E/00 are legal escape
+        // followers, so 0x02 must remain visible as the newer STX boundary.
+        let newer = Data([0x02, 0x01, 0x04, 0x03])
+        var buffer = Data([0x02, 0x05, 0x01, 0x7D])
+        buffer.append(newer)
+
+        let frames = HudProtocol.extractFrames(from: &buffer)
+        XCTAssertEqual(frames, [newer])
+        XCTAssertTrue(buffer.isEmpty)
+    }
+
+    func testUnescapeRejectsUnknownEscapeFollower() {
+        XCTAssertNil(HudProtocol.unescape(Data([0x02, 0x01, 0x7D, 0x55, 0x03])))
+        XCTAssertEqual(
+            HudProtocol.unescape(Data([0x02, 0x01, 0x7D, 0x7F, 0x03])),
+            Data([0x01, 0x02])
+        )
+    }
+
 }
