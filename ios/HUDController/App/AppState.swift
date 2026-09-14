@@ -901,6 +901,7 @@ final class AppState {
                 sessionScoped: true
             )
 
+            @MainActor
             func monitorCurrentSession(seconds: Int, phase: String) async -> Bool {
                 for attempt in 1...seconds {
                     try? await Task.sleep(for: .seconds(1))

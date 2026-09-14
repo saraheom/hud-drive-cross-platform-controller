@@ -1,0 +1,30 @@
+HUD Controller v90.35.3.13.2.1 — Xcode 26 MainActor CI alignment
+
+CI failure diagnosed from workflow logs:
+- build reached SwiftCompile AppState.swift
+- Xcode 26 / Swift 6 rejected accesses inside local async monitorCurrentSession helper
+- diagnostics were main actor-isolated hudU2WSTAStatus / hudU2WLiveRelayActive / logger.log used from nonisolated context
+
+Fix:
+- explicitly mark monitorCurrentSession(seconds:phase:) @MainActor
+- no production behavior change beyond actor-isolation correctness
+
+Local validation:
+- Python repository regression suite: 357 passed
+- v90.35.3.13.2 stabilization static checks: 20 passed
+- v90.35.3.13 latest-frame static checks: 16 passed
+- Swift syntax parse: 184 files, 0 failures
+- GitHub Actions YAML parse: 8 files, 0 failures
+- U2W v8.17 install SHA-256 unchanged: 6313ac3ec24a8a44456ae18c0a8c7f4a05b39d573479aa72b8bbff844045b19b
+- U2W v8.17 uninstall SHA-256 unchanged: 396524a1ce72ec7f39a555b054f5727e31260d6b331ed71e2f68fba2284d4ee3
+
+Release invariants versus v90.35.3.13.2:
+- only production source change: ios/HUDController/App/AppState.swift (+ explicit @MainActor on nested helper)
+- MainVideo decoder behavior unchanged
+- HUD viewer recovery behavior unchanged
+- OBD framing/forensics unchanged
+- Map Mode layout/settings unchanged
+- route/media/ambient behavior unchanged
+- U2W v8.17 unchanged; no reflash required
+
+Full Xcode 26 compile/XCTest remains authoritative in GitHub Actions.
