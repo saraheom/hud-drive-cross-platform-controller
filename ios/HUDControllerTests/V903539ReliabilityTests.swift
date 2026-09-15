@@ -9,7 +9,8 @@ final class V903539ReliabilityTests: XCTestCase {
 
     func testRouteGuidanceTransportHoldoverDoesNotImmediatelyDropHUD() throws {
         let route = try source("HUDController/Navigation/RouteGuidanceAdapterClient.swift")
-        XCTAssertTrue(route.contains("transportFailureHoldoverInterval: TimeInterval = 45.0"))
+        XCTAssertTrue(route.contains("transportFailureHoldoverInterval: TimeInterval = 90.0"))
+        XCTAssertTrue(route.contains("malformedResponseHoldoverInterval: TimeInterval = 180.0"))
         XCTAssertTrue(route.contains("CARPLAY RGD HOLD"))
         XCTAssertTrue(route.contains("Ignoring first inactive sample"))
         XCTAssertTrue(route.contains("confirmations < 2"))

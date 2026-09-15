@@ -1,0 +1,24 @@
+HUD Controller v90.35.3.14.1 — CI alignment verification
+
+GitHub Actions evidence from failed v90.35.3.14 run:
+- iOS simulator build: BUILD SUCCEEDED
+- XCTest: 287 executed, 1 failure
+- sole failure: V903539ReliabilityTests.testRouteGuidanceTransportHoldoverDoesNotImmediatelyDropHUD
+- stale assertion expected transportFailureHoldoverInterval = 45.0
+- production v90.35.3.14 intentionally uses 90.0 seconds transport holdover and 180.0 seconds reachable-malformed-json holdover
+
+v90.35.3.14.1 change:
+- only V903539ReliabilityTests source assertion aligned to 90 s / 180 s runtime policy
+- no ios/HUDController production source changes
+- no U2W v8.18 changes
+
+Local verification:
+- pytest: 368 passed
+- v90.35.3.14 + U2W v8.18 static release checks: 16 passed
+- v90.35.3.13.2 stabilization checks: 20 passed
+- v90.35.3.13 latest-frame checks: 16 passed
+- Swift syntax parse: 184 files, 0 failures
+- GitHub Actions YAML parse: 8 files, 0 failures
+- production ios/HUDController tree byte-for-byte identical to v90.35.3.14
+- u2w/v8.18_MainVideoFDReselect tree byte-for-byte identical to v90.35.3.14
+- U2W v8.18 install/uninstall SHA256 verification: OK
