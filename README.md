@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.14.1 — CI alignment only
+
+The iOS 26 GitHub Actions build for v90.35.3.14 compiled successfully and ran 287 XCTest cases. One legacy source-string regression assertion still expected the pre-v90.35.3.14 45-second Route Guidance transport holdover, while the production v90.35.3.14 implementation intentionally uses a 90-second network/HTTP-failure holdover and a separate 180-second holdover for reachable HTTP-200 responses with temporarily malformed JSON.
+
+This alignment revision updates only `V903539ReliabilityTests.testRouteGuidanceTransportHoldoverDoesNotImmediatelyDropHUD` to assert the intentional 90 s / 180 s policy. No file under `ios/HUDController/` changed. MainVideo FD reselection, Route Guidance runtime behavior, OBD diagnostic reassembly, the three Map Mode presets/designer, navigation/lane behavior, media, ambient lighting, and physical 5 fps relay are byte-for-byte unchanged from v90.35.3.14. The paired adapter remains **U2W v8.18**; no U2W reflash is required.
+
+See `V90_35_3_14_1_CI_ALIGNMENT.md`.
+
+---
+
 # HUD Controller v90.35.3.14 — MainVideo FD reselection + Route Guidance holdover + OBD diagnostic reassembly
 
 This release builds directly on **v90.35.3.13.3** and preserves the three-preset Map Mode designer, including the one-time migration of the existing pre-designer layout into Preset 1. It is paired with **U2W v8.18 MainVideo FD Reselection**.
