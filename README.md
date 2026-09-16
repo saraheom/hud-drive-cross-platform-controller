@@ -1,3 +1,15 @@
+# HUD Controller v90.35.3.16 — iPhone MainVideo filter + Map-Mode-only video load
+
+This is an **app-first stability release** paired with the proven **U2W v8.11 MainVideo exporter + v8.17 LatestFrame streamer**. **Do not keep U2W v8.19 installed for road use.** The v8.19 standalone CGI filter was isolated from AppleCarPlay, but field testing showed repeated MainVideo CGI timeouts, whole-adapter lag, and an adapter/CarPlay restart. Use the bundled v8.19 uninstall image to restore the exact v8.17 streamer; the v8.11 exporter remains untouched.
+
+The expensive H.264 validation now runs on the iPhone. Raw v8.17 bytes are syntax-checked for a real **800×480** SPS/PPS/slice relationship before VideoToolbox sees them. Dirty bytes trigger only a local decoder resync; they no longer cause repeated HTTP/CGI reconnects. A transport reconnect is allowed only after **60 seconds of true source silence**, and retries back off for 5 seconds after actual HTTP errors. MainVideo itself is now **strictly Map-Mode-only**: normal Navigation/Freeride does not open the video endpoint at all.
+
+The 12-second OBD probe remains available. Based on the 2026-09-16 field test, probe cleanup no longer clears the stock OBD custom slot immediately; it restores fullscreen/KeepAlive while leaving the slot hidden, then performs one delayed OBD health reassert if needed. The previous probe data still does not identify a trustworthy production OBD vehicle-speed value, so no OBD-based speed-warning feature is enabled.
+
+See `docs/V90_35_3_16_IPHONE_MAINVIDEO_FILTER.md` and `V90_35_3_16_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.15 — Safe MainVideo + route inactive hold + accessible OBD probe
 
 This release keeps the stable **v8.11 MainVideo exporter** and replaces only the v8.17 HTTP streamer with **U2W v8.19 Safe MainVideo Filter**. The v8.18 AppleCarPlay fd-reselection preload is intentionally not used. v8.19 runs only as a standalone Boa CGI reader of `/tmp/u2w_mainvideo_live.h264`; it does not hook or restart AppleCarPlay.

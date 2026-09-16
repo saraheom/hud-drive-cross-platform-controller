@@ -1,0 +1,53 @@
+HUD Controller v90.35.3.16 — iPhone MainVideo Filter / Map-Mode-only video
+
+Production delta from v90.35.3.15:
+- ios/HUDController/App/AppState.swift
+- ios/HUDController/MapMode/U2WMainVideoClient.swift
+- ios/HUDController/MapMode/H264MainVideoSanitizer.swift (new)
+- ios/HUDController/UI/NavigationHUDPreviewCard.swift
+
+Adapter baseline / safety:
+- No new U2W image is introduced by v90.35.3.16.
+- Required road-test baseline is the stable v8.11 MainVideo exporter + v8.17 LatestFrame HTTP streamer.
+- The bundled v8.19 uninstall image restores the exact v8.17 streamer and does not modify the v8.11 exporter.
+- U2W v8.17 install SHA-256: 6313ac3ec24a8a44456ae18c0a8c7f4a05b39d573479aa72b8bbff844045b19b
+- U2W v8.17 uninstall SHA-256: 396524a1ce72ec7f39a555b054f5727e31260d6b331ed71e2f68fba2284d4ee3
+- U2W v8.19 rollback SHA-256: 096be9abf03c1d72ba630baf2430d567ac3c12ac8de0c516e09d9fe6dc11b88d
+- Entire u2w/ tree is unchanged from v90.35.3.15; only the app moves filtering off-adapter.
+
+MainVideo changes:
+- Raw v8.17 bytes are syntax-validated on the iPhone before VideoToolbox.
+- SPS must parse to exactly 800x480; PPS must reference an accepted SPS; VCL slices must reference an accepted PPS/SPS.
+- False/unknown Annex-B NALs are rejected before decode.
+- Fresh raw bytes with no image for 20 s trigger a local decoder resync only; the HTTP stream stays open.
+- Local decoder-resync cooldown: 30 s.
+- True raw-source silence: 60 s before a transport reconnect.
+- Source reconnect cooldown: 60 s.
+- Actual HTTP completion/error retry backoff: 5 s.
+- URLSession request inactivity allowance: 60 s.
+- MainVideo starts only after live U2W Map Mode successfully starts and stops immediately when live Map Mode stops.
+- Normal Navigation/Freeride never starts MainVideo.
+- UI exposes raw/valid/rejected SPS/PPS/IDR/slice counters.
+
+OBD diagnostic follow-up:
+- 12 s probe-end cleanup no longer clears the OBD custom slot while live Map Mode remains active.
+- Fullscreen + KeepAlive restore the custom GPS-rendered Map Mode speed while the stock OBD slot stays hidden.
+- One delayed health check reasserts OBD if it nevertheless drops.
+- The diagnostic OBD slot is cleared when Map Mode itself exits, with one health reassert if exit cleanup disconnects OBD.
+- No production OBD vehicle-speed source is enabled.
+
+Reference capture validation using the production Swift H264MainVideoSanitizer:
+- known-good 5,046,272-byte capture: raw 473, valid 309, rejected 164, SPS 1, PPS 1, IDR 1, slices 307
+- contaminated 73,617-byte capture: raw 7, valid 0, rejected 7
+- contaminated 4,411,482-byte capture: raw 345, valid 0, rejected 345
+
+Local validation:
+- pytest: 379 passed
+- top-level release/static scripts: 9/9 passed
+- Swift syntax parse: 187 Swift files, 0 failures
+- GitHub Actions YAML parse: 8 workflows, 0 failures
+- H264MainVideoSanitizer standalone Swift compile/run: passed
+- U2W v8.17/v8.19 rollback image hashes: verified
+- Production u2w/ tree vs v90.35.3.15: unchanged
+
+Full Xcode 26 compilation/XCTest still requires the GitHub Actions macOS runner.

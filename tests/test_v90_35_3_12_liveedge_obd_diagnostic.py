@@ -12,11 +12,12 @@ def test_live_edge_streamer_does_not_start_at_zero():
     assert 'byte_zero_replay_on_reconnect=0' in (ROOT/'u2w/v8.16_LiveEdgeMainVideo/source/install_once.sh').read_text()
 
 def test_ios_watchdog_is_less_aggressive_and_tracks_bytes():
-    assert 'decoderStaleFrameInterval: TimeInterval = 15.0' in VIDEO
-    assert 'freshnessReconnectCooldown: TimeInterval = 30.0' in VIDEO
+    assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
+    assert 'sourceStaleInterval: TimeInterval = 60.0' in VIDEO
     assert 'onBytes' in VIDEO
     assert 'receivedBytes' in VIDEO
-    assert 'conservative v8.19 reseed' in VIDEO
+    assert 'requestDecoderResync' in VIDEO
+    assert 'raw HTTP stream left open' in VIDEO
 
 def test_stock_hud_obd_log_protocol_is_exposed():
     assert 'requestOBDDiagnosticLogs' in CMD

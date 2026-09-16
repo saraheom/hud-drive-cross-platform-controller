@@ -23,7 +23,7 @@ check('follow/dark/light real-pixel filtering', 'case .followSource' in canvas a
 check('crop persistence', all(x in settings for x in ['sourceMapZoom','sourceMapOffsetX','sourceMapOffsetY']))
 check('live status UI', 'LabeledContent("MainVideo"' in ui and 'state.mainVideo.frameCount' in ui and 'Reconnect U2W video' in ui)
 check('freeze before wifi handoff', app.index('mapModeFrozenSourceImage = mainVideo.latestFrame') < app.index('mainVideo.stop(reason: "Map Mode HUD-WiFi handoff') if 'Map Mode HUD-WiFi handoff' in app else app.index('mapModeFrozenSourceImage = mainVideo.latestFrame') < app.index('mainVideo.stop(reason: "Map Mode HUD-Wi-Fi handoff'))
-check('resume video after map mode', 'mainVideo.start(reason: "Map Mode disabled — resume U2W main video")' in app)
+check('legacy map mode does not restart background video', 'mainVideo.stop(reason: "legacy Map Mode disabled — MainVideo remains off outside live U2W Map Mode")' in app)
 check('bundled u2w v811 image', (R/'u2w/v8.11_MainVideoLive/U2W_Update_v8.11_MainVideoLive.img').exists())
 
 print(f'v90.35.1 live-mainvideo static checks passed: {len(checks)}')

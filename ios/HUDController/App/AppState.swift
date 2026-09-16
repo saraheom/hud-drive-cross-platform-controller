@@ -287,7 +287,10 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            self.mainVideo.start(reason: "HUD BLE transport ready")
+            // v90.35.3.16: MainVideo is intentionally Map-Mode-only. Keeping the
+            // raw video HTTP stream closed during normal Navigation/Freeride
+            // prevents any background load on the old U2W adapter.
+            self.mainVideo.stop(reason: "HUD BLE ready — Map Mode not active")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
                !self.hudWiFiExposureActive {
@@ -754,6 +757,9 @@ final class AppState {
             let prewarmStartCount = self.hudU2WFrameRelay.sentFrameCount
             self.hudU2WFrameRelay.start()
             self.hudU2WLiveRelayActive = true
+            // Start raw MainVideo only after the lightweight HUD relay endpoint has
+            // successfully started. The iPhone performs all H.264 validation.
+            self.mainVideo.start(reason: "live U2W Map Mode relay")
             self.startHUDU2WRelayFrameLoop()
 
             // v90.35.3.10 prewarms one real iPhone-rendered 480×240 frame before
@@ -1131,15 +1137,27 @@ final class AppState {
             return
         }
         if wasActive {
-            bluetooth.enqueue(
-                HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.none.rawValue)),
-                label: "Relay OBD probe → clear stock OBD custom item"
-            )
-            bluetooth.enqueue(HudCommands.fullScreen(true), label: "Relay OBD probe → restore full screen")
+            // Field test on 2026-09-16 showed the HUD emitted connected=false in
+            // the same second that the old probe-end path cleared the custom OBD
+            // slot. Leave OBD_DRIVING_VELOCITY configured but hidden behind the
+            // restored full-screen Map Mode frame; this avoids an unnecessary OBD
+            // teardown and lets a second probe run without reconnecting.
+            bluetooth.enqueue(HudCommands.fullScreen(true), label: "Relay OBD probe → restore full screen (keep OBD slot hidden)")
             bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe → restore KeepAlive")
         }
-        hudU2WNativeOBDProbeStatus = "Stopped — custom GPS speed restored"
-        logger.log("OBD MAP PROBE", "END reason=\(reason); restored custom JPEG speed and cleared stock OBD slot")
+        hudU2WNativeOBDProbeStatus = "Stopped — custom GPS speed restored; OBD slot kept hidden"
+        logger.log("OBD MAP PROBE", "END reason=\(reason); restored custom JPEG speed without clearing OBD slot")
+
+        if wasActive {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else { return }
+                if !self.obd.connected {
+                    self.logger.log("OBD MAP PROBE", "Post-probe OBD health check found disconnected; requesting one reconnect")
+                    self.obd.connect(force: true)
+                }
+            }
+        }
     }
 
     func runHUDMode4STAPersistenceTest() {
@@ -1275,6 +1293,7 @@ final class AppState {
         hudU2WSTAResetInProgress = false
         hudU2WIgnoreEmptyStatusUntil = .distantPast
         hudU2WFrameRelay.stop(reason: "relay stopped")
+        mainVideo.stop(reason: "live U2W Map Mode disabled")
         hudU2WLiveRelayActive = false
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
@@ -1288,7 +1307,25 @@ final class AppState {
             // sufficient to leave KivicCast; the next start can reuse/overwrite the
             // credentials normally.
             bluetooth.enqueue(HudCommands.kivicMode(4), label: "HUD/U2W live relay → restore IOS_HUD_MODE(4) (preserve STA credentials)")
+            // The probe keeps OBD_DRIVING_VELOCITY hidden while Map Mode remains
+            // active so a second probe can run without tearing down OBD. Once Map
+            // Mode itself exits, clear that diagnostic slot before restoring the
+            // normal dashboard; any resulting OBD disconnect is self-healed below.
+            bluetooth.enqueue(
+                HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.none.rawValue)),
+                label: "HUD/U2W Map Mode exit → clear diagnostic OBD custom item"
+            )
+            bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD/U2W Map Mode exit → full screen ON")
             restoreDashboardOperatingMode(reason: "HUD/U2W live relay stopped")
+
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, self.bluetooth.state == .connected, !self.hudU2WLiveRelayActive else { return }
+                if !self.obd.connected {
+                    self.logger.log("OBD MAP PROBE", "Map Mode exit cleanup left OBD disconnected; requesting one reconnect")
+                    self.obd.connect(force: true)
+                }
+            }
         }
 
         Task { @MainActor [weak self] in
@@ -1801,7 +1838,7 @@ final class AppState {
             mapModeStatus = "Could not start Map Mode cast server: \(error.localizedDescription)"
             routeGuidance.start(reason: "Map Mode cast-server start failed")
             nowPlaying.start(reason: "Map Mode cast-server start failed")
-            mainVideo.start(reason: "Map Mode cast-server start failed")
+            mainVideo.stop(reason: "legacy Map Mode cast-server failed — live U2W Map Mode is off")
             UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
             logger.log("MAP MODE", "Cast server start failed: \(error.localizedDescription)")
             return
@@ -1867,7 +1904,7 @@ final class AppState {
         speedEngine.reassertOriginalSpeedMarker(reason: "Map Mode disabled")
         routeGuidance.start(reason: "Map Mode disabled — resume U2W polling")
         nowPlaying.start(reason: "Map Mode disabled — resume U2W polling")
-        mainVideo.start(reason: "Map Mode disabled — resume U2W main video")
+        mainVideo.stop(reason: "legacy Map Mode disabled — MainVideo remains off outside live U2W Map Mode")
         UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
         mapModeStatus = "Map Mode off — normal Freeride/Navigation restored"
         logger.log("MAP MODE", "Disabled reason=\(reason); normal HUD state restored")
@@ -2163,7 +2200,11 @@ final class AppState {
             guard let self, self.bluetooth.state == .connected, !self.firmwareMaintenanceActive else { return }
             self.routeGuidance.start(reason: "firmware maintenance ended")
             self.nowPlaying.start(reason: "firmware maintenance ended")
-            self.mainVideo.start(reason: "firmware maintenance ended")
+            if self.hudU2WLiveRelayActive {
+                self.mainVideo.start(reason: "firmware maintenance ended — live U2W Map Mode active")
+            } else {
+                self.mainVideo.stop(reason: "firmware maintenance ended — Map Mode off")
+            }
         }
     }
 

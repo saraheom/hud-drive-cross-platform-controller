@@ -377,6 +377,7 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("MainVideo", value: state.mainVideo.status)
                     LabeledContent("Video frames", value: "\(state.mainVideo.frameCount) • \(state.mainVideo.sourceSize)")
                     LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
+                    LabeledContent("iPhone H.264 filter", value: state.mainVideo.sanitizerSummary)
                     LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
                     LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
                     LabeledContent("HUD cadence", value: "5 fps • latest frame")
@@ -402,6 +403,11 @@ struct NavigationHUDPreviewCard: View {
                         state.mainVideo.reconnect(reason: "Map Mode UI")
                     }
                     .buttonStyle(.bordered)
+                    .disabled(!state.hudU2WLiveRelayActive)
+
+                    Text("MainVideo connects only while live Map Mode is enabled. Raw v8.17 bytes are filtered on the iPhone so normal Navigation/Freeride adds no video-processing load to the CarPlay adapter.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
 
                     DisclosureGroup(isExpanded: $showSTAPersistenceTest) {
                         VStack(alignment: .leading, spacing: 7) {

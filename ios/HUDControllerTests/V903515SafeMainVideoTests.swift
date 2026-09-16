@@ -9,11 +9,12 @@ final class V903515SafeMainVideoTests: XCTestCase {
 
     func testMainVideoRecoveryIsConservativeForSanitizedStream() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 15.0"))
-        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 30.0"))
-        XCTAssertTrue(video.contains("freshnessReconnectCooldown: TimeInterval = 30.0"))
-        XCTAssertTrue(video.contains("conservative v8.19 reseed"))
-        XCTAssertTrue(video.contains("nal.count <= 256"))
+        XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 20.0"))
+        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 60.0"))
+        XCTAssertTrue(video.contains("localDecoderResyncCooldown: TimeInterval = 30.0"))
+        XCTAssertTrue(video.contains("requestDecoderResync"))
+        XCTAssertTrue(video.contains("raw HTTP stream left open"))
+        XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
     }
 
     func testRouteInactiveNeedsFiveSecondsBeforeFreeride() throws {

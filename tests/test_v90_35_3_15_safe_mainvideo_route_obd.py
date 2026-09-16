@@ -12,11 +12,14 @@ INSTALL = (U2W/'source/install_once.sh').read_text()
 UNINSTALL = (U2W/'source/uninstall_once.sh').read_text()
 
 def test_mainvideo_recovery_is_conservative():
-    assert 'decoderStaleFrameInterval: TimeInterval = 15.0' in VIDEO
-    assert 'sourceStaleInterval: TimeInterval = 30.0' in VIDEO
-    assert 'freshnessReconnectCooldown: TimeInterval = 30.0' in VIDEO
-    assert 'conservative v8.19 reseed' in VIDEO
-    assert 'nal.count <= 256' in VIDEO
+    # v90.35.3.16 supersedes adapter-side v8.19 filtering: dirty raw bytes are
+    # filtered on iPhone and fresh-byte stalls do not churn the HTTP CGI.
+    assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
+    assert 'sourceStaleInterval: TimeInterval = 60.0' in VIDEO
+    assert 'localDecoderResyncCooldown: TimeInterval = 30.0' in VIDEO
+    assert 'requestDecoderResync' in VIDEO
+    assert 'raw HTTP stream left open' in VIDEO
+    assert 'H264MainVideoSanitizer' in VIDEO
 
 def test_route_inactive_requires_five_seconds():
     assert 'inactiveRouteEndConfirmationInterval: TimeInterval = 5.0' in ROUTE
