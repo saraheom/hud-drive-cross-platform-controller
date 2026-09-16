@@ -19,7 +19,7 @@ status = read('u2w/v8.18_MainVideoFDReselect/source/u2wvideo-status-v818.cgi')
 checks = {
     'network route holdover 90s': 'transportFailureHoldoverInterval: TimeInterval = 90.0' in route,
     'reachable malformed route holdover 180s': 'malformedResponseHoldoverInterval: TimeInterval = 180.0' in route,
-    'decoded inactive still confirmation-gated': 'Ignoring first inactive sample' in route and 'confirmations < 2' in route,
+    'decoded inactive still confirmation-gated': 'Ignoring first inactive sample' in route and 'inactiveRouteEndConfirmationInterval: TimeInterval = 5.0' in route,
     'diagnostic BLE frame collector': 'consumeDiagnosticBLEFragment' in ble and 'obdDiagnosticWireFrame' in ble,
     'diagnostic interleaving preserved': 'Interleaved HUD event preserved while diagnostic frame waits' in ble,
     'raw capture precedes parser changes': ble.find('captureOBDDiagnosticRawBLE(data)') < ble.find('shouldSuppressDuplicateDiagnosticBLEFragment(data)') < ble.find('consumeDiagnosticBLEFragment(data)'),

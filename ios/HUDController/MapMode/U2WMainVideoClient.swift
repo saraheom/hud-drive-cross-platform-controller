@@ -5,7 +5,7 @@ import VideoToolbox
 import CoreMedia
 import CoreImage
 
-/// v90.35.3.13.2 stabilized MainVideo client for U2W v8.17.
+/// v90.35.3.15 stabilized MainVideo client for U2W v8.19 safe filter.
 ///
 /// The adapter exposes the existing CarPlay H.264 stream as Annex-B at
 /// /cgi-bin/u2wvideo-main-stream.cgi. This path is deliberately content-blind:
@@ -36,9 +36,9 @@ final class U2WMainVideoClient {
     // quickly enough that a 10-second frozen HUD is unnecessary. Source silence
     // gets a longer allowance because a truly static CarPlay frame can compress
     // down to very little traffic.
-    private let decoderStaleFrameInterval: TimeInterval = 5.0
-    private let sourceStaleInterval: TimeInterval = 12.0
-    private let freshnessReconnectCooldown: TimeInterval = 8.0
+    private let decoderStaleFrameInterval: TimeInterval = 15.0
+    private let sourceStaleInterval: TimeInterval = 30.0
+    private let freshnessReconnectCooldown: TimeInterval = 30.0
 
     init(logger: LogManager) {
         self.logger = logger
@@ -147,10 +147,10 @@ final class U2WMainVideoClient {
                 } else {
                     detail = "source silent for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s, no live image for \(String(format: "%.1f", frameAge))s"
                 }
-                self.status = "U2W main video stale — reseeding latest GOP…"
+                self.status = "U2W main video stale — conservative reseed…"
                 self.logger.log(
                     "U2W VIDEO WATCH",
-                    "\(detail); reseeding this worker at v8.17 latest GOP while preserving last-known-good VideoToolbox parameter sets"
+                    "\(detail); conservative v8.19 reseed while preserving last-known-good VideoToolbox parameter sets"
                 )
                 self.connected = false
                 self.connectedAt = nil
@@ -471,7 +471,7 @@ private final class H264VideoToolboxDecoder {
         publishLock.unlock()
     }
 
-    /// A new HTTP connection starts at U2W v8.17's latest SPS/PPS + IDR. Keep
+    /// A new HTTP connection starts at U2W v8.19's validated SPS/PPS + IDR. Keep
     /// any already-accepted VideoToolbox session alive until a replacement pair
     /// has actually been validated and a new session has been created.
     func prepareForStreamRestart() {
@@ -685,7 +685,7 @@ private final class H264VideoToolboxDecoder {
               first & 0x1F == expectedType else { return nil }
         // Real CarPlay SPS/PPS are tiny. The generous bound rejects accidental
         // multi-NAL/garbage candidates without constraining legitimate profiles.
-        guard nal.count >= 2, nal.count <= 4096 else { return nil }
+        guard nal.count >= 2, nal.count <= 256 else { return nil }
         return nal
     }
 

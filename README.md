@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.15 — Safe MainVideo + route inactive hold + accessible OBD probe
+
+This release keeps the stable **v8.11 MainVideo exporter** and replaces only the v8.17 HTTP streamer with **U2W v8.19 Safe MainVideo Filter**. The v8.18 AppleCarPlay fd-reselection preload is intentionally not used. v8.19 runs only as a standalone Boa CGI reader of `/tmp/u2w_mainvideo_live.h264`; it does not hook or restart AppleCarPlay.
+
+The iOS app reduces MainVideo reseed pressure (15 s decoder stall, 30 s source silence, 30 s cooldown), requires five seconds of continuous decoded Route Guidance inactivity before returning to Freeride, and lets the 12-second OBD probe request/wait for HUD-side OBD connection instead of leaving its button disabled. The three Map Mode presets/designer, 5 fps HUD relay, media, lane behavior, and ambient-light logic remain otherwise unchanged.
+
+See `docs/V90_35_3_15_SAFE_MAINVIDEO_ROUTE_OBD.md`, `V90_35_3_15_BUILD_VERIFY.txt`, and `u2w/v8.19_SafeMainVideoFilter/README.md`.
+
+---
+
 # HUD Controller v90.35.3.14.1 — CI alignment only
 
 The iOS 26 GitHub Actions build for v90.35.3.14 compiled successfully and ran 287 XCTest cases. One legacy source-string regression assertion still expected the pre-v90.35.3.14 45-second Route Guidance transport holdover, while the production v90.35.3.14 implementation intentionally uses a 90-second network/HTTP-failure holdover and a separate 180-second holdover for reachable HTTP-200 responses with temporarily malformed JSON.

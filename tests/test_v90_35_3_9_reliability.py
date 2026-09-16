@@ -12,13 +12,13 @@ def test_route_transport_faults_hold_last_valid_navigation():
     assert 'malformedResponseHoldoverInterval: TimeInterval = 180.0' in ROUTE
     assert 'CARPLAY RGD HOLD' in ROUTE
     assert 'Route feed interrupted — holding last guidance' in ROUTE
-    assert 'confirmations < 2' in ROUTE
+    assert 'inactiveRouteEndConfirmationInterval: TimeInterval = 5.0' in ROUTE
     assert 'Ignoring first inactive sample' in ROUTE
 
 
 def test_mainvideo_has_freshness_watchdog_and_generation_guard():
-    assert 'decoderStaleFrameInterval: TimeInterval = 5.0' in VIDEO
-    assert 'freshnessReconnectCooldown: TimeInterval = 8.0' in VIDEO
+    assert 'decoderStaleFrameInterval: TimeInterval = 15.0' in VIDEO
+    assert 'freshnessReconnectCooldown: TimeInterval = 30.0' in VIDEO
     assert 'U2W VIDEO WATCH' in VIDEO
     assert 'workerGeneration' in VIDEO
     assert 'self.workerGeneration == generation' in VIDEO

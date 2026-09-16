@@ -157,7 +157,8 @@ final class RouteGuidanceAdapterClient {
     private var lastSequenceProgressAtBySource: [SourceKind: Date] = [:]
     private var lastEndpointSuccessAt: Date?
     private var transportHoldoverStartedAt: Date?
-    private var inactiveConfirmationsBySource: [SourceKind: Int] = [:]
+    private var inactiveStartedAtBySource: [SourceKind: Date] = [:]
+    private let inactiveRouteEndConfirmationInterval: TimeInterval = 5.0
     private var lastValidInstruction: NavigationInstruction?
     private var rerouteAwaitingFreshManeuver = false
     private var rerouteCandidateSignature: String?
@@ -218,7 +219,7 @@ final class RouteGuidanceAdapterClient {
         lastSequenceProgressAtBySource.removeAll()
         lastEndpointSuccessAt = nil
         transportHoldoverStartedAt = nil
-        inactiveConfirmationsBySource.removeAll()
+        inactiveStartedAtBySource.removeAll()
         selectedKind = nil
         lastDeliveredSignature = ""
         lastEtaMilliseconds = nil
@@ -362,27 +363,34 @@ final class RouteGuidanceAdapterClient {
         }
         lastSequenceBySource[kind] = snapshot.sequence
 
-        // A single explicit state-0 sample can occur at an exporter transition.
-        // Require two consecutive *successfully decoded* inactive samples before
-        // releasing an already-active source. This costs ~0.75 s on a real route end
-        // but prevents one transient packet from blinking the HUD back to Freeride.
+        // v90.35.3.15: Google Maps can emit a short run of valid state-0 samples
+        // while navigation is still active. Two samples at the 750 ms poll cadence
+        // proved too aggressive in field testing. Hold the previously active route
+        // for a full five seconds of continuously decoded inactive state. A genuinely
+        // active sample immediately cancels this timer.
         if kind != .other,
            (!snapshot.active || snapshot.routeState == 0),
            let previous = snapshots[kind]?.snapshot,
            previous.active,
            previous.routeState != 0 {
-            let confirmations = (inactiveConfirmationsBySource[kind] ?? 0) + 1
-            inactiveConfirmationsBySource[kind] = confirmations
-            if confirmations < 2 {
+            let started = inactiveStartedAtBySource[kind] ?? now
+            inactiveStartedAtBySource[kind] = started
+            let elapsed = now.timeIntervalSince(started)
+            if elapsed < inactiveRouteEndConfirmationInterval {
                 status = "Confirming CarPlay route end…"
                 logger.log(
                     "CARPLAY RGD HOLD",
-                    "Ignoring first inactive sample source=\(kind.rawValue) seq=\(snapshot.sequence) state=\(snapshot.routeState); waiting for confirmation"
+                    "Ignoring first inactive sample / transient inactive run source=\(kind.rawValue) seq=\(snapshot.sequence) state=\(snapshot.routeState) elapsed=\(String(format: "%.1f", elapsed))s; holding active HUD guidance for 5s"
                 )
                 return
             }
+            logger.log(
+                "CARPLAY RGD HOLD",
+                "Confirmed route inactive after \(String(format: "%.1f", elapsed))s continuous state=\(snapshot.routeState) source=\(kind.rawValue)"
+            )
+            inactiveStartedAtBySource[kind] = nil
         } else if snapshot.active && snapshot.routeState != 0 {
-            inactiveConfirmationsBySource[kind] = 0
+            inactiveStartedAtBySource[kind] = nil
         }
 
         // Every successful HTTP response proves that the adapter/runtime is alive.

@@ -13,13 +13,13 @@ final class V903539ReliabilityTests: XCTestCase {
         XCTAssertTrue(route.contains("malformedResponseHoldoverInterval: TimeInterval = 180.0"))
         XCTAssertTrue(route.contains("CARPLAY RGD HOLD"))
         XCTAssertTrue(route.contains("Ignoring first inactive sample"))
-        XCTAssertTrue(route.contains("confirmations < 2"))
+        XCTAssertTrue(route.contains("inactiveRouteEndConfirmationInterval: TimeInterval = 5.0"))
     }
 
     func testMainVideoFreshnessWatchdogCanRecoverFrozenCrop() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 5.0"))
-        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 12.0"))
+        XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 15.0"))
+        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 30.0"))
         XCTAssertTrue(video.contains("U2W VIDEO WATCH"))
         XCTAssertTrue(video.contains("workerGeneration"))
         XCTAssertTrue(video.contains("self.workerGeneration == generation"))

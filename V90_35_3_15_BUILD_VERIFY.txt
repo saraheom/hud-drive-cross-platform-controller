@@ -1,0 +1,27 @@
+HUD Controller v90.35.3.15 + U2W v8.19 — build verification
+
+Production deltas:
+- U2W v8.19 safe MainVideo CGI filter; v8.11 exporter remains unchanged
+- iOS MainVideo watchdog 15 s decoder / 30 s source / 30 s cooldown
+- iOS parameter-set bound tightened to 256 bytes
+- decoded inactive Route Guidance requires 5 s continuous confirmation
+- OBD 12 s probe can request/wait up to 20 s for HUD-side OBD confirmation
+
+Safety scope:
+- v8.18 AppleCarPlay fd-reselection preload is NOT used
+- v8.19 install payload contains only once.sh + standalone MainVideo CGI binary
+- no AppleCarPlay process/preload modification
+- no route/media/HUD-relay/ambient changes on adapter
+
+Local validation:
+- pytest: 374 passed
+- GitHub Actions YAML parse: 8 files, 0 failures
+- Swift syntax parse: 185 Swift files, 0 failures
+- U2W ARM build: ELF32 ARM EABI5 soft-float, static, no dynamic section
+- U2W C compile: -Wall -Wextra -Werror clean
+- U2W deterministic rebuild: exact binary match
+- installer/uninstaller: sh -n clean
+- reference safe filter: known-good capture remains 800x480 H.264, 308 decodable frames
+- reference safe filter: contaminated 73,617-byte latest segment emits no unvalidated H.264
+
+Full Xcode/iOS simulator build and XCTest still require GitHub Actions/Xcode 26.

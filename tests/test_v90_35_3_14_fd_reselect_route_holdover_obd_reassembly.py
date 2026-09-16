@@ -20,8 +20,8 @@ def test_route_holdover_distinguishes_reachable_malformed_from_network_failure()
     assert 'shouldHoldLastActiveRoute(now: now, maximumAge: transportFailureHoldoverInterval)' in ROUTE
     assert 'Route feed malformed — holding last guidance' in ROUTE
     # Explicit decoded inactivity remains authoritative and still uses the existing
-    # two-sample confirmation logic rather than the transport holdover.
-    assert 'confirmations < 2' in ROUTE
+    # time-based confirmation logic rather than the transport holdover.
+    assert 'inactiveRouteEndConfirmationInterval: TimeInterval = 5.0' in ROUTE
     assert 'Ignoring first inactive sample' in ROUTE
 
 

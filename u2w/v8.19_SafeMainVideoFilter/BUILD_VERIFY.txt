@@ -1,0 +1,37 @@
+U2W v8.19 Safe MainVideo Filter — build verification
+
+Target: U2W software 2021.03.06.1343
+Prerequisites: v8.11 MainVideo exporter + v8.17 LatestFrame marker
+Change scope: MainVideo CGI streamer only
+
+Safety invariants:
+- AppleCarPlay executable/preload library unchanged
+- no LD_PRELOAD changes
+- no write/send/writev/sendmsg/close interposition
+- no AppleCarPlay restart/kill command
+- Route Guidance, Now Playing, HUD JPEG relay, hostapd/DHCP/Wi-Fi untouched
+- uninstall restores exact v8.17 streamer binary
+
+Binary validation:
+- ELF32 ARM EABI5 soft-float
+- statically linked
+- no dynamic section / DT_NEEDED
+- clang -Wall -Wextra -Werror build succeeds
+- deterministic rebuild matches bundled ARM binary
+- install/uninstall shell syntax passes
+- encrypted update containers decrypt-verify in build_images.py
+
+Filter validation:
+- validated SPS must decode as 800x480
+- parameter sets capped at 256 bytes
+- PPS binds to accepted SPS
+- VCL slice binds to accepted PPS
+- forbidden-zero-bit NALs rejected
+- reference sanitizer retains 308/308 decodable frames from known-good 800x480 capture
+- reference sanitizer emits zero bytes from the latest 73,617-byte contaminated segment that has no valid SPS/PPS bootstrap
+
+Install SHA-256:
+841c5d827f83d5fbfba75d4a53a4de87a5ec51afb0e49e6f9e239eab602250cf
+
+Uninstall SHA-256:
+096be9abf03c1d72ba630baf2430d567ac3c12ac8de0c516e09d9fe6dc11b88d

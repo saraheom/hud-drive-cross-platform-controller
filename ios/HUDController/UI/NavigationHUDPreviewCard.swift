@@ -915,9 +915,9 @@ struct NavigationHUDPreviewCard: View {
                     state.startHUDU2WNativeOBDSpeedProbe()
                 }
                 .buttonStyle(.bordered)
-                .disabled(!state.hudU2WLiveRelayActive || !state.obd.connected || state.hudU2WNativeOBDProbeActive)
+                .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive || state.hudU2WNativeOBDProbePending)
 
-                if state.hudU2WNativeOBDProbeActive {
+                if state.hudU2WNativeOBDProbeActive || state.hudU2WNativeOBDProbePending {
                     Button("Stop", role: .destructive) {
                         state.stopHUDU2WNativeOBDSpeedProbe()
                     }
@@ -925,7 +925,7 @@ struct NavigationHUDPreviewCard: View {
                 }
             }
 
-            Text("Optional experiment for tomorrow's drive. For 12 seconds the iPhone-rendered GPS speed number is intentionally blank while the app asks for OBD_DRIVING_VELOCITY (item 10). The first 6 seconds leave the viewer/fullscreen state untouched; the second 6 seconds temporarily exposes the stock HUD layer. If a live speed number appears in that blank area, it is strong evidence that mode 6 can overlay the HUD's internally decoded OBD speed without sending that value back to iOS. The probe auto-restores the normal custom speed and does not re-send mode 6.")
+            Text("Road-test experiment. You can tap Start as soon as Map Mode is active. If HUD-side OBD is not yet confirmed, the app requests the connection and waits up to 20 seconds, then automatically begins the 12-second probe. For those 12 seconds the iPhone-rendered GPS speed number is intentionally blank while the app asks for OBD_DRIVING_VELOCITY (item 10). The first 6 seconds leave the viewer/fullscreen state untouched; the second 6 seconds temporarily exposes the stock HUD layer. If a live speed number appears in that blank area, it is strong evidence that mode 6 can overlay the HUD's internally decoded OBD speed without sending that value back to iOS. The probe auto-restores the normal custom speed and does not re-send mode 6.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

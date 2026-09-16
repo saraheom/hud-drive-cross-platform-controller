@@ -16,8 +16,8 @@ canvas = text("ios/HUDController/MapMode/HudMapModeCanvas.swift")
 
 checks = {
     "5 fps physical HUD cadence remains unchanged": ".milliseconds(200)" in app,
-    "decoder stall watchdog is 5 seconds": "decoderStaleFrameInterval: TimeInterval = 5.0" in video,
-    "reseed cooldown is 8 seconds": "freshnessReconnectCooldown: TimeInterval = 8.0" in video,
+    "decoder stall watchdog is 15 seconds": "decoderStaleFrameInterval: TimeInterval = 15.0" in video,
+    "reseed cooldown is 30 seconds": "freshnessReconnectCooldown: TimeInterval = 30.0" in video,
     "watchdog reseeds same stream worker": "worker.reconnectAtLiveEdge(" in video,
     "accepted decoder state survives HTTP reseed": "decoder.prepareForStreamRestart()" in video,
     "SPS/PPS candidates are staged separately": all(s in video for s in ("activeSPS", "activePPS", "pendingSPS", "pendingPPS")),
