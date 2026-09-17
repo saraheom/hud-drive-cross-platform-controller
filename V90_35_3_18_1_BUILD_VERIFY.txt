@@ -1,0 +1,34 @@
+HUD Controller v90.35.3.18.1 — CI-only lane-vector regression alignment
+
+Runtime behavior: IDENTICAL to v90.35.3.18.
+U2W behavior: IDENTICAL to v8.20 Validated GOP Bootstrap.
+
+Why this revision exists
+------------------------
+GitHub Actions successfully compiled the application and HUDControllerTests target,
+then executed 300 XCTest cases. Exactly one source-regression assertion failed:
+
+  V903538MapUILayoutCalibrationTests
+  testRendererAppliesOffsetsBoldnessAndLaneEmphasisOnlyInJPEGComposition
+
+The stale assertion required:
+
+  symbolWeight(settings.laneArrowThickness)
+
+That was correct for the former SF-Symbol lane renderer. v90.35.3.18 intentionally
+replaced lane SF Symbols with LaneGuidanceGlyph custom vector paths, where
+laneArrowThickness now controls vector stroke width:
+
+  lineWidth: CGFloat(max(0.75, min(2.25, settings.laneArrowThickness * 0.82)))
+
+v90.35.3.18.1 changes only the XCTest guard so it verifies the new vector contract:
+- LaneGuidanceGlyph is used;
+- laneArrowThickness drives its stroke width;
+- active-lane emphasis and lane spacing remain applied;
+- maneuver arrow boldness still uses symbolWeight.
+
+No production Swift source was changed.
+No MainVideo decoder/reseed logic was changed.
+No lane geometry or street-name layout was changed.
+No OBD behavior was changed.
+No U2W image needs to be reflashed if v8.20 is already installed.

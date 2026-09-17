@@ -29,7 +29,10 @@ final class V903538MapUILayoutCalibrationTests: XCTestCase {
         XCTAssertTrue(canvas.contains("settings.centerOffsetX"))
         XCTAssertTrue(canvas.contains("settings.rightOffsetX"))
         XCTAssertTrue(canvas.contains("symbolWeight(settings.maneuverArrowThickness)"))
-        XCTAssertTrue(canvas.contains("symbolWeight(settings.laneArrowThickness)"))
+        // v90.35.3.18 replaced lane SF Symbols with custom vector paths. Lane
+        // boldness is therefore applied as vector stroke width, not Font.Weight.
+        XCTAssertTrue(canvas.contains("LaneGuidanceGlyph("))
+        XCTAssertTrue(canvas.contains("settings.laneArrowThickness * 0.82"))
         XCTAssertTrue(canvas.contains("settings.laneActiveEmphasis"))
         XCTAssertTrue(canvas.contains("settings.laneSpacing"))
         XCTAssertTrue(canvas.contains("settings.etaOffsetX"))

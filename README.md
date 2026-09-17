@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.18.1 — CI-only lane-vector test alignment
+
+## v90.35.3.18.1 — no runtime changes
+
+This revision is runtime-identical to v90.35.3.18. GitHub Actions compiled the iOS app and test target successfully, then found one stale XCTest assertion from the former SF-Symbol lane renderer. The test expected `symbolWeight(settings.laneArrowThickness)`, while v90.35.3.18 intentionally moved lane thickness into the custom `LaneGuidanceGlyph` vector `lineWidth`. The regression guard now validates that vector contract instead. MainVideo recovery, U2W v8.20 validated-GOP bootstrap, lane geometry, two-line street names, ambient lighting, navigation, and OBD behavior are unchanged.
+
+See `V90_35_3_18_1_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.18 — MainVideo recovery + validated U2W GOP bootstrap + vector lane graphics
 
 ## v90.35.3.18 — commute-driven MainVideo recovery and Map Mode UI refinement
