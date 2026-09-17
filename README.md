@@ -1,4 +1,13 @@
-# HUD Controller v90.35.3.16 — iPhone MainVideo filter + Map-Mode-only video load
+# HUD Controller v90.35.3.17 — persistent item-10 OBD test + iPhone network trace + lane rendering fixes
+
+## v90.35.3.17 — item-10 OBD toggle, iPhone network trace, speed-limit/lane UI fixes
+
+- Converts the live Map Mode `OBD_DRIVING_VELOCITY` (`itemIndex=10`) road test from a 12-second button into a persistent toggle. The control is now its own card outside the collapsible Map Mode image-customization block. If armed while Map Mode is off, it starts automatically on the next live relay session.
+- Adds Map-Mode-only `NWPathMonitor` logging for default, Wi-Fi, and cellular paths. `IPHONE NETWORK` log lines include path changes plus MainVideo byte/frame age and H.264 counters so cellular/default-route transitions can be correlated with live-map stalls. The diagnostics card also shows the current default/Wi-Fi/cellular path state.
+- The custom speed-limit sign is rendered only when the OSM-derived/held display limit is greater than zero. The sign slot remains reserved when unavailable, so the speed number does not jump or re-center vertically.
+- Lane arrows are packed contiguously and centered instead of stretching to the edges. For more than four lanes, Map Mode selects the best readable four-lane window around the recommended lane cluster; if no lane is recommended, it uses the center four.
+- Native lane types `3` (straight + right) and `5` (straight + left) now render as combined straight/turn glyphs rather than diagonal arrows.
+
 
 This is an **app-first stability release** paired with the proven **U2W v8.11 MainVideo exporter + v8.17 LatestFrame streamer**. **Do not keep U2W v8.19 installed for road use.** The v8.19 standalone CGI filter was isolated from AppleCarPlay, but field testing showed repeated MainVideo CGI timeouts, whole-adapter lag, and an adapter/CarPlay restart. Use the bundled v8.19 uninstall image to restore the exact v8.17 streamer; the v8.11 exporter remains untouched.
 

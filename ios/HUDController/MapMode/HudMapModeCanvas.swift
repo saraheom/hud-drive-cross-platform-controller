@@ -54,30 +54,39 @@ struct HudMapModeCanvas: View {
         VStack(spacing: 7) {
             Spacer(minLength: 10)
 
-            if settings.showSpeed && !suppressCustomSpeedForNativeOBDProbe {
-                VStack(spacing: -3) {
-                    Text("\(max(0, snapshot.speedMph))")
-                        .font(.system(size: 48, weight: .bold, design: .rounded))
-                        .minimumScaleFactor(0.55)
-                        .lineLimit(1)
-                    Text("MPH")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.60))
+            Group {
+                if settings.showSpeed && !suppressCustomSpeedForNativeOBDProbe {
+                    VStack(spacing: -3) {
+                        Text("\(max(0, snapshot.speedMph))")
+                            .font(.system(size: 48, weight: .bold, design: .rounded))
+                            .minimumScaleFactor(0.55)
+                            .lineLimit(1)
+                        Text("MPH")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.60))
+                    }
+                    .scaleEffect(settings.speedScale)
+                    .offset(
+                        x: CGFloat(settings.designerSpeedOffsetX / max(0.01, settings.leftScale)),
+                        y: CGFloat(settings.designerSpeedOffsetY / max(0.01, settings.leftScale))
+                    )
+                } else {
+                    // Keep a fixed speed slot even when the native item-10 probe owns
+                    // this region. That prevents any vertical layout shift.
+                    Color.clear.frame(height: 60)
                 }
-                .scaleEffect(settings.speedScale)
-                .offset(
-                    x: CGFloat(settings.designerSpeedOffsetX / max(0.01, settings.leftScale)),
-                    y: CGFloat(settings.designerSpeedOffsetY / max(0.01, settings.leftScale))
-                )
-            } else if settings.showSpeed && suppressCustomSpeedForNativeOBDProbe {
-                // Deliberately reserve the left speed area during the physical
-                // OBD-overlay experiment. Any number visible on the HUD is then
-                // unambiguously produced by the stock OBD renderer, not GPS.
-                Color.clear.frame(height: 60)
             }
+            .frame(height: 60)
 
-            if settings.showSpeedLimit {
-                usSpeedLimitSign
+            Group {
+                if settings.showSpeedLimit && snapshot.speedLimitMph > 0 {
+                    usSpeedLimitSign
+                } else {
+                    // No OSM speed limit = no white rectangle. Preserve the exact
+                    // sign slot so the speed number never re-centers vertically.
+                    Color.clear
+                        .frame(width: 42, height: CGFloat(34 * settings.speedLimitSignHeightScale))
+                }
             }
 
             Spacer(minLength: 10)
@@ -87,7 +96,7 @@ struct HudMapModeCanvas: View {
     }
 
     private var usSpeedLimitSign: some View {
-        Text(snapshot.speedLimitMph > 0 ? "\(snapshot.speedLimitMph)" : "—")
+        Text("\(snapshot.speedLimitMph)")
             .font(.system(
                 size: CGFloat(24 * settings.speedLimitFontScale),
                 weight: .bold,
@@ -276,24 +285,58 @@ struct HudMapModeCanvas: View {
         return previewLanePlaceholder ? [-1, -1, 2] : []
     }
 
+    /// The physical right-side lane area is intentionally optimized for four
+    /// readable arrows. For 1...4 lanes, every arrow is packed contiguously and
+    /// the whole group is centered. For 5+ lanes, select the best four-lane
+    /// window around the recommended (positive) lane cluster rather than shrinking
+    /// every glyph until it becomes unreadable.
+    private var displayedLaneValues: [Int] {
+        let values = effectiveLaneValues
+        guard values.count > 4 else { return values }
+
+        let active = values.indices.filter { values[$0] > 0 }
+        guard !active.isEmpty else {
+            let start = max(0, (values.count - 4) / 2)
+            return Array(values[start..<(start + 4)])
+        }
+
+        let activeCenter = Double(active.reduce(0, +)) / Double(active.count)
+        var bestStart = 0
+        var bestScore = -Double.infinity
+        for start in 0...(values.count - 4) {
+            let range = start..<(start + 4)
+            let activeInside = active.filter { range.contains($0) }.count
+            let windowCenter = Double(start) + 1.5
+            // First maximize how many recommended lanes are retained; then prefer
+            // the window whose center is nearest the recommended-lane centroid.
+            let score = Double(activeInside) * 100.0 - abs(windowCenter - activeCenter)
+            if score > bestScore {
+                bestScore = score
+                bestStart = start
+            }
+        }
+        return Array(values[bestStart..<(bestStart + 4)])
+    }
+
     @ViewBuilder
     private var laneGuidanceRow: some View {
-        let values = effectiveLaneValues
+        let values = displayedLaneValues
         if values.isEmpty {
             Color.clear
         } else {
             HStack(spacing: CGFloat(settings.laneSpacing)) {
                 ForEach(Array(values.enumerated()), id: \.offset) { _, value in
-                    Image(systemName: laneSymbol(for: abs(value)))
+                    laneGlyph(for: abs(value))
                         .font(.system(
                             size: 11,
                             weight: symbolWeight(settings.laneArrowThickness)
                         ))
                         .foregroundStyle(value > 0 ? .white : Color(white: settings.laneInactiveGray))
                         .scaleEffect(value > 0 ? settings.laneActiveEmphasis : 1.0)
-                        .frame(maxWidth: .infinity)
+                        .frame(width: 14, height: 18)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 
@@ -331,13 +374,28 @@ struct HudMapModeCanvas: View {
         }
     }
 
-    private func laneSymbol(for raw: Int) -> String {
+    @ViewBuilder
+    private func laneGlyph(for raw: Int) -> some View {
         switch raw {
-        case 2: return "arrow.turn.up.right"
-        case 3: return "arrow.up.right"
-        case 4: return "arrow.turn.up.left"
-        case 5: return "arrow.up.left"
-        default: return "arrow.up"
+        case 2:
+            Image(systemName: "arrow.turn.up.right")
+        case 3:
+            // Native lane type 3 means straight OR right. Overlay the straight
+            // and turn glyphs instead of collapsing it to a diagonal arrow.
+            ZStack {
+                Image(systemName: "arrow.up")
+                Image(systemName: "arrow.turn.up.right")
+            }
+        case 4:
+            Image(systemName: "arrow.turn.up.left")
+        case 5:
+            // Native lane type 5 means straight OR left.
+            ZStack {
+                Image(systemName: "arrow.up")
+                Image(systemName: "arrow.turn.up.left")
+            }
+        default:
+            Image(systemName: "arrow.up")
         }
     }
 

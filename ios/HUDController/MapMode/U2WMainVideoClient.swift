@@ -4,8 +4,9 @@ import UIKit
 import VideoToolbox
 import CoreMedia
 import CoreImage
+import Network
 
-/// v90.35.3.16 MainVideo client for the stable U2W v8.11 exporter + v8.17
+/// v90.35.3.17 MainVideo client for the stable U2W v8.11 exporter + v8.17
 /// latest-frame streamer.
 ///
 /// Field captures prove fd33 contains genuine 800×480 CarPlay H.264 mixed with
@@ -30,6 +31,7 @@ final class U2WMainVideoClient {
     private(set) var acceptedPPSCount = 0
     private(set) var acceptedIDRCount = 0
     private(set) var acceptedSliceCount = 0
+    private(set) var networkPathSummary = "Not monitoring — Map Mode off"
 
     var sanitizerSummary: String {
         "raw \(rawNALCount) • valid \(acceptedNALCount) • rejected \(rejectedNALCount) • " +
@@ -46,6 +48,11 @@ final class U2WMainVideoClient {
     private var lastReceivedBytesAt: Date?
     private var lastLocalDecoderResyncAt: Date?
     private var lastSourceReconnectAt: Date?
+    private var lastNetworkHeartbeatAt: Date?
+    private var networkMonitors: [String: NWPathMonitor] = [:]
+    private var networkSignatures: [String: String] = [:]
+    private var networkStatuses: [String: String] = [:]
+    private let networkPathQueue = DispatchQueue(label: "HUD.MainVideo.NetworkPath")
 
     // Do not churn HTTP while the raw adapter stream remains active. A long span
     // of contaminated/non-video bytes is handled locally by the sanitizer. Only
@@ -80,6 +87,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.17-raw+iPhone-filter mapModeOnly=1")
+        startNetworkPathLogging()
         startWorker(reason: reason)
         startFreshnessWatchdog()
     }
@@ -172,6 +180,11 @@ final class U2WMainVideoClient {
                 let byteAge = self.lastReceivedBytesAt.map { now.timeIntervalSince($0) } ?? .infinity
                 let bytesAreFresh = byteAge < 2.0
 
+                if self.lastNetworkHeartbeatAt.map({ now.timeIntervalSince($0) >= 15.0 }) ?? true {
+                    self.lastNetworkHeartbeatAt = now
+                    self.logNetworkContext(reason: "15s MainVideo heartbeat")
+                }
+
                 if bytesAreFresh, frameAge >= self.decoderStaleFrameInterval {
                     let mayResync = self.lastLocalDecoderResyncAt.map {
                         now.timeIntervalSince($0) >= self.localDecoderResyncCooldown
@@ -183,6 +196,7 @@ final class U2WMainVideoClient {
                         "U2W VIDEO WATCH",
                         "raw bytes fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; local decoder resync only, HTTP stream remains open; filter={\(self.sanitizerSummary)}"
                     )
+                    self.logNetworkContext(reason: "decoder stale while raw bytes remain fresh")
                     self.worker?.requestDecoderResync(reason: "fresh raw bytes but no validated live image")
                     continue
                 }
@@ -200,6 +214,7 @@ final class U2WMainVideoClient {
                     "U2W VIDEO WATCH",
                     "source silent for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s frameAge=\(String(format: "%.1f", frameAge))s; one rate-limited v8.17 HTTP reconnect"
                 )
+                self.logNetworkContext(reason: "MainVideo source silent before reconnect")
                 self.connected = false
                 self.connectedAt = nil
                 if let worker = self.worker {
@@ -229,6 +244,8 @@ final class U2WMainVideoClient {
         lastReceivedBytesAt = nil
         lastLocalDecoderResyncAt = nil
         lastSourceReconnectAt = nil
+        lastNetworkHeartbeatAt = nil
+        stopNetworkPathLogging(reason: reason)
         status = "U2W main video idle — Map Mode off"
         logger.log("U2W VIDEO", "Stop reason=\(reason); no MainVideo HTTP traffic remains")
     }
@@ -246,11 +263,101 @@ final class U2WMainVideoClient {
         lastSourceReconnectAt = Date()
         status = "Reconnecting U2W v8.17 raw MainVideo…"
         logger.log("U2W VIDEO", "Manual reconnect reason=\(reason)")
+        logNetworkContext(reason: "manual MainVideo reconnect")
         if let worker {
             worker.reconnectAtLiveEdge(reason: "manual / \(reason)")
         } else {
             startWorker(reason: "manual reconnect / \(reason)")
         }
+    }
+    private func startNetworkPathLogging() {
+        stopNetworkPathLogging(reason: "restart")
+        networkStatuses = ["default": "pending", "wifi": "pending", "cellular": "pending"]
+        networkPathSummary = "default pending • Wi-Fi pending • cellular pending"
+
+        let specs: [(String, NWPathMonitor)] = [
+            ("default", NWPathMonitor()),
+            ("wifi", NWPathMonitor(requiredInterfaceType: .wifi)),
+            ("cellular", NWPathMonitor(requiredInterfaceType: .cellular)),
+        ]
+        for (label, monitor) in specs {
+            monitor.pathUpdateHandler = { [weak self] path in
+                Task { @MainActor [weak self] in
+                    self?.handleNetworkPathUpdate(label: label, path: path)
+                }
+            }
+            networkMonitors[label] = monitor
+            monitor.start(queue: networkPathQueue)
+        }
+        logger.log("IPHONE NETWORK", "Started default + Wi-Fi + cellular NWPathMonitor while Map Mode MainVideo is active")
+    }
+
+    private func stopNetworkPathLogging(reason: String) {
+        guard !networkMonitors.isEmpty else {
+            networkPathSummary = "Not monitoring — Map Mode off"
+            return
+        }
+        for monitor in networkMonitors.values { monitor.cancel() }
+        networkMonitors.removeAll()
+        networkSignatures.removeAll()
+        networkStatuses.removeAll()
+        networkPathSummary = "Not monitoring — Map Mode off"
+        logger.log("IPHONE NETWORK", "Stopped NWPathMonitor reason=\(reason)")
+    }
+
+    private func handleNetworkPathUpdate(label: String, path: NWPath) {
+        guard running else { return }
+        let status: String
+        switch path.status {
+        case .satisfied: status = "satisfied"
+        case .unsatisfied: status = "unsatisfied"
+        case .requiresConnection: status = "requiresConnection"
+        @unknown default: status = "unknown"
+        }
+
+        let activeTypes = [
+            path.usesInterfaceType(.wifi) ? "wifi" : nil,
+            path.usesInterfaceType(.cellular) ? "cellular" : nil,
+            path.usesInterfaceType(.wiredEthernet) ? "ethernet" : nil,
+            path.usesInterfaceType(.loopback) ? "loopback" : nil,
+            path.usesInterfaceType(.other) ? "other" : nil,
+        ].compactMap { $0 }
+        let available = path.availableInterfaces
+            .map { "\(networkInterfaceTypeName($0.type)):\($0.name)" }
+            .sorted()
+            .joined(separator: ",")
+        let signature = "status=\(status) active=[\(activeTypes.joined(separator: ","))] available=[\(available)] expensive=\(path.isExpensive ? 1 : 0) constrained=\(path.isConstrained ? 1 : 0) ipv4=\(path.supportsIPv4 ? 1 : 0) ipv6=\(path.supportsIPv6 ? 1 : 0) dns=\(path.supportsDNS ? 1 : 0)"
+
+        networkStatuses[label] = status
+        networkPathSummary = "default \(networkStatuses["default"] ?? "pending") • Wi-Fi \(networkStatuses["wifi"] ?? "pending") • cellular \(networkStatuses["cellular"] ?? "pending")"
+
+        guard networkSignatures[label] != signature else { return }
+        networkSignatures[label] = signature
+        logger.log("IPHONE NETWORK", "\(label) path changed \(signature)")
+        logNetworkContext(reason: "\(label) path change")
+    }
+
+    private func networkInterfaceTypeName(_ type: NWInterface.InterfaceType) -> String {
+        switch type {
+        case .wifi: return "wifi"
+        case .cellular: return "cellular"
+        case .wiredEthernet: return "ethernet"
+        case .loopback: return "loopback"
+        case .other: return "other"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private func logNetworkContext(reason: String) {
+        let now = Date()
+        let byteAge = lastReceivedBytesAt.map { now.timeIntervalSince($0) }
+        let frameAge = lastDecodedFrameAt.map { now.timeIntervalSince($0) }
+        let byteAgeText = byteAge.map { String(format: "%.1fs", $0) } ?? "none"
+        let frameAgeText = frameAge.map { String(format: "%.1fs", $0) } ?? "none"
+        logger.log(
+            "IPHONE NETWORK",
+            "context reason=\(reason) summary={\(networkPathSummary)} mainVideoConnected=\(connected ? 1 : 0) bytes=\(receivedBytes) byteAge=\(byteAgeText) frames=\(frameCount) frameAge=\(frameAgeText) h264={\(sanitizerSummary)}"
+        )
     }
 }
 

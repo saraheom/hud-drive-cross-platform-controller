@@ -1,0 +1,30 @@
+HUD Controller v90.35.3.17 build verification
+
+Base: v90.35.3.16 full repository.
+
+Changes:
+- Persistent toggleable native OBD_DRIVING_VELOCITY item-10 Map Mode probe.
+- OBD test card moved outside the collapsible Map Mode image-customization block.
+- Default/Wi-Fi/cellular NWPathMonitor logging tied to live MainVideo only.
+- IPHONE NETWORK logs include path changes plus MainVideo bytes, byte age, frames, frame age, and H.264 counters.
+- No white speed-limit rectangle when speedLimitMph <= 0; fixed sign slot preserves speed Y position.
+- Lane arrows center-pack contiguously; >4 uses the best readable four-lane window around recommended lanes.
+- Native lane type 3 (straight+right) and type 5 (straight+left) use combined glyphs rather than diagonal arrows.
+
+Local validation completed:
+- All 10 root Python regression files passed.
+- Swift parser passed for:
+  * HudMapModeCanvas.swift
+  * U2WMainVideoClient.swift
+  * AppState.swift
+  * NavigationHUDPreviewCard.swift
+  * V903517OBDNetworkLaneTests.swift
+- Diff against v90.35.3.16 contains only the intended four production Swift files, README, and new v90.35.3.17 verification/tests.
+
+Environment limitation:
+- A full iOS/Xcode archive cannot be compiled in this Linux container. The repository retains the existing GitHub Actions/Xcode project generation workflow for the real iOS build.
+
+Physical road validation still required:
+- Confirm item 10 overlays a changing true OBD speed on the physical HUD while the toggle remains ON.
+- Correlate IPHONE NETWORK default/Wi-Fi/cellular transitions with MainVideo stalls/recovery.
+- Verify 5+ lane windowing and straight+turn combined glyph appearance with live route data.

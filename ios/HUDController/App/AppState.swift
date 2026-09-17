@@ -56,6 +56,7 @@ final class AppState {
     // speed into the iPhone. It temporarily hides the JPEG's GPS speed and asks
     // the stock HUD layer for OBD_DRIVING_VELOCITY so we can learn whether mode 6
     // can composite the HUD's internally decoded true vehicle speed over KivicCast.
+    private(set) var hudU2WNativeOBDProbeEnabled = false
     private(set) var hudU2WNativeOBDProbeActive = false
     private(set) var hudU2WNativeOBDProbePending = false
     private(set) var hudU2WNativeOBDProbeStatus = "Not running"
@@ -201,6 +202,17 @@ final class AppState {
             if connected, self?.mapModeActive == true {
                 self?.startNativeOBDSpeedOverlayProbeIfNeeded()
             }
+            if connected,
+               self?.hudU2WLiveRelayActive == true,
+               self?.hudU2WNativeOBDProbeEnabled == true {
+                self?.startHUDU2WNativeOBDSpeedProbe()
+            } else if !connected,
+                      self?.hudU2WLiveRelayActive == true,
+                      self?.hudU2WNativeOBDProbeEnabled == true,
+                      self?.hudU2WNativeOBDProbeActive == true {
+                self?.stopHUDU2WNativeOBDSpeedProbe(reason: "HUD-side OBD disconnected during persistent test")
+                self?.obd.connect(force: true)
+            }
         }
 
         bluetooth.onWiFiSTAStatusEvent = { [weak self] status, reason, address in
@@ -245,6 +257,15 @@ final class AppState {
                 self.primeHUDU2WKivicViewer(
                     reason: status == 1 ? "STA status=1 connected" : "STA has DHCP address despite status=6"
                 )
+            }
+
+            if self.hudU2WLiveRelayActive, linkUp, self.hudU2WNativeOBDProbeEnabled,
+               !self.hudU2WNativeOBDProbeActive, !self.hudU2WNativeOBDProbePending {
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(2))
+                    guard let self, self.hudU2WLiveRelayActive, self.hudU2WNativeOBDProbeEnabled else { return }
+                    self.startHUDU2WNativeOBDSpeedProbe()
+                }
             }
 
             if self.hudSTAPersistenceTestActive {
@@ -1043,13 +1064,32 @@ final class AppState {
 
 
 
+    func setHUDU2WNativeOBDSpeedProbeEnabled(_ enabled: Bool) {
+        hudU2WNativeOBDProbeEnabled = enabled
+        if enabled {
+            if hudU2WLiveRelayActive {
+                startHUDU2WNativeOBDSpeedProbe()
+            } else {
+                hudU2WNativeOBDProbeStatus = "Armed — enable Map Mode to start item 10"
+                logger.log("OBD MAP PROBE", "Toggle ON while Map Mode inactive; probe armed for next live relay")
+            }
+        } else {
+            stopHUDU2WNativeOBDSpeedProbe(reason: "toggle off")
+            hudU2WNativeOBDProbeStatus = "Off"
+        }
+    }
+
     func startHUDU2WNativeOBDSpeedProbe() {
         guard hudU2WLiveRelayActive else {
-            hudU2WNativeOBDProbeStatus = "Enable Map Mode first"
+            hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled ? "Armed — enable Map Mode to start item 10" : "Enable Map Mode first"
             return
         }
         guard bluetooth.state == .connected else {
             hudU2WNativeOBDProbeStatus = "HUD BLE disconnected"
+            return
+        }
+        guard hudU2WSTAConnected || isUsableHUDSTAAddress(hudU2WSTAAddress) else {
+            hudU2WNativeOBDProbeStatus = "Armed — waiting for HUD Map Mode Wi-Fi"
             return
         }
         guard !hudU2WNativeOBDProbeActive, !hudU2WNativeOBDProbePending else { return }
@@ -1084,21 +1124,21 @@ final class AppState {
                 }
                 guard self.obd.connected else {
                     self.hudU2WNativeOBDProbePending = false
-                    self.hudU2WNativeOBDProbeStatus = "OBD connection timed out — tap Start to retry"
+                    self.hudU2WNativeOBDProbeStatus = "OBD connection timed out — toggle off/on to retry"
                     self.logger.log("OBD MAP PROBE", "ABORT waited 20s but HUD-side OBD never confirmed connected")
                     self.hudU2WNativeOBDProbeTask = nil
                     return
                 }
-                self.logger.log("OBD MAP PROBE", "HUD-side OBD connected; automatically starting requested 12s probe")
+                self.logger.log("OBD MAP PROBE", "HUD-side OBD connected; automatically starting persistent item-10 probe")
             }
 
             self.hudU2WNativeOBDProbePending = false
             self.hudU2WNativeOBDProbeActive = true
-            self.hudU2WNativeOBDProbeStatus = "Phase 1/2 — OBD item only; custom GPS speed hidden"
-            self.bluetooth.beginOBDSpeedProbeForensics(duration: 13.5, label: "manual mode-6 OBD_DRIVING_VELOCITY")
+            self.hudU2WNativeOBDProbeStatus = "Starting item 10 — custom GPS speed hidden"
+            self.bluetooth.beginOBDSpeedProbeForensics(duration: 30.0, label: "persistent mode-6 OBD_DRIVING_VELOCITY")
             self.logger.log(
                 "OBD MAP PROBE",
-                "BEGIN relay-mode6: hide custom GPS speed; request stock OBD_DRIVING_VELOCITY itemIndex=10 position=0; leave fullscreen unchanged for first 6s"
+                "BEGIN persistent relay-mode6 test: hide custom GPS speed; request stock OBD_DRIVING_VELOCITY itemIndex=10 position=0; leave fullscreen unchanged for first 6s"
             )
 
             self.bluetooth.enqueue(
@@ -1110,8 +1150,8 @@ final class AppState {
             try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled, self.hudU2WNativeOBDProbeActive else { return }
 
-            self.hudU2WNativeOBDProbeStatus = "Phase 2/2 — stock layer exposed for 6s"
-            self.logger.log("OBD MAP PROBE", "PHASE2 fullScreen(false) + OBD_DRIVING_VELOCITY; no mode6 rewrite")
+            self.hudU2WNativeOBDProbeStatus = "ON — item 10 active; stock layer exposed until toggle off"
+            self.logger.log("OBD MAP PROBE", "PERSIST fullScreen(false) + OBD_DRIVING_VELOCITY; remains active until toggle off")
             self.bluetooth.enqueue(HudCommands.fullScreen(false), label: "Relay OBD probe phase 2 → expose stock HUD layer")
             self.bluetooth.enqueue(
                 HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)),
@@ -1119,9 +1159,9 @@ final class AppState {
             )
             self.bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe phase 2 → KeepAlive")
 
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled, self.hudU2WNativeOBDProbeActive else { return }
-            self.stopHUDU2WNativeOBDSpeedProbe(reason: "12s two-phase probe complete")
+            // Persistent diagnostic mode: phase 2 stays active until the user
+            // turns the separate OBD test toggle off or Map Mode exits.
+            self.hudU2WNativeOBDProbeTask = nil
         }
     }
 
@@ -1145,8 +1185,8 @@ final class AppState {
             bluetooth.enqueue(HudCommands.fullScreen(true), label: "Relay OBD probe → restore full screen (keep OBD slot hidden)")
             bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe → restore KeepAlive")
         }
-        hudU2WNativeOBDProbeStatus = "Stopped — custom GPS speed restored; OBD slot kept hidden"
-        logger.log("OBD MAP PROBE", "END reason=\(reason); restored custom JPEG speed without clearing OBD slot")
+        hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled ? "Armed — custom GPS speed restored; waiting for Map Mode" : "Stopped — custom GPS speed restored"
+        logger.log("OBD MAP PROBE", "END reason=\(reason); restored custom JPEG speed without clearing OBD slot; enabled=\(hudU2WNativeOBDProbeEnabled ? 1 : 0)")
 
         if wasActive {
             Task { @MainActor [weak self] in
@@ -1283,7 +1323,10 @@ final class AppState {
         hudU2WNativeOBDProbeTask = nil
         hudU2WNativeOBDProbeActive = false
         hudU2WNativeOBDProbePending = false
-        hudU2WNativeOBDProbeStatus = "Not running"
+        bluetooth.endOBDSpeedProbeForensics(reason: "Map Mode disabled")
+        hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled
+            ? "Armed — enable Map Mode to start item 10"
+            : "Off"
         hudU2WRelayFrameTask?.cancel()
         hudU2WRelayFrameTask = nil
         hudU2WKivicKickTask?.cancel()

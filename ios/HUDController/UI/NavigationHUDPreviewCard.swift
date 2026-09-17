@@ -40,6 +40,7 @@ struct NavigationHUDPreviewCard: View {
 
                 presetQuickSwitch
                 mapModeRelayControls
+                obdProbeControls
 
                 DisclosureGroup(isExpanded: $showMapCustomization) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -51,7 +52,6 @@ struct NavigationHUDPreviewCard: View {
                         widgetPositionControls
                         rightSideFineTuningControls
                         componentControls
-                        obdProbeControls
                     }
                     .padding(.top, 8)
                 } label: {
@@ -375,6 +375,7 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
                     LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
                     LabeledContent("MainVideo", value: state.mainVideo.status)
+                    LabeledContent("iPhone network", value: state.mainVideo.networkPathSummary)
                     LabeledContent("Video frames", value: "\(state.mainVideo.frameCount) • \(state.mainVideo.sourceSize)")
                     LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
                     LabeledContent("iPhone H.264 filter", value: state.mainVideo.sanitizerSummary)
@@ -910,28 +911,21 @@ struct NavigationHUDPreviewCard: View {
 
     private var obdProbeControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("OBD speed road-test probe")
-                .font(.subheadline.weight(.semibold))
-
-            LabeledContent("HUD-side OBD", value: state.obd.connected ? "Connected" : "Not confirmed")
-            LabeledContent("Visual probe", value: state.hudU2WNativeOBDProbeStatus)
-
-            HStack(spacing: 8) {
-                Button("Start 12s native OBD speed probe") {
-                    state.startHUDU2WNativeOBDSpeedProbe()
-                }
-                .buttonStyle(.bordered)
-                .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive || state.hudU2WNativeOBDProbePending)
-
-                if state.hudU2WNativeOBDProbeActive || state.hudU2WNativeOBDProbePending {
-                    Button("Stop", role: .destructive) {
-                        state.stopHUDU2WNativeOBDSpeedProbe()
-                    }
-                    .buttonStyle(.bordered)
-                }
+            HStack {
+                Label("Native OBD speed test", systemImage: "gauge.with.dots.needle.67percent")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { state.hudU2WNativeOBDProbeEnabled },
+                    set: { state.setHUDU2WNativeOBDSpeedProbeEnabled($0) }
+                ))
+                .labelsHidden()
             }
 
-            Text("Road-test experiment. You can tap Start as soon as Map Mode is active. If HUD-side OBD is not yet confirmed, the app requests the connection and waits up to 20 seconds, then automatically begins the 12-second probe. For those 12 seconds the iPhone-rendered GPS speed number is intentionally blank while the app asks for OBD_DRIVING_VELOCITY (item 10). The first 6 seconds leave the viewer/fullscreen state untouched; the second 6 seconds temporarily exposes the stock HUD layer. If a live speed number appears in that blank area, it is strong evidence that mode 6 can overlay the HUD's internally decoded OBD speed without sending that value back to iOS. The probe auto-restores the normal custom speed and does not re-send mode 6.")
+            LabeledContent("HUD-side OBD", value: state.obd.connected ? "Connected" : "Not confirmed")
+            LabeledContent("Item 10", value: state.hudU2WNativeOBDProbeStatus)
+
+            Text("Separate from Map Mode image customization so it remains accessible when that long section is collapsed. When enabled, the app reserves the speed-number area, requests stock OBD_DRIVING_VELOCITY (item 10), waits 6 seconds with the existing fullscreen state untouched, then exposes the stock HUD layer and keeps the test active until this toggle is turned off. If Map Mode is off, the toggle stays armed for the next live relay session.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
