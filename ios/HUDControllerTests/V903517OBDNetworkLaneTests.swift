@@ -31,7 +31,8 @@ final class V903517OBDNetworkLaneTests: XCTestCase {
         XCTAssertTrue(canvas.contains("guard values.count > 4 else { return values }"))
         XCTAssertTrue(canvas.contains("activeInside"))
         XCTAssertTrue(canvas.contains("LaneGuidanceGlyph"))
-        XCTAssertTrue(canvas.contains("func combined(right: Bool)"))
+        XCTAssertTrue(canvas.contains("func combined(right: Bool, drawColor: Color"))
+        XCTAssertTrue(canvas.contains("func turnOnlyCombined(right: Bool)"))
         XCTAssertTrue(canvas.contains("share one long"))
     }
 }

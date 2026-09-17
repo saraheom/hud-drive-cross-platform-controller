@@ -1,3 +1,11 @@
+# v90.35.3.19.1 — CI-only lane-vector regression alignment
+
+v90.35.3.19.1 changes no production runtime Swift from v90.35.3.19. The iOS 26 simulator build already succeeded; CI failed only because the older v90.35.3.17 lane regression expected the pre-v90.35.3.19 `func combined(right: Bool)` source signature. The test now recognizes the color-aware vector helper and the turn-only overlapping helper used by the approved lane-guidance design.
+
+See `V90_35_3_19_1_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.18.1 — CI-only lane-vector test alignment
 
 ## v90.35.3.18.1 — no runtime changes

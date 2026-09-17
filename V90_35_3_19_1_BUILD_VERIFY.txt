@@ -1,0 +1,18 @@
+HUD v90.35.3.19.1 BUILD VERIFY
+
+Base: v90.35.3.19
+Type: CI-only regression-test alignment
+
+GitHub Actions result from v90.35.3.19:
+- iOS Simulator build: SUCCEEDED
+- Unit tests: 299 / 300 passed
+- Only failure: V903517OBDNetworkLaneTests.testSpeedLimitSlotAndLaneWindowing
+- Cause: stale source-string assertion expected old lane vector helper signature `func combined(right: Bool)`
+
+Correction:
+- Update that test to recognize the v90.35.3.19 custom vector API:
+  `func combined(right: Bool, drawColor: Color, ...)`
+  and the new `func turnOnlyCombined(right: Bool)` overlay helper.
+
+Runtime production Swift source is unchanged from v90.35.3.19.
+MainVideo recovery, U2W v8.20 compatibility, lane geometry, turn-only overlay rendering, lane size/thickness controls, and street wrapping are unchanged.
