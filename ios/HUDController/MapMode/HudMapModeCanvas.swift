@@ -168,13 +168,17 @@ struct HudMapModeCanvas: View {
             if settings.showTurningStreet {
                 Text(nonempty(snapshot.turningStreet, fallback: "Upcoming road"))
                     .font(.system(
-                        size: CGFloat(11 * settings.turningStreetScale),
+                        size: CGFloat(10.5 * settings.turningStreetScale),
                         weight: .semibold
                     ))
                     .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.50)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.62)
+                    .allowsTightening(true)
+                    .multilineTextAlignment(.center)
+                    // Always reserve two lines. Short names stay on the top line;
+                    // long names wrap at a word boundary instead of clipping right.
+                    .frame(maxWidth: .infinity, minHeight: 29, maxHeight: 29, alignment: .top)
                     .offset(
                         x: CGFloat(settings.designerStreetOffsetX / max(0.01, settings.rightScale)),
                         y: CGFloat(settings.designerStreetOffsetY / max(0.01, settings.rightScale))
@@ -188,17 +192,29 @@ struct HudMapModeCanvas: View {
             if settings.showManeuver || settings.showDistance {
                 VStack(spacing: 2) {
                     if settings.showManeuver {
-                        Image(systemName: snapshot.maneuver.symbol)
-                            .font(.system(
-                                size: CGFloat(34 * settings.maneuverArrowScale),
-                                weight: symbolWeight(settings.maneuverArrowThickness)
-                            ))
-                            .foregroundStyle(.white)
-                            .frame(height: CGFloat(40 * max(1.0, settings.maneuverArrowScale)))
-                            .offset(
-                                x: CGFloat(settings.maneuverOffsetX + settings.designerManeuverOffsetX / max(0.01, settings.rightScale)),
-                                y: CGFloat(settings.maneuverOffsetY + settings.designerManeuverOffsetY / max(0.01, settings.rightScale))
-                            )
+                        Group {
+                            if let mergeKind = mergeManeuverKind {
+                                MergeManeuverGlyph(
+                                    kind: mergeKind,
+                                    color: .white,
+                                    lineWidth: CGFloat(max(1.0, min(3.0, settings.maneuverArrowThickness * 1.05)))
+                                )
+                                .frame(width: 34, height: 38)
+                            } else {
+                                Image(systemName: snapshot.maneuver.symbol)
+                                    .font(.system(
+                                        size: CGFloat(34 * settings.maneuverArrowScale),
+                                        weight: symbolWeight(settings.maneuverArrowThickness)
+                                    ))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .scaleEffect(settings.maneuverArrowScale)
+                        .frame(height: CGFloat(40 * max(1.0, settings.maneuverArrowScale)))
+                        .offset(
+                            x: CGFloat(settings.maneuverOffsetX + settings.designerManeuverOffsetX / max(0.01, settings.rightScale)),
+                            y: CGFloat(settings.maneuverOffsetY + settings.designerManeuverOffsetY / max(0.01, settings.rightScale))
+                        )
                     }
 
                     if settings.showDistance {
@@ -280,6 +296,14 @@ struct HudMapModeCanvas: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var mergeManeuverKind: MergeManeuverGlyph.Kind? {
+        let text = snapshot.maneuverText.lowercased()
+        guard text.contains("merge") || text.contains("merging") else { return nil }
+        if text.contains("left") { return .left }
+        if text.contains("right") { return .right }
+        return .ahead
+    }
+
     private var effectiveLaneValues: [Int] {
         if !snapshot.laneValues.isEmpty { return snapshot.laneValues }
         return previewLanePlaceholder ? [-1, -1, 2] : []
@@ -326,14 +350,13 @@ struct HudMapModeCanvas: View {
         } else {
             HStack(spacing: CGFloat(settings.laneSpacing)) {
                 ForEach(Array(values.enumerated()), id: \.offset) { _, value in
-                    laneGlyph(for: abs(value))
-                        .font(.system(
-                            size: 11,
-                            weight: symbolWeight(settings.laneArrowThickness)
-                        ))
-                        .foregroundStyle(value > 0 ? .white : Color(white: settings.laneInactiveGray))
-                        .scaleEffect(value > 0 ? settings.laneActiveEmphasis : 1.0)
-                        .frame(width: 14, height: 18)
+                    LaneGuidanceGlyph(
+                        rawValue: abs(value),
+                        color: value > 0 ? .white : Color(white: settings.laneInactiveGray),
+                        lineWidth: CGFloat(max(0.75, min(2.25, settings.laneArrowThickness * 0.82)))
+                    )
+                    .scaleEffect(value > 0 ? settings.laneActiveEmphasis : 1.0)
+                    .frame(width: 15, height: 22)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)
@@ -374,34 +397,160 @@ struct HudMapModeCanvas: View {
         }
     }
 
-    @ViewBuilder
-    private func laneGlyph(for raw: Int) -> some View {
-        switch raw {
-        case 2:
-            Image(systemName: "arrow.turn.up.right")
-        case 3:
-            // Native lane type 3 means straight OR right. Overlay the straight
-            // and turn glyphs instead of collapsing it to a diagonal arrow.
-            ZStack {
-                Image(systemName: "arrow.up")
-                Image(systemName: "arrow.turn.up.right")
-            }
-        case 4:
-            Image(systemName: "arrow.turn.up.left")
-        case 5:
-            // Native lane type 5 means straight OR left.
-            ZStack {
-                Image(systemName: "arrow.up")
-                Image(systemName: "arrow.turn.up.left")
-            }
-        default:
-            Image(systemName: "arrow.up")
-        }
-    }
-
     private func nonempty(_ value: String, fallback: String) -> String {
         let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty || cleaned == "—" ? fallback : cleaned
+    }
+}
+
+
+/// Compact lane-guidance vector designed for the 480×240 physical HUD.
+/// Unlike stacked SF Symbols, combined straight+turn glyphs share one long
+/// stem and branch around mid-height, keeping the arrowheads clearly separated.
+private struct LaneGuidanceGlyph: View {
+    let rawValue: Int
+    let color: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+            let cx = w * 0.5
+            let bottom = h * 0.94
+            let straightBaseY = h * 0.23
+            let straightApexY = h * 0.055
+            let headHalfW = max(1.8, w * 0.18)
+            let style = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+
+            func stroke(_ path: Path, opacity: Double = 1.0) {
+                context.stroke(path, with: .color(color.opacity(opacity)), style: style)
+            }
+            func triangle(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint, opacity: Double = 1.0) {
+                var p = Path()
+                p.move(to: a); p.addLine(to: b); p.addLine(to: c); p.closeSubpath()
+                context.fill(p, with: .color(color.opacity(opacity)))
+            }
+            func straightArrow() {
+                var shaft = Path()
+                shaft.move(to: CGPoint(x: cx, y: bottom))
+                shaft.addLine(to: CGPoint(x: cx, y: straightBaseY))
+                stroke(shaft)
+                triangle(
+                    CGPoint(x: cx, y: straightApexY),
+                    CGPoint(x: cx - headHalfW, y: straightBaseY),
+                    CGPoint(x: cx + headHalfW, y: straightBaseY)
+                )
+            }
+            func turnBranch(right: Bool, includeStraight: Bool) {
+                let sign: CGFloat = right ? 1 : -1
+                let branchY = h * (includeStraight ? 0.55 : 0.64)
+                let headY = h * (includeStraight ? 0.39 : 0.29)
+                let headX = cx + sign * w * 0.41
+                let baseX = headX - sign * w * 0.20
+                let halfH = h * 0.095
+
+                var p = Path()
+                p.move(to: CGPoint(x: cx, y: bottom))
+                p.addLine(to: CGPoint(x: cx, y: branchY))
+                p.addCurve(
+                    to: CGPoint(x: baseX, y: headY),
+                    control1: CGPoint(x: cx, y: branchY - h * 0.14),
+                    control2: CGPoint(x: baseX - sign * w * 0.10, y: headY)
+                )
+                stroke(p)
+                triangle(
+                    CGPoint(x: headX, y: headY),
+                    CGPoint(x: baseX, y: headY - halfH),
+                    CGPoint(x: baseX, y: headY + halfH)
+                )
+            }
+            func combined(right: Bool) {
+                straightArrow()
+                let sign: CGFloat = right ? 1 : -1
+                let branchStartY = h * 0.56
+                let headY = h * 0.40
+                let headX = cx + sign * w * 0.41
+                let baseX = headX - sign * w * 0.19
+                let halfH = h * 0.085
+                var branch = Path()
+                branch.move(to: CGPoint(x: cx, y: branchStartY))
+                branch.addCurve(
+                    to: CGPoint(x: baseX, y: headY),
+                    control1: CGPoint(x: cx + sign * w * 0.05, y: h * 0.47),
+                    control2: CGPoint(x: baseX - sign * w * 0.08, y: headY)
+                )
+                stroke(branch)
+                triangle(
+                    CGPoint(x: headX, y: headY),
+                    CGPoint(x: baseX, y: headY - halfH),
+                    CGPoint(x: baseX, y: headY + halfH)
+                )
+            }
+
+            switch rawValue {
+            case 2: turnBranch(right: true, includeStraight: false)
+            case 3: combined(right: true)
+            case 4: turnBranch(right: false, includeStraight: false)
+            case 5: combined(right: false)
+            default: straightArrow()
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Merge maneuver icon used when the source maneuver description explicitly
+/// contains "merge". Lane metadata itself exposes angles but not merge semantics,
+/// so we do not guess per-lane merge shapes; this graphic is source-text driven.
+private struct MergeManeuverGlyph: View {
+    enum Kind { case left, right, ahead }
+    let kind: Kind
+    let color: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width, h = size.height, cx = w * 0.5
+            let style = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+            func stroke(_ path: Path, opacity: Double = 1.0) {
+                context.stroke(path, with: .color(color.opacity(opacity)), style: style)
+            }
+            func head(at x: CGFloat) {
+                let apex = CGPoint(x: x, y: h * 0.05)
+                let baseY = h * 0.23
+                var p = Path()
+                p.move(to: apex)
+                p.addLine(to: CGPoint(x: x - w * 0.11, y: baseY))
+                p.addLine(to: CGPoint(x: x + w * 0.11, y: baseY))
+                p.closeSubpath()
+                context.fill(p, with: .color(color))
+            }
+            var main = Path()
+            main.move(to: CGPoint(x: cx, y: h * 0.92))
+            main.addLine(to: CGPoint(x: cx, y: h * 0.23))
+            stroke(main)
+            head(at: cx)
+
+            func feeder(from x: CGFloat) {
+                var f = Path()
+                f.move(to: CGPoint(x: x, y: h * 0.91))
+                f.addCurve(
+                    to: CGPoint(x: cx, y: h * 0.52),
+                    control1: CGPoint(x: x, y: h * 0.73),
+                    control2: CGPoint(x: cx + (x - cx) * 0.32, y: h * 0.57)
+                )
+                stroke(f, opacity: 0.62)
+            }
+            switch kind {
+            case .left: feeder(from: w * 0.18)
+            case .right: feeder(from: w * 0.82)
+            case .ahead:
+                feeder(from: w * 0.18)
+                feeder(from: w * 0.82)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

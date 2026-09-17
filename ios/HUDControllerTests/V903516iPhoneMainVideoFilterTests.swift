@@ -50,18 +50,16 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
         XCTAssertTrue(app.contains("mainVideo.stop(reason: \"live U2W Map Mode disabled\")"))
 
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
-        XCTAssertTrue(video.contains("requestDecoderResync"))
-        XCTAssertTrue(video.contains("raw HTTP stream left open"))
+        XCTAssertTrue(video.contains("KEEP decoder session and continue validated P-frames"))
+        XCTAssertTrue(video.contains("one rate-limited v8.20 validated-GOP HTTP reseed"))
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 60.0"))
         XCTAssertTrue(video.contains("timeoutIntervalForRequest = 60"))
     }
 
-    func testProbeEndDoesNotClearOBDSlotDuringLiveMapMode() throws {
+    func testItem10MapModeProbeIsRetired() throws {
+        let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         let app = try source("HUDController/App/AppState.swift")
-        let function = app.components(separatedBy: "func stopHUDU2WNativeOBDSpeedProbe")[1]
-            .components(separatedBy: "func runHUDMode4STAPersistenceTest")[0]
-        XCTAssertFalse(function.contains("HudOBDItem.none"))
-        XCTAssertTrue(function.contains("keep OBD slot hidden"))
-        XCTAssertTrue(function.contains("Post-probe OBD health check"))
+        XCTAssertFalse(ui.contains("Native OBD speed test"))
+        XCTAssertTrue(app.contains("suppressCustomSpeedForNativeOBDProbe: false"))
     }
 }

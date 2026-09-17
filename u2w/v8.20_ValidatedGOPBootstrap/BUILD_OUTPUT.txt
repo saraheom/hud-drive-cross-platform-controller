@@ -1,0 +1,2 @@
+U2W_Update_v8.20_ValidatedGOPBootstrap.img 3190 a9f359264b1984ebf9a5f9e054a98074ff0a21c56fe3a08eb009ee73883e6fa1 ['tmp/once.sh', 'tmp/u2w_mainvideo_streamer']
+U2W_Update_v8.20_ValidatedGOPBootstrap_UNINSTALL.img 2446 3c0ab8c1d9b25c21551ebf8f2c5cd167af95244c576ed9096ab82404caa94ed5 ['tmp/once.sh', 'tmp/u2w_mainvideo_streamer_v817']

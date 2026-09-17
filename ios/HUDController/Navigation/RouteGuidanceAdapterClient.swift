@@ -848,6 +848,7 @@ final class RouteGuidanceAdapterClient {
             streetName: street,
             displayDistanceText: displayDistance(snapshot),
             currentStreet: snapshot.currentRoad,
+            sourceDescription: maneuver.description,
             exitNumber: Self.roundaboutExit(for: maneuver.type)
         )
     }

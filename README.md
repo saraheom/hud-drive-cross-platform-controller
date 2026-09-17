@@ -1,3 +1,40 @@
+# HUD Controller v90.35.3.18 — MainVideo recovery + validated U2W GOP bootstrap + vector lane graphics
+
+## v90.35.3.18 — commute-driven MainVideo recovery and Map Mode UI refinement
+
+This release is based on the 2026-09-17 commute evidence. Raw U2W MainVideo bytes and valid H.264 P-slices continued after one VideoToolbox decode error, but v90.35.3.17 immediately forced `needsIDR=true`, leaving the image frozen until navigation ended and CarPlay emitted a genuine new SPS/PPS/IDR sequence. Cellular state was not causal.
+
+### Live MainVideo recovery
+
+- One isolated VideoToolbox decode error no longer forces an IDR reset. The decoder keeps its current session and continues submitting validated pictures.
+- Only repeated **consecutive** decode failures trigger a decoder-session rebuild from the last-known-good SPS/PPS.
+- The 20-second fresh-bytes/stale-image watchdog is now diagnostic-only; it no longer performs the destructive local reset that previously made recovery impossible.
+- If raw bytes remain fresh but no decoded image has returned for 90 seconds, the app performs one rate-limited HTTP live-edge reseed.
+- MainVideo response logging now records the U2W streamer's `X-U2W-Streamer` header.
+
+### U2W v8.20 validated-GOP bootstrap
+
+`u2w/v8.20_ValidatedGOPBootstrap` is included with install/uninstall images. It changes only the MainVideo CGI streamer. The stable v8.11 AppleCarPlay exporter, Route Guidance, Now Playing, and HUD JPEG relay are untouched.
+
+The v8.20 bootstrap keeps the v8.17 generation guard but validates the candidate SPS/PPS/IDR using NAL length, forbidden/reference bits, SPS profile, ordering, and proximity before selecting the newest decoder-safe GOP. This reduces the chance that unrelated bytes containing accidental Annex-B-looking patterns seed a reconnect. The uninstall image restores the exact v8.17 streamer.
+
+### Lane guidance graphics
+
+- Replaces stacked SF Symbols with custom thin/long vector lane arrows.
+- Straight+left and straight+right now share one vertical body and branch around mid-height, keeping their arrowheads separated.
+- Existing centered contiguous lane packing is retained, including the best-four-lane window for 5+ lane roads.
+- Merge-left, merge-right, and merge-ahead maneuver graphics are rendered when the source maneuver description explicitly says `merge`; lane metadata itself is not guessed to be merge because 0x5204 provides direction angles but no merge semantic.
+
+### Turning street name
+
+The upcoming street name always owns a fixed two-line region. Short names use only the top line and keep the second line empty; longer names wrap to two centered lines instead of clipping at the right edge. The rest of the right-side layout therefore remains stable as street-name length changes.
+
+### OBD item-10 experiment
+
+The item-10 Map Mode visual experiment is retired from the UI/runtime path in this build. The road test confirmed the command was sent while OBD was connected but the native HUD item did not composite above the mode-6/KivicCast image. No new OBD-speed experiment is included in v90.35.3.18.
+
+---
+
 # HUD Controller v90.35.3.17 — persistent item-10 OBD test + iPhone network trace + lane rendering fixes
 
 ## v90.35.3.17 — item-10 OBD toggle, iPhone network trace, speed-limit/lane UI fixes

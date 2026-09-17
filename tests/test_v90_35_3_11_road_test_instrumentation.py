@@ -53,12 +53,9 @@ def test_mode6_to_mode4_sta_persistence_probe_keeps_relay_alive():
     assert 'u2whud-stop.cgi' not in block
 
 
-def test_optional_mode6_native_obd_visual_probe_is_manual_and_temporary():
-    assert 'startHUDU2WNativeOBDSpeedProbe' in APP
-    assert 'stopHUDU2WNativeOBDSpeedProbe' in APP
-    assert 'OBD_DRIVING_VELOCITY' in APP
-    assert 'hudU2WNativeOBDProbeActive' in APP
-    assert 'suppressCustomSpeedForNativeOBDProbe: self.hudU2WNativeOBDProbeActive' in APP
-    assert 'Start 12s native OBD speed probe' in UI
-    assert APP.count('Task.sleep(for: .seconds(6))') >= 2
-    assert 'PHASE2 fullScreen(false)' in APP
+def test_optional_mode6_native_obd_visual_probe_is_retired_from_map_mode():
+    # v90.35.3.18 road-test result: item 10 was sent but did not composite above mode 6.
+    assert 'Native OBD speed test' not in UI
+    assert 'suppressCustomSpeedForNativeOBDProbe: false' in APP
+    assert 'startNativeOBDSpeedOverlayProbeIfNeeded()' not in APP.split('private func handleMapModeCastEvent', 1)[1].split('private func startNativeOBDSpeedOverlayProbeIfNeeded', 1)[0]
+

@@ -21,7 +21,7 @@ def test_canvas_applies_tuning_without_transport_changes():
     for token in [
         "settings.leftOffsetX", "settings.centerOffsetX", "settings.rightOffsetX",
         "symbolWeight(settings.maneuverArrowThickness)",
-        "symbolWeight(settings.laneArrowThickness)",
+        "settings.laneArrowThickness * 0.82",
         "settings.laneActiveEmphasis", "settings.etaOffsetX",
     ]:
         assert token in CANVAS

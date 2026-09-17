@@ -1,0 +1,31 @@
+HUD Controller v90.35.3.18 — build verification
+Date: 2026-09-17
+Base: v90.35.3.17
+Paired U2W: v8.20 Validated-GOP Bootstrap
+
+Scope
+- MainVideo decoder recovery from isolated VideoToolbox errors
+- non-destructive 20 s decoder-stale watchdog
+- bounded 90 s validated-live-edge reseed if bytes remain fresh but images remain stale
+- U2W v8.20 validated newest-GOP bootstrap/reseed CGI
+- thin/long custom lane vectors with shared-body straight+left/right arrows
+- source-text-driven merge maneuver graphics
+- best-four-lane window retained for 5+ lanes
+- fixed two-line turning-street region
+- item-10 OBD visual probe retired; no replacement OBD experiment in this release
+
+Validation
+- `python -m pytest -q`: 379 passed
+- all root `tests_v*.py` static release scripts pass, including v90.35.3.18 guards
+- modified Swift production/test files pass `swiftc -frontend -parse`
+- U2W installer/uninstaller pass `sh -n`
+- U2W ARM streamer is ELF32 ARM EABI5 soft-float, statically linked, with no dynamic section
+- v8.20 install/uninstall images round-trip through the existing AES/tar build validator
+- actual 2026-09-17 MainVideo capture checked against the v8.20-equivalent GOP validator
+
+Environment limitation
+- A full Xcode/iOS archive cannot be performed in this Linux build environment. The repository retains the existing GitHub Actions/Xcode workflow as the final compile/signing validation after commit.
+
+U2W v8.20 image SHA-256
+- install: a9f359264b1984ebf9a5f9e054a98074ff0a21c56fe3a08eb009ee73883e6fa1
+- uninstall: 3c0ab8c1d9b25c21551ebf8f2c5cd167af95244c576ed9096ab82404caa94ed5

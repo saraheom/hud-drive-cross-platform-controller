@@ -6,8 +6,8 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.17 MainVideo client for the stable U2W v8.11 exporter + v8.17
-/// latest-frame streamer.
+/// v90.35.3.18 MainVideo client for the stable U2W v8.11 exporter + v8.20
+/// validated-GOP bootstrap streamer.
 ///
 /// Field captures prove fd33 contains genuine 800×480 CarPlay H.264 mixed with
 /// unrelated bytes. The adapter therefore stays deliberately simple: it only
@@ -46,7 +46,8 @@ final class U2WMainVideoClient {
     private var connectedAt: Date?
     private var lastDecodedFrameAt: Date?
     private var lastReceivedBytesAt: Date?
-    private var lastLocalDecoderResyncAt: Date?
+    private var lastDecoderStaleDiagnosticAt: Date?
+    private var lastDecoderReseedAt: Date?
     private var lastSourceReconnectAt: Date?
     private var lastNetworkHeartbeatAt: Date?
     private var networkMonitors: [String: NWPathMonitor] = [:]
@@ -58,7 +59,9 @@ final class U2WMainVideoClient {
     // of contaminated/non-video bytes is handled locally by the sanitizer. Only
     // true source silence permits a rate-limited transport reconnect.
     private let decoderStaleFrameInterval: TimeInterval = 20.0
-    private let localDecoderResyncCooldown: TimeInterval = 30.0
+    private let decoderStaleDiagnosticCooldown: TimeInterval = 30.0
+    private let decoderLiveEdgeReseedInterval: TimeInterval = 90.0
+    private let decoderLiveEdgeReseedCooldown: TimeInterval = 90.0
     private let sourceStaleInterval: TimeInterval = 60.0
     private let sourceReconnectCooldown: TimeInterval = 60.0
 
@@ -69,7 +72,7 @@ final class U2WMainVideoClient {
     func start(reason: String) {
         guard !running else { return }
         running = true
-        status = "Connecting to U2W v8.17 raw MainVideo…"
+        status = "Connecting to U2W MainVideo…"
         latestFrame = nil
         frameCount = 0
         sourceSize = "—"
@@ -77,7 +80,8 @@ final class U2WMainVideoClient {
         connectedAt = nil
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
-        lastLocalDecoderResyncAt = nil
+        lastDecoderStaleDiagnosticAt = nil
+        lastDecoderReseedAt = nil
         lastSourceReconnectAt = nil
         rawNALCount = 0
         acceptedNALCount = 0
@@ -86,7 +90,7 @@ final class U2WMainVideoClient {
         acceptedPPSCount = 0
         acceptedIDRCount = 0
         acceptedSliceCount = 0
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.17-raw+iPhone-filter mapModeOnly=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.20-validated-bootstrap+iPhone-tolerant-filter mapModeOnly=1")
         startNetworkPathLogging()
         startWorker(reason: reason)
         startFreshnessWatchdog()
@@ -186,18 +190,33 @@ final class U2WMainVideoClient {
                 }
 
                 if bytesAreFresh, frameAge >= self.decoderStaleFrameInterval {
-                    let mayResync = self.lastLocalDecoderResyncAt.map {
-                        now.timeIntervalSince($0) >= self.localDecoderResyncCooldown
+                    let mayLog = self.lastDecoderStaleDiagnosticAt.map {
+                        now.timeIntervalSince($0) >= self.decoderStaleDiagnosticCooldown
                     } ?? true
-                    guard mayResync else { continue }
-                    self.lastLocalDecoderResyncAt = now
-                    self.status = "Raw MainVideo active — waiting for valid 800×480 H.264"
-                    self.logger.log(
-                        "U2W VIDEO WATCH",
-                        "raw bytes fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; local decoder resync only, HTTP stream remains open; filter={\(self.sanitizerSummary)}"
-                    )
-                    self.logNetworkContext(reason: "decoder stale while raw bytes remain fresh")
-                    self.worker?.requestDecoderResync(reason: "fresh raw bytes but no validated live image")
+                    if mayLog {
+                        self.lastDecoderStaleDiagnosticAt = now
+                        self.status = "Raw MainVideo active — decoder waiting for next good picture"
+                        self.logger.log(
+                            "U2W VIDEO WATCH",
+                            "raw bytes fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; KEEP decoder session and continue validated P-frames; no destructive local IDR reset; filter={\(self.sanitizerSummary)}"
+                        )
+                        self.logNetworkContext(reason: "decoder stale while raw bytes remain fresh")
+                    }
+
+                    if frameAge >= self.decoderLiveEdgeReseedInterval {
+                        let mayReseed = self.lastDecoderReseedAt.map {
+                            now.timeIntervalSince($0) >= self.decoderLiveEdgeReseedCooldown
+                        } ?? true
+                        if mayReseed {
+                            self.lastDecoderReseedAt = now
+                            self.status = "Decoder stale — requesting validated live-edge GOP…"
+                            self.logger.log(
+                                "U2W VIDEO WATCH",
+                                "decoded image stale \(String(format: "%.1f", frameAge))s while raw bytes remain fresh; one rate-limited v8.20 validated-GOP HTTP reseed"
+                            )
+                            self.worker?.reconnectAtLiveEdge(reason: "decoded frame stale >=90s with fresh raw bytes")
+                        }
+                    }
                     continue
                 }
 
@@ -242,7 +261,8 @@ final class U2WMainVideoClient {
         connectedAt = nil
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
-        lastLocalDecoderResyncAt = nil
+        lastDecoderStaleDiagnosticAt = nil
+        lastDecoderReseedAt = nil
         lastSourceReconnectAt = nil
         lastNetworkHeartbeatAt = nil
         stopNetworkPathLogging(reason: reason)
@@ -261,7 +281,7 @@ final class U2WMainVideoClient {
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
         lastSourceReconnectAt = Date()
-        status = "Reconnecting U2W v8.17 raw MainVideo…"
+        status = "Reconnecting U2W MainVideo at validated live edge…"
         logger.log("U2W VIDEO", "Manual reconnect reason=\(reason)")
         logNetworkContext(reason: "manual MainVideo reconnect")
         if let worker {
@@ -439,16 +459,7 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         task = session.dataTask(with: request)
         task?.resume()
-        onStatus?("Opening U2W v8.17 raw H.264 stream…", false)
-    }
-
-    func requestDecoderResync(reason: String) {
-        guard running else { return }
-        delegateQueue.addOperation { [weak self] in
-            guard let self, self.running else { return }
-            self.decoder.prepareForStreamRestart()
-            self.onDiagnostic?("Local decoder resync reason=\(reason); raw HTTP stream left open")
-        }
+        onStatus?("Opening U2W validated live-edge H.264 stream…", false)
     }
 
     func reconnectAtLiveEdge(reason: String) {
@@ -506,7 +517,9 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
             scheduleReconnect("HTTP \(http.statusCode)")
             return
         }
-        onStatus?("U2W v8.17 raw MainVideo connected • filtering on iPhone", true)
+        let streamer = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-U2W-Streamer") ?? "unknown-streamer"
+        onDiagnostic?("HTTP MainVideo connected streamer=\(streamer)")
+        onStatus?("U2W MainVideo connected • filtering on iPhone", true)
         completionHandler(.allow)
     }
 
@@ -623,7 +636,8 @@ private final class AnnexBH264Parser {
 /// - groups slices into one H.264 access unit (AUD and first_mb_in_slice aware),
 /// - submits one CMSampleBuffer per picture,
 /// - decodes synchronously so VideoToolbox cannot accumulate a hidden queue,
-/// - requires a fresh IDR after every decoder reset, and
+/// - tolerates isolated bad access units without forcing an IDR reset,
+/// - requires a fresh IDR only after an actual decoder/session rebuild, and
 /// - publishes at most 15 images/s while always replacing the latest mailbox.
 private final class H264VideoToolboxDecoder {
     var onFrame: ((UIImage) -> Void)?
@@ -647,7 +661,9 @@ private final class H264VideoToolboxDecoder {
     private var pendingHasVCL = false
     private var needsIDR = true
     private var submittedAccessUnits = 0
-    private var decodeErrors = 0
+    private var totalDecodeErrors = 0
+    private var consecutiveDecodeErrors = 0
+    private let consecutiveErrorRebuildThreshold = 5
 
     private let publishLock = NSLock()
     private var lastPublishedUptime: TimeInterval = 0
@@ -667,7 +683,8 @@ private final class H264VideoToolboxDecoder {
         lastRejectedParameterSetSignature = ""
         needsIDR = true
         submittedAccessUnits = 0
-        decodeErrors = 0
+        totalDecodeErrors = 0
+        consecutiveDecodeErrors = 0
         publishLock.lock()
         lastPublishedUptime = 0
         publishLock.unlock()
@@ -682,7 +699,8 @@ private final class H264VideoToolboxDecoder {
         pendingPPS = nil
         needsIDR = true
         submittedAccessUnits = 0
-        decodeErrors = 0
+        totalDecodeErrors = 0
+        consecutiveDecodeErrors = 0
     }
 
     func discardPendingAccessUnit() {
@@ -974,24 +992,37 @@ private final class H264VideoToolboxDecoder {
         )
 
         if decodeStatus != noErr {
-            decodeErrors += 1
-            needsIDR = true
+            totalDecodeErrors += 1
+            consecutiveDecodeErrors += 1
+
+            // v90.35.3.17 field evidence: one VideoToolbox -12903 was followed by
+            // hundreds of syntactically valid P-slices. Forcing needsIDR=true on
+            // that *single* error permanently froze the image until navigation ended
+            // and CarPlay happened to emit another IDR. Keep the existing decoder
+            // session and continue feeding validated pictures after isolated errors.
             onDiagnostic?(
-                "Decode error status=\(decodeStatus) au=\(submittedAccessUnits) errors=\(decodeErrors); waiting for fresh IDR"
+                "Decode error status=\(decodeStatus) au=\(submittedAccessUnits) total=\(totalDecodeErrors) consecutive=\(consecutiveDecodeErrors); CONTINUE without IDR reset"
             )
-            if decodeErrors >= 3, let activeSPS, let activePPS {
-                // A VideoToolbox session can become poisoned after repeated bad
-                // access units even though the accepted parameter sets remain good.
-                // Recreate only the decoder session; do not throw away the known-good
-                // SPS/PPS or reconnect the HTTP stream just for this condition.
+
+            if consecutiveDecodeErrors >= consecutiveErrorRebuildThreshold,
+               let activeSPS, let activePPS {
+                // Only repeated consecutive failures are treated as a poisoned
+                // VideoToolbox session. Rebuild from the last-known-good parameter
+                // sets; the outer watchdog will request one validated live-edge GOP
+                // if an IDR does not arrive naturally after the rebuild.
                 pendingSPS = activeSPS
                 pendingPPS = activePPS
-                decodeErrors = 0
-                onDiagnostic?("Rebuilding decoder from last-known-good SPS/PPS after repeated decode errors")
+                consecutiveDecodeErrors = 0
+                onDiagnostic?(
+                    "Rebuilding decoder after \(consecutiveErrorRebuildThreshold) consecutive decode errors; fresh IDR required only after real session rebuild"
+                )
                 promoteValidParameterSetPairIfPossible()
             }
         } else {
-            decodeErrors = 0
+            if consecutiveDecodeErrors > 0 {
+                onDiagnostic?("Decoder recovered after \(consecutiveDecodeErrors) consecutive error(s) without IDR reset")
+            }
+            consecutiveDecodeErrors = 0
             if submittedAccessUnits == 1 || submittedAccessUnits % 300 == 0 {
                 onDiagnostic?("Decoded access unit #\(submittedAccessUnits) nals=\(nals.count)")
             }

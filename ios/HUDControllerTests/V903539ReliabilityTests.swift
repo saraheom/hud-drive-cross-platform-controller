@@ -20,7 +20,7 @@ final class V903539ReliabilityTests: XCTestCase {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 20.0"))
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 60.0"))
-        XCTAssertTrue(video.contains("requestDecoderResync"))
+        XCTAssertTrue(video.contains("KEEP decoder session and continue validated P-frames"))
         XCTAssertTrue(video.contains("U2W VIDEO WATCH"))
         XCTAssertTrue(video.contains("workerGeneration"))
         XCTAssertTrue(video.contains("self.workerGeneration == generation"))

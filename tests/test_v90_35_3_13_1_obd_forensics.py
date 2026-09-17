@@ -26,10 +26,10 @@ def test_speed_pid_and_elm_signatures_are_scanned():
     assert 'speed:' in BT
 
 
-def test_native_speed_probe_forces_unthrottled_rx_forensics():
-    assert 'beginOBDSpeedProbeForensics(duration: 13.5' in APP
+def test_native_speed_probe_forensics_remain_available_but_map_overlay_is_retired():
     assert 'OBD PROBE RX' in BT
-    assert 'automatic Map Mode OBD overlay' in APP
+    assert 'beginOBDSpeedProbeForensics' in BT
+    assert 'Native OBD speed test' not in (ROOT/'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 
 def test_vehicle_ui_exposes_raw_capture_without_adapter_change():

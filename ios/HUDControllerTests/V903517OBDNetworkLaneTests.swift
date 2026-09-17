@@ -7,20 +7,11 @@ final class V903517OBDNetworkLaneTests: XCTestCase {
         return try String(contentsOf: ios.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testPersistentItem10ProbeIsSeparateFromCustomizationDisclosure() throws {
+    func testItem10MapModeProbeIsRetiredAfterNegativeRoadTest() throws {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(ui.contains("Native OBD speed test"))
-        XCTAssertTrue(ui.contains("setHUDU2WNativeOBDSpeedProbeEnabled"))
-        XCTAssertTrue(app.contains("hudU2WNativeOBDProbeEnabled"))
-        XCTAssertTrue(app.contains("remains active until toggle off"))
-        XCTAssertFalse(app.contains("12s two-phase probe complete"))
-
-        let disclosureStart = try XCTUnwrap(ui.range(of: "DisclosureGroup(isExpanded: $showMapCustomization)"))
-        let disclosureTail = ui[disclosureStart.lowerBound...]
-        let disclosureEnd = try XCTUnwrap(disclosureTail.range(of: "} label: {"))
-        let customizationBody = disclosureTail[..<disclosureEnd.lowerBound]
-        XCTAssertFalse(customizationBody.contains("obdProbeControls"))
+        XCTAssertFalse(ui.contains("Native OBD speed test"))
+        XCTAssertTrue(app.contains("suppressCustomSpeedForNativeOBDProbe: false"))
     }
 
     func testNetworkTraceCoversDefaultWiFiAndCellular() throws {
@@ -39,9 +30,8 @@ final class V903517OBDNetworkLaneTests: XCTestCase {
         XCTAssertTrue(canvas.contains("private var displayedLaneValues"))
         XCTAssertTrue(canvas.contains("guard values.count > 4 else { return values }"))
         XCTAssertTrue(canvas.contains("activeInside"))
-        XCTAssertTrue(canvas.contains("straight OR right"))
-        XCTAssertTrue(canvas.contains("straight OR left"))
-        XCTAssertFalse(canvas.contains("return \"arrow.up.right\""))
-        XCTAssertFalse(canvas.contains("return \"arrow.up.left\""))
+        XCTAssertTrue(canvas.contains("LaneGuidanceGlyph"))
+        XCTAssertTrue(canvas.contains("func combined(right: Bool)"))
+        XCTAssertTrue(canvas.contains("share one long"))
     }
 }

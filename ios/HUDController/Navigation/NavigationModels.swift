@@ -73,6 +73,9 @@ struct NavigationInstruction: Equatable, Codable {
     /// "0.4 mi". HUD protocol still uses distanceMeters internally.
     var displayDistanceText: String = ""
     var currentStreet: String = ""
+    /// Source-provided maneuver description retained for richer Map Mode
+    /// graphics such as merge-left / merge-right / merge-ahead.
+    var sourceDescription: String? = nil
     var exitNumber: Int? = nil
 }
 

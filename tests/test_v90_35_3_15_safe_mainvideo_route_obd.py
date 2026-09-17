@@ -16,9 +16,9 @@ def test_mainvideo_recovery_is_conservative():
     # filtered on iPhone and fresh-byte stalls do not churn the HTTP CGI.
     assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
     assert 'sourceStaleInterval: TimeInterval = 60.0' in VIDEO
-    assert 'localDecoderResyncCooldown: TimeInterval = 30.0' in VIDEO
-    assert 'requestDecoderResync' in VIDEO
-    assert 'raw HTTP stream left open' in VIDEO
+    assert 'decoderStaleDiagnosticCooldown: TimeInterval = 30.0' in VIDEO
+    assert 'KEEP decoder session and continue validated P-frames' in VIDEO
+    assert 'decoderLiveEdgeReseedInterval: TimeInterval = 90.0' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
 
 def test_route_inactive_requires_five_seconds():
@@ -28,12 +28,9 @@ def test_route_inactive_requires_five_seconds():
     assert 'transportFailureHoldoverInterval: TimeInterval = 90.0' in ROUTE
     assert 'malformedResponseHoldoverInterval: TimeInterval = 180.0' in ROUTE
 
-def test_obd_probe_can_wait_for_connection():
-    assert 'hudU2WNativeOBDProbePending' in APP
-    assert 'waiting up to 20s' in APP
-    assert 'Date().addingTimeInterval(20.0)' in APP
-    assert 'obd.connect(force: true)' in APP
-    assert '!state.obd.connected' not in UI.split('Start 12s native OBD speed probe',1)[1].split('if state.hudU2WNativeOBDProbeActive',1)[0]
+def test_obd_probe_ui_is_retired_after_negative_compositor_test():
+    assert 'Native OBD speed test' not in UI
+    assert 'suppressCustomSpeedForNativeOBDProbe: false' in APP
 
 def test_u2w_v819_is_cgi_only_and_does_not_patch_applecarplay():
     assert 'cp "$P/u2w_mainvideo_streamer" "$DST"' in INSTALL

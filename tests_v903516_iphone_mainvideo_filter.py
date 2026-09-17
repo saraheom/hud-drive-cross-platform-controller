@@ -11,7 +11,7 @@ checks = {
     'Map Mode only start': 'mainVideo.start(reason: "live U2W Map Mode relay")' in app,
     'Map Mode stop closes video': 'mainVideo.stop(reason: "live U2W Map Mode disabled")' in app,
     'no transport-ready video start': 'mainVideo.start' not in app.split('bluetooth.onTransportReady =',1)[1].split('bluetooth.onHUDSessionReset =',1)[0],
-    'fresh bytes keep HTTP open': 'raw HTTP stream left open' in video,
+    'fresh bytes keep decoder session alive': 'KEEP decoder session and continue validated P-frames' in video,
     'source silence is 60s': 'sourceStaleInterval: TimeInterval = 60.0' in video,
     'UI exposes filter counters': 'iPhone H.264 filter' in ui and 'sanitizerSummary' in ui,
     'manual video reconnect gated by Map Mode': '.disabled(!state.hudU2WLiveRelayActive)' in ui,

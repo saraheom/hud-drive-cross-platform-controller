@@ -1,0 +1,21 @@
+U2W v8.20 Validated-GOP MainVideo Bootstrap — build verification
+
+Target: U2W software 2021.03.06.1343
+Prerequisites: v8.17 LatestFrame marker + v8.11 MainVideo exporter marker
+Change scope: /etc/boa/cgi-bin/u2wvideo-main-stream.cgi only
+Rollback: exact bundled v8.17 streamer
+
+Validation performed 2026-09-17:
+- v8.20 streamer: ELF32 ARM EABI5 soft-float, statically linked
+- no ELF dynamic section / DT_NEEDED runtime dependencies
+- installer and uninstaller pass `sh -n`
+- encrypted install/uninstall containers round-trip decrypt and tar-member validation in build_images.py
+- installer contains no AppleCarPlay hook, LD_PRELOAD change, fd-reselection shim, or process restart
+- U2W v8.11 MainVideo exporter, Route Guidance, Now Playing, and HUD JPEG relay are not modified
+- morning-drive capture `/tmp/u2w_mainvideo_live.h264` (15,463,823 bytes) contained 2,982 Annex-B-looking starts; the v8.20-equivalent validation admitted one plausible SPS/PPS/IDR bootstrap: SPS offset 0/profile 100, PPS offset 24, IDR offset 32
+
+Install image SHA-256:
+a9f359264b1984ebf9a5f9e054a98074ff0a21c56fe3a08eb009ee73883e6fa1
+
+Uninstall image SHA-256:
+3c0ab8c1d9b25c21551ebf8f2c5cd167af95244c576ed9096ab82404caa94ed5

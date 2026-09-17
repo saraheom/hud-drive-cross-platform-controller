@@ -6,6 +6,9 @@ struct HudMapModeSnapshot: Equatable {
     var currentRoad: String
     var turningStreet: String
     var maneuver: HudManeuver
+    /// Source maneuver text retained so Map Mode can distinguish merge graphics
+    /// even when the stock HUD maneuver vocabulary collapses them to straight.
+    var maneuverText: String
     var distanceText: String
     var destination: String
     var etaText: String
@@ -20,6 +23,7 @@ struct HudMapModeSnapshot: Equatable {
         currentRoad: "N 38th St",
         turningStreet: "Sweetbriar Dr",
         maneuver: .right,
+        maneuverText: "Turn right",
         distanceText: "100 ft",
         destination: "Work",
         etaText: "9:05 AM",

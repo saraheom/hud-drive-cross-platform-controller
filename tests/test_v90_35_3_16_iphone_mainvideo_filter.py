@@ -18,7 +18,7 @@ def test_mainvideo_is_map_mode_only():
 
 
 def test_raw_v817_filter_runs_on_iphone():
-    assert 'stable U2W v8.11 exporter + v8.17' in VIDEO
+    assert 'stable U2W v8.11 exporter + v8.20' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
     assert 'expectedWidth: Int = 800' in SAN
     assert 'expectedHeight: Int = 480' in SAN
@@ -30,11 +30,11 @@ def test_raw_v817_filter_runs_on_iphone():
 
 def test_dirty_bytes_do_not_reconnect_http():
     assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
-    assert 'localDecoderResyncCooldown: TimeInterval = 30.0' in VIDEO
+    assert 'decoderStaleDiagnosticCooldown: TimeInterval = 30.0' in VIDEO
     assert 'sourceStaleInterval: TimeInterval = 60.0' in VIDEO
     assert 'sourceReconnectCooldown: TimeInterval = 60.0' in VIDEO
-    assert 'requestDecoderResync' in VIDEO
-    assert 'raw HTTP stream left open' in VIDEO
+    assert 'KEEP decoder session and continue validated P-frames' in VIDEO
+    assert 'one rate-limited v8.20 validated-GOP HTTP reseed' in VIDEO
     assert 'timeoutIntervalForRequest = 60' in VIDEO
     assert '.now() + 5.0' in VIDEO
 

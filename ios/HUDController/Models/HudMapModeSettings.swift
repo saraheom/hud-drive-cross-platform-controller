@@ -383,7 +383,7 @@ final class HudMapModeSettings {
         showLaneGuidance = bool("HUD.MapMode.showLaneGuidance", default: true)
         showETA = bool("HUD.MapMode.showETA", default: true)
         showTimeLeft = bool("HUD.MapMode.showTimeLeft", default: true)
-        nativeOBDSpeedOverlayExperiment = bool("HUD.MapMode.nativeOBDSpeedOverlayExperiment", default: true)
+        nativeOBDSpeedOverlayExperiment = bool("HUD.MapMode.nativeOBDSpeedOverlayExperiment", default: false)
 
         let raw = store.string(forKey: "HUD.MapMode.mapAppearance") ?? HudMapAppearance.followSource.rawValue
         mapAppearance = HudMapAppearance(rawValue: raw) ?? .followSource

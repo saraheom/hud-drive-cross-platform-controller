@@ -11,9 +11,9 @@ final class V903515SafeMainVideoTests: XCTestCase {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 20.0"))
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 60.0"))
-        XCTAssertTrue(video.contains("localDecoderResyncCooldown: TimeInterval = 30.0"))
-        XCTAssertTrue(video.contains("requestDecoderResync"))
-        XCTAssertTrue(video.contains("raw HTTP stream left open"))
+        XCTAssertTrue(video.contains("decoderStaleDiagnosticCooldown: TimeInterval = 30.0"))
+        XCTAssertTrue(video.contains("KEEP decoder session and continue validated P-frames"))
+        XCTAssertTrue(video.contains("decoderLiveEdgeReseedInterval: TimeInterval = 90.0"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
     }
 
@@ -24,12 +24,10 @@ final class V903515SafeMainVideoTests: XCTestCase {
         XCTAssertTrue(route.contains("holding active HUD guidance for 5s"))
     }
 
-    func testOBDProbeCanStartBeforeConnectionConfirmation() throws {
+    func testItem10MapModeProbeIsRetiredFromUI() throws {
         let app = try source("HUDController/App/AppState.swift")
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
-        XCTAssertTrue(app.contains("hudU2WNativeOBDProbePending"))
-        XCTAssertTrue(app.contains("Date().addingTimeInterval(20.0)"))
-        XCTAssertTrue(app.contains("obd.connect(force: true)"))
-        XCTAssertFalse(ui.contains("!state.obd.connected || state.hudU2WNativeOBDProbeActive"))
+        XCTAssertFalse(ui.contains("Native OBD speed test"))
+        XCTAssertTrue(app.contains("suppressCustomSpeedForNativeOBDProbe: false"))
     }
 }

@@ -199,20 +199,8 @@ final class AppState {
             // uses it as permission for ambient animation. HUD transport readiness
             // is the reliable automatic-animation session gate.
             ambientLight?.obdPowerSignal(connected)
-            if connected, self?.mapModeActive == true {
-                self?.startNativeOBDSpeedOverlayProbeIfNeeded()
-            }
-            if connected,
-               self?.hudU2WLiveRelayActive == true,
-               self?.hudU2WNativeOBDProbeEnabled == true {
-                self?.startHUDU2WNativeOBDSpeedProbe()
-            } else if !connected,
-                      self?.hudU2WLiveRelayActive == true,
-                      self?.hudU2WNativeOBDProbeEnabled == true,
-                      self?.hudU2WNativeOBDProbeActive == true {
-                self?.stopHUDU2WNativeOBDSpeedProbe(reason: "HUD-side OBD disconnected during persistent test")
-                self?.obd.connect(force: true)
-            }
+            // v90.35.3.18: the item-10 Map Mode compositor experiment is retired.
+            // OBD connection changes no longer alter the Map Mode image/layers.
         }
 
         bluetooth.onWiFiSTAStatusEvent = { [weak self] status, reason, address in
@@ -259,14 +247,6 @@ final class AppState {
                 )
             }
 
-            if self.hudU2WLiveRelayActive, linkUp, self.hudU2WNativeOBDProbeEnabled,
-               !self.hudU2WNativeOBDProbeActive, !self.hudU2WNativeOBDProbePending {
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(2))
-                    guard let self, self.hudU2WLiveRelayActive, self.hudU2WNativeOBDProbeEnabled else { return }
-                    self.startHUDU2WNativeOBDSpeedProbe()
-                }
-            }
 
             if self.hudSTAPersistenceTestActive {
                 self.hudSTAPersistenceTestSawStatusEvent = true
@@ -1053,7 +1033,7 @@ final class AppState {
                     snapshot: snapshot,
                     settings: self.mapModeSettings,
                     sourceMapImage: self.mainVideo.latestFrame,
-                    suppressCustomSpeedForNativeOBDProbe: self.hudU2WNativeOBDProbeActive
+                    suppressCustomSpeedForNativeOBDProbe: false
                 ) {
                     self.hudU2WFrameRelay.sendFrame(frame)
                 }
@@ -1898,8 +1878,7 @@ final class AppState {
         bluetooth.enqueue(HudCommands.keepAlive(), label: "Map Mode → KeepAlive")
         logger.log(
             "MAP MODE",
-            "Enabled custom cast; frozen route=\(mapModeFrozenSnapshot?.turningStreet ?? "—") " +
-            "OBDOverlayProbe=\(mapModeSettings.nativeOBDSpeedOverlayExperiment)"
+            "Enabled custom cast; frozen route=\(mapModeFrozenSnapshot?.turningStreet ?? "—"); native OBD overlay probe retired"
         )
 
         Task { @MainActor [weak self] in
@@ -1927,12 +1906,8 @@ final class AppState {
             return
         }
 
-        // Clear the experimental OBD custom slot, release KivicCast mode and
-        // reconstruct exactly the normal Freeride/Navigation state.
-        bluetooth.enqueue(
-            HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.none.rawValue)),
-            label: "Map Mode → clear native OBD speed overlay probe"
-        )
+        // Release KivicCast mode and reconstruct normal Freeride/Navigation state.
+        // v90.35.3.18 no longer touches the OBD custom-item compositor here.
         bluetooth.enqueue(
             HudCommands.hudHotspotBaseband(is5G: true, forceEnable: false),
             label: "Map Mode → stock HUD AP release"
@@ -1962,12 +1937,11 @@ final class AppState {
                     useFrozenRouteWhenUnavailable: true,
                     allowDesignFallback: true
                 )
-                let suppressSpeed = self.mapModeSettings.nativeOBDSpeedOverlayExperiment && self.obd.connected
                 if let frame = HudMapModeFrameRenderer.jpeg(
                     snapshot: snapshot,
                     settings: self.mapModeSettings,
                     sourceMapImage: self.mapModeFrozenSourceImage ?? self.mainVideo.latestFrame,
-                    suppressCustomSpeedForNativeOBDProbe: suppressSpeed
+                    suppressCustomSpeedForNativeOBDProbe: false
                 ) {
                     self.mapModeCastServer.updateFrame(frame)
                 }
@@ -1982,7 +1956,6 @@ final class AppState {
         guard mapModeActive else { return }
         if event.contains("HUD MJPEG client streaming") {
             mapModeStatus = "Map Mode streaming to HUD"
-            startNativeOBDSpeedOverlayProbeIfNeeded()
         } else if event.contains("HUD discovered Map Mode stream") {
             mapModeStatus = "HUD discovered iPhone Map Mode stream — opening MJPEG"
         }
@@ -2054,6 +2027,7 @@ final class AppState {
             currentRoad: routeGuidance.currentRoad,
             turningStreet: navigation.current.streetName,
             maneuver: navigation.current.maneuver,
+            maneuverText: navigation.current.sourceDescription ?? navigation.current.primaryText,
             distanceText: distance,
             destination: routeGuidance.destination,
             etaText: routeGuidance.etaText,

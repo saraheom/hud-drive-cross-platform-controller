@@ -40,7 +40,6 @@ struct NavigationHUDPreviewCard: View {
 
                 presetQuickSwitch
                 mapModeRelayControls
-                obdProbeControls
 
                 DisclosureGroup(isExpanded: $showMapCustomization) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -908,31 +907,6 @@ struct NavigationHUDPreviewCard: View {
             ])
         }
     }
-
-    private var obdProbeControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Native OBD speed test", systemImage: "gauge.with.dots.needle.67percent")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { state.hudU2WNativeOBDProbeEnabled },
-                    set: { state.setHUDU2WNativeOBDSpeedProbeEnabled($0) }
-                ))
-                .labelsHidden()
-            }
-
-            LabeledContent("HUD-side OBD", value: state.obd.connected ? "Connected" : "Not confirmed")
-            LabeledContent("Item 10", value: state.hudU2WNativeOBDProbeStatus)
-
-            Text("Separate from Map Mode image customization so it remains accessible when that long section is collapsed. When enabled, the app reserves the speed-number area, requests stock OBD_DRIVING_VELOCITY (item 10), waits 6 seconds with the existing fullscreen state untouched, then exposes the stock HUD layer and keeps the test active until this toggle is turned off. If Map Mode is off, the toggle stays armed for the next live relay session.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
-    }
-
 
     private func positionPad(
         title: String,
