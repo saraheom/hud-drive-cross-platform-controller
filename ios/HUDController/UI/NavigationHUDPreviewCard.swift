@@ -741,7 +741,7 @@ struct NavigationHUDPreviewCard: View {
             )
             tuningSlider(
                 icon: "bold",
-                title: "Lane boldness",
+                title: "Lane arrow thickness",
                 value: Binding(
                     get: { state.mapModeSettings.laneArrowThickness },
                     set: { state.mapModeSettings.laneArrowThickness = $0 }

@@ -342,20 +342,68 @@ struct HudMapModeCanvas: View {
         return Array(values[bestStart..<(bestStart + 4)])
     }
 
+    private enum LaneTurnHighlightDirection {
+        case none, left, right
+
+        init(maneuver: HudManeuver) {
+            switch maneuver {
+            case .left, .slightLeft, .sharpLeft, .keepLeft, .exitLeft, .uTurn:
+                self = .left
+            case .right, .slightRight, .sharpRight, .keepRight, .exitRight, .roundabout:
+                self = .right
+            default:
+                self = .none
+            }
+        }
+    }
+
+    private var laneTurnHighlightDirection: LaneTurnHighlightDirection {
+        LaneTurnHighlightDirection(maneuver: snapshot.maneuver)
+    }
+
+    private func laneGlyphStyle(for wireValue: Int) -> LaneGuidanceGlyph.Style {
+        let recommended = wireValue > 0
+        let type = abs(wireValue)
+        guard recommended else { return .inactive }
+
+        switch laneTurnHighlightDirection {
+        case .left:
+            switch type {
+            case 4: return .active
+            case 5: return .turnOnlyLeft
+            case 1: return .inactive
+            default: return .active
+            }
+        case .right:
+            switch type {
+            case 2: return .active
+            case 3: return .turnOnlyRight
+            case 1: return .inactive
+            default: return .active
+            }
+        case .none:
+            return .active
+        }
+    }
+
     @ViewBuilder
     private var laneGuidanceRow: some View {
         let values = displayedLaneValues
         if values.isEmpty {
             Color.clear
         } else {
+            let inactiveColor = Color(white: settings.laneInactiveGray)
             HStack(spacing: CGFloat(settings.laneSpacing)) {
                 ForEach(Array(values.enumerated()), id: \.offset) { _, value in
+                    let style = laneGlyphStyle(for: value)
                     LaneGuidanceGlyph(
                         rawValue: abs(value),
-                        color: value > 0 ? .white : Color(white: settings.laneInactiveGray),
+                        style: style,
+                        activeColor: .white,
+                        inactiveColor: inactiveColor,
                         lineWidth: CGFloat(max(0.75, min(2.25, settings.laneArrowThickness * 0.82)))
                     )
-                    .scaleEffect(value > 0 ? settings.laneActiveEmphasis : 1.0)
+                    .scaleEffect(style.isHighlighted ? settings.laneActiveEmphasis : 1.0)
                     .frame(width: 15, height: 22)
                 }
             }
@@ -408,8 +456,24 @@ struct HudMapModeCanvas: View {
 /// Unlike stacked SF Symbols, combined straight+turn glyphs share one long
 /// stem and branch around mid-height, keeping the arrowheads clearly separated.
 private struct LaneGuidanceGlyph: View {
+    enum Style {
+        case inactive
+        case active
+        case turnOnlyLeft
+        case turnOnlyRight
+
+        var isHighlighted: Bool {
+            switch self {
+            case .inactive: return false
+            default: return true
+            }
+        }
+    }
+
     let rawValue: Int
-    let color: Color
+    let style: Style
+    let activeColor: Color
+    let inactiveColor: Color
     let lineWidth: CGFloat
 
     var body: some View {
@@ -421,31 +485,36 @@ private struct LaneGuidanceGlyph: View {
             let straightBaseY = h * 0.23
             let straightApexY = h * 0.055
             let headHalfW = max(1.8, w * 0.18)
-            let style = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+            let styleStroke = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
 
-            func stroke(_ path: Path, opacity: Double = 1.0) {
-                context.stroke(path, with: .color(color.opacity(opacity)), style: style)
+            func stroke(_ path: Path, color: Color, opacity: Double = 1.0) {
+                context.stroke(path, with: .color(color.opacity(opacity)), style: styleStroke)
             }
-            func triangle(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint, opacity: Double = 1.0) {
+            func triangle(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint, color: Color, opacity: Double = 1.0) {
                 var p = Path()
-                p.move(to: a); p.addLine(to: b); p.addLine(to: c); p.closeSubpath()
+                p.move(to: a)
+                p.addLine(to: b)
+                p.addLine(to: c)
+                p.closeSubpath()
                 context.fill(p, with: .color(color.opacity(opacity)))
             }
-            func straightArrow() {
+            func straightArrow(_ drawColor: Color, opacity: Double = 1.0) {
                 var shaft = Path()
                 shaft.move(to: CGPoint(x: cx, y: bottom))
                 shaft.addLine(to: CGPoint(x: cx, y: straightBaseY))
-                stroke(shaft)
+                stroke(shaft, color: drawColor, opacity: opacity)
                 triangle(
                     CGPoint(x: cx, y: straightApexY),
                     CGPoint(x: cx - headHalfW, y: straightBaseY),
-                    CGPoint(x: cx + headHalfW, y: straightBaseY)
+                    CGPoint(x: cx + headHalfW, y: straightBaseY),
+                    color: drawColor,
+                    opacity: opacity
                 )
             }
-            func turnBranch(right: Bool, includeStraight: Bool) {
+            func soloTurn(right: Bool, drawColor: Color, opacity: Double = 1.0) {
                 let sign: CGFloat = right ? 1 : -1
-                let branchY = h * (includeStraight ? 0.55 : 0.64)
-                let headY = h * (includeStraight ? 0.39 : 0.29)
+                let branchY = h * 0.64
+                let headY = h * 0.29
                 let headX = cx + sign * w * 0.41
                 let baseX = headX - sign * w * 0.20
                 let halfH = h * 0.095
@@ -458,15 +527,17 @@ private struct LaneGuidanceGlyph: View {
                     control1: CGPoint(x: cx, y: branchY - h * 0.14),
                     control2: CGPoint(x: baseX - sign * w * 0.10, y: headY)
                 )
-                stroke(p)
+                stroke(p, color: drawColor, opacity: opacity)
                 triangle(
                     CGPoint(x: headX, y: headY),
                     CGPoint(x: baseX, y: headY - halfH),
-                    CGPoint(x: baseX, y: headY + halfH)
+                    CGPoint(x: baseX, y: headY + halfH),
+                    color: drawColor,
+                    opacity: opacity
                 )
             }
-            func combined(right: Bool) {
-                straightArrow()
+            func combined(right: Bool, drawColor: Color, opacity: Double = 1.0) {
+                straightArrow(drawColor, opacity: opacity)
                 let sign: CGFloat = right ? 1 : -1
                 let branchStartY = h * 0.56
                 let headY = h * 0.40
@@ -480,20 +551,64 @@ private struct LaneGuidanceGlyph: View {
                     control1: CGPoint(x: cx + sign * w * 0.05, y: h * 0.47),
                     control2: CGPoint(x: baseX - sign * w * 0.08, y: headY)
                 )
-                stroke(branch)
+                stroke(branch, color: drawColor, opacity: opacity)
                 triangle(
                     CGPoint(x: headX, y: headY),
                     CGPoint(x: baseX, y: headY - halfH),
-                    CGPoint(x: baseX, y: headY + halfH)
+                    CGPoint(x: baseX, y: headY + halfH),
+                    color: drawColor,
+                    opacity: opacity
+                )
+            }
+            // White turn arrow intentionally overlaps on top of the gray straight
+            // arrow so the glyph matches Google/Apple lane guidance cards for
+            // turn-only highlighting of straight+left / straight+right lanes.
+            func turnOnlyCombined(right: Bool) {
+                straightArrow(inactiveColor)
+                let sign: CGFloat = right ? 1 : -1
+                let branchStartY = h * 0.70
+                let headY = h * 0.41
+                let headX = cx + sign * w * 0.34
+                let baseX = headX - sign * w * 0.17
+                let halfH = h * 0.082
+                var branch = Path()
+                branch.move(to: CGPoint(x: cx, y: bottom))
+                branch.addLine(to: CGPoint(x: cx, y: branchStartY))
+                branch.addCurve(
+                    to: CGPoint(x: baseX, y: headY),
+                    control1: CGPoint(x: cx + sign * w * 0.01, y: h * 0.56),
+                    control2: CGPoint(x: baseX - sign * w * 0.07, y: headY)
+                )
+                stroke(branch, color: activeColor)
+                triangle(
+                    CGPoint(x: headX, y: headY),
+                    CGPoint(x: baseX, y: headY - halfH),
+                    CGPoint(x: baseX, y: headY + halfH),
+                    color: activeColor
                 )
             }
 
-            switch rawValue {
-            case 2: turnBranch(right: true, includeStraight: false)
-            case 3: combined(right: true)
-            case 4: turnBranch(right: false, includeStraight: false)
-            case 5: combined(right: false)
-            default: straightArrow()
+            switch style {
+            case .inactive:
+                switch rawValue {
+                case 2: soloTurn(right: true, drawColor: inactiveColor)
+                case 3: combined(right: true, drawColor: inactiveColor)
+                case 4: soloTurn(right: false, drawColor: inactiveColor)
+                case 5: combined(right: false, drawColor: inactiveColor)
+                default: straightArrow(inactiveColor)
+                }
+            case .active:
+                switch rawValue {
+                case 2: soloTurn(right: true, drawColor: activeColor)
+                case 3: combined(right: true, drawColor: activeColor)
+                case 4: soloTurn(right: false, drawColor: activeColor)
+                case 5: combined(right: false, drawColor: activeColor)
+                default: straightArrow(activeColor)
+                }
+            case .turnOnlyLeft:
+                turnOnlyCombined(right: false)
+            case .turnOnlyRight:
+                turnOnlyCombined(right: true)
             }
         }
         .accessibilityHidden(true)

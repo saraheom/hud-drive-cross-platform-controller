@@ -1,0 +1,23 @@
+HUD v90.35.3.19 BUILD VERIFY
+
+Base: v90.35.3.18.1
+Scope:
+- Preserve MainVideo recovery work from v90.35.3.18.1
+- Refine lane-guidance rendering to match approved turn-only overlap style
+- Keep each physical lane in its own slot while centering the lane group
+- Use CarPlay maneuver direction to choose turn-only overlays for straight+left/right recommended lanes
+- Retain map-mode customization controls for lane arrow size and thickness
+
+Key code changes:
+- ios/HUDController/MapMode/HudMapModeCanvas.swift
+- ios/HUDController/UI/NavigationHUDPreviewCard.swift
+- ios/HUDControllerTests/V903518MainVideoLaneStreetTests.swift
+- ios/HUDControllerTests/V903538MapUILayoutCalibrationTests.swift
+- tests_v903518_mainvideo_lane_street.py
+
+Static validation performed in container:
+- python3 tests_v903518_mainvideo_lane_street.py  -> PASS
+
+Notes:
+- No U2W changes in this app-focused repo build.
+- Lane arrow size and thickness controls already existed; thickness label now reads "Lane arrow thickness".

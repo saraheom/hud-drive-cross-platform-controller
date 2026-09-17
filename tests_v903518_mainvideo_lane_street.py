@@ -24,8 +24,8 @@ checks = {
     "v8.20 validates SPS profile": "plausible_sps_profile" in streamer,
     "v8.20 validates parameter-set/IDR proximity": "(*last_pps-*last_sps)>4096" in streamer and "(start-*last_pps)>65536" in streamer,
     "v8.20 does not hook AppleCarPlay": "AppleCarPlay" not in installer and "LD_PRELOAD" not in installer,
-    "lane arrows use vectors": "LaneGuidanceGlyph" in canvas and "func combined(right: Bool)" in canvas,
-    "combined arrows share a mid-shaft branch": "branchStartY = h * 0.56" in canvas,
+    "lane arrows use vectors": "LaneGuidanceGlyph" in canvas and "func combined(right: Bool, drawColor: Color" in canvas,
+    "turn-only overlays share the same stem": "func turnOnlyCombined(right: Bool)" in canvas and "laneGlyphStyle(for wireValue: Int)" in canvas,
     "merge maneuver vectors are available": "MergeManeuverGlyph" in canvas and "mergeManeuverKind" in canvas,
     "lane window retains readable four lanes": "guard values.count > 4 else { return values }" in canvas and "activeInside" in canvas,
     "turning street reserves exactly two lines": ".lineLimit(2)" in canvas and "minHeight: 29, maxHeight: 29" in canvas,
@@ -35,5 +35,5 @@ checks = {
 
 failed = [name for name, ok in checks.items() if not ok]
 if failed:
-    raise SystemExit("v90.35.3.18 static failures:\n- " + "\n- ".join(failed))
-print(f"v90.35.3.18 static checks passed: {len(checks)}")
+    raise SystemExit("v90.35.3.19 static failures:\n- " + "\n- ".join(failed))
+print(f"v90.35.3.19 static checks passed: {len(checks)}")

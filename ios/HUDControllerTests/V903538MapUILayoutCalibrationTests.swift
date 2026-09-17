@@ -43,7 +43,7 @@ final class V903538MapUILayoutCalibrationTests: XCTestCase {
         XCTAssertTrue(ui.contains("Physical HUD position"))
         XCTAssertTrue(ui.contains("Right-side component size / spacing"))
         XCTAssertTrue(ui.contains("Turn arrow boldness"))
-        XCTAssertTrue(ui.contains("Lane boldness"))
+        XCTAssertTrue(ui.contains("Lane arrow thickness"))
         XCTAssertTrue(ui.contains("Active lane emphasis"))
         XCTAssertTrue(ui.contains("delta: -2"))
         XCTAssertTrue(ui.contains("delta: 2"))

@@ -19,8 +19,9 @@ final class V903518MainVideoLaneStreetTests: XCTestCase {
     func testLaneVectorsAndTwoLineStreetLayout() throws {
         let canvas = try source("HUDController/MapMode/HudMapModeCanvas.swift")
         XCTAssertTrue(canvas.contains("LaneGuidanceGlyph"))
-        XCTAssertTrue(canvas.contains("func combined(right: Bool)"))
-        XCTAssertTrue(canvas.contains("branchStartY = h * 0.56"))
+        XCTAssertTrue(canvas.contains("func combined(right: Bool, drawColor: Color"))
+        XCTAssertTrue(canvas.contains("func turnOnlyCombined(right: Bool)"))
+        XCTAssertTrue(canvas.contains("laneGlyphStyle(for wireValue: Int)"))
         XCTAssertTrue(canvas.contains("MergeManeuverGlyph"))
         XCTAssertTrue(canvas.contains(".lineLimit(2)"))
         XCTAssertTrue(canvas.contains("minHeight: 29, maxHeight: 29"))
