@@ -16,7 +16,7 @@ final class V9035132StabilizationTests: XCTestCase {
         XCTAssertTrue(video.contains("pendingSPS"))
         XCTAssertTrue(video.contains("preserving last-known-good decoder"))
         XCTAssertTrue(video.contains("prepareForStreamRestart"))
-        XCTAssertTrue(video.contains("worker.reconnectAtLiveEdge"))
+        XCTAssertTrue(video.contains("reconnectAtLiveEdge(reason:"))
         XCTAssertTrue(video.contains("Atomic promotion: only now retire the prior VideoToolbox session."))
     }
 

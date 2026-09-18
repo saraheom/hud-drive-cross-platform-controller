@@ -1,0 +1,17 @@
+HUD v90.35.3.21.1 CI ALIGNMENT
+
+Base: v90.35.3.21
+Scope: CI-only regression guard alignment.
+
+GitHub Actions result for v90.35.3.21:
+- iOS Simulator BUILD SUCCEEDED.
+- 304 XCTest cases executed; exactly one stale source-string assertion failed.
+- Failure: V9035132StabilizationTests.swift line 19 expected literal `worker.reconnectAtLiveEdge`.
+- Runtime source uses `self.worker?.reconnectAtLiveEdge(reason: ...)` under the v8.22 dedicated H.264 relay architecture.
+
+Change:
+- Update assertion to verify `reconnectAtLiveEdge(reason:` instead.
+
+No production Swift runtime code changed.
+No U2W v8.22 code/image changed.
+No reflash required if v8.22 is already installed.
