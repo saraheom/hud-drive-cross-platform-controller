@@ -6,20 +6,18 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.20 MainVideo client for the stable U2W v8.11 exporter + v8.21
-/// persistent decoder-safe GOP cache streamer.
+/// v90.35.3.21 MainVideo client for U2W v8.22.
 ///
-/// Field captures prove fd33 contains genuine 800×480 CarPlay H.264 mixed with
-/// unrelated bytes. The adapter therefore stays deliberately simple: it only
-/// forwards the raw v8.17 stream. Expensive/syntax-aware H.264 validation runs
-/// here on the iPhone before VideoToolbox sees a NAL. The adapter-side v8.21
-/// cache helper is warmed as soon as the HUD/U2W session is available, but the
-/// actual MainVideo HTTP stream is still opened only while Map Mode is active.
+/// Video no longer travels through a long-lived Boa CGI or through a cache file
+/// that is truncated underneath an active reader.  The adapter-side relay tails
+/// the stable v8.11 mirror and publishes length-framed H.264 NAL units on
+/// TCP/15332.  The iPhone keeps this connection warm as soon as the HUD BLE
+/// transport is ready, so it normally owns decoder state before navigation starts.
 @MainActor
 @Observable
 final class U2WMainVideoClient {
     private(set) var latestFrame: UIImage?
-    private(set) var status = "U2W main video idle — Map Mode off"
+    private(set) var status = "U2W main video idle"
     private(set) var frameCount = 0
     private(set) var connected = false
     private(set) var sourceSize = "—"
@@ -31,8 +29,10 @@ final class U2WMainVideoClient {
     private(set) var acceptedPPSCount = 0
     private(set) var acceptedIDRCount = 0
     private(set) var acceptedSliceCount = 0
-    private(set) var networkPathSummary = "Not monitoring — Map Mode off"
-    private(set) var adapterCacheSummary = "GOP cache not checked"
+    private(set) var networkPathSummary = "Not monitoring — video idle"
+    // Kept under the old property name so existing diagnostic UI bindings remain
+    // source-compatible.  In v8.22 it describes the dedicated TCP relay, not v8.21.
+    private(set) var adapterCacheSummary = "H.264 relay not checked"
 
     var sanitizerSummary: String {
         "raw \(rawNALCount) • valid \(acceptedNALCount) • rejected \(rejectedNALCount) • " +
@@ -40,43 +40,46 @@ final class U2WMainVideoClient {
     }
 
     private let logger: LogManager
-    private var worker: U2WMainVideoStreamWorker?
+    private var worker: U2WMainVideoTCPWorker?
     private var workerGeneration = 0
     private var running = false
     private var freshnessTask: Task<Void, Never>?
-    private var cacheBootstrapTask: Task<Void, Never>?
+    private var bootstrapTask: Task<Void, Never>?
     private var connectedAt: Date?
     private var lastDecodedFrameAt: Date?
     private var lastReceivedBytesAt: Date?
     private var lastDecoderStaleDiagnosticAt: Date?
     private var lastDecoderReseedAt: Date?
     private var lastSourceReconnectAt: Date?
+    private var lastRelayEnsureAt: Date?
     private var lastNetworkHeartbeatAt: Date?
     private var networkMonitors: [String: NWPathMonitor] = [:]
     private var networkSignatures: [String: String] = [:]
     private var networkStatuses: [String: String] = [:]
     private let networkPathQueue = DispatchQueue(label: "HUD.MainVideo.NetworkPath")
-    private let cacheStartEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-cache-start.cgi")!
-    private let cacheStatusEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-cache-status.cgi")!
+    private let relayStartEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-start.cgi")!
+    private let relayStatusEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi")!
 
-    // Do not churn HTTP while the raw adapter stream remains active. A long span
-    // of contaminated/non-video bytes is handled locally by the sanitizer. Only
-    // true source silence permits a rate-limited transport reconnect.
     private let decoderStaleFrameInterval: TimeInterval = 20.0
-    private let decoderStaleDiagnosticCooldown: TimeInterval = 30.0
-    private let decoderLiveEdgeReseedInterval: TimeInterval = 90.0
-    private let decoderLiveEdgeReseedCooldown: TimeInterval = 90.0
-    private let sourceStaleInterval: TimeInterval = 60.0
-    private let sourceReconnectCooldown: TimeInterval = 60.0
+    private let decoderReseedInterval: TimeInterval = 45.0
+    private let decoderReseedCooldown: TimeInterval = 45.0
+    private let sourceStaleInterval: TimeInterval = 15.0
+    private let sourceReconnectCooldown: TimeInterval = 15.0
+    private let relayEnsureCooldown: TimeInterval = 5.0
 
-    init(logger: LogManager) {
-        self.logger = logger
-    }
+    init(logger: LogManager) { self.logger = logger }
 
     func start(reason: String) {
-        guard !running else { return }
+        if running {
+            if !connected {
+                Task { @MainActor [weak self] in
+                    await self?.ensureAdapterRelay(reason: "already running / \(reason)")
+                }
+            }
+            return
+        }
         running = true
-        status = "Connecting to U2W MainVideo…"
+        status = "Starting dedicated U2W H.264 relay…"
         latestFrame = nil
         frameCount = 0
         sourceSize = "—"
@@ -87,6 +90,7 @@ final class U2WMainVideoClient {
         lastDecoderStaleDiagnosticAt = nil
         lastDecoderReseedAt = nil
         lastSourceReconnectAt = nil
+        lastRelayEnsureAt = nil
         rawNALCount = 0
         acceptedNALCount = 0
         rejectedNALCount = 0
@@ -94,42 +98,22 @@ final class U2WMainVideoClient {
         acceptedPPSCount = 0
         acceptedIDRCount = 0
         acceptedSliceCount = 0
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.21-persistent-gop-cache+iPhone-tolerant-filter mapModeOnly=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.22-dedicated-tcp-15332+in-memory-gop continuousPredecode=1 longLivedBoaVideo=0")
         startNetworkPathLogging()
-        cacheBootstrapTask?.cancel()
-        cacheBootstrapTask = Task { @MainActor [weak self] in
+        bootstrapTask?.cancel()
+        bootstrapTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.warmAdapterCache(reason: "Map Mode start / \(reason)")
+            await self.ensureAdapterRelay(reason: "video start / \(reason)")
             guard self.running, !Task.isCancelled else { return }
             self.startWorker(reason: reason)
             self.startFreshnessWatchdog()
         }
     }
 
-    func warmAdapterCache(reason: String) async {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 4
-        configuration.timeoutIntervalForResource = 6
-        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-
-        do {
-            var request = URLRequest(url: cacheStartEndpoint)
-            request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-            let (data, response) = try await session.data(for: request)
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            let body = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            logger.log("U2W GOP CACHE", "warm reason=\(reason) HTTP=\(code) body={\(body.replacingOccurrences(of: "\n", with: " | "))}")
-        } catch {
-            logger.log("U2W GOP CACHE", "warm failed reason=\(reason) error=\(error.localizedDescription)")
-        }
-        await refreshAdapterCacheStatus(reason: "after warm")
-    }
-
-    private func refreshAdapterCacheStatus(reason: String) async {
+    func ensureAdapterRelay(reason: String) async {
+        let now = Date()
+        if let lastRelayEnsureAt, now.timeIntervalSince(lastRelayEnsureAt) < relayEnsureCooldown { return }
+        lastRelayEnsureAt = now
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 3
         configuration.timeoutIntervalForResource = 4
@@ -137,7 +121,27 @@ final class U2WMainVideoClient {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
         do {
-            let (data, response) = try await session.data(from: cacheStatusEndpoint)
+            var request = URLRequest(url: relayStartEndpoint)
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            let (data, response) = try await session.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            logger.log("U2W H264 RELAY", "ensure reason=\(reason) HTTP=\(code) body={\(body.replacingOccurrences(of: "\n", with: " | "))}")
+        } catch {
+            logger.log("U2W H264 RELAY", "ensure failed reason=\(reason) error=\(error.localizedDescription)")
+        }
+        await refreshAdapterRelayStatus(reason: "after ensure")
+    }
+
+    private func refreshAdapterRelayStatus(reason: String) async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 2
+        configuration.timeoutIntervalForResource = 3
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        do {
+            let (data, response) = try await session.data(from: relayStatusEndpoint)
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             let text = String(data: data, encoding: .utf8) ?? ""
             var fields: [String: String] = [:]
@@ -145,15 +149,16 @@ final class U2WMainVideoClient {
                 let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
                 if parts.count == 2 { fields[parts[0]] = parts[1] }
             }
-            let ready = fields["cache_ready"] ?? "?"
-            let bytes = fields["cache_bytes"] ?? "?"
-            let pid = fields["cache_pid"] ?? "?"
-            let streams = fields["stream_cgi_processes"] ?? "?"
-            adapterCacheSummary = "ready \(ready) • \(bytes) B • pid \(pid) • streams \(streams)"
-            logger.log("U2W GOP CACHE", "status reason=\(reason) HTTP=\(code) \(adapterCacheSummary)")
+            let process = fields["relay_process"] ?? "?"
+            let ready = fields["gop_ready"] ?? "?"
+            let gopBytes = fields["gop_bytes"] ?? "?"
+            let client = fields["client_connected"] ?? "?"
+            let overflow = fields["gop_overflow"] ?? "?"
+            adapterCacheSummary = "\(process) • GOP \(ready) \(gopBytes)B • client \(client) • overflow \(overflow)"
+            logger.log("U2W H264 RELAY", "status reason=\(reason) HTTP=\(code) \(adapterCacheSummary)")
         } catch {
-            adapterCacheSummary = "GOP cache status unavailable"
-            logger.log("U2W GOP CACHE", "status failed reason=\(reason) error=\(error.localizedDescription)")
+            adapterCacheSummary = "H.264 relay status unavailable"
+            logger.log("U2W H264 RELAY", "status failed reason=\(reason) error=\(error.localizedDescription)")
         }
     }
 
@@ -162,23 +167,17 @@ final class U2WMainVideoClient {
         workerGeneration &+= 1
         let generation = workerGeneration
         connectedAt = nil
-        lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
 
-        let worker = U2WMainVideoStreamWorker(
-            endpoint: URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-main-stream.cgi")!
-        )
+        let worker = U2WMainVideoTCPWorker(host: "192.168.50.2", port: 15332)
         worker.onStatus = { [weak self] message, isConnected in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
                 let wasConnected = self.connected
                 self.status = message
                 self.connected = isConnected
-                if isConnected, !wasConnected || self.connectedAt == nil {
-                    self.connectedAt = Date()
-                } else if !isConnected {
-                    self.connectedAt = nil
-                }
+                if isConnected, !wasConnected || self.connectedAt == nil { self.connectedAt = Date() }
+                if !isConnected { self.connectedAt = nil }
                 self.logger.log("U2W VIDEO", message)
             }
         }
@@ -204,18 +203,13 @@ final class U2WMainVideoClient {
         worker.onFrame = { [weak self] image in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
-                // Single-frame mailbox: every newly published frame replaces the
-                // prior one. The 5-fps HUD renderer always consumes the newest image.
                 self.latestFrame = image
                 self.lastDecodedFrameAt = Date()
                 self.frameCount += 1
                 self.sourceSize = "\(Int(image.size.width))×\(Int(image.size.height))"
-                self.status = "Live U2W map video • iPhone H.264 filter"
+                self.status = "Live U2W map video • dedicated TCP relay"
                 if self.frameCount == 1 || self.frameCount % 75 == 0 {
-                    self.logger.log(
-                        "U2W VIDEO",
-                        "Live frame #\(self.frameCount) source=\(self.sourceSize) filter={\(self.sanitizerSummary)}"
-                    )
+                    self.logger.log("U2W VIDEO", "Live frame #\(self.frameCount) source=\(self.sourceSize) filter={\(self.sanitizerSummary)}")
                 }
             }
         }
@@ -227,7 +221,7 @@ final class U2WMainVideoClient {
         }
         self.worker = worker
         worker.start()
-        logger.log("U2W VIDEO", "Worker opened reason=\(reason)")
+        logger.log("U2W VIDEO", "TCP worker opened reason=\(reason) endpoint=192.168.50.2:15332")
     }
 
     private func startFreshnessWatchdog() {
@@ -236,129 +230,94 @@ final class U2WMainVideoClient {
             guard let self else { return }
             while !Task.isCancelled, self.running {
                 try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, self.running, self.connected,
-                      let connectedAt = self.connectedAt else { continue }
-
+                guard !Task.isCancelled, self.running else { continue }
                 let now = Date()
+
+                if self.lastNetworkHeartbeatAt.map({ now.timeIntervalSince($0) >= 15.0 }) ?? true {
+                    self.lastNetworkHeartbeatAt = now
+                    self.logNetworkContext(reason: "15s dedicated MainVideo heartbeat")
+                    await self.refreshAdapterRelayStatus(reason: "15s MainVideo heartbeat")
+                }
+
+                guard self.connected, let connectedAt = self.connectedAt else {
+                    await self.ensureAdapterRelay(reason: "TCP disconnected watchdog")
+                    continue
+                }
+
                 let referenceFrameTime = self.lastDecodedFrameAt ?? connectedAt
                 let frameAge = now.timeIntervalSince(referenceFrameTime)
                 let byteAge = self.lastReceivedBytesAt.map { now.timeIntervalSince($0) } ?? .infinity
                 let bytesAreFresh = byteAge < 2.0
 
-                if self.lastNetworkHeartbeatAt.map({ now.timeIntervalSince($0) >= 15.0 }) ?? true {
-                    self.lastNetworkHeartbeatAt = now
-                    self.logNetworkContext(reason: "15s MainVideo heartbeat")
-                    await self.refreshAdapterCacheStatus(reason: "15s MainVideo heartbeat")
-                }
-
                 if bytesAreFresh, frameAge >= self.decoderStaleFrameInterval {
-                    let mayLog = self.lastDecoderStaleDiagnosticAt.map {
-                        now.timeIntervalSince($0) >= self.decoderStaleDiagnosticCooldown
-                    } ?? true
+                    let mayLog = self.lastDecoderStaleDiagnosticAt.map { now.timeIntervalSince($0) >= 20.0 } ?? true
                     if mayLog {
                         self.lastDecoderStaleDiagnosticAt = now
-                        self.status = "Raw MainVideo active — decoder waiting for next good picture"
-                        self.logger.log(
-                            "U2W VIDEO WATCH",
-                            "raw bytes fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; KEEP decoder session and continue validated P-frames; no destructive local IDR reset; filter={\(self.sanitizerSummary)}"
-                        )
-                        self.logNetworkContext(reason: "decoder stale while raw bytes remain fresh")
+                        self.status = "H.264 relay active — decoder waiting for a good picture"
+                        self.logger.log("U2W VIDEO WATCH", "framed NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s filter={\(self.sanitizerSummary)}")
                     }
-
-                    if frameAge >= self.decoderLiveEdgeReseedInterval {
-                        let mayReseed = self.lastDecoderReseedAt.map {
-                            now.timeIntervalSince($0) >= self.decoderLiveEdgeReseedCooldown
-                        } ?? true
+                    if frameAge >= self.decoderReseedInterval {
+                        let mayReseed = self.lastDecoderReseedAt.map { now.timeIntervalSince($0) >= self.decoderReseedCooldown } ?? true
                         if mayReseed {
                             self.lastDecoderReseedAt = now
-                            self.status = "Decoder stale — requesting validated live-edge GOP…"
-                            self.logger.log(
-                                "U2W VIDEO WATCH",
-                                "decoded image stale \(String(format: "%.1f", frameAge))s while raw bytes remain fresh; one rate-limited v8.21 GOP-cache HTTP reseed"
-                            )
-                            self.worker?.reconnectAtLiveEdge(reason: "decoded frame stale >=90s with fresh raw bytes")
+                            self.logger.log("U2W VIDEO WATCH", "decoder stale with fresh framed NALs; reconnecting to in-memory decoder-safe GOP")
+                            self.worker?.reconnectAtLiveEdge(reason: "decoder stale >=45s")
                         }
                     }
                     continue
                 }
 
-                guard !bytesAreFresh,
-                      byteAge >= self.sourceStaleInterval else { continue }
-                let mayReconnect = self.lastSourceReconnectAt.map {
-                    now.timeIntervalSince($0) >= self.sourceReconnectCooldown
-                } ?? true
+                guard !bytesAreFresh, byteAge >= self.sourceStaleInterval else { continue }
+                let mayReconnect = self.lastSourceReconnectAt.map { now.timeIntervalSince($0) >= self.sourceReconnectCooldown } ?? true
                 guard mayReconnect else { continue }
-
                 self.lastSourceReconnectAt = now
-                self.status = "U2W MainVideo source silent — reconnecting once…"
-                self.logger.log(
-                    "U2W VIDEO WATCH",
-                    "source silent for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s frameAge=\(String(format: "%.1f", frameAge))s; one rate-limited v8.21 cache-stream HTTP reconnect"
-                )
-                self.logNetworkContext(reason: "MainVideo source silent before reconnect")
                 self.connected = false
                 self.connectedAt = nil
-                if let worker = self.worker {
-                    worker.reconnectAtLiveEdge(reason: "source silent >=60s")
-                } else {
-                    self.startWorker(reason: "source silent >=60s")
-                }
+                self.status = "U2W H.264 relay silent — self-healing…"
+                self.logger.log("U2W VIDEO WATCH", "TCP source silent byteAge=\(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s; ensure daemon + reconnect")
+                await self.ensureAdapterRelay(reason: "source silent")
+                self.worker?.reconnectAtLiveEdge(reason: "source silent >=15s")
             }
         }
     }
 
     func stop(reason: String) {
-        guard running || worker != nil else {
-            status = "U2W main video idle — Map Mode off"
-            return
-        }
+        guard running || worker != nil else { status = "U2W main video idle"; return }
         running = false
-        freshnessTask?.cancel()
-        freshnessTask = nil
-        cacheBootstrapTask?.cancel()
-        cacheBootstrapTask = nil
-        worker?.stop()
-        worker = nil
+        freshnessTask?.cancel(); freshnessTask = nil
+        bootstrapTask?.cancel(); bootstrapTask = nil
+        worker?.stop(); worker = nil
         workerGeneration &+= 1
         connected = false
         latestFrame = nil
         connectedAt = nil
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
-        lastDecoderStaleDiagnosticAt = nil
-        lastDecoderReseedAt = nil
-        lastSourceReconnectAt = nil
         lastNetworkHeartbeatAt = nil
         stopNetworkPathLogging(reason: reason)
-        status = "U2W main video idle — Map Mode off"
-        logger.log("U2W VIDEO", "Stop reason=\(reason); no MainVideo HTTP traffic remains")
+        status = "U2W main video idle"
+        logger.log("U2W VIDEO", "Stop reason=\(reason); dedicated TCP client closed")
     }
 
     func reconnect(reason: String = "manual") {
         guard running else {
-            status = "Enable Map Mode before reconnecting U2W video"
-            logger.log("U2W VIDEO", "Ignored reconnect while Map Mode video is idle reason=\(reason)")
+            status = "MainVideo predecode is not active"
+            logger.log("U2W VIDEO", "Ignored reconnect while video idle reason=\(reason)")
             return
         }
         connected = false
         connectedAt = nil
-        lastDecodedFrameAt = nil
-        lastReceivedBytesAt = nil
         lastSourceReconnectAt = Date()
-        status = "Reconnecting U2W MainVideo at decoder-safe GOP cache…"
-        logger.log("U2W VIDEO", "Manual reconnect reason=\(reason)")
-        logNetworkContext(reason: "manual MainVideo reconnect")
-        if let worker {
-            worker.reconnectAtLiveEdge(reason: "manual / \(reason)")
-        } else {
-            startWorker(reason: "manual reconnect / \(reason)")
-        }
+        status = "Reconnecting dedicated U2W H.264 relay…"
+        logger.log("U2W VIDEO", "Manual TCP reconnect reason=\(reason)")
+        Task { @MainActor [weak self] in await self?.ensureAdapterRelay(reason: "manual reconnect") }
+        worker?.reconnectAtLiveEdge(reason: "manual / \(reason)")
     }
+
     private func startNetworkPathLogging() {
         stopNetworkPathLogging(reason: "restart")
         networkStatuses = ["default": "pending", "wifi": "pending", "cellular": "pending"]
         networkPathSummary = "default pending • Wi-Fi pending • cellular pending"
-
         let specs: [(String, NWPathMonitor)] = [
             ("default", NWPathMonitor()),
             ("wifi", NWPathMonitor(requiredInterfaceType: .wifi)),
@@ -366,39 +325,31 @@ final class U2WMainVideoClient {
         ]
         for (label, monitor) in specs {
             monitor.pathUpdateHandler = { [weak self] path in
-                Task { @MainActor [weak self] in
-                    self?.handleNetworkPathUpdate(label: label, path: path)
-                }
+                Task { @MainActor [weak self] in self?.handleNetworkPathUpdate(label: label, path: path) }
             }
             networkMonitors[label] = monitor
             monitor.start(queue: networkPathQueue)
         }
-        logger.log("IPHONE NETWORK", "Started default + Wi-Fi + cellular NWPathMonitor while Map Mode MainVideo is active")
+        logger.log("IPHONE NETWORK", "Started network monitors while continuous MainVideo predecode is active")
     }
 
     private func stopNetworkPathLogging(reason: String) {
-        guard !networkMonitors.isEmpty else {
-            networkPathSummary = "Not monitoring — Map Mode off"
-            return
-        }
+        guard !networkMonitors.isEmpty else { networkPathSummary = "Not monitoring — video idle"; return }
         for monitor in networkMonitors.values { monitor.cancel() }
-        networkMonitors.removeAll()
-        networkSignatures.removeAll()
-        networkStatuses.removeAll()
-        networkPathSummary = "Not monitoring — Map Mode off"
+        networkMonitors.removeAll(); networkSignatures.removeAll(); networkStatuses.removeAll()
+        networkPathSummary = "Not monitoring — video idle"
         logger.log("IPHONE NETWORK", "Stopped NWPathMonitor reason=\(reason)")
     }
 
     private func handleNetworkPathUpdate(label: String, path: NWPath) {
         guard running else { return }
-        let status: String
+        let value: String
         switch path.status {
-        case .satisfied: status = "satisfied"
-        case .unsatisfied: status = "unsatisfied"
-        case .requiresConnection: status = "requiresConnection"
-        @unknown default: status = "unknown"
+        case .satisfied: value = "satisfied"
+        case .unsatisfied: value = "unsatisfied"
+        case .requiresConnection: value = "requiresConnection"
+        @unknown default: value = "unknown"
         }
-
         let activeTypes = [
             path.usesInterfaceType(.wifi) ? "wifi" : nil,
             path.usesInterfaceType(.cellular) ? "cellular" : nil,
@@ -406,19 +357,13 @@ final class U2WMainVideoClient {
             path.usesInterfaceType(.loopback) ? "loopback" : nil,
             path.usesInterfaceType(.other) ? "other" : nil,
         ].compactMap { $0 }
-        let available = path.availableInterfaces
-            .map { "\(networkInterfaceTypeName($0.type)):\($0.name)" }
-            .sorted()
-            .joined(separator: ",")
-        let signature = "status=\(status) active=[\(activeTypes.joined(separator: ","))] available=[\(available)] expensive=\(path.isExpensive ? 1 : 0) constrained=\(path.isConstrained ? 1 : 0) ipv4=\(path.supportsIPv4 ? 1 : 0) ipv6=\(path.supportsIPv6 ? 1 : 0) dns=\(path.supportsDNS ? 1 : 0)"
-
-        networkStatuses[label] = status
+        let available = path.availableInterfaces.map { "\(networkInterfaceTypeName($0.type)):\($0.name)" }.sorted().joined(separator: ",")
+        let signature = "status=\(value) active=[\(activeTypes.joined(separator: ","))] available=[\(available)] expensive=\(path.isExpensive ? 1 : 0) constrained=\(path.isConstrained ? 1 : 0) ipv4=\(path.supportsIPv4 ? 1 : 0) ipv6=\(path.supportsIPv6 ? 1 : 0) dns=\(path.supportsDNS ? 1 : 0)"
+        networkStatuses[label] = value
         networkPathSummary = "default \(networkStatuses["default"] ?? "pending") • Wi-Fi \(networkStatuses["wifi"] ?? "pending") • cellular \(networkStatuses["cellular"] ?? "pending")"
-
         guard networkSignatures[label] != signature else { return }
         networkSignatures[label] = signature
         logger.log("IPHONE NETWORK", "\(label) path changed \(signature)")
-        logNetworkContext(reason: "\(label) path change")
     }
 
     private func networkInterfaceTypeName(_ type: NWInterface.InterfaceType) -> String {
@@ -438,125 +383,162 @@ final class U2WMainVideoClient {
         let frameAge = lastDecodedFrameAt.map { now.timeIntervalSince($0) }
         let byteAgeText = byteAge.map { String(format: "%.1fs", $0) } ?? "none"
         let frameAgeText = frameAge.map { String(format: "%.1fs", $0) } ?? "none"
-        logger.log(
-            "IPHONE NETWORK",
-            "context reason=\(reason) summary={\(networkPathSummary)} mainVideoConnected=\(connected ? 1 : 0) bytes=\(receivedBytes) byteAge=\(byteAgeText) frames=\(frameCount) frameAge=\(frameAgeText) h264={\(sanitizerSummary)}"
-        )
+        logger.log("IPHONE NETWORK", "context reason=\(reason) summary={\(networkPathSummary)} tcp15332=\(connected ? 1 : 0) bytes=\(receivedBytes) byteAge=\(byteAgeText) frames=\(frameCount) frameAge=\(frameAgeText) h264={\(sanitizerSummary)}")
     }
 }
 
-/// URLSession streaming worker. Raw v8.17 bytes are split and syntax-validated
-/// on the iPhone before VideoToolbox submission. The delegate queue is serial so
-/// H.264 ordering is deterministic and adapter-side computation stays minimal.
-private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
-    let endpoint: URL
+/// Dedicated TCP/15332 worker.  The adapter already provides explicit NAL
+/// boundaries, so the iPhone no longer has to recover Annex-B boundaries from a
+/// Boa byte stream. Syntax validation remains on the iPhone before VideoToolbox.
+private final class U2WMainVideoTCPWorker {
+    let host: NWEndpoint.Host
+    let port: NWEndpoint.Port
     var onStatus: ((String, Bool) -> Void)?
     var onBytes: ((Int) -> Void)?
     var onFrame: ((UIImage) -> Void)?
     var onDiagnostic: ((String) -> Void)?
     var onSanitizerStats: ((H264MainVideoSanitizerStats) -> Void)?
 
-    private let parser = AnnexBH264Parser()
     private let sanitizer = H264MainVideoSanitizer()
     private let decoder = H264VideoToolboxDecoder()
-    private var session: URLSession?
-    private var task: URLSessionDataTask?
+    private let queue = DispatchQueue(label: "HUD.U2WMainVideo.TCP15332", qos: .userInitiated)
+    private var connection: NWConnection?
     private var running = false
+    private var buffer = Data()
+    private var handshakeComplete = false
     private var reconnectWorkItem: DispatchWorkItem?
     private var lastStatsEmitUptime: TimeInterval = 0
-    private let delegateQueue: OperationQueue = {
-        let queue = OperationQueue()
-        queue.maxConcurrentOperationCount = 1
-        queue.qualityOfService = .userInitiated
-        queue.name = "HUD.U2WMainVideo.Serial"
-        return queue
-    }()
+    private let magic = Data("U2WH2641".utf8)
 
-    init(endpoint: URL) {
-        self.endpoint = endpoint
-        super.init()
-        decoder.onFrame = { [weak self] image in
-            self?.onFrame?(image)
-        }
-        decoder.onDiagnostic = { [weak self] message in
-            self?.onDiagnostic?(message)
-        }
+    init(host: String, port: UInt16) {
+        self.host = NWEndpoint.Host(host)
+        self.port = NWEndpoint.Port(rawValue: port)!
+        decoder.onFrame = { [weak self] image in self?.onFrame?(image) }
+        decoder.onDiagnostic = { [weak self] message in self?.onDiagnostic?(message) }
     }
 
     func start() {
         guard !running else { return }
         running = true
-        let configuration = URLSessionConfiguration.ephemeral
-        // v8.21 fails fast with HTTP 503 when the persistent GOP cache is not
-        // ready; a successful response remains a long-lived stream.
-        configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 60 * 60 * 6
-        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        parser.reset()
         sanitizer.reset()
         decoder.reset()
-        session = URLSession(configuration: configuration, delegate: self, delegateQueue: delegateQueue)
-        openStream()
+        openConnection()
     }
 
     func stop() {
         running = false
-        reconnectWorkItem?.cancel()
-        reconnectWorkItem = nil
-        task?.cancel()
-        task = nil
-        session?.invalidateAndCancel()
-        session = nil
-        parser.reset()
+        reconnectWorkItem?.cancel(); reconnectWorkItem = nil
+        connection?.stateUpdateHandler = nil
+        connection?.cancel(); connection = nil
+        buffer.removeAll(keepingCapacity: false)
+        handshakeComplete = false
         sanitizer.reset()
         decoder.reset()
     }
 
-    private func openStream() {
-        guard running, let session else { return }
-        parser.reset()
+    func reconnectAtLiveEdge(reason: String) {
+        queue.async { [weak self] in
+            guard let self, self.running else { return }
+            self.onDiagnostic?("TCP relay reconnect requested reason=\(reason)")
+            self.connection?.stateUpdateHandler = nil
+            self.connection?.cancel()
+            self.connection = nil
+            self.buffer.removeAll(keepingCapacity: true)
+            self.handshakeComplete = false
+            self.sanitizer.prepareForTransportReconnect()
+            self.decoder.prepareForStreamRestart()
+            self.openConnection()
+        }
+    }
+
+    private func openConnection() {
+        guard running else { return }
+        reconnectWorkItem?.cancel(); reconnectWorkItem = nil
+        buffer.removeAll(keepingCapacity: true)
+        handshakeComplete = false
         sanitizer.prepareForTransportReconnect()
         decoder.prepareForStreamRestart()
-        var request = URLRequest(url: endpoint)
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-        task = session.dataTask(with: request)
-        task?.resume()
-        onStatus?("Opening U2W GOP-cache-backed H.264 stream…", false)
-    }
-
-    func reconnectAtLiveEdge(reason: String) {
-        guard running else { return }
-        delegateQueue.addOperation { [weak self] in
-            guard let self, self.running else { return }
-            self.reconnectWorkItem?.cancel()
-            self.reconnectWorkItem = nil
-            let previous = self.task
-            self.task = nil
-            previous?.cancel()
-            self.onDiagnostic?("Transport reconnect requested reason=\(reason); retaining validated SPS/PPS relationship")
-            self.openStream()
-        }
-    }
-
-    private func isCurrent(_ dataTask: URLSessionDataTask) -> Bool {
-        task?.taskIdentifier == dataTask.taskIdentifier
-    }
-
-    private func scheduleReconnect(_ detail: String) {
-        guard running else { return }
-        onStatus?("U2W video unavailable — retrying in 5s: \(detail)", false)
-        reconnectWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.delegateQueue.addOperation { [weak self] in
-                guard let self, self.running else { return }
-                self.openStream()
+        let connection = NWConnection(host: host, port: port, using: .tcp)
+        self.connection = connection
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            guard let self, let connection, self.running, self.connection === connection else { return }
+            switch state {
+            case .ready:
+                self.onDiagnostic?("TCP MainVideo connected relay=v8.22 endpoint=192.168.50.2:15332")
+                self.onStatus?("U2W H.264 relay connected • TCP/15332", true)
+                self.receiveNext(connection)
+            case .failed(let error):
+                self.onStatus?("U2W H.264 TCP failed: \(error.localizedDescription)", false)
+                self.scheduleReconnect()
+            case .cancelled:
+                if self.running { self.scheduleReconnect() }
+            default:
+                break
             }
         }
-        reconnectWorkItem = item
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5.0, execute: item)
+        onStatus?("Opening dedicated U2W H.264 TCP/15332…", false)
+        connection.start(queue: queue)
+    }
+
+    private func receiveNext(_ connection: NWConnection) {
+        guard running, self.connection === connection else { return }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 128 * 1024) { [weak self, weak connection] data, _, complete, error in
+            guard let self, let connection, self.running, self.connection === connection else { return }
+            if let data, !data.isEmpty {
+                self.onBytes?(data.count)
+                self.buffer.append(data)
+                if !self.consumeBuffer() { return }
+            }
+            if complete || error != nil {
+                self.onStatus?("U2W H.264 TCP ended\(error.map { ": \($0.localizedDescription)" } ?? "")", false)
+                self.scheduleReconnect()
+                return
+            }
+            self.receiveNext(connection)
+        }
+    }
+
+    @discardableResult
+    private func consumeBuffer() -> Bool {
+        if !handshakeComplete {
+            guard buffer.count >= magic.count else { return true }
+            guard buffer.prefix(magic.count) == magic else {
+                onDiagnostic?("Invalid TCP relay magic; closing transport")
+                connection?.cancel()
+                scheduleReconnect()
+                return false
+            }
+            buffer.removeFirst(magic.count)
+            handshakeComplete = true
+            onDiagnostic?("TCP relay handshake U2WH2641 accepted")
+        }
+
+        while buffer.count >= 4 {
+            let length = buffer.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
+            guard length > 0, length <= 512 * 1024 else {
+                onDiagnostic?("Invalid framed NAL length=\(length); reconnecting")
+                connection?.cancel()
+                scheduleReconnect()
+                return false
+            }
+            guard buffer.count >= 4 + length else { break }
+            let nal = Data(buffer[4..<(4 + length)])
+            buffer.removeFirst(4 + length)
+            if let accepted = sanitizer.process(nal) {
+                decoder.consume(accepted.data)
+                switch accepted.kind {
+                case .sps, .pps:
+                    onDiagnostic?("iPhone filter accepted \(accepted.kind.rawValue) • \(sanitizer.stats.summary)")
+                case .idr:
+                    let count = sanitizer.stats.acceptedIDR
+                    if count <= 3 || count % 10 == 0 { onDiagnostic?("iPhone filter accepted IDR #\(count) • \(sanitizer.stats.summary)") }
+                case .slice:
+                    break
+                }
+            }
+            emitSanitizerStats()
+        }
+        return true
     }
 
     private func emitSanitizerStats(force: Bool = false) {
@@ -566,60 +548,19 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         onSanitizerStats?(sanitizer.stats)
     }
 
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive response: URLResponse,
-        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
-    ) {
-        guard isCurrent(dataTask) else {
-            completionHandler(.cancel)
-            return
-        }
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            completionHandler(.cancel)
-            scheduleReconnect("HTTP \(http.statusCode)")
-            return
-        }
-        let streamer = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-U2W-Streamer") ?? "unknown-streamer"
-        let cache = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-U2W-Cache") ?? "unknown"
-        onDiagnostic?("HTTP MainVideo connected streamer=\(streamer) cache=\(cache)")
-        onStatus?("U2W MainVideo connected • filtering on iPhone", true)
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard isCurrent(dataTask) else { return }
-        onBytes?(data.count)
-        for nal in parser.append(data) {
-            if let accepted = sanitizer.process(nal) {
-                decoder.consume(accepted.data)
-                switch accepted.kind {
-                case .sps, .pps:
-                    onDiagnostic?("iPhone filter accepted \(accepted.kind.rawValue) • \(sanitizer.stats.summary)")
-                case .idr:
-                    let count = sanitizer.stats.acceptedIDR
-                    if count <= 3 || count % 10 == 0 {
-                        onDiagnostic?("iPhone filter accepted IDR #\(count) • \(sanitizer.stats.summary)")
-                    }
-                case .slice:
-                    break
-                }
-            }
-        }
-        emitSanitizerStats()
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: Error?
-    ) {
-        guard running, self.task?.taskIdentifier == task.taskIdentifier else { return }
-        self.task = nil
+    private func scheduleReconnect() {
+        guard running else { return }
+        connection?.stateUpdateHandler = nil
+        connection?.cancel(); connection = nil
         decoder.discardPendingAccessUnit()
         emitSanitizerStats(force: true)
-        scheduleReconnect(error?.localizedDescription ?? "stream ended")
+        reconnectWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.running else { return }
+            self.openConnection()
+        }
+        reconnectWorkItem = item
+        queue.asyncAfter(deadline: .now() + 2.0, execute: item)
     }
 }
 

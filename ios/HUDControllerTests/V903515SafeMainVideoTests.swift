@@ -10,10 +10,10 @@ final class V903515SafeMainVideoTests: XCTestCase {
     func testMainVideoRecoveryIsConservativeForSanitizedStream() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 20.0"))
-        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 60.0"))
-        XCTAssertTrue(video.contains("decoderStaleDiagnosticCooldown: TimeInterval = 30.0"))
-        XCTAssertTrue(video.contains("KEEP decoder session and continue validated P-frames"))
-        XCTAssertTrue(video.contains("decoderLiveEdgeReseedInterval: TimeInterval = 90.0"))
+        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 15.0"))
+        XCTAssertTrue(video.contains("decoderReseedCooldown: TimeInterval = 45.0"))
+        XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
+        XCTAssertTrue(video.contains("decoderReseedInterval: TimeInterval = 45.0"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
     }
 

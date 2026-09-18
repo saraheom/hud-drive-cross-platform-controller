@@ -1,0 +1,31 @@
+HUD v90.35.3.21 + U2W v8.22 BUILD VERIFY
+
+Base app: v90.35.3.20.1
+Paired adapter: U2W v8.22 Dedicated H264 Relay + HUD Cast Watchdog
+
+Primary fixes:
+1. MainVideo no longer uses a long-lived Boa CGI or a cache file that is truncated while clients read it.
+2. iPhone maintains continuous MainVideo predecode while HUD BLE transport is ready.
+3. MainVideo moves to direct TCP/15332 with explicit length-framed NAL units.
+4. Adapter holds a bounded in-process decoder-safe GOP across v8.11 rolling-file rotations.
+5. Adapter startup scan reaches the current live edge before bootstrapping a client.
+6. Physical HUD MJPEG sender has bounded socket writes so a stale viewer cannot block the whole Map Mode composite forever.
+7. iPhone -> U2W JPEG ingress automatically reconnects after a connection/send failure.
+8. MAP RENDER HEARTBEAT logs speed, route/maneuver, source video frame count, JPEG size, ingress state, sent/dropped counts and reconnect count every ~5 seconds.
+
+Preserved behavior:
+- large turn-by-turn maneuver arrow unchanged
+- current shorter lane-guidance vectors unchanged
+- idle/no-navigation Map Mode remains blank except independent speed/speed-limit information
+- Route Guidance, Now Playing, v8.11 MainVideo exporter and CarPlay process are not patched by v8.22
+
+Validation:
+- pytest: 379/379 PASS
+- all HUDController XCTest Swift sources parser-check PASS
+- modified production Swift sources parser-check PASS
+- v8.22 ARM binaries static/no dynamic section
+- shell scripts sh -n PASS
+- encrypted image build/AES round-trip/tar validation PASS
+
+Full Xcode build/archive must still be validated by GitHub Actions/macOS CI.
+Real in-car validation is required before treating the streaming issue as resolved.

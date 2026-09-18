@@ -10,8 +10,8 @@ final class V9035132StabilizationTests: XCTestCase {
     func testMainVideoPreservesLastKnownGoodDecoderAcrossLiveEdgeReseeds() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 20.0"))
-        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 60.0"))
-        XCTAssertTrue(video.contains("KEEP decoder session and continue validated P-frames"))
+        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 15.0"))
+        XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
         XCTAssertTrue(video.contains("activeSPS"))
         XCTAssertTrue(video.contains("pendingSPS"))
         XCTAssertTrue(video.contains("preserving last-known-good decoder"))

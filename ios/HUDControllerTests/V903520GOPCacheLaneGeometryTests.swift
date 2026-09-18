@@ -34,14 +34,14 @@ final class V903520GOPCacheLaneGeometryTests: XCTestCase {
         XCTAssertTrue(canvas.contains("max(0.45"))
     }
 
-    func testU2WCacheWarmupAndDiagnosticsAreExposed() throws {
+    func testDedicatedH264RelayWarmupAndDiagnosticsAreExposed() throws {
         let app = try source("HUDController/App/AppState.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
-        XCTAssertTrue(app.contains("warmAdapterCache(reason: \"HUD BLE transport ready\")"))
-        XCTAssertTrue(video.contains("u2wvideo-cache-start.cgi"))
-        XCTAssertTrue(video.contains("u2wvideo-cache-status.cgi"))
-        XCTAssertTrue(video.contains("v8.21-persistent-gop-cache"))
-        XCTAssertTrue(ui.contains("U2W GOP cache"))
+        XCTAssertTrue(app.contains("HUD BLE transport ready — continuous predecode"))
+        XCTAssertTrue(video.contains("u2wvideo-relay-start.cgi"))
+        XCTAssertTrue(video.contains("u2wvideo-relay-status.cgi"))
+        XCTAssertTrue(video.contains("v8.22-dedicated-tcp-15332+in-memory-gop"))
+        XCTAssertTrue(ui.contains("U2W H.264 relay"))
     }
 }

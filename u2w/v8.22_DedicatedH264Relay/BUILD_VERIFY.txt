@@ -1,0 +1,30 @@
+U2W v8.22 Dedicated H264 Relay + HUD Cast Watchdog — build verification
+
+Target: U2W 2021.03.06.1343
+Prerequisites: v8.11 MainVideo exporter marker + v8.15.1 HUD relay marker
+
+Architecture:
+- no long-lived MainVideo Boa CGI
+- dedicated one-client TCP/15332 H.264 relay
+- explicit U2WH2641 + u32BE-length framed NAL protocol
+- bounded 20 MiB in-process latest-GOP cache
+- startup catch-up completes before client bootstrap
+- stable v8.11 source mirror remains unchanged
+- physical HUD MJPEG TCP/15330 sender has 2 s send / 3 s receive timeout
+
+Safety scope:
+- AppleCarPlay not killed/restarted/hooked
+- no LD_PRELOAD modification
+- Route Guidance unchanged
+- Now Playing unchanged
+- v8.11 MainVideo exporter unchanged
+- orphaned legacy u2w_mainvideo_streamer CGI processes are terminated on install
+
+Validation performed in build container:
+- u2w_mainvideo_relay: ELF32 ARM EABI5 soft-float, statically linked, no dynamic section
+- u2whud_cast_relay_v822: ELF32 ARM EABI5 soft-float, statically linked, no dynamic section
+- install/uninstall/start/status scripts: sh -n PASS
+- encrypted install/uninstall image AES round-trip and tar member validation: PASS
+- captured 2026-09-18 post-crash 20,026,720-byte MainVideo sample fits the relay's rough-filter GOP cache under the 20 MiB bound (~15.1 MiB from latest accepted IDR to sample end)
+
+Road validation remains required. This architecture removes the two concrete failure mechanisms observed in v8.21 (cache-file truncation under an active reader and long-lived video CGI resource contention), but cannot guarantee that an unrelated adapter/CarPlay firmware defect will never occur.

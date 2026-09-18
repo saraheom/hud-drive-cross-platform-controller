@@ -288,13 +288,11 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            // v90.35.3.20: warm only the tiny adapter-side GOP cache helper now,
-            // before a route may rotate the v8.11 rolling file mid-GOP. The actual
-            // MainVideo HTTP stream remains Map-Mode-only.
-            Task { @MainActor [weak self] in
-                await self?.mainVideo.warmAdapterCache(reason: "HUD BLE transport ready")
-            }
-            self.mainVideo.stop(reason: "HUD BLE ready — Map Mode not active")
+            // v90.35.3.21: keep the dedicated TCP/15332 MainVideo decoder warm
+            // from HUD transport-ready onward.  This normally gives VideoToolbox
+            // SPS/PPS/IDR state before navigation starts and removes any need to
+            // bootstrap a long-lived Boa CGI in the middle of a route.
+            self.mainVideo.start(reason: "HUD BLE transport ready — continuous predecode")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
                !self.hudWiFiExposureActive {
@@ -1027,6 +1025,7 @@ final class AppState {
         hudU2WRelayFrameTask?.cancel()
         hudU2WRelayFrameTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            var renderCount = 0
             while !Task.isCancelled, self.hudU2WLiveRelayActive {
                 let snapshot = self.makeMapModeSnapshot(
                     useFrozenRouteWhenUnavailable: false,
@@ -1038,7 +1037,14 @@ final class AppState {
                     sourceMapImage: self.mainVideo.latestFrame,
                     suppressCustomSpeedForNativeOBDProbe: false
                 ) {
+                    renderCount += 1
                     self.hudU2WFrameRelay.sendFrame(frame)
+                    if renderCount == 1 || renderCount % 25 == 0 {
+                        self.logger.log(
+                            "MAP RENDER HEARTBEAT",
+                            "render=\(renderCount) speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
+                        )
+                    }
                 }
                 try? await Task.sleep(for: .milliseconds(200))
             }
@@ -1319,7 +1325,7 @@ final class AppState {
         hudU2WSTAResetInProgress = false
         hudU2WIgnoreEmptyStatusUntil = .distantPast
         hudU2WFrameRelay.stop(reason: "relay stopped")
-        mainVideo.stop(reason: "live U2W Map Mode disabled")
+        mainVideo.start(reason: "live U2W Map Mode disabled — keep continuous predecode alive")
         hudU2WLiveRelayActive = false
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
@@ -2223,7 +2229,7 @@ final class AppState {
             if self.hudU2WLiveRelayActive {
                 self.mainVideo.start(reason: "firmware maintenance ended — live U2W Map Mode active")
             } else {
-                self.mainVideo.stop(reason: "firmware maintenance ended — Map Mode off")
+                self.mainVideo.start(reason: "firmware maintenance ended — resume continuous predecode")
             }
         }
     }

@@ -11,8 +11,8 @@ final class V903518MainVideoLaneStreetTests: XCTestCase {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
         XCTAssertTrue(video.contains("consecutiveErrorRebuildThreshold = 5"))
-        XCTAssertTrue(video.contains("KEEP decoder session and continue validated P-frames"))
-        XCTAssertTrue(video.contains("decoderLiveEdgeReseedInterval: TimeInterval = 90.0"))
+        XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
+        XCTAssertTrue(video.contains("decoderReseedInterval: TimeInterval = 45.0"))
         XCTAssertFalse(video.contains("requestDecoderResync"))
     }
 

@@ -374,7 +374,7 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
                     LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
                     LabeledContent("MainVideo", value: state.mainVideo.status)
-                    LabeledContent("U2W GOP cache", value: state.mainVideo.adapterCacheSummary)
+                    LabeledContent("U2W H.264 relay", value: state.mainVideo.adapterCacheSummary)
                     LabeledContent("iPhone network", value: state.mainVideo.networkPathSummary)
                     LabeledContent("Video frames", value: "\(state.mainVideo.frameCount) • \(state.mainVideo.sourceSize)")
                     LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
@@ -406,7 +406,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v8.21 keeps a small decoder-safe GOP cache warm on the adapter, but the MainVideo HTTP stream still opens only while live Map Mode is enabled. The iPhone continues to syntax-filter H.264 before VideoToolbox.")
+                    Text("v8.22 moves MainVideo off long-lived Boa CGI onto a dedicated TCP/15332 H.264 relay. The iPhone keeps the decoder connection warm while the HUD transport is ready, syntax-filters every NAL before VideoToolbox, and automatically reconnects the final JPEG ingress if the HUD relay stalls.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

@@ -8,17 +8,19 @@ APP = (ROOT / 'ios/HUDController/App/AppState.swift').read_text()
 UI = (ROOT / 'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 
-def test_mainvideo_is_map_mode_only():
+def test_mainvideo_uses_continuous_dedicated_tcp():
     transport = APP.split('bluetooth.onTransportReady =', 1)[1].split('bluetooth.onHUDSessionReset =', 1)[0]
-    assert 'mainVideo.start' not in transport
+    assert 'mainVideo.start(reason: "HUD BLE transport ready — continuous predecode")' in transport
     assert 'mainVideo.start(reason: "live U2W Map Mode relay")' in APP
-    assert 'mainVideo.stop(reason: "live U2W Map Mode disabled")' in APP
-    assert '.disabled(!state.hudU2WLiveRelayActive)' in UI
-    assert 'MainVideo HTTP stream still opens only while live Map Mode is enabled' in UI
+    assert 'keep continuous predecode alive' in APP
+    assert 'U2W H.264 relay' in UI
 
 
-def test_raw_v817_filter_runs_on_iphone():
-    assert 'stable U2W v8.11 exporter + v8.21' in VIDEO
+def test_dedicated_tcp_filter_runs_on_iphone():
+    assert 'v8.22-dedicated-tcp-15332+in-memory-gop' in VIDEO
+    assert 'U2WMainVideoTCPWorker' in VIDEO
+    assert 'U2WH2641' in VIDEO
+    assert 'port: 15332' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
     assert 'expectedWidth: Int = 800' in SAN
     assert 'expectedHeight: Int = 480' in SAN
@@ -28,15 +30,15 @@ def test_raw_v817_filter_runs_on_iphone():
     assert 'parseSlice' in SAN
 
 
-def test_dirty_bytes_do_not_reconnect_http():
+def test_video_self_healing_does_not_use_long_lived_boa():
     assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
-    assert 'decoderStaleDiagnosticCooldown: TimeInterval = 30.0' in VIDEO
-    assert 'sourceStaleInterval: TimeInterval = 60.0' in VIDEO
-    assert 'sourceReconnectCooldown: TimeInterval = 60.0' in VIDEO
-    assert 'KEEP decoder session and continue validated P-frames' in VIDEO
-    assert 'one rate-limited v8.21 GOP-cache HTTP reseed' in VIDEO
-    assert 'timeoutIntervalForRequest = 15' in VIDEO
-    assert '.now() + 5.0' in VIDEO
+    assert 'decoderReseedInterval: TimeInterval = 45.0' in VIDEO
+    assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
+    assert 'sourceReconnectCooldown: TimeInterval = 15.0' in VIDEO
+    assert 'CONTINUE without IDR reset' in VIDEO
+    assert 'u2wvideo-relay-start.cgi' in VIDEO
+    assert 'u2wvideo-relay-status.cgi' in VIDEO
+    assert 'u2wvideo-main-stream.cgi' not in VIDEO
 
 
 def test_obd_probe_end_keeps_connection_path_alive():

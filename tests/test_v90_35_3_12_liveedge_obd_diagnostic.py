@@ -13,11 +13,11 @@ def test_live_edge_streamer_does_not_start_at_zero():
 
 def test_ios_watchdog_is_less_aggressive_and_tracks_bytes():
     assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
-    assert 'sourceStaleInterval: TimeInterval = 60.0' in VIDEO
+    assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
     assert 'onBytes' in VIDEO
     assert 'receivedBytes' in VIDEO
-    assert 'KEEP decoder session and continue validated P-frames' in VIDEO
-    assert 'no destructive local IDR reset' in VIDEO
+    assert 'CONTINUE without IDR reset' in VIDEO
+    assert 'reconnecting to in-memory decoder-safe GOP' in VIDEO
 
 def test_stock_hud_obd_log_protocol_is_exposed():
     assert 'requestOBDDiagnosticLogs' in CMD

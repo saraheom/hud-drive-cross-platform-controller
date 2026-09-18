@@ -39,22 +39,25 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
         XCTAssertEqual(sanitizer.stats.rejectedNALs, 3)
     }
 
-    func testMainVideoIsMapModeOnlyAndDoesNotChurnHTTPOnDirtyBytes() throws {
+    func testMainVideoUsesContinuousDedicatedTCPAndKeepsIPhoneFiltering() throws {
         let app = try source("HUDController/App/AppState.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
 
         let transportReady = app.components(separatedBy: "bluetooth.onTransportReady =")[1]
             .components(separatedBy: "bluetooth.onHUDSessionReset =")[0]
-        XCTAssertFalse(transportReady.contains("mainVideo.start"))
-        XCTAssertTrue(app.contains("mainVideo.start(reason: \"live U2W Map Mode relay\")"))
-        XCTAssertTrue(app.contains("mainVideo.stop(reason: \"live U2W Map Mode disabled\")"))
+        XCTAssertTrue(transportReady.contains(#"mainVideo.start(reason: "HUD BLE transport ready — continuous predecode")"#))
+        XCTAssertTrue(app.contains(#"mainVideo.start(reason: "live U2W Map Mode relay")"#))
+        XCTAssertTrue(app.contains("keep continuous predecode alive"))
 
+        XCTAssertTrue(video.contains("U2WMainVideoTCPWorker"))
+        XCTAssertTrue(video.contains("port: 15332"))
+        XCTAssertTrue(video.contains("U2WH2641"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
-        XCTAssertTrue(video.contains("KEEP decoder session and continue validated P-frames"))
-        XCTAssertTrue(video.contains("one rate-limited v8.21 GOP-cache HTTP reseed"))
-        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 60.0"))
-        XCTAssertTrue(video.contains("timeoutIntervalForRequest = 15"))
-        XCTAssertTrue(video.contains("warmAdapterCache(reason:"))
+        XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
+        XCTAssertTrue(video.contains("decoderReseedInterval: TimeInterval = 45.0"))
+        XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 15.0"))
+        XCTAssertTrue(video.contains("u2wvideo-relay-start.cgi"))
+        XCTAssertFalse(video.contains("u2wvideo-main-stream.cgi"))
     }
 
     func testItem10MapModeProbeIsRetired() throws {

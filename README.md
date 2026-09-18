@@ -1,3 +1,25 @@
+# HUD Controller v90.35.3.21 — Dedicated H.264 relay + HUD cast watchdog
+
+This release pairs the iOS app with **U2W v8.22**. It retires the v8.21 file-backed GOP/long-lived MainVideo CGI path after the 2026-09-18 drive showed decoder corruption around cache rewrites, Boa/CGI degradation, and a post-CarPlay-restart cache daemon that did not recover.
+
+The new data path is:
+
+`v8.11 MainVideo mirror → dedicated TCP/15332 H.264 relay → iPhone VideoToolbox → 480×240 Map Mode JPEG → U2W frame ingress → timeout-hardened HUD MJPEG sender`
+
+Key changes:
+- direct length-framed H.264 NAL transport on TCP/15332; continuous video no longer travels through Boa
+- bounded in-process decoder-safe GOP across v8.11 pathname rotations
+- continuous iPhone predecode from HUD BLE transport-ready
+- automatic iPhone→U2W JPEG ingress reconnect
+- timeout-hardened final U2W→HUD MJPEG socket so a stale HUD viewer cannot block the entire speed/map/maneuver composite indefinitely
+- `MAP RENDER HEARTBEAT` diagnostics to isolate future freezes
+- no AppleCarPlay hook/restart, no Route Guidance change, no Now Playing change
+- lane graphics and large maneuver arrow are unchanged from v90.35.3.20.1
+
+See `V90_35_3_21_BUILD_VERIFY.txt` and `u2w/v8.22_DedicatedH264Relay/BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.20.1 — CI alignment only
 
 This is runtime-identical to v90.35.3.20. GitHub Actions built the app successfully and 299/300 XCTest cases passed; the sole failure was a stale v90.35.3.17 source-string guard that still expected the former long lane-arrow wording. The guard now validates the approved shorter Google-style lane geometry and shared combined-arrow body. U2W v8.21 is unchanged.

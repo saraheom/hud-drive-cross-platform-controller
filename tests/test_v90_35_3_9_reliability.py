@@ -18,8 +18,8 @@ def test_route_transport_faults_hold_last_valid_navigation():
 
 def test_mainvideo_has_freshness_watchdog_and_generation_guard():
     assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
-    assert 'sourceStaleInterval: TimeInterval = 60.0' in VIDEO
-    assert 'decoderStaleDiagnosticCooldown: TimeInterval = 30.0' in VIDEO
+    assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
+    assert 'decoderReseedCooldown: TimeInterval = 45.0' in VIDEO
     assert 'U2W VIDEO WATCH' in VIDEO
     assert 'workerGeneration' in VIDEO
     assert 'self.workerGeneration == generation' in VIDEO
