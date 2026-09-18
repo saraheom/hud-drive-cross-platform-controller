@@ -123,7 +123,7 @@ struct HudMapModeCanvas: View {
 
     @ViewBuilder
     private var centerWidget: some View {
-        if settings.showMap {
+        if settings.showMap && snapshot.hasLiveRoute {
             Group {
                 if let sourceMapImage {
                     // Deliberately content-blind: crop the same configured rectangle
@@ -161,7 +161,16 @@ struct HudMapModeCanvas: View {
         }
     }
 
+    @ViewBuilder
     private var rightWidget: some View {
+        if snapshot.hasLiveRoute {
+            rightNavigationWidget
+        } else {
+            Color.clear
+        }
+    }
+
+    private var rightNavigationWidget: some View {
         VStack(alignment: .center, spacing: 0) {
             Spacer(minLength: 8)
 
@@ -306,7 +315,7 @@ struct HudMapModeCanvas: View {
 
     private var effectiveLaneValues: [Int] {
         if !snapshot.laneValues.isEmpty { return snapshot.laneValues }
-        return previewLanePlaceholder ? [-1, -1, 2] : []
+        return previewLanePlaceholder ? [-1, -1, 3] : []
     }
 
     /// The physical right-side lane area is intentionally optimized for four
@@ -401,7 +410,7 @@ struct HudMapModeCanvas: View {
                         style: style,
                         activeColor: .white,
                         inactiveColor: inactiveColor,
-                        lineWidth: CGFloat(max(0.75, min(2.25, settings.laneArrowThickness * 0.82)))
+                        lineWidth: CGFloat(max(0.45, min(2.25, settings.laneArrowThickness * 0.82)))
                     )
                     .scaleEffect(style.isHighlighted ? settings.laneActiveEmphasis : 1.0)
                     .frame(width: 15, height: 22)
@@ -453,8 +462,10 @@ struct HudMapModeCanvas: View {
 
 
 /// Compact lane-guidance vector designed for the 480×240 physical HUD.
-/// Unlike stacked SF Symbols, combined straight+turn glyphs share one long
-/// stem and branch around mid-height, keeping the arrowheads clearly separated.
+/// v90.35.3.20 uses the approved shorter Google-style lane arrows. This changes
+/// only lane guidance; the large turn-by-turn maneuver arrow above stays unchanged.
+/// Combined straight+turn glyphs share one body, with turn-only white overlays
+/// drawn directly on top of the gray straight stem.
 private struct LaneGuidanceGlyph: View {
     enum Style {
         case inactive
@@ -481,10 +492,10 @@ private struct LaneGuidanceGlyph: View {
             let w = size.width
             let h = size.height
             let cx = w * 0.5
-            let bottom = h * 0.94
-            let straightBaseY = h * 0.23
-            let straightApexY = h * 0.055
-            let headHalfW = max(1.8, w * 0.18)
+            let bottom = h * 0.82
+            let straightBaseY = h * 0.30
+            let straightApexY = h * 0.12
+            let headHalfW = max(1.7, w * 0.17)
             let styleStroke = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
 
             func stroke(_ path: Path, color: Color, opacity: Double = 1.0) {
@@ -513,19 +524,19 @@ private struct LaneGuidanceGlyph: View {
             }
             func soloTurn(right: Bool, drawColor: Color, opacity: Double = 1.0) {
                 let sign: CGFloat = right ? 1 : -1
-                let branchY = h * 0.64
-                let headY = h * 0.29
-                let headX = cx + sign * w * 0.41
-                let baseX = headX - sign * w * 0.20
-                let halfH = h * 0.095
+                let branchY = h * 0.58
+                let headY = h * 0.31
+                let headX = cx + sign * w * 0.39
+                let baseX = headX - sign * w * 0.19
+                let halfH = h * 0.090
 
                 var p = Path()
                 p.move(to: CGPoint(x: cx, y: bottom))
                 p.addLine(to: CGPoint(x: cx, y: branchY))
                 p.addCurve(
                     to: CGPoint(x: baseX, y: headY),
-                    control1: CGPoint(x: cx, y: branchY - h * 0.14),
-                    control2: CGPoint(x: baseX - sign * w * 0.10, y: headY)
+                    control1: CGPoint(x: cx + sign * w * 0.01, y: branchY - h * 0.18),
+                    control2: CGPoint(x: baseX - sign * w * 0.16, y: headY + h * 0.02)
                 )
                 stroke(p, color: drawColor, opacity: opacity)
                 triangle(
@@ -539,17 +550,17 @@ private struct LaneGuidanceGlyph: View {
             func combined(right: Bool, drawColor: Color, opacity: Double = 1.0) {
                 straightArrow(drawColor, opacity: opacity)
                 let sign: CGFloat = right ? 1 : -1
-                let branchStartY = h * 0.56
-                let headY = h * 0.40
-                let headX = cx + sign * w * 0.41
-                let baseX = headX - sign * w * 0.19
-                let halfH = h * 0.085
+                let branchStartY = h * 0.57
+                let headY = h * 0.34
+                let headX = cx + sign * w * 0.38
+                let baseX = headX - sign * w * 0.18
+                let halfH = h * 0.082
                 var branch = Path()
                 branch.move(to: CGPoint(x: cx, y: branchStartY))
                 branch.addCurve(
                     to: CGPoint(x: baseX, y: headY),
-                    control1: CGPoint(x: cx + sign * w * 0.05, y: h * 0.47),
-                    control2: CGPoint(x: baseX - sign * w * 0.08, y: headY)
+                    control1: CGPoint(x: cx + sign * w * 0.03, y: h * 0.46),
+                    control2: CGPoint(x: baseX - sign * w * 0.13, y: headY + h * 0.01)
                 )
                 stroke(branch, color: drawColor, opacity: opacity)
                 triangle(
@@ -566,18 +577,18 @@ private struct LaneGuidanceGlyph: View {
             func turnOnlyCombined(right: Bool) {
                 straightArrow(inactiveColor)
                 let sign: CGFloat = right ? 1 : -1
-                let branchStartY = h * 0.70
-                let headY = h * 0.41
-                let headX = cx + sign * w * 0.34
+                let branchStartY = h * 0.72
+                let headY = h * 0.34
+                let headX = cx + sign * w * 0.35
                 let baseX = headX - sign * w * 0.17
-                let halfH = h * 0.082
+                let halfH = h * 0.080
                 var branch = Path()
                 branch.move(to: CGPoint(x: cx, y: bottom))
                 branch.addLine(to: CGPoint(x: cx, y: branchStartY))
                 branch.addCurve(
                     to: CGPoint(x: baseX, y: headY),
-                    control1: CGPoint(x: cx + sign * w * 0.01, y: h * 0.56),
-                    control2: CGPoint(x: baseX - sign * w * 0.07, y: headY)
+                    control1: CGPoint(x: cx + sign * w * 0.005, y: h * 0.53),
+                    control2: CGPoint(x: baseX - sign * w * 0.14, y: headY + h * 0.015)
                 )
                 stroke(branch, color: activeColor)
                 triangle(

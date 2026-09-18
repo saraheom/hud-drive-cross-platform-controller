@@ -352,7 +352,7 @@ final class HudMapModeSettings {
         distanceScale = min(1.60, max(0.60, double("HUD.MapMode.distanceScale", default: 1.0)))
 
         laneScale = min(1.70, max(0.60, double("HUD.MapMode.laneScale", default: 1.0)))
-        laneArrowThickness = min(2.50, max(1.00, double("HUD.MapMode.laneArrowThickness", default: 1.75)))
+        laneArrowThickness = min(2.50, max(0.60, double("HUD.MapMode.laneArrowThickness", default: 1.75)))
         laneSpacing = min(8, max(1, double("HUD.MapMode.laneSpacing", default: 3)))
         laneActiveEmphasis = min(1.35, max(1.00, double("HUD.MapMode.laneActiveEmphasis", default: 1.10)))
         laneInactiveGray = min(0.80, max(0.12, double("HUD.MapMode.laneInactiveGray", default: 0.40)))

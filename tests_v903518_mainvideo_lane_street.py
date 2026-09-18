@@ -18,7 +18,7 @@ checks = {
     "isolated VT errors continue without forced IDR": "CONTINUE without IDR reset" in video,
     "consecutive-error rebuild threshold is bounded": "consecutiveErrorRebuildThreshold = 5" in video,
     "20s watchdog is nondestructive": "KEEP decoder session and continue validated P-frames" in video,
-    "90s watchdog requests one live-edge reseed": "decoderLiveEdgeReseedInterval: TimeInterval = 90.0" in video and "validated-GOP HTTP reseed" in video,
+    "90s watchdog requests one live-edge reseed": "decoderLiveEdgeReseedInterval: TimeInterval = 90.0" in video and "GOP-cache HTTP reseed" in video,
     "old local resync hook is gone": "requestDecoderResync" not in video,
     "v8.20 response is fingerprinted": "X-U2W-Streamer: v8.20-validated-gop-bootstrap" in streamer,
     "v8.20 validates SPS profile": "plausible_sps_profile" in streamer,

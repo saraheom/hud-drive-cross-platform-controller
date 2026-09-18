@@ -1,0 +1,22 @@
+HUD v90.35.3.20 BUILD VERIFY
+
+Base: v90.35.3.19.1
+Paired adapter image: U2W v8.21 PersistentGOPCache
+
+Production changes:
+- MainVideo client warms v8.21 GOP cache at HUD BLE readiness and Map Mode start.
+- MainVideo diagnostics expose adapter cache ready/bytes/pid/stream count.
+- MainVideo HTTP request timeout is 15 s; v8.21 itself fails not-ready requests quickly with HTTP 503.
+- Map Mode center/right navigation content is empty when hasLiveRoute=false.
+- Lane guidance vectors are shorter/more curved; large maneuver arrow remains unchanged.
+- Turn-only combined lane overlay remains gray straight + white turn on the same stem.
+- Lane thickness control range extended to 0.60x and vector minimum stroke to 0.45 px.
+
+Validation:
+- python3 -m pytest -q -> 379 passed
+- swiftc -parse passed for every modified production Swift file and new XCTest file
+- v8.21 cache + streamer binaries: ELF32 ARM EABI5 soft-float, statically linked, no dynamic section
+- install/uninstall scripts pass sh -n
+- encrypted U2W images round-trip validate their tar payloads in build_images.py
+
+No Xcode archive was performed in the Linux container; GitHub Actions remains the final iOS compile/archive gate.

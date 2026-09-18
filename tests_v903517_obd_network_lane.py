@@ -40,7 +40,7 @@ def test_lane_pack_window_and_combined_turn_glyphs():
     assert "activeInside" in canvas
     assert "LaneGuidanceGlyph(" in canvas
     assert ".frame(width: 15, height: 22)" in canvas
-    assert "func combined(right: Bool)" in canvas
+    assert "func combined(right: Bool, drawColor: Color" in canvas
     assert "MergeManeuverGlyph" in canvas
     assert 'Image(systemName: "arrow.turn.up.right")' not in canvas
     assert 'Image(systemName: "arrow.turn.up.left")' not in canvas

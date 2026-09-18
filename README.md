@@ -1,3 +1,38 @@
+# HUD Controller v90.35.3.20 — persistent MainVideo GOP cache + shorter lane guidance + empty idle Map Mode
+
+This release is based on the 2026-09-17 afternoon road test. The v8.11 exporter continued receiving CarPlay MainVideo, but v8.20 could not open the HTTP stream whenever the current rolling generation contained only non-IDR P-slices. Returning Google Maps to its default map produced a fresh SPS/PPS/IDR and immediately restored live video. Repeated blocked MainVideo CGIs also correlated with a 106-second Route Guidance/Now Playing blackout.
+
+## U2W v8.21 Persistent GOP Cache
+
+`u2w/v8.21_PersistentGOPCache` leaves AppleCarPlay, the v8.11 exporter, Route Guidance, Now Playing, and the HUD JPEG relay untouched. A small standalone ARM daemon tails `/tmp/u2w_mainvideo_live.h264` continuously and preserves the latest decoder-safe `SPS + PPS + IDR + following slices` across exporter pathname rotations. New MainVideo clients read that cache instead of rescanning only the current rolling file.
+
+- Cache start: `/cgi-bin/u2wvideo-cache-start.cgi`
+- Cache diagnostics: `/cgi-bin/u2wvideo-cache-status.cgi`
+- MainVideo: `/cgi-bin/u2wvideo-main-stream.cgi`
+- If no decoder-safe GOP has been captured yet, MainVideo returns HTTP 503 with `Retry-After: 2` instead of blocking indefinitely.
+- Stream CGIs self-terminate after about five seconds without cache growth, limiting orphaned Boa CGI accumulation after client cancellation.
+- The iOS app warms the GOP cache when the HUD BLE transport becomes ready, before a route is likely to rotate the v8.11 file mid-GOP. The actual MainVideo HTTP stream remains Map-Mode-only.
+- Diagnostics now show GOP-cache ready state, cache bytes, daemon pid, and active stream CGI count.
+
+## Lane guidance
+
+Only the compact lane-guidance glyphs are redesigned. The large turn-by-turn maneuver arrow remains unchanged. Lane arrows now use the approved shorter, more curved geometry, while straight+left/right turn-only guidance continues to draw the white turn path directly on top of the gray straight stem. CarPlay lane types remain source-derived from 0x5204 direction angles (`straight`, `right`, `straight+right`, `left`, `straight+left`) and lane recommendation state.
+
+The existing Map Mode controls remain available, with a wider useful range:
+- Lane arrow size: 60–170%
+- Lane arrow thickness: 0.60–2.50×
+- Lane spacing
+- Inactive-lane gray
+- Active-lane emphasis
+
+## Empty idle Map Mode
+
+When no live navigation route exists, Map Mode no longer fabricates the old sample route, maneuver, street, distance, or lane guidance. The center/right navigation regions stay empty until real CarPlay Route Guidance is active. Speed and a valid OSM speed-limit sign remain independent left-side vehicle information.
+
+See `V90_35_3_20_BUILD_VERIFY.txt` and `u2w/v8.21_PersistentGOPCache/BUILD_VERIFY.txt`.
+
+---
+
 # v90.35.3.19.1 — CI-only lane-vector regression alignment
 
 v90.35.3.19.1 changes no production runtime Swift from v90.35.3.19. The iOS 26 simulator build already succeeded; CI failed only because the older v90.35.3.17 lane regression expected the pre-v90.35.3.19 `func combined(right: Bool)` source signature. The test now recognizes the color-aware vector helper and the turn-only overlapping helper used by the approved lane-guidance design.

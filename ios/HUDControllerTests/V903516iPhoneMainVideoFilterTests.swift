@@ -51,9 +51,10 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
 
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
         XCTAssertTrue(video.contains("KEEP decoder session and continue validated P-frames"))
-        XCTAssertTrue(video.contains("one rate-limited v8.20 validated-GOP HTTP reseed"))
+        XCTAssertTrue(video.contains("one rate-limited v8.21 GOP-cache HTTP reseed"))
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 60.0"))
-        XCTAssertTrue(video.contains("timeoutIntervalForRequest = 60"))
+        XCTAssertTrue(video.contains("timeoutIntervalForRequest = 15"))
+        XCTAssertTrue(video.contains("warmAdapterCache(reason:"))
     }
 
     func testItem10MapModeProbeIsRetired() throws {

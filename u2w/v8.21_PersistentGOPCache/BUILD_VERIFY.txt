@@ -1,0 +1,27 @@
+U2W v8.21 Persistent GOP Cache — build verification
+
+Target: U2W 2021.03.06.1343
+Prerequisites: v8.20 marker + v8.11 MainVideo exporter marker
+
+Safety scope:
+- no AppleCarPlay restart/hook change
+- no LD_PRELOAD change
+- no v8.11 exporter modification
+- no Route Guidance / Now Playing modification
+- no HUD JPEG relay modification
+
+Installed components:
+- /usr/lib/u2wvideo/u2w_mainvideo_cache
+- /etc/boa/cgi-bin/u2wvideo-main-stream.cgi
+- /etc/boa/cgi-bin/u2wvideo-cache-start.cgi
+- /etc/boa/cgi-bin/u2wvideo-cache-status.cgi
+
+Validation:
+- u2w_mainvideo_cache: ELF32 ARM EABI5 soft-float, static, no dynamic section
+- u2w_mainvideo_streamer: ELF32 ARM EABI5 soft-float, static, no dynamic section
+- not-ready streamer path returns HTTP 503/Retry-After instead of indefinite wait
+- streamer has bounded idle lifetime after cache stops growing
+- install/uninstall sh -n pass
+- build_images.py AES round-trip + tar member validation pass
+
+Uninstall restores exact bundled v8.20 streamer.

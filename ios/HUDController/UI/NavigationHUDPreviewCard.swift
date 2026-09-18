@@ -374,6 +374,7 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
                     LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
                     LabeledContent("MainVideo", value: state.mainVideo.status)
+                    LabeledContent("U2W GOP cache", value: state.mainVideo.adapterCacheSummary)
                     LabeledContent("iPhone network", value: state.mainVideo.networkPathSummary)
                     LabeledContent("Video frames", value: "\(state.mainVideo.frameCount) • \(state.mainVideo.sourceSize)")
                     LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
@@ -405,7 +406,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("MainVideo connects only while live Map Mode is enabled. Raw v8.17 bytes are filtered on the iPhone so normal Navigation/Freeride adds no video-processing load to the CarPlay adapter.")
+                    Text("v8.21 keeps a small decoder-safe GOP cache warm on the adapter, but the MainVideo HTTP stream still opens only while live Map Mode is enabled. The iPhone continues to syntax-filter H.264 before VideoToolbox.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -746,8 +747,8 @@ struct NavigationHUDPreviewCard: View {
                     get: { state.mapModeSettings.laneArrowThickness },
                     set: { state.mapModeSettings.laneArrowThickness = $0 }
                 ),
-                range: 1.00...2.50,
-                step: 0.25,
+                range: 0.60...2.50,
+                step: 0.10,
                 format: { String(format: "%.2fx", $0) }
             )
             tuningSlider(

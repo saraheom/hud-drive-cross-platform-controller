@@ -14,11 +14,11 @@ def test_mainvideo_is_map_mode_only():
     assert 'mainVideo.start(reason: "live U2W Map Mode relay")' in APP
     assert 'mainVideo.stop(reason: "live U2W Map Mode disabled")' in APP
     assert '.disabled(!state.hudU2WLiveRelayActive)' in UI
-    assert 'MainVideo connects only while live Map Mode is enabled' in UI
+    assert 'MainVideo HTTP stream still opens only while live Map Mode is enabled' in UI
 
 
 def test_raw_v817_filter_runs_on_iphone():
-    assert 'stable U2W v8.11 exporter + v8.20' in VIDEO
+    assert 'stable U2W v8.11 exporter + v8.21' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
     assert 'expectedWidth: Int = 800' in SAN
     assert 'expectedHeight: Int = 480' in SAN
@@ -34,8 +34,8 @@ def test_dirty_bytes_do_not_reconnect_http():
     assert 'sourceStaleInterval: TimeInterval = 60.0' in VIDEO
     assert 'sourceReconnectCooldown: TimeInterval = 60.0' in VIDEO
     assert 'KEEP decoder session and continue validated P-frames' in VIDEO
-    assert 'one rate-limited v8.20 validated-GOP HTTP reseed' in VIDEO
-    assert 'timeoutIntervalForRequest = 60' in VIDEO
+    assert 'one rate-limited v8.21 GOP-cache HTTP reseed' in VIDEO
+    assert 'timeoutIntervalForRequest = 15' in VIDEO
     assert '.now() + 5.0' in VIDEO
 
 

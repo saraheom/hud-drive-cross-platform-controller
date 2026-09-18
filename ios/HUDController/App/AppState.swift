@@ -288,9 +288,12 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            // v90.35.3.16: MainVideo is intentionally Map-Mode-only. Keeping the
-            // raw video HTTP stream closed during normal Navigation/Freeride
-            // prevents any background load on the old U2W adapter.
+            // v90.35.3.20: warm only the tiny adapter-side GOP cache helper now,
+            // before a route may rotate the v8.11 rolling file mid-GOP. The actual
+            // MainVideo HTTP stream remains Map-Mode-only.
+            Task { @MainActor [weak self] in
+                await self?.mainVideo.warmAdapterCache(reason: "HUD BLE transport ready")
+            }
             self.mainVideo.stop(reason: "HUD BLE ready — Map Mode not active")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
@@ -1027,7 +1030,7 @@ final class AppState {
             while !Task.isCancelled, self.hudU2WLiveRelayActive {
                 let snapshot = self.makeMapModeSnapshot(
                     useFrozenRouteWhenUnavailable: false,
-                    allowDesignFallback: true
+                    allowDesignFallback: false
                 )
                 if let frame = HudMapModeFrameRenderer.jpeg(
                     snapshot: snapshot,
@@ -1810,7 +1813,7 @@ final class AppState {
     // MARK: - v90.35 custom Map Mode cast
 
     var mapModePreviewSnapshot: HudMapModeSnapshot {
-        makeMapModeSnapshot(useFrozenRouteWhenUnavailable: mapModeActive, allowDesignFallback: true)
+        makeMapModeSnapshot(useFrozenRouteWhenUnavailable: mapModeActive, allowDesignFallback: false)
     }
 
     var mapModePreviewSourceImage: UIImage? {
@@ -1835,7 +1838,7 @@ final class AppState {
 
         mapModeFrozenSnapshot = makeMapModeSnapshot(
             useFrozenRouteWhenUnavailable: false,
-            allowDesignFallback: true
+            allowDesignFallback: false
         )
         // Freeze the latest decoded U2W MainVideo frame before Wi-Fi moves from
         // Carlinkit to the HUD AP. The iPhone cannot remain associated with both
@@ -1935,7 +1938,7 @@ final class AppState {
             while !Task.isCancelled, self.mapModeActive {
                 let snapshot = self.makeMapModeSnapshot(
                     useFrozenRouteWhenUnavailable: true,
-                    allowDesignFallback: true
+                    allowDesignFallback: false
                 )
                 if let frame = HudMapModeFrameRenderer.jpeg(
                     snapshot: snapshot,

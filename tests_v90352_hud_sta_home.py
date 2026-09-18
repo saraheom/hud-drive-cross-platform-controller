@@ -45,8 +45,8 @@ def test_temporary_speed_marker_probe_block_is_not_in_vehicle_ui():
 
 def test_home_diagnostic_ui_has_credentials_status_and_no_wifi_handoff_instruction():
     ui = read("ios/HUDController/UI/NavigationHUDPreviewCard.swift")
-    assert "HUD → U2W Wi-Fi home diagnostic" in ui
-    assert "Start home bridge test" in ui
+    assert "CarPlay adapter Wi-Fi name" in ui
+    assert "Enable Map Mode" in ui
     assert "Request status" in ui
     assert "HUD STA IP" in ui
-    assert "Do not manually join HUDWAY Drive Wi-Fi" in ui
+    assert "Reconnect U2W video" in ui

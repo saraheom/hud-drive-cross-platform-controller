@@ -6,15 +6,15 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.18 MainVideo client for the stable U2W v8.11 exporter + v8.20
-/// validated-GOP bootstrap streamer.
+/// v90.35.3.20 MainVideo client for the stable U2W v8.11 exporter + v8.21
+/// persistent decoder-safe GOP cache streamer.
 ///
 /// Field captures prove fd33 contains genuine 800×480 CarPlay H.264 mixed with
 /// unrelated bytes. The adapter therefore stays deliberately simple: it only
 /// forwards the raw v8.17 stream. Expensive/syntax-aware H.264 validation runs
-/// here on the iPhone before VideoToolbox sees a NAL. MainVideo is started only
-/// while live U2W Map Mode is active, so normal Navigation/Freeride adds zero
-/// MainVideo HTTP load to the old Carlinkit hardware.
+/// here on the iPhone before VideoToolbox sees a NAL. The adapter-side v8.21
+/// cache helper is warmed as soon as the HUD/U2W session is available, but the
+/// actual MainVideo HTTP stream is still opened only while Map Mode is active.
 @MainActor
 @Observable
 final class U2WMainVideoClient {
@@ -32,6 +32,7 @@ final class U2WMainVideoClient {
     private(set) var acceptedIDRCount = 0
     private(set) var acceptedSliceCount = 0
     private(set) var networkPathSummary = "Not monitoring — Map Mode off"
+    private(set) var adapterCacheSummary = "GOP cache not checked"
 
     var sanitizerSummary: String {
         "raw \(rawNALCount) • valid \(acceptedNALCount) • rejected \(rejectedNALCount) • " +
@@ -43,6 +44,7 @@ final class U2WMainVideoClient {
     private var workerGeneration = 0
     private var running = false
     private var freshnessTask: Task<Void, Never>?
+    private var cacheBootstrapTask: Task<Void, Never>?
     private var connectedAt: Date?
     private var lastDecodedFrameAt: Date?
     private var lastReceivedBytesAt: Date?
@@ -54,6 +56,8 @@ final class U2WMainVideoClient {
     private var networkSignatures: [String: String] = [:]
     private var networkStatuses: [String: String] = [:]
     private let networkPathQueue = DispatchQueue(label: "HUD.MainVideo.NetworkPath")
+    private let cacheStartEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-cache-start.cgi")!
+    private let cacheStatusEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-cache-status.cgi")!
 
     // Do not churn HTTP while the raw adapter stream remains active. A long span
     // of contaminated/non-video bytes is handled locally by the sanitizer. Only
@@ -90,10 +94,67 @@ final class U2WMainVideoClient {
         acceptedPPSCount = 0
         acceptedIDRCount = 0
         acceptedSliceCount = 0
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.20-validated-bootstrap+iPhone-tolerant-filter mapModeOnly=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.21-persistent-gop-cache+iPhone-tolerant-filter mapModeOnly=1")
         startNetworkPathLogging()
-        startWorker(reason: reason)
-        startFreshnessWatchdog()
+        cacheBootstrapTask?.cancel()
+        cacheBootstrapTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.warmAdapterCache(reason: "Map Mode start / \(reason)")
+            guard self.running, !Task.isCancelled else { return }
+            self.startWorker(reason: reason)
+            self.startFreshnessWatchdog()
+        }
+    }
+
+    func warmAdapterCache(reason: String) async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 4
+        configuration.timeoutIntervalForResource = 6
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        do {
+            var request = URLRequest(url: cacheStartEndpoint)
+            request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            let (data, response) = try await session.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let body = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            logger.log("U2W GOP CACHE", "warm reason=\(reason) HTTP=\(code) body={\(body.replacingOccurrences(of: "\n", with: " | "))}")
+        } catch {
+            logger.log("U2W GOP CACHE", "warm failed reason=\(reason) error=\(error.localizedDescription)")
+        }
+        await refreshAdapterCacheStatus(reason: "after warm")
+    }
+
+    private func refreshAdapterCacheStatus(reason: String) async {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 3
+        configuration.timeoutIntervalForResource = 4
+        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        do {
+            let (data, response) = try await session.data(from: cacheStatusEndpoint)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let text = String(data: data, encoding: .utf8) ?? ""
+            var fields: [String: String] = [:]
+            for line in text.split(separator: "\n") {
+                let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+                if parts.count == 2 { fields[parts[0]] = parts[1] }
+            }
+            let ready = fields["cache_ready"] ?? "?"
+            let bytes = fields["cache_bytes"] ?? "?"
+            let pid = fields["cache_pid"] ?? "?"
+            let streams = fields["stream_cgi_processes"] ?? "?"
+            adapterCacheSummary = "ready \(ready) • \(bytes) B • pid \(pid) • streams \(streams)"
+            logger.log("U2W GOP CACHE", "status reason=\(reason) HTTP=\(code) \(adapterCacheSummary)")
+        } catch {
+            adapterCacheSummary = "GOP cache status unavailable"
+            logger.log("U2W GOP CACHE", "status failed reason=\(reason) error=\(error.localizedDescription)")
+        }
     }
 
     private func startWorker(reason: String) {
@@ -187,6 +248,7 @@ final class U2WMainVideoClient {
                 if self.lastNetworkHeartbeatAt.map({ now.timeIntervalSince($0) >= 15.0 }) ?? true {
                     self.lastNetworkHeartbeatAt = now
                     self.logNetworkContext(reason: "15s MainVideo heartbeat")
+                    await self.refreshAdapterCacheStatus(reason: "15s MainVideo heartbeat")
                 }
 
                 if bytesAreFresh, frameAge >= self.decoderStaleFrameInterval {
@@ -212,7 +274,7 @@ final class U2WMainVideoClient {
                             self.status = "Decoder stale — requesting validated live-edge GOP…"
                             self.logger.log(
                                 "U2W VIDEO WATCH",
-                                "decoded image stale \(String(format: "%.1f", frameAge))s while raw bytes remain fresh; one rate-limited v8.20 validated-GOP HTTP reseed"
+                                "decoded image stale \(String(format: "%.1f", frameAge))s while raw bytes remain fresh; one rate-limited v8.21 GOP-cache HTTP reseed"
                             )
                             self.worker?.reconnectAtLiveEdge(reason: "decoded frame stale >=90s with fresh raw bytes")
                         }
@@ -231,7 +293,7 @@ final class U2WMainVideoClient {
                 self.status = "U2W MainVideo source silent — reconnecting once…"
                 self.logger.log(
                     "U2W VIDEO WATCH",
-                    "source silent for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s frameAge=\(String(format: "%.1f", frameAge))s; one rate-limited v8.17 HTTP reconnect"
+                    "source silent for \(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s frameAge=\(String(format: "%.1f", frameAge))s; one rate-limited v8.21 cache-stream HTTP reconnect"
                 )
                 self.logNetworkContext(reason: "MainVideo source silent before reconnect")
                 self.connected = false
@@ -253,6 +315,8 @@ final class U2WMainVideoClient {
         running = false
         freshnessTask?.cancel()
         freshnessTask = nil
+        cacheBootstrapTask?.cancel()
+        cacheBootstrapTask = nil
         worker?.stop()
         worker = nil
         workerGeneration &+= 1
@@ -281,7 +345,7 @@ final class U2WMainVideoClient {
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
         lastSourceReconnectAt = Date()
-        status = "Reconnecting U2W MainVideo at validated live edge…"
+        status = "Reconnecting U2W MainVideo at decoder-safe GOP cache…"
         logger.log("U2W VIDEO", "Manual reconnect reason=\(reason)")
         logNetworkContext(reason: "manual MainVideo reconnect")
         if let worker {
@@ -423,9 +487,9 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         guard !running else { return }
         running = true
         let configuration = URLSessionConfiguration.ephemeral
-        // v8.17 is a lightweight byte streamer. Keep one long-lived request and
-        // tolerate long dirty spans instead of reopening a CGI every ~15 seconds.
-        configuration.timeoutIntervalForRequest = 60
+        // v8.21 fails fast with HTTP 503 when the persistent GOP cache is not
+        // ready; a successful response remains a long-lived stream.
+        configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 60 * 60 * 6
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         parser.reset()
@@ -459,7 +523,7 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         task = session.dataTask(with: request)
         task?.resume()
-        onStatus?("Opening U2W validated live-edge H.264 stream…", false)
+        onStatus?("Opening U2W GOP-cache-backed H.264 stream…", false)
     }
 
     func reconnectAtLiveEdge(reason: String) {
@@ -518,7 +582,8 @@ private final class U2WMainVideoStreamWorker: NSObject, URLSessionDataDelegate {
             return
         }
         let streamer = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-U2W-Streamer") ?? "unknown-streamer"
-        onDiagnostic?("HTTP MainVideo connected streamer=\(streamer)")
+        let cache = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-U2W-Cache") ?? "unknown"
+        onDiagnostic?("HTTP MainVideo connected streamer=\(streamer) cache=\(cache)")
         onStatus?("U2W MainVideo connected • filtering on iPhone", true)
         completionHandler(.allow)
     }
