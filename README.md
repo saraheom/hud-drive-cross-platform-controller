@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.20.1 — CI alignment only
+
+This is runtime-identical to v90.35.3.20. GitHub Actions built the app successfully and 299/300 XCTest cases passed; the sole failure was a stale v90.35.3.17 source-string guard that still expected the former long lane-arrow wording. The guard now validates the approved shorter Google-style lane geometry and shared combined-arrow body. U2W v8.21 is unchanged.
+
+See `V90_35_3_20_1_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.20 — persistent MainVideo GOP cache + shorter lane guidance + empty idle Map Mode
 
 This release is based on the 2026-09-17 afternoon road test. The v8.11 exporter continued receiving CarPlay MainVideo, but v8.20 could not open the HTTP stream whenever the current rolling generation contained only non-IDR P-slices. Returning Google Maps to its default map produced a fresh SPS/PPS/IDR and immediately restored live video. Repeated blocked MainVideo CGIs also correlated with a 106-second Route Guidance/Now Playing blackout.

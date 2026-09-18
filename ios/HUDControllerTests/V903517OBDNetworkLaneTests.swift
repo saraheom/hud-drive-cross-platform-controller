@@ -33,6 +33,7 @@ final class V903517OBDNetworkLaneTests: XCTestCase {
         XCTAssertTrue(canvas.contains("LaneGuidanceGlyph"))
         XCTAssertTrue(canvas.contains("func combined(right: Bool, drawColor: Color"))
         XCTAssertTrue(canvas.contains("func turnOnlyCombined(right: Bool)"))
-        XCTAssertTrue(canvas.contains("share one long"))
+        XCTAssertTrue(canvas.contains("uses the approved shorter Google-style lane arrows"))
+        XCTAssertTrue(canvas.contains("Combined straight+turn glyphs share one body"))
     }
 }

@@ -1,0 +1,17 @@
+HUD v90.35.3.20.1 BUILD VERIFY
+
+Base: v90.35.3.20
+Scope: CI-only regression alignment. No runtime Swift, U2W v8.21, lane geometry, MainVideo, Route Guidance, or Map Mode behavior changes.
+
+GitHub Actions failure analyzed from logs_95580209143.zip:
+- Application build completed successfully.
+- 299/300 XCTest cases passed.
+- Only V903517OBDNetworkLaneTests.testSpeedLimitSlotAndLaneWindowing failed.
+- Stale assertion expected the old phrase "share one long", while v90.35.3.20 intentionally documents/implements shorter Google-style lane arrows.
+
+Correction:
+- Updated that source-string guard to assert the v90.35.3.20 contract:
+  * "uses the approved shorter Google-style lane arrows"
+  * "Combined straight+turn glyphs share one body"
+
+Runtime sources are unchanged.
