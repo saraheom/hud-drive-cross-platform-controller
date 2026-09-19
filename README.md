@@ -1,5 +1,8 @@
 # HUD Controller v90.35.3.23 — MainVideo fatal recovery + lane clear + fast DAY transition
 
+
+> **v90.35.3.23.1 CI alignment:** adds the missing private `emitDecoderState()` worker helper required by the v90.35.3.23 recovery paths. Runtime behavior and U2W v8.23 are unchanged.
+
 This release keeps **U2W v8.23 unchanged** and addresses the failures isolated in the 2026-09-19 parked/road tests. The dedicated adapter relay was confirmed healthy and delivered real 800×480 CarPlay frames; the remaining map freeze was decoder-side. v90.35.3.23 adds bounded VideoToolbox recovery for silent output stalls and fatal `-12903` sessions, fixes stale native HUD lane layers after a maneuver without lanes, removes synthetic lanes from the top live preview, and shortens corroborated night→day lighting latency.
 
 Main changes:

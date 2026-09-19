@@ -864,6 +864,13 @@ private final class U2WMainVideoTCPWorker {
         onDecoderState?(decoder.stateSummary)
     }
 
+    /// Publish decoder diagnostics immediately after an explicit recovery/flush
+    /// action. This bypasses the one-second sanitizer-stats throttle so the
+    /// MainVideo preflight reflects the new VideoToolbox state right away.
+    private func emitDecoderState() {
+        onDecoderState?(decoder.stateSummary)
+    }
+
     private func closeCurrentConnection() {
         waitingDeadlineWorkItem?.cancel(); waitingDeadlineWorkItem = nil
         connection?.stateUpdateHandler = nil

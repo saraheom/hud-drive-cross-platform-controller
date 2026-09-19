@@ -1,0 +1,20 @@
+HUD Controller v90.35.3.23.1 — CI compile correction verification
+
+CI failure inspected from logs_96062648313.zip (Xcode 26.6):
+- exactly three compiler errors were reported
+- all three were calls to missing U2WMainVideoTCPWorker.emitDecoderState()
+  in U2WMainVideoClient.swift
+
+Correction:
+- added private emitDecoderState() on U2WMainVideoTCPWorker
+- helper forwards decoder.stateSummary through the already-existing
+  onDecoderState callback
+- no recovery thresholds/state-machine logic changed
+- no lane/ambient/runtime UI changes
+- U2W v8.23 unchanged
+
+Local validation:
+- pytest: 398 passed
+- 12 standalone historical static suites executed successfully
+- swiftc -frontend -parse U2WMainVideoClient.swift: PASS
+- source diff against v90.35.3.23: only U2WMainVideoClient.swift + documentation
