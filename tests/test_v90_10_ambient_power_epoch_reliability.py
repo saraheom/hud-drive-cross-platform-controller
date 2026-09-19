@@ -47,7 +47,7 @@ def test_center_signal_is_fast_day_night_owner_and_two_light_crosscheck_does_not
     assert 'noteHeadlightPowerSeen(id, reason: "didConnect")' in MONITOR
     assert "scheduleHeadlightPowerOffEvaluation" in MONITOR
     assert "Dashboard+Center diagnostic consensus" in MONITOR
-    assert "Center/BLEDOM remains authoritative for fast day/night" in MONITOR
+    assert "Fast corroborated BOTH-OFF → DAY" in MONITOR
     commit = MONITOR.split("private func commitConfirmedHeadlightPower", 1)[1].split("private func noteHeadlightPowerSeen", 1)[0]
     assert "Fast Center day/night" in commit
     assert "beginHeadlightTransitionSyncCohort(reason: reason)" in commit

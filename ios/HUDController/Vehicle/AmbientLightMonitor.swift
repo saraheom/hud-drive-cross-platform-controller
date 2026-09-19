@@ -3065,9 +3065,28 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             }
 
             self.ambientTrace("Dashboard+Center diagnostic consensus stable observation=\(observation.rawValue) reason=\(reason)")
+
+            // v90.35.3.23: retain the v90.35.3.22 NIGHT latch for a single
+            // Center/BLEDOM transport loss, but do not wait the full 3× Center
+            // advertisement timeout once BOTH independent headlight-fed devices
+            // agree that power is absent. Two-source BOTH-OFF is the physical
+            // corroboration we wanted; commit DAY after the existing stability
+            // window rather than waiting ~15 seconds.
+            if observation == .bothOff,
+               self.headlightPowerSessionActive,
+               self.lightPresent {
+                self.logger.log(
+                    "AMBIENT POWER",
+                    "Dashboard+Center BOTH-OFF stable; fast corroborated DAY commit after \(String(format: "%.2f", self.headlightConsensusStabilitySeconds))s"
+                )
+                self.ambientTrace("Fast corroborated BOTH-OFF → DAY reason=\(reason)")
+                self.markAbsent(reason: "stable Dashboard+Center bothOff consensus")
+                return
+            }
+
             self.logger.log(
                 "AMBIENT POWER",
-                "Dashboard+Center diagnostic consensus=\(observation.rawValue); Center/BLEDOM remains authoritative for fast day/night"
+                "Dashboard+Center diagnostic consensus=\(observation.rawValue); single-device transport loss does not change day/night"
             )
         }
     }

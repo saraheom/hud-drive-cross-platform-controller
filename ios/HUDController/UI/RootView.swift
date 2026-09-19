@@ -67,10 +67,11 @@ struct RootView: View {
             state.logger.log("APP LIFECYCLE", "Scene phase \(String(describing: phase))")
             switch phase {
             case .active:
+                state.mainVideo.applicationDidBecomeActive()
                 consumePendingShortcut()
                 state.nowPlaying.refreshNow()
             case .background:
-                break
+                state.mainVideo.applicationDidEnterBackground()
             default:
                 break
             }

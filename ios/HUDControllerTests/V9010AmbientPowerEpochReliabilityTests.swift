@@ -33,7 +33,7 @@ final class V9010AmbientPowerEpochReliabilityTests: XCTestCase {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(monitor.contains("Fast Center day/night"))
         XCTAssertTrue(monitor.contains("Dashboard+Center diagnostic consensus"))
-        XCTAssertTrue(monitor.contains("Center/BLEDOM remains authoritative for fast day/night"))
+        XCTAssertTrue(monitor.contains("Fast corroborated BOTH-OFF → DAY"))
 
         let startupParts = monitor.components(separatedBy: "private func runStartupAnimationIfNeeded")
         XCTAssertGreaterThan(startupParts.count, 1)

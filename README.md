@@ -1,19 +1,24 @@
-# HUD Controller v90.35.3.22 — Live-IDR MainVideo + parked preflight + lane designer + ambient NIGHT latch
+# HUD Controller v90.35.3.23 — MainVideo fatal recovery + lane clear + fast DAY transition
 
-This release pairs the iOS app with **U2W v8.23** and is based on the 2026-09-18 evening field evidence. The stable v8.11 capture continued receiving valid CarPlay MainVideo, while v8.22 never completed a cached-GOP bootstrap and the app sessions terminated immediately after the late relay handshakes. v90.35.3.22 therefore keeps the proven capture/VideoToolbox path but removes the fragile startup/history behavior around it.
+This release keeps **U2W v8.23 unchanged** and addresses the failures isolated in the 2026-09-19 parked/road tests. The dedicated adapter relay was confirmed healthy and delivered real 800×480 CarPlay frames; the remaining map freeze was decoder-side. v90.35.3.23 adds bounded VideoToolbox recovery for silent output stalls and fatal `-12903` sessions, fixes stale native HUD lane layers after a maneuver without lanes, removes synthetic lanes from the top live preview, and shortens corroborated night→day lighting latency.
 
 Main changes:
-- MainVideo TCP opens only after v8.23 is confirmed running; `.waiting` connections are recreated automatically.
-- No historical GOP replay. A new client waits for a fresh **live IDR**, receives SPS/PPS/IDR, then follows only naturally arriving live NALs.
-- Exact bounded framed reads on iPhone; no giant receive/history burst.
-- A good VideoToolbox session is preserved through isolated/repeated errors; a rebuild is armed and performed only when a future validated IDR is already available.
-- `MAINVIDEO PREFLIGHT` logs and a parked UI gate expose every stage from relay → TCP → H.264 → decoder → decoded frames.
-- U2W restores the known-good v8.15.1 final HUD MJPEG sender.
-- Lane-guidance head size and body length are now independently adjustable.
-- Expanded Map Mode customization always has a non-live demo scene, while the top preview remains the actual HUD-equivalent output.
-- Ambient NIGHT state survives transient Center/BLEDOM BLE transport disconnects; DAY requires sustained Center absence plus Dashboard+Center BOTH-OFF corroboration.
+- Fresh H.264 with no decoded image for 3 seconds is treated as a **decoder-output stall**, while TCP/15332 remains connected.
+- VideoToolbox `-12903` is treated as a fatal session error and immediately enters bounded decoder recovery instead of receiving thousands of failed frames.
+- Output-callback failures are now visible in diagnostics and feed the same recovery path.
+- Decoder recovery reuses the last validated SPS/PPS and resumes at the next validated live IDR; there is still **no historical GOP replay**.
+- New VideoToolbox sessions are configured for real-time decode.
+- Parked preflight requires **20 seconds of continuously advancing frames**, not just the first two frames.
+- Foreground/background lifecycle is tied into MainVideo recovery diagnostics.
+- Native Navigation Mode lane state gets a post-maneuver clear when the new maneuver owns no lanes, with a generation-guarded 150 ms settle clear.
+- The top live Map Mode preview no longer displays the hard-coded three-lane placeholder when live lane data is absent. The customization demo remains populated.
+- Stable Dashboard+Center BOTH-OFF commits DAY after the existing 0.75-second consensus instead of waiting ~15 seconds; a single Center disconnect still latches NIGHT.
+- Physical Map Mode join is also hardened: a stalled HUD STA association gets one bounded automatic `mode 4 → mode 6 → credentials` recreation, and status 4/6 with a valid HUD DHCP address can advance to session-scoped viewer verification without being treated as success by itself.
 
-See `V90_35_3_22_BUILD_VERIFY.txt`, `V90_35_3_22_RELEASE.md`, and `u2w/v8.23_LiveIDRRelay/README.md`.
+**No U2W reflash is required from v8.23.** See `V90_35_3_23_RELEASE.md` and `V90_35_3_23_BUILD_VERIFY.txt`.
+
+---
+
 
 ---
 

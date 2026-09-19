@@ -19,4 +19,5 @@ def test_status6_with_valid_ip_is_soft_connected():
     assert 'status=6' in app
     assert 'isUsableHUDSTAAddress' in app
     assert 'Wi-Fi IP acquired — starting HUD display…' in app
-    assert 'STA has DHCP address despite status=6' in app
+    assert 'STA has DHCP address despite status=' in app
+    assert '(status == 4 || status == 6)' in app

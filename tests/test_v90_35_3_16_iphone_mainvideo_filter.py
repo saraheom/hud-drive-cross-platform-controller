@@ -31,12 +31,12 @@ def test_dedicated_tcp_filter_runs_on_iphone():
 
 
 def test_video_self_healing_does_not_use_long_lived_boa():
-    assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
+    assert 'decoderStaleFrameInterval: TimeInterval = 3.0' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
     assert 'historical GOP replay=0' in VIDEO
     assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
     assert 'sourceReconnectCooldown: TimeInterval = 15.0' in VIDEO
-    assert 'CONTINUE without IDR reset' in VIDEO
+    assert 'kVTInvalidSessionErr (-12903)' in VIDEO
     assert 'u2wvideo-relay-start.cgi' in VIDEO
     assert 'u2wvideo-relay-status.cgi' in VIDEO
     assert 'u2wvideo-main-stream.cgi' not in VIDEO

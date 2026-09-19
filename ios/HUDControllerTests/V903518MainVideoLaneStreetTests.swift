@@ -9,10 +9,10 @@ final class V903518MainVideoLaneStreetTests: XCTestCase {
 
     func testMainVideoRecoveryDoesNotPoisonDecoderAfterOneError() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
+        XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
         XCTAssertTrue(video.contains("consecutiveErrorRebuildThreshold = 5"))
-        XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
-        XCTAssertTrue(video.contains("PRESERVE transport/decoder, no reconnect"))
+        XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
+        XCTAssertTrue(video.contains("HARD decoder recovery, TCP preserved"))
         XCTAssertFalse(video.contains("requestDecoderResync"))
     }
 

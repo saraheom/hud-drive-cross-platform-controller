@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.22 MainVideo client for U2W v8.23.
+/// v90.35.3.23 MainVideo client for U2W v8.23.
 ///
 /// Video no longer travels through a long-lived Boa CGI or through a cache file
 /// that is truncated underneath an active reader.  The adapter-side relay tails
@@ -39,12 +39,25 @@ final class U2WMainVideoClient {
     private(set) var adapterRelayConfirmedRunning = false
     private(set) var decoderSummary = "session=none • needsIDR=1 • errors=0"
 
+    private let preflightRequiredContinuity: TimeInterval = 20.0
+
     var preflightReady: Bool {
-        connected && transportPhase == "LIVE" && frameCount >= 2 && (lastFrameAgeSeconds ?? .infinity) < 2.5
+        guard connected,
+              transportPhase == "LIVE",
+              frameCount >= 30,
+              (lastFrameAgeSeconds ?? .infinity) < 1.5,
+              !decoderRecoveryPending,
+              let preflightStableSince else { return false }
+        return Date().timeIntervalSince(preflightStableSince) >= preflightRequiredContinuity
     }
 
     var preflightSummary: String {
-        if preflightReady { return "LIVE • frames advancing" }
+        if preflightReady { return "LIVE • 20s continuity verified" }
+        if transportPhase == "LIVE", let preflightStableSince {
+            let elapsed = min(preflightRequiredContinuity, max(0, Date().timeIntervalSince(preflightStableSince)))
+            return "LIVE • validating continuity \(Int(elapsed))/\(Int(preflightRequiredContinuity))s"
+        }
+        if transportPhase == "DECODER_RECOVERY" { return "Decoder recovery • waiting for clean live IDR" }
         if transportPhase == "WAITING_LIVE_IDR" { return "Connected • waiting for next live IDR" }
         if transportPhase == "WAITING_RELAY" { return "Waiting for U2W v8.23 relay" }
         if transportPhase == "TCP_WAITING" { return "TCP waiting — automatic retry armed" }
@@ -67,10 +80,15 @@ final class U2WMainVideoClient {
     private var lastDecodedFrameAt: Date?
     private var lastReceivedBytesAt: Date?
     private var lastDecoderStaleDiagnosticAt: Date?
+    private var lastDecoderSoftFlushAt: Date?
     private var lastDecoderReseedAt: Date?
     private var lastSourceReconnectAt: Date?
     private var lastRelayEnsureAt: Date?
     private var lastNetworkHeartbeatAt: Date?
+    private var preflightStableSince: Date?
+    private var preflightPassLogged = false
+    private var decoderRecoveryPending = false
+    private var backgroundedAt: Date?
     private var networkMonitors: [String: NWPathMonitor] = [:]
     private var networkSignatures: [String: String] = [:]
     private var networkStatuses: [String: String] = [:]
@@ -78,7 +96,7 @@ final class U2WMainVideoClient {
     private let relayStartEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-start.cgi")!
     private let relayStatusEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi")!
 
-    private let decoderStaleFrameInterval: TimeInterval = 20.0
+    private let decoderStaleFrameInterval: TimeInterval = 3.0
     private let sourceStaleInterval: TimeInterval = 15.0
     private let initialIDRWaitDiagnosticInterval: TimeInterval = 20.0
     private let sourceReconnectCooldown: TimeInterval = 15.0
@@ -105,6 +123,12 @@ final class U2WMainVideoClient {
         lastReceivedBytesAt = nil
         lastFrameAgeSeconds = nil
         lastDecoderStaleDiagnosticAt = nil
+        lastDecoderSoftFlushAt = nil
+        lastDecoderReseedAt = nil
+        preflightStableSince = nil
+        preflightPassLogged = false
+        decoderRecoveryPending = false
+        backgroundedAt = nil
         lastSourceReconnectAt = nil
         lastRelayEnsureAt = nil
         adapterRelayConfirmedRunning = false
@@ -264,21 +288,38 @@ final class U2WMainVideoClient {
                 self.decoderSummary = summary
             }
         }
+        worker.onDecoderRecovery = { [weak self] reason in
+            Task { @MainActor [weak self] in
+                guard let self, self.running, self.workerGeneration == generation else { return }
+                self.decoderRecoveryPending = true
+                self.preflightStableSince = nil
+                self.preflightPassLogged = false
+                self.transportPhase = "DECODER_RECOVERY"
+                self.status = "VideoToolbox recovery • waiting for clean live IDR"
+                self.logger.log("U2W VIDEO RECOVERY", reason)
+            }
+        }
         worker.onFrame = { [weak self] image in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
+                let now = Date()
+                let previousFrameAt = self.lastDecodedFrameAt
                 self.latestFrame = image
-                self.lastDecodedFrameAt = Date()
+                self.lastDecodedFrameAt = now
                 self.lastFrameAgeSeconds = 0
+                self.lastDecoderSoftFlushAt = nil
                 self.frameCount += 1
                 self.transportPhase = "LIVE"
+                self.decoderRecoveryPending = false
+                if self.preflightStableSince == nil ||
+                    previousFrameAt.map({ now.timeIntervalSince($0) > 1.5 }) == true {
+                    self.preflightStableSince = now
+                    self.preflightPassLogged = false
+                }
                 self.sourceSize = "\(Int(image.size.width))×\(Int(image.size.height))"
                 self.status = "Live U2W map video • dedicated TCP relay"
                 if self.frameCount == 1 || self.frameCount % 75 == 0 {
                     self.logger.log("U2W VIDEO", "Live frame #\(self.frameCount) source=\(self.sourceSize) filter={\(self.sanitizerSummary)}")
-                }
-                if self.frameCount == 2 {
-                    self.logger.log("MAINVIDEO PREFLIGHT", "PASS frames=2 source=\(self.sourceSize) — parked test can proceed")
                 }
             }
         }
@@ -303,6 +344,20 @@ final class U2WMainVideoClient {
                 guard !Task.isCancelled, self.running else { continue }
                 let now = Date()
                 self.lastFrameAgeSeconds = self.lastDecodedFrameAt.map { now.timeIntervalSince($0) }
+
+                if let frameAge = self.lastFrameAgeSeconds,
+                   frameAge > 1.5 {
+                    self.preflightStableSince = nil
+                    self.preflightPassLogged = false
+                }
+
+                if self.preflightReady, !self.preflightPassLogged {
+                    self.preflightPassLogged = true
+                    self.logger.log(
+                        "MAINVIDEO PREFLIGHT",
+                        "PASS 20s continuous decode frames=\(self.frameCount) source=\(self.sourceSize) — parked validation passed"
+                    )
+                }
 
                 if lastPreflightLogAt.map({ now.timeIntervalSince($0) >= 5.0 }) ?? true {
                     lastPreflightLogAt = now
@@ -347,15 +402,42 @@ final class U2WMainVideoClient {
                     continue
                 }
 
-                // If H.264 bytes are continuing but decoded frames are stale, preserve
-                // transport + decoder history. Reconnecting here was one of the old
-                // failure amplifiers because it discarded reference-frame continuity.
+                // First-stage recovery for a live source whose output callback has
+                // gone quiet: ask VideoToolbox to drain any delayed/asynchronous
+                // work without destroying its reference chain. If this produces a
+                // frame, onFrame resets the marker and normal decode continues.
+                if bytesAreFresh, frameAge >= 1.5, frameAge < self.decoderStaleFrameInterval,
+                   self.lastDecoderSoftFlushAt == nil {
+                    self.lastDecoderSoftFlushAt = now
+                    self.logger.log(
+                        "U2W VIDEO WATCH",
+                        "NALs fresh but decoded output age=\(String(format: "%.1f", frameAge))s; soft-flushing delayed VideoToolbox frames before hard recovery"
+                    )
+                    self.worker?.softFlushDecoder(reason: "fresh H.264 / stale output soft probe")
+                }
+
+                // v90.35.3.23 field evidence: the TCP/H.264 source can stay fresh while
+                // VideoToolbox stops producing output for minutes, even while
+                // VTDecompressionSessionDecodeFrame still returns noErr. Treat that as
+                // a decoder-output stall, not a transport failure. Retire the decoder
+                // session and wait for the next *validated* live IDR while preserving
+                // the TCP stream and sanitizer state. This also catches output-callback
+                // failures before they escalate to kVTInvalidSessionErr (-12903).
                 if bytesAreFresh, frameAge >= self.decoderStaleFrameInterval {
-                    let mayLog = self.lastDecoderStaleDiagnosticAt.map { now.timeIntervalSince($0) >= 20.0 } ?? true
-                    if mayLog {
-                        self.lastDecoderStaleDiagnosticAt = now
-                        self.status = "H.264 live stream active — decoder recovery pending"
-                        self.logger.log("U2W VIDEO WATCH", "NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; PRESERVE transport/decoder, no reconnect filter={\(self.sanitizerSummary)}")
+                    if !self.decoderRecoveryPending {
+                        self.decoderRecoveryPending = true
+                        self.preflightStableSince = nil
+                        self.preflightPassLogged = false
+                        self.lastDecoderReseedAt = now
+                        self.status = "H.264 source live — resetting stalled decoder"
+                        self.transportPhase = "DECODER_RECOVERY"
+                        self.logger.log(
+                            "U2W VIDEO WATCH",
+                            "NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; HARD decoder recovery, TCP preserved filter={\(self.sanitizerSummary)}"
+                        )
+                        self.worker?.recoverDecoderAtNextIDR(
+                            reason: "fresh H.264 but no decoded frame for \(String(format: "%.1f", frameAge))s"
+                        )
                     }
                     continue
                 }
@@ -371,6 +453,43 @@ final class U2WMainVideoClient {
                 _ = await self.ensureAdapterRelay(reason: "source silent")
                 self.worker?.reconnectAtLiveEdge(reason: "source silent >=15s")
             }
+        }
+    }
+
+    func applicationDidEnterBackground() {
+        guard running else { return }
+        backgroundedAt = Date()
+        preflightStableSince = nil
+        preflightPassLogged = false
+        logger.log(
+            "U2W VIDEO LIFECYCLE",
+            "App entered background; TCP remains connected, but VideoToolbox hardware decode may be invalidated by iOS"
+        )
+    }
+
+    func applicationDidBecomeActive() {
+        guard running else { return }
+        let now = Date()
+        let backgroundDuration = backgroundedAt.map { now.timeIntervalSince($0) }
+        backgroundedAt = nil
+
+        let frameAge = lastDecodedFrameAt.map { now.timeIntervalSince($0) } ?? .infinity
+        if let backgroundDuration, backgroundDuration >= 0.5, connected {
+            decoderRecoveryPending = true
+            preflightStableSince = nil
+            preflightPassLogged = false
+            transportPhase = "DECODER_RECOVERY"
+            status = "Returned to foreground — refreshing VideoToolbox decoder"
+            logger.log(
+                "U2W VIDEO LIFECYCLE",
+                "Foreground after \(String(format: "%.1f", backgroundDuration))s background; proactively recreating decoder, TCP preserved frameAge=\(frameAge.isFinite ? String(format: "%.1f", frameAge) : "none")s"
+            )
+            worker?.recoverDecoderAtNextIDR(reason: "app foreground after background transition")
+        } else {
+            logger.log(
+                "U2W VIDEO LIFECYCLE",
+                "App active; no forced decoder reset backgroundDuration=\(backgroundDuration.map { String(format: "%.1f", $0) } ?? "none") frameAge=\(frameAge.isFinite ? String(format: "%.1f", frameAge) : "none")"
+            )
         }
     }
 
@@ -495,6 +614,7 @@ private final class U2WMainVideoTCPWorker {
     var onDiagnostic: ((String) -> Void)?
     var onSanitizerStats: ((H264MainVideoSanitizerStats) -> Void)?
     var onDecoderState: ((String) -> Void)?
+    var onDecoderRecovery: ((String) -> Void)?
 
     private let sanitizer = H264MainVideoSanitizer()
     private let decoder = H264VideoToolboxDecoder()
@@ -514,6 +634,17 @@ private final class U2WMainVideoTCPWorker {
         self.port = NWEndpoint.Port(rawValue: port)!
         decoder.onFrame = { [weak self] image in self?.onFrame?(image) }
         decoder.onDiagnostic = { [weak self] message in self?.onDiagnostic?(message) }
+        decoder.onRecoveryNeeded = { [weak self] reason in
+            guard let self else { return }
+            self.queue.async { [weak self] in
+                guard let self, self.running else { return }
+                self.decoder.hardRecoverAwaitingIDR(reason: reason)
+                self.onPhase?("DECODER_RECOVERY")
+                self.onStatus?("VideoToolbox recovery • waiting for clean live IDR", true)
+                self.onDecoderRecovery?(reason)
+                self.emitDecoderState()
+            }
+        }
     }
 
     func start() {
@@ -545,6 +676,26 @@ private final class U2WMainVideoTCPWorker {
             // before VCL decode resumes after a transport boundary.
             self.decoder.prepareForStreamRestart()
             self.scheduleReconnect(reason: reason, delay: 0.25)
+        }
+    }
+
+    func softFlushDecoder(reason: String) {
+        queue.async { [weak self] in
+            guard let self, self.running else { return }
+            self.onDiagnostic?("Decoder soft-flush requested reason=\(reason)")
+            self.decoder.finishDelayedFramesForStallProbe()
+            self.emitDecoderState()
+        }
+    }
+
+    func recoverDecoderAtNextIDR(reason: String) {
+        queue.async { [weak self] in
+            guard let self, self.running else { return }
+            self.decoder.hardRecoverAwaitingIDR(reason: reason)
+            self.onPhase?("DECODER_RECOVERY")
+            self.onStatus?("VideoToolbox recovery • waiting for clean live IDR", true)
+            self.onDecoderRecovery?(reason)
+            self.emitDecoderState()
         }
     }
 
@@ -820,8 +971,13 @@ private final class AnnexBH264Parser {
 /// - requires a fresh IDR only after an actual decoder/session rebuild, and
 /// - publishes at most 15 images/s while always replacing the latest mailbox.
 private final class H264VideoToolboxDecoder {
+    // VideoToolbox reports kVTInvalidSessionErr as -12903. Keep a local OSStatus
+    // literal so the recovery path is independent of SDK symbol-import spelling.
+    private static let invalidSessionStatus: OSStatus = -12903
+
     var onFrame: ((UIImage) -> Void)?
     var onDiagnostic: ((String) -> Void)?
+    var onRecoveryNeeded: ((String) -> Void)?
 
     // Candidate parameter sets are staged separately from the accepted pair.
     // A malformed/partial SPS/PPS must never replace the last-known-good decoder
@@ -846,6 +1002,12 @@ private final class H264VideoToolboxDecoder {
     private let consecutiveErrorRebuildThreshold = 5
     private var rebuildAtNextIDR = false
     private var lastDecodeStatus: OSStatus = noErr
+    private var outputCallbackErrors = 0
+    private var outputCallbackFrames = 0
+    private var imageConversionErrors = 0
+    private var lastOutputCallbackStatus: OSStatus = noErr
+    private var hardRecoveryCount = 0
+    private var recoveryRequestPending = false
 
     private let publishLock = NSLock()
     private var lastPublishedUptime: TimeInterval = 0
@@ -869,6 +1031,12 @@ private final class H264VideoToolboxDecoder {
         consecutiveDecodeErrors = 0
         rebuildAtNextIDR = false
         lastDecodeStatus = noErr
+        outputCallbackErrors = 0
+        outputCallbackFrames = 0
+        imageConversionErrors = 0
+        lastOutputCallbackStatus = noErr
+        hardRecoveryCount = 0
+        recoveryRequestPending = false
         publishLock.lock()
         lastPublishedUptime = 0
         publishLock.unlock()
@@ -887,11 +1055,16 @@ private final class H264VideoToolboxDecoder {
         consecutiveDecodeErrors = 0
         rebuildAtNextIDR = false
         lastDecodeStatus = noErr
+        outputCallbackErrors = 0
+        outputCallbackFrames = 0
+        imageConversionErrors = 0
+        lastOutputCallbackStatus = noErr
+        recoveryRequestPending = false
     }
 
     var stateSummary: String {
         let session = decompressionSession == nil ? "none" : "ready"
-        return "session=\(session) • needsIDR=\(needsIDR ? 1 : 0) • rebuildOnIDR=\(rebuildAtNextIDR ? 1 : 0) • AU=\(submittedAccessUnits) • errors=\(totalDecodeErrors)/\(consecutiveDecodeErrors) • lastStatus=\(lastDecodeStatus)"
+        return "session=\(session) • needsIDR=\(needsIDR ? 1 : 0) • rebuildOnIDR=\(rebuildAtNextIDR ? 1 : 0) • recoveryPending=\(recoveryRequestPending ? 1 : 0) • recoveries=\(hardRecoveryCount) • AU=\(submittedAccessUnits) • errors=\(totalDecodeErrors)/\(consecutiveDecodeErrors) • outputs=\(outputCallbackFrames) • outputErr=\(outputCallbackErrors) • imageErr=\(imageConversionErrors) • lastStatus=\(lastDecodeStatus) • outputStatus=\(lastOutputCallbackStatus)"
     }
 
     func discardPendingAccessUnit() {
@@ -997,13 +1170,11 @@ private final class H264VideoToolboxDecoder {
 
             var callback = VTDecompressionOutputCallbackRecord(
                 decompressionOutputCallback: { outputRefCon, _, status, _, imageBuffer, _, _ in
-                    guard status == noErr,
-                          let outputRefCon,
-                          let imageBuffer else { return }
+                    guard let outputRefCon else { return }
                     let decoder = Unmanaged<H264VideoToolboxDecoder>
                         .fromOpaque(outputRefCon)
                         .takeUnretainedValue()
-                    decoder.publish(imageBuffer)
+                    decoder.handleOutputCallback(status: status, imageBuffer: imageBuffer)
                 },
                 decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque()
             )
@@ -1028,6 +1199,20 @@ private final class H264VideoToolboxDecoder {
                     )
                 }
                 continue
+            }
+
+            // This is a live navigation surface, not file playback. Ask
+            // VideoToolbox to prioritize real-time decode/output and avoid
+            // accumulating a hidden backlog when the app is under load. A
+            // nonzero property status is diagnostic only; the session remains
+            // usable and the normal stall watchdog still protects output.
+            let realTimeStatus = VTSessionSetProperty(
+                candidateSession,
+                key: kVTDecompressionPropertyKey_RealTime,
+                value: kCFBooleanTrue
+            )
+            if realTimeStatus != noErr {
+                onDiagnostic?("VideoToolbox RealTime property status=\(realTimeStatus); continuing with decoder")
             }
 
             // Atomic promotion: only now retire the prior VideoToolbox session.
@@ -1108,6 +1293,20 @@ private final class H264VideoToolboxDecoder {
 
     private func decodeAccessUnit(_ nals: [Data]) {
         let hasIDR = nals.contains { ($0.first ?? 0) & 0x1F == 5 }
+
+        // A fatal/output-stall recovery request is handled on the worker's serial
+        // queue. Do not keep feeding the session while that reset is pending.
+        if recoveryRequestPending { return }
+
+        // If a background/lifecycle transition caused decoder creation to fail,
+        // retry creation from the last validated parameter-set pair when a clean
+        // IDR is actually in hand.
+        if hasIDR, decompressionSession == nil, let activeSPS, let activePPS {
+            pendingSPS = activeSPS
+            pendingPPS = activePPS
+            onDiagnostic?("Validated IDR arrived with no decoder session; recreating from last-known-good SPS/PPS")
+            promoteValidParameterSetPairIfPossible()
+        }
 
         // Never destroy a decoder that may still recover while only P-frames are
         // available. Five consecutive errors merely arm a rebuild. The actual
@@ -1200,25 +1399,25 @@ private final class H264VideoToolboxDecoder {
             totalDecodeErrors += 1
             consecutiveDecodeErrors += 1
 
-            // v90.35.3.17 field evidence: one VideoToolbox -12903 was followed by
-            // hundreds of syntactically valid P-slices. Forcing needsIDR=true on
-            // that *single* error permanently froze the image until navigation ended
-            // and CarPlay happened to emit another IDR. Keep the existing decoder
-            // session and continue feeding validated pictures after isolated errors.
+            if decodeStatus == Self.invalidSessionStatus {
+                onDiagnostic?(
+                    "FATAL VideoToolbox invalid session status=\(decodeStatus) au=\(submittedAccessUnits); immediate decoder reset requested, TCP preserved"
+                )
+                requestHardRecovery(reason: "kVTInvalidSessionErr (-12903) from VTDecompressionSessionDecodeFrame")
+                return
+            }
+
             onDiagnostic?(
-                "Decode error status=\(decodeStatus) au=\(submittedAccessUnits) total=\(totalDecodeErrors) consecutive=\(consecutiveDecodeErrors); CONTINUE without IDR reset"
+                "Decode error status=\(decodeStatus) au=\(submittedAccessUnits) total=\(totalDecodeErrors) consecutive=\(consecutiveDecodeErrors)"
             )
 
             if consecutiveDecodeErrors >= consecutiveErrorRebuildThreshold,
                activeSPS != nil, activePPS != nil, !rebuildAtNextIDR {
-                // Do NOT rebuild here. During the previous field failure this was
-                // exactly how a recoverable stream became permanently frozen: the
-                // session was destroyed while no new IDR was available. Arm the
-                // rebuild and keep feeding the existing session until either it
-                // recovers or a future validated IDR provides a safe swap point.
+                // Non-fatal bad access units can still recover on the existing
+                // reference chain. Arm a safe swap at a future validated IDR.
                 rebuildAtNextIDR = true
                 onDiagnostic?(
-                    "Decoder rebuild ARMED after \(consecutiveErrorRebuildThreshold) consecutive errors; existing session preserved until future IDR"
+                    "Decoder rebuild ARMED after \(consecutiveErrorRebuildThreshold) non-fatal consecutive errors; existing session preserved until future IDR"
                 )
             }
         } else {
@@ -1236,6 +1435,76 @@ private final class H264VideoToolboxDecoder {
         }
     }
 
+    private func handleOutputCallback(status: OSStatus, imageBuffer: CVImageBuffer?) {
+        lastOutputCallbackStatus = status
+
+        guard status == noErr, let imageBuffer else {
+            outputCallbackErrors += 1
+            if outputCallbackErrors <= 5 || outputCallbackErrors % 100 == 0 {
+                onDiagnostic?(
+                    "VideoToolbox output callback failure status=\(status) image=\(imageBuffer == nil ? 0 : 1) count=\(outputCallbackErrors)"
+                )
+            }
+            if status == Self.invalidSessionStatus {
+                requestHardRecovery(reason: "kVTInvalidSessionErr (-12903) from VideoToolbox output callback")
+            } else if outputCallbackErrors >= 3 {
+                requestHardRecovery(reason: "3 consecutive VideoToolbox output callback failures status=\(status)")
+            }
+            return
+        }
+
+        if outputCallbackErrors > 0 {
+            onDiagnostic?("VideoToolbox output callback recovered after \(outputCallbackErrors) failure(s)")
+        }
+        outputCallbackErrors = 0
+        outputCallbackFrames += 1
+        lastOutputCallbackStatus = noErr
+        publish(imageBuffer)
+    }
+
+    private func requestHardRecovery(reason: String) {
+        guard !recoveryRequestPending else { return }
+        recoveryRequestPending = true
+        onDiagnostic?("Decoder hard recovery requested reason=\(reason)")
+        onRecoveryNeeded?(reason)
+    }
+
+    func hardRecoverAwaitingIDR(reason: String) {
+        discardPendingAccessUnit()
+
+        if let decompressionSession {
+            VTDecompressionSessionInvalidate(decompressionSession)
+        }
+        decompressionSession = nil
+        formatDescription = nil
+        pendingSPS = activeSPS
+        pendingPPS = activePPS
+        needsIDR = true
+        rebuildAtNextIDR = false
+        consecutiveDecodeErrors = 0
+        outputCallbackErrors = 0
+        lastDecodeStatus = noErr
+        lastOutputCallbackStatus = noErr
+        recoveryRequestPending = false
+        hardRecoveryCount += 1
+
+        if activeSPS != nil, activePPS != nil {
+            promoteValidParameterSetPairIfPossible()
+        }
+        onDiagnostic?(
+            "Decoder hard recovery #\(hardRecoveryCount) complete reason=\(reason); waiting for validated IDR"
+        )
+    }
+
+    func finishDelayedFramesForStallProbe() {
+        guard let decompressionSession else { return }
+        let finishStatus = VTDecompressionSessionFinishDelayedFrames(decompressionSession)
+        let waitStatus = VTDecompressionSessionWaitForAsynchronousFrames(decompressionSession)
+        onDiagnostic?(
+            "Decoder stall soft-flush finishStatus=\(finishStatus) waitStatus=\(waitStatus)"
+        )
+    }
+
     private func publish(_ pixelBuffer: CVImageBuffer) {
         let now = ProcessInfo.processInfo.systemUptime
         publishLock.lock()
@@ -1247,7 +1516,13 @@ private final class H264VideoToolboxDecoder {
         guard shouldPublish else { return }
 
         let image = CIImage(cvImageBuffer: pixelBuffer)
-        guard let cgImage = ciContext.createCGImage(image, from: image.extent) else { return }
+        guard let cgImage = ciContext.createCGImage(image, from: image.extent) else {
+            imageConversionErrors += 1
+            if imageConversionErrors <= 3 || imageConversionErrors % 100 == 0 {
+                onDiagnostic?("Decoded pixel buffer could not be converted to CGImage count=\(imageConversionErrors) outputCallbacks=\(outputCallbackFrames)")
+            }
+            return
+        }
         onFrame?(UIImage(cgImage: cgImage))
     }
 

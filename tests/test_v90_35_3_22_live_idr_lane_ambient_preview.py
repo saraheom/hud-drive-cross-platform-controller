@@ -29,13 +29,13 @@ def test_tcp_is_not_opened_until_relay_is_confirmed_and_waiting_recovers():
     assert 'TCP intentionally NOT opened' in VIDEO
     assert 'TCP WAITING deadline expired' in VIDEO
     assert '4s retry deadline armed' in VIDEO
-    assert 'PRESERVE transport/decoder, no reconnect' in VIDEO
+    assert 'HARD decoder recovery, TCP preserved' in VIDEO
 
 
 def test_parked_preflight_and_diagnostic_chain_are_visible():
     for token in ['MAINVIDEO PREFLIGHT', 'preflightSummary', 'Last map frame', 'Parked MainVideo preflight']:
         assert token in VIDEO + UI
-    assert 'LIVE • frames advancing' in VIDEO
+    assert 'LIVE • 20s continuity verified' in VIDEO
     assert 'source_generation_changes' in VIDEO
     assert 'pre_idr_slices_dropped' in VIDEO
     assert 'MAP RENDER HEARTBEAT' in (ROOT/'ios/HUDController/App/AppState.swift').read_text()

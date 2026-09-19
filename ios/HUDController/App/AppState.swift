@@ -35,6 +35,8 @@ final class AppState {
     private var hudU2WKivicKickTask: Task<Void, Never>?
     private var hudU2WKivicKickCount = 0
     private var hudU2WAutomaticViewerRecoveryCount = 0
+    private var hudU2WAutomaticJoinRecoveryCount = 0
+    private var hudU2WJoinRecoveryTask: Task<Void, Never>?
     private var hudU2WLastManualDisplayRetryAt = Date.distantPast
     private var hudU2WSTAResetInProgress = false
     private var hudU2WIgnoreEmptyStatusUntil = Date.distantPast
@@ -103,6 +105,11 @@ final class AppState {
     // launcher has any hidden right-side lane-capable renderer.
     private var laneRightSideProbeActive = false
     private var laneRightSideProbeWidget: String?
+    // v90.35.3.23: the stock HUD can redraw an old lane layer when a new
+    // maneuver packet arrives. Track a generation so a delayed post-maneuver
+    // clear cannot erase genuinely new lane guidance that arrives meanwhile.
+    private var postManeuverLaneClearTask: Task<Void, Never>?
+    private var lanePresentationGeneration: UInt64 = 0
 
     // Legacy U2W v8.7 fallback cache. v8.7 incorrectly labeled the 0x5204
     // composed-guidance-event id as a route maneuver index and retained only the
@@ -210,11 +217,15 @@ final class AppState {
             // ("Empty network") while simultaneously returning a valid DHCP address
             // such as 192.168.50.100. U2W's ARP table also shows that peer. Therefore
             // status=6 is not a reliable link-layer disconnect signal on this firmware.
-            // Treat a valid IPv4 address as a "soft connected" STA link and continue
-            // to the KivicCast viewer/discovery stage instead of waiting forever for
-            // status=1. Status=1 remains the definitive positive state.
+            // The 2026-09-19 field run also produced status=4 ("Address search timeout")
+            // together with a real 192.168.50.x HUD address. While Map Mode is active,
+            // a valid DHCP address on status 4/6 is therefore enough to enter the bounded
+            // current-session viewer monitor. That monitor still requires an actual HUD
+            // client + live frame before declaring success, so a stale address cannot
+            // create a false-positive Map Mode session.
             let hasAddress = self.isUsableHUDSTAAddress(address)
-            let linkUp = status == 1 || (self.hudU2WLiveRelayActive && hasAddress && status == 6)
+            let softAddressLink = self.hudU2WLiveRelayActive && hasAddress && (status == 4 || status == 6)
+            let linkUp = status == 1 || softAddressLink
 
             self.hudU2WSTAConnected = linkUp
             if !address.isEmpty {
@@ -229,6 +240,8 @@ final class AppState {
                 self.hudU2WSTAStatus = "Disconnected"
             case 3:
                 self.hudU2WSTAStatus = "HUD requested hotspot"
+            case 4 where linkUp:
+                self.hudU2WSTAStatus = "HUD has Wi-Fi IP — verifying current display session…"
             case 4:
                 self.hudU2WSTAStatus = "Address search timeout"
             case 5:
@@ -243,7 +256,9 @@ final class AppState {
 
             if self.hudU2WLiveRelayActive, linkUp, self.hudU2WKivicKickCount == 0 {
                 self.primeHUDU2WKivicViewer(
-                    reason: status == 1 ? "STA status=1 connected" : "STA has DHCP address despite status=6"
+                    reason: status == 1
+                        ? "STA status=1 connected"
+                        : "STA has DHCP address despite status=\(status)"
                 )
             }
 
@@ -324,6 +339,8 @@ final class AppState {
             self.timeWeatherColdOffSyncTask = nil
             self.hudU2WSTAStatusTask?.cancel()
             self.hudU2WSTAStatusTask = nil
+            self.hudU2WJoinRecoveryTask?.cancel()
+            self.hudU2WJoinRecoveryTask = nil
             self.hudSTAPersistenceTestTask?.cancel()
             self.hudSTAPersistenceTestTask = nil
             self.hudSTAPersistenceTestActive = false
@@ -724,9 +741,12 @@ final class AppState {
         hudU2WSTAStatusTask?.cancel()
         hudU2WRelayFrameTask?.cancel()
         hudU2WKivicKickTask?.cancel()
+        hudU2WJoinRecoveryTask?.cancel()
+        hudU2WJoinRecoveryTask = nil
         hudU2WFrameRelay.stop(reason: "new relay session")
         hudU2WKivicKickCount = 0
         hudU2WAutomaticViewerRecoveryCount = 0
+        hudU2WAutomaticJoinRecoveryCount = 0
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
@@ -813,6 +833,84 @@ final class AppState {
             try? await Task.sleep(for: .seconds(4.0))
             guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
             self.requestHUDU2WSTAStatus()
+
+            // v90.35.3.23: a real road test showed the stock HUD can remain in
+            // status=4 / DHCP-search limbo for the entire Map Mode attempt even while
+            // iPhone→U2W JPEG ingress is healthy. Give the final status response a
+            // short chance to arrive, then perform exactly one full STA/viewer join
+            // recreation. This mirrors the proven manual recovery sequence but is
+            // bounded to one automatic attempt per Map Mode session.
+            try? await Task.sleep(for: .seconds(2.0))
+            guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
+            self.scheduleHUDU2WAutomaticJoinRecovery(
+                reason: "STA still not linked after initial join + credential refresh",
+                ssid: cleanSSID,
+                password: password
+            )
+        }
+    }
+
+    private func scheduleHUDU2WAutomaticJoinRecovery(reason: String, ssid: String? = nil, password: String? = nil) {
+        guard hudU2WLiveRelayActive, bluetooth.state == .connected else { return }
+        guard hudU2WAutomaticJoinRecoveryCount == 0, hudU2WJoinRecoveryTask == nil else { return }
+
+        let cleanSSID = (ssid ?? UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.ssid") ?? "NISSAN68")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanPassword = password ?? UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.password") ?? ""
+        guard !cleanSSID.isEmpty, !cleanPassword.isEmpty else {
+            logger.log("HUD/U2W STA", "AUTO JOIN RECOVERY skipped: saved STA credentials unavailable reason=\(reason)")
+            return
+        }
+
+        hudU2WAutomaticJoinRecoveryCount = 1
+        hudU2WJoinRecoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.hudU2WJoinRecoveryTask = nil }
+            guard self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else { return }
+
+            self.hudU2WKivicKickTask?.cancel()
+            self.hudU2WKivicKickTask = nil
+            self.hudU2WKivicKickCount = 0
+            self.hudU2WSTAConnected = false
+            self.hudU2WSTAStatus = "HUD Wi-Fi join stalled — rebuilding join once…"
+            self.logger.log(
+                "HUD/U2W STA",
+                "AUTO JOIN RECOVERY begin mode4→mode6→credentials reason=\(reason) ssid=\(cleanSSID)"
+            )
+
+            self.bluetooth.enqueue(
+                HudCommands.kivicMode(4),
+                label: "HUD/U2W auto join recovery → IOS_HUD_MODE(4)"
+            )
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+
+            self.bluetooth.enqueue(
+                HudCommands.kivicMode(6),
+                label: "HUD/U2W auto join recovery → IOS_KIVICCAST_STA_MODE(6)"
+            )
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+
+            self.bluetooth.enqueue(
+                HudCommands.wifiSTAMode(ssid: cleanSSID, password: cleanPassword, security: 2),
+                label: "HUD/U2W auto join recovery → Wi-Fi STA credentials for \(cleanSSID)"
+            )
+            self.hudU2WSTAStatus = "Rejoining \(cleanSSID)…"
+
+            // Two bounded status probes cover association + DHCP without creating a
+            // repeating mode-6/credential loop. Any positive/soft-positive status event
+            // will call primeHUDU2WKivicViewer() and take over current-session validation.
+            for checkpoint in 1...2 {
+                try? await Task.sleep(for: .seconds(4.0))
+                guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+                if self.hudU2WSTAConnected {
+                    self.logger.log("HUD/U2W STA", "AUTO JOIN RECOVERY link-up observed checkpoint=\(checkpoint)")
+                    return
+                }
+                self.logger.log("HUD/U2W STA", "AUTO JOIN RECOVERY status probe checkpoint=\(checkpoint)")
+                self.requestHUDU2WSTAStatus()
+            }
         }
     }
 
@@ -1305,6 +1403,8 @@ final class AppState {
     func stopHUDU2WSTAHomeProbe() {
         hudU2WSTAStatusTask?.cancel()
         hudU2WSTAStatusTask = nil
+        hudU2WJoinRecoveryTask?.cancel()
+        hudU2WJoinRecoveryTask = nil
         hudSTAPersistenceTestTask?.cancel()
         hudSTAPersistenceTestTask = nil
         hudSTAPersistenceTestActive = false
@@ -1322,6 +1422,7 @@ final class AppState {
         hudU2WKivicKickTask = nil
         hudU2WKivicKickCount = 0
         hudU2WAutomaticViewerRecoveryCount = 0
+        hudU2WAutomaticJoinRecoveryCount = 0
         hudU2WSTAResetInProgress = false
         hudU2WIgnoreEmptyStatusUntil = .distantPast
         hudU2WFrameRelay.stop(reason: "relay stopped")
@@ -1619,21 +1720,63 @@ final class AppState {
     }
 
     private func reassertLiveLaneAfterManeuverDelivery(maneuverIndex: Int?) {
-        guard bluetooth.state == .connected,
-              activeLaneIsLive,
-              shouldDisplayActiveLanes(),
-              let activeManeuver = activeLiveLaneManeuverIndex,
-              let maneuverIndex,
-              activeManeuver == maneuverIndex else { return }
-        // The stock firmware can clear the lane layer when the maneuver packet
-        // redraws. Re-send lanes in the same BLE queue immediately after every
-        // delivery of the *same* maneuver that owns the latched lane event. A
-        // newly advanced maneuver must never receive the previous turn's lanes.
-        sendActiveLaneGuidance(label: "Lane policy → post-maneuver reassert")
+        guard bluetooth.state == .connected else { return }
+
+        postManeuverLaneClearTask?.cancel()
+        postManeuverLaneClearTask = nil
+
+        if activeLaneIsLive,
+           shouldDisplayActiveLanes(),
+           let activeManeuver = activeLiveLaneManeuverIndex,
+           let maneuverIndex,
+           activeManeuver == maneuverIndex {
+            // The stock firmware can clear the lane layer when the maneuver packet
+            // redraws. Re-send lanes immediately after delivery of the maneuver
+            // that owns the active event.
+            sendActiveLaneGuidance(label: "Lane policy → post-maneuver reassert")
+            logger.log(
+                "CARPLAY LANE REASSERT",
+                "after maneuver delivery index=\(maneuverIndex) guidance=\(activeLiveLaneGuidanceIndex.map(String.init) ?? "nil")"
+            )
+            return
+        }
+
+        // v90.35.3.23: the inverse case needs an explicit post-maneuver clear.
+        // Field evidence showed that the new maneuver packet can redraw the HUD's
+        // previously cached lane layer even though app state was already empty.
+        // Clear once in the same BLE queue and once more after the stock renderer
+        // settles. The generation guard prevents the delayed clear from deleting
+        // any new lane event that arrives during that short window.
+        let generation = lanePresentationGeneration
+        bluetooth.enqueue(HudCommands.clearLaneGuidance(), label: "Lane policy → post-maneuver clear")
         logger.log(
-            "CARPLAY LANE REASSERT",
-            "after maneuver delivery index=\(maneuverIndex) guidance=\(activeLiveLaneGuidanceIndex.map(String.init) ?? "nil")"
+            "CARPLAY LANE CLEAR",
+            "after maneuver delivery index=\(maneuverIndex.map(String.init) ?? "nil") no owning live lanes; clear generation=\(generation)"
         )
+
+        postManeuverLaneClearTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled,
+                  self.bluetooth.state == .connected,
+                  self.navigation.navigationActive,
+                  self.lanePresentationGeneration == generation else { return }
+
+            let newManeuverOwnsLanes =
+                self.activeLaneIsLive &&
+                self.shouldDisplayActiveLanes() &&
+                self.activeLiveLaneManeuverIndex == maneuverIndex
+            guard !newManeuverOwnsLanes else { return }
+
+            self.bluetooth.enqueue(
+                HudCommands.clearLaneGuidance(),
+                label: "Lane policy → post-maneuver settle clear"
+            )
+            self.logger.log(
+                "CARPLAY LANE CLEAR",
+                "settle clear index=\(maneuverIndex.map(String.init) ?? "nil") generation=\(generation)"
+            )
+        }
     }
 
     private func updateActiveLaneDistanceMeters(_ distanceMeters: Int, context: String) {
@@ -1786,6 +1929,9 @@ final class AppState {
         context: String,
         isLive: Bool = false
     ) {
+        lanePresentationGeneration &+= 1
+        postManeuverLaneClearTask?.cancel()
+        postManeuverLaneClearTask = nil
         activeLaneGuidance = lanes
         activeLaneDistanceMeters = max(0, distanceMeters)
         activeLaneContext = context
@@ -1797,6 +1943,9 @@ final class AppState {
     }
 
     func clearLaneGuidancePolicy(reason: String = "manual clear") {
+        lanePresentationGeneration &+= 1
+        postManeuverLaneClearTask?.cancel()
+        postManeuverLaneClearTask = nil
         laneGuidanceRefreshTask?.cancel()
         laneGuidanceRefreshTask = nil
         activeLaneGuidance = []

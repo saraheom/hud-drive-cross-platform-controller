@@ -28,7 +28,7 @@ struct NavigationHUDPreviewCard: View {
                     snapshot: state.mapModePreviewSnapshot,
                     settings: state.mapModeSettings,
                     sourceMapImage: state.mapModePreviewSourceImage,
-                    previewLanePlaceholder: true,
+                    previewLanePlaceholder: false,
                     suppressCustomSpeedForNativeOBDProbe: false
                 )
                 .aspectRatio(2.0, contentMode: .fit)

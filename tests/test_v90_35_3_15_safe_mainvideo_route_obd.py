@@ -14,11 +14,11 @@ UNINSTALL = (U2W/'source/uninstall_once.sh').read_text()
 def test_mainvideo_recovery_is_conservative():
     # v90.35.3.16 supersedes adapter-side v8.19 filtering: dirty raw bytes are
     # filtered on iPhone and fresh-byte stalls do not churn the HTTP CGI.
-    assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
+    assert 'decoderStaleFrameInterval: TimeInterval = 3.0' in VIDEO
     assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
     assert 'initialIDRWaitDiagnosticInterval: TimeInterval = 20.0' in VIDEO
-    assert 'CONTINUE without IDR reset' in VIDEO
-    assert 'PRESERVE transport/decoder, no reconnect' in VIDEO
+    assert 'kVTInvalidSessionErr (-12903)' in VIDEO
+    assert 'HARD decoder recovery, TCP preserved' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
 
