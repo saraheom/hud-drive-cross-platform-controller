@@ -51,10 +51,10 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
 
         XCTAssertTrue(video.contains("U2WMainVideoTCPWorker"))
         XCTAssertTrue(video.contains("port: 15332"))
-        XCTAssertTrue(video.contains("U2WH2641"))
+        XCTAssertTrue(video.contains("U2WH2642"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
         XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
-        XCTAssertTrue(video.contains("decoderReseedInterval: TimeInterval = 45.0"))
+        XCTAssertTrue(video.contains("PRESERVE transport/decoder, no reconnect"))
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 15.0"))
         XCTAssertTrue(video.contains("u2wvideo-relay-start.cgi"))
         XCTAssertFalse(video.contains("u2wvideo-main-stream.cgi"))

@@ -17,8 +17,8 @@ canvas = text("ios/HUDController/MapMode/HudMapModeCanvas.swift")
 checks = {
     "5 fps physical HUD cadence remains unchanged": ".milliseconds(200)" in app,
     "decoder stall watchdog is 20 seconds": "decoderStaleFrameInterval: TimeInterval = 20.0" in video,
-    "decoder-stale diagnostic cooldown is 30 seconds": "decoderStaleDiagnosticCooldown: TimeInterval = 30.0" in video,
-    "fresh bytes keep decoder alive instead of forcing IDR reset": "KEEP decoder session and continue validated P-frames" in video and "no destructive local IDR reset" in video,
+    "decoder-stale diagnostics remain bounded": "lastDecoderStaleDiagnosticAt" in video and "now.timeIntervalSince($0) >= 20.0" in video,
+    "fresh bytes keep decoder alive instead of forcing reconnect": "PRESERVE transport/decoder, no reconnect" in video and "bytesAreFresh" in video,
     "accepted decoder state survives HTTP reseed": "decoder.prepareForStreamRestart()" in video,
     "SPS/PPS candidates are staged separately": all(s in video for s in ("activeSPS", "activePPS", "pendingSPS", "pendingPPS")),
     "bad SPS/PPS cannot evict known-good decoder": "preserving last-known-good decoder" in video,

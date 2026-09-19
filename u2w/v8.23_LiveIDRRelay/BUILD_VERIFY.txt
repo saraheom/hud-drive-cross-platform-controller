@@ -1,0 +1,28 @@
+U2W v8.23 Live-IDR Relay — build verification
+
+Architecture:
+- Base capture remains U2W v8.11 MainVideo exporter.
+- TCP/15332 relay is independent of AppleCarPlay and Boa long-lived video.
+- Wire magic: U2WH2642; u32BE length-framed raw NALs.
+- New clients wait for a fresh live IDR; no historical GOP replay.
+- Annex-B parser continuity is preserved across normal v8.11 rolling-file generations.
+- Known-good v8.15.1 HUD MJPEG cast relay is restored.
+
+Local validation:
+- u2w_mainvideo_relay: ELF32 ARM, EABI5, soft-float ABI, statically linked.
+- No ELF dynamic section / shared-library dependencies.
+- C source compiles with clang -Wall -Wextra with no warnings.
+- All install/start/status/uninstall shell scripts pass sh -n.
+- AES-128-CBC update images round-trip decrypt exactly to generated tar.gz payloads.
+- Install image tar members verified:
+  tmp/once.sh
+  tmp/u2w_mainvideo_relay
+  tmp/u2wvideo-relay-start.cgi
+  tmp/u2wvideo-relay-status.cgi
+  tmp/u2whud_cast_relay_v8151
+- Uninstall image contains exact bundled v8.22 relay/start/status/HUD-cast restoration components.
+
+SHA256:
+- relay binary: 2aa1bb2a148510c3cfb12192010f8902f0b69c20fb38e941fdd2dbf75fc63fe6
+- install image: 06e5c7d21a60d29dc1816638e2f406f77d071961e586c723bd764c803aa62b2a
+- uninstall image: 40f182805580a8f0f31d45437110b7217b38339753191d45c65b5384095360ba

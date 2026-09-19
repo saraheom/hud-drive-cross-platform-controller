@@ -410,7 +410,9 @@ struct HudMapModeCanvas: View {
                         style: style,
                         activeColor: .white,
                         inactiveColor: inactiveColor,
-                        lineWidth: CGFloat(max(0.45, min(2.25, settings.laneArrowThickness * 0.82)))
+                        lineWidth: CGFloat(max(0.45, min(2.25, settings.laneArrowThickness * 0.82))),
+                        headScale: CGFloat(settings.laneArrowHeadScale),
+                        bodyLength: CGFloat(settings.laneArrowBodyLength)
                     )
                     .scaleEffect(style.isHighlighted ? settings.laneActiveEmphasis : 1.0)
                     .frame(width: 15, height: 22)
@@ -486,16 +488,23 @@ private struct LaneGuidanceGlyph: View {
     let activeColor: Color
     let inactiveColor: Color
     let lineWidth: CGFloat
+    let headScale: CGFloat
+    let bodyLength: CGFloat
 
     var body: some View {
         Canvas { context, size in
             let w = size.width
             let h = size.height
             let cx = w * 0.5
-            let bottom = h * 0.82
+            // v90.35.3.22 decouples shaft length from arrow-head size. The
+            // physical 480×240 HUD made the old long, thin glyph read like a
+            // line; a shorter body plus a wider filled head stays identifiable.
+            let body = min(1.0, max(0.55, bodyLength))
+            let head = min(1.8, max(0.8, headScale))
+            let bottom = h * (0.30 + 0.52 * body)
             let straightBaseY = h * 0.30
             let straightApexY = h * 0.12
-            let headHalfW = max(1.7, w * 0.17)
+            let headHalfW = max(1.7, w * 0.17) * head
             let styleStroke = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
 
             func stroke(_ path: Path, color: Color, opacity: Double = 1.0) {
@@ -524,11 +533,11 @@ private struct LaneGuidanceGlyph: View {
             }
             func soloTurn(right: Bool, drawColor: Color, opacity: Double = 1.0) {
                 let sign: CGFloat = right ? 1 : -1
-                let branchY = h * 0.58
+                let branchY = min(h * 0.58, max(h * 0.47, bottom - h * 0.10))
                 let headY = h * 0.31
                 let headX = cx + sign * w * 0.39
-                let baseX = headX - sign * w * 0.19
-                let halfH = h * 0.090
+                let baseX = headX - sign * w * (0.19 * head)
+                let halfH = h * 0.090 * head
 
                 var p = Path()
                 p.move(to: CGPoint(x: cx, y: bottom))
@@ -550,11 +559,11 @@ private struct LaneGuidanceGlyph: View {
             func combined(right: Bool, drawColor: Color, opacity: Double = 1.0) {
                 straightArrow(drawColor, opacity: opacity)
                 let sign: CGFloat = right ? 1 : -1
-                let branchStartY = h * 0.57
+                let branchStartY = min(h * 0.57, max(h * 0.46, bottom - h * 0.10))
                 let headY = h * 0.34
                 let headX = cx + sign * w * 0.38
-                let baseX = headX - sign * w * 0.18
-                let halfH = h * 0.082
+                let baseX = headX - sign * w * (0.18 * head)
+                let halfH = h * 0.082 * head
                 var branch = Path()
                 branch.move(to: CGPoint(x: cx, y: branchStartY))
                 branch.addCurve(
@@ -577,11 +586,11 @@ private struct LaneGuidanceGlyph: View {
             func turnOnlyCombined(right: Bool) {
                 straightArrow(inactiveColor)
                 let sign: CGFloat = right ? 1 : -1
-                let branchStartY = h * 0.72
+                let branchStartY = min(h * 0.64, max(h * 0.48, bottom - h * 0.02))
                 let headY = h * 0.34
                 let headX = cx + sign * w * 0.35
-                let baseX = headX - sign * w * 0.17
-                let halfH = h * 0.080
+                let baseX = headX - sign * w * (0.17 * head)
+                let halfH = h * 0.080 * head
                 var branch = Path()
                 branch.move(to: CGPoint(x: cx, y: bottom))
                 branch.addLine(to: CGPoint(x: cx, y: branchStartY))

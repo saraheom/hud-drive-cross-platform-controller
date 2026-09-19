@@ -1,0 +1,52 @@
+HUD Controller v90.35.3.22 + U2W v8.23 — build verification
+
+Primary MainVideo correction:
+- v8.22 startup race removed: iOS does not open TCP until the adapter relay is positively confirmed RUNNING.
+- NWConnection .waiting state has a 4-second deadline and is recreated instead of remaining stuck for an entire drive.
+- v8.22 12–20 MiB cached-GOP bootstrap is removed.
+- v8.23 waits for the next naturally arriving live IDR, then sends SPS/PPS/IDR and follows only the live edge.
+- iOS uses exact length-framed reads with a 512 KiB NAL bound; no unbounded receive buffer/history burst.
+- MainVideo remains warm across navigation lifecycle changes.
+- Fresh H.264 bytes with a stale image do not trigger destructive transport reconnects.
+- Five consecutive VideoToolbox errors ARM a rebuild but do not destroy the current session; the swap occurs only when a future validated IDR is already in hand.
+- Annex-B parser state survives normal v8.11 rolling-file generation handoffs.
+
+Parked preflight / diagnostics:
+- UI exposes relay state, TCP phase, frame count, last-frame age, sanitizer counters, VideoToolbox decoder state, and iPhone network state.
+- MAINVIDEO PREFLIGHT heartbeat is logged every ~5 seconds.
+- Adapter relay status includes source progress, generation count, SPS/PPS/IDR/slice counters, client state, bootstrap count, send failures, dropped pre-IDR slices, and relay-log tail.
+- Test drive should not begin unless preflight reads LIVE • frames advancing and frame count continues increasing while parked.
+
+Lane guidance:
+- Thin shaft remains independently adjustable.
+- New Lane arrow head size control: 80–180%, default 135%.
+- New Lane arrow body length control: 55–100%, default 78%.
+- Large turn-by-turn maneuver arrow is unchanged.
+
+Customization preview:
+- Top Map Mode preview remains actual/live HUD-equivalent output.
+- Expanded customization has a persistent demo scene outside the car: schematic map, speed 32 mph, 25 mph limit, right turn, street/distance/ETA, and sample lane guidance.
+- Styling/layout controls update the demo immediately.
+
+Ambient day/night:
+- Center/BLEDOM CoreBluetooth disconnect is treated as transport-unknown, not physical headlight OFF.
+- Confirmed NIGHT remains latched while Center reconnects.
+- DAY requires sustained Center advertisement absence plus Dashboard+Center BOTH-OFF corroboration.
+- HUD auto-brightness and Door target use the latched effective night/day state.
+- Overspeed-warning restore resolves the current effective Door day/night target.
+
+Validation:
+- pytest repository regression suite: 387 passed.
+- All historical standalone tests_v*.py compatibility/static guards pass.
+- All production Swift files parse with swiftc -parse.
+- All XCTest Swift files parse with swiftc -parse.
+- U2W shell scripts pass sh -n.
+- v8.23 ARM relay is static ELF32 ARM EABI5 soft-float with no dynamic section.
+- Encrypted install/uninstall images were rebuilt and AES decrypt/tar member round-trip verified.
+
+Limit:
+- A local macOS/Xcode compile/archive is not available in this environment. GitHub Actions remains the final Xcode 26 compile/TestFlight validation.
+
+U2W image SHA256:
+- install: 06e5c7d21a60d29dc1816638e2f406f77d071961e586c723bd764c803aa62b2a
+- uninstall: 40f182805580a8f0f31d45437110b7217b38339753191d45c65b5384095360ba

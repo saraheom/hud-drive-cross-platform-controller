@@ -248,6 +248,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// Brightness and Door day/night target; Dashboard remains a diagnostic cross-check.
     private var trackedPeripheral: CBPeripheral?
     private var lastSeen = Date.distantPast
+    /// v90.35.3.22: a CoreBluetooth transport disconnect is not proof that the
+    /// headlight-fed Center light lost physical power. Keep the confirmed NIGHT
+    /// state latched while advertisement absence is independently confirmed.
+    private var centerTransportUnknownSince: Date?
+    private var lastCenterAbsenceWithheldLogAt = Date.distantPast
     private var watchdogTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var connectionAttemptStartedAt: Date?
@@ -4216,6 +4221,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         reason: String
     ) {
         lastSeen = Date()
+        centerTransportUnknownSince = nil
+        lastCenterAbsenceWithheldLogAt = .distantPast
         detectedName = name
         detectedIdentifier = identifier
         if let rssi { lastRSSI = rssi }
@@ -4236,6 +4243,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func markAbsent(reason: String) {
         guard lightPresent else { return }
+        centerTransportUnknownSince = nil
+        lastCenterAbsenceWithheldLogAt = .distantPast
         lightPresent = false
         status = "\(targetName) absent"
         logger.log(
@@ -4521,11 +4530,27 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             }
 
             if self.trackedPeripheral?.identifier == id {
-                // A GATT disconnect is an OS-delivered event and therefore remains
-                // useful when the app is backgrounded/locked. Turn brightness OFF,
-                // then leave another pending connect request so device power-on
-                // automatically wakes/reconnects us.
-                self.markAbsent(reason: "persistent BLE disconnect")
+                // v90.35.3.22: a GATT transport drop is NOT a physical headlight-OFF
+                // signal. The 2026-09-18 field log showed Center reconnecting while
+                // the headlight remained on; immediately calling markAbsent() falsely
+                // switched Door + HUD back to DAY. Preserve the last confirmed state
+                // and restart the independent advertisement-absence timer instead.
+                let now = Date()
+                self.centerTransportUnknownSince = now
+                self.lastSeen = now
+                if self.headlightPowerSessionActive || self.lightPresent {
+                    self.status = "\(self.targetName) reconnecting • NIGHT latched"
+                    self.logger.log(
+                        "AMBIENT LATCH",
+                        "Center BLE transport disconnected; preserving confirmed NIGHT. Physical OFF requires \(self.absenceConfirmationWindows) missed advertisement windows."
+                    )
+                    self.ambientTrace("Center transport unknown; NIGHT latched pending physical-absence confirmation")
+                } else {
+                    self.logger.log(
+                        "AMBIENT LATCH",
+                        "Center BLE transport disconnected while DAY; transport unknown, no day/night edge committed"
+                    )
+                }
             }
 
             // Hybrid recovery: leave a GATT connection pending AND scan for
@@ -4858,11 +4883,31 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 let timeout = Double(max(1, self.absenceTimeoutSeconds))
                 let missedWindows = Int(elapsed / timeout)
 
-                if self.hudBrightnessTriggerEnabled && self.lightPresent && !connected &&
+                if self.lightPresent && !connected &&
                     missedWindows >= self.absenceConfirmationWindows {
-                    self.markAbsent(
-                        reason: "\(self.absenceConfirmationWindows) missed advertisement windows"
-                    )
+                    // A Center transport outage alone is still not enough to call the
+                    // headlight OFF. The Dashboard is powered by the same headlight rail,
+                    // so any positive Dashboard evidence vetoes a false DAY transition.
+                    // Only sustained Center absence *and* a BOTH-OFF cross-check may end
+                    // the latched NIGHT state.
+                    let consensus = self.currentHeadlightConsensus()
+                    if consensus == .bothOff {
+                        if let unknownSince = self.centerTransportUnknownSince {
+                            self.logger.log(
+                                "AMBIENT LATCH",
+                                "Center transport absent for \(String(format: "%.1f", Date().timeIntervalSince(unknownSince)))s and Dashboard+Center=bothOff; physical absence confirmed after \(self.absenceConfirmationWindows) windows → DAY"
+                            )
+                        }
+                        self.markAbsent(
+                            reason: "\(self.absenceConfirmationWindows) missed Center windows + Dashboard/Center bothOff"
+                        )
+                    } else if Date().timeIntervalSince(self.lastCenterAbsenceWithheldLogAt) >= timeout {
+                        self.lastCenterAbsenceWithheldLogAt = Date()
+                        self.logger.log(
+                            "AMBIENT LATCH",
+                            "Center advertisement absence reached \(missedWindows) windows but consensus=\(consensus.rawValue); preserving confirmed NIGHT"
+                        )
+                    }
                 }
 
                 if self.hudBrightnessTriggerEnabled,

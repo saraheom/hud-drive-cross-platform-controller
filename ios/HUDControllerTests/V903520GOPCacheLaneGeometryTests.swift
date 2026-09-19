@@ -41,7 +41,7 @@ final class V903520GOPCacheLaneGeometryTests: XCTestCase {
         XCTAssertTrue(app.contains("HUD BLE transport ready — continuous predecode"))
         XCTAssertTrue(video.contains("u2wvideo-relay-start.cgi"))
         XCTAssertTrue(video.contains("u2wvideo-relay-status.cgi"))
-        XCTAssertTrue(video.contains("v8.22-dedicated-tcp-15332+in-memory-gop"))
+        XCTAssertTrue(video.contains("v8.23-live-idr-tcp-15332"))
         XCTAssertTrue(ui.contains("U2W H.264 relay"))
     }
 }

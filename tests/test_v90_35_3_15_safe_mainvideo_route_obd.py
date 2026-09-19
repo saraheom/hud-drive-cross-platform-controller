@@ -16,9 +16,10 @@ def test_mainvideo_recovery_is_conservative():
     # filtered on iPhone and fresh-byte stalls do not churn the HTTP CGI.
     assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
     assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
-    assert 'decoderReseedCooldown: TimeInterval = 45.0' in VIDEO
+    assert 'initialIDRWaitDiagnosticInterval: TimeInterval = 20.0' in VIDEO
     assert 'CONTINUE without IDR reset' in VIDEO
-    assert 'decoderReseedInterval: TimeInterval = 45.0' in VIDEO
+    assert 'PRESERVE transport/decoder, no reconnect' in VIDEO
+    assert 'WAITING_LIVE_IDR' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
 
 def test_route_inactive_requires_five_seconds():

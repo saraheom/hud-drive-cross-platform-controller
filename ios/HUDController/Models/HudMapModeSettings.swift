@@ -83,6 +83,9 @@ private struct HudMapModePresetSnapshot: Codable {
     var distanceScale: Double
     var laneScale: Double
     var laneArrowThickness: Double
+    // Optional for backwards-compatible decoding of presets saved before v90.35.3.22.
+    var laneArrowHeadScale: Double?
+    var laneArrowBodyLength: Double?
     var laneSpacing: Double
     var laneActiveEmphasis: Double
     var laneInactiveGray: Double
@@ -157,6 +160,8 @@ private struct HudMapModePresetSnapshot: Codable {
         distanceScale = settings.distanceScale
         laneScale = settings.laneScale
         laneArrowThickness = settings.laneArrowThickness
+        laneArrowHeadScale = settings.laneArrowHeadScale
+        laneArrowBodyLength = settings.laneArrowBodyLength
         laneSpacing = settings.laneSpacing
         laneActiveEmphasis = settings.laneActiveEmphasis
         laneInactiveGray = settings.laneInactiveGray
@@ -251,6 +256,12 @@ final class HudMapModeSettings {
 
     var laneScale: Double { didSet { persist(laneScale, key: "HUD.MapMode.laneScale") } }
     var laneArrowThickness: Double { didSet { persist(laneArrowThickness, key: "HUD.MapMode.laneArrowThickness") } }
+    /// Independent filled-arrowhead size. Keeps the thin shaft legible while making
+    /// the head survive the 480×240 HUD + JPEG presentation path.
+    var laneArrowHeadScale: Double { didSet { persist(laneArrowHeadScale, key: "HUD.MapMode.laneArrowHeadScale") } }
+    /// Independent vertical shaft/body length. 1.0 preserves the v90.35.3.20 geometry;
+    /// smaller values shorten the stem without shrinking the head.
+    var laneArrowBodyLength: Double { didSet { persist(laneArrowBodyLength, key: "HUD.MapMode.laneArrowBodyLength") } }
     var laneSpacing: Double { didSet { persist(laneSpacing, key: "HUD.MapMode.laneSpacing") } }
     var laneActiveEmphasis: Double { didSet { persist(laneActiveEmphasis, key: "HUD.MapMode.laneActiveEmphasis") } }
     var laneInactiveGray: Double { didSet { persist(laneInactiveGray, key: "HUD.MapMode.laneInactiveGray") } }
@@ -353,6 +364,8 @@ final class HudMapModeSettings {
 
         laneScale = min(1.70, max(0.60, double("HUD.MapMode.laneScale", default: 1.0)))
         laneArrowThickness = min(2.50, max(0.60, double("HUD.MapMode.laneArrowThickness", default: 1.75)))
+        laneArrowHeadScale = min(1.80, max(0.80, double("HUD.MapMode.laneArrowHeadScale", default: 1.35)))
+        laneArrowBodyLength = min(1.00, max(0.55, double("HUD.MapMode.laneArrowBodyLength", default: 0.78)))
         laneSpacing = min(8, max(1, double("HUD.MapMode.laneSpacing", default: 3)))
         laneActiveEmphasis = min(1.35, max(1.00, double("HUD.MapMode.laneActiveEmphasis", default: 1.10)))
         laneInactiveGray = min(0.80, max(0.12, double("HUD.MapMode.laneInactiveGray", default: 0.40)))
@@ -534,6 +547,8 @@ final class HudMapModeSettings {
         distanceScale = preset.distanceScale
         laneScale = preset.laneScale
         laneArrowThickness = preset.laneArrowThickness
+        laneArrowHeadScale = min(1.80, max(0.80, preset.laneArrowHeadScale ?? 1.35))
+        laneArrowBodyLength = min(1.00, max(0.55, preset.laneArrowBodyLength ?? 0.78))
         laneSpacing = preset.laneSpacing
         laneActiveEmphasis = preset.laneActiveEmphasis
         laneInactiveGray = preset.laneInactiveGray
@@ -700,6 +715,8 @@ final class HudMapModeSettings {
         distanceScale = 1.0
         laneScale = 1.0
         laneArrowThickness = 1.75
+        laneArrowHeadScale = 1.35
+        laneArrowBodyLength = 0.78
         laneSpacing = 3
         laneActiveEmphasis = 1.10
         laneInactiveGray = 0.40

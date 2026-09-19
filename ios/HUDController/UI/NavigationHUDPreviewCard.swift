@@ -43,6 +43,7 @@ struct NavigationHUDPreviewCard: View {
 
                 DisclosureGroup(isExpanded: $showMapCustomization) {
                     VStack(alignment: .leading, spacing: 14) {
+                        customizationSamplePreview
                         layoutDesignerControls
                         mapAppearanceControls
                         mapCropControls
@@ -114,6 +115,39 @@ struct NavigationHUDPreviewCard: View {
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    private var customizationSamplePreview: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Style sample")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("Demo • not live HUD output")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            HudMapModeCanvas(
+                snapshot: .customizationDemo,
+                settings: state.mapModeSettings,
+                sourceMapImage: nil,
+                previewLanePlaceholder: false,
+                suppressCustomSpeedForNativeOBDProbe: false
+            )
+            .aspectRatio(2.0, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(.white.opacity(0.10), lineWidth: 1)
+            }
+
+            Text("This preview always contains a sample map, speed-limit sign, maneuver, distance, lanes, and ETA so visual settings can be tuned outside the car. The preview above Map Mode remains the real current HUD-equivalent output.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
     private var layoutDesignerControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -158,10 +192,10 @@ struct NavigationHUDPreviewCard: View {
 
             ZStack {
                 HudMapModeCanvas(
-                    snapshot: state.mapModePreviewSnapshot,
+                    snapshot: .customizationDemo,
                     settings: state.mapModeSettings,
-                    sourceMapImage: state.mapModePreviewSourceImage,
-                    previewLanePlaceholder: true,
+                    sourceMapImage: nil,
+                    previewLanePlaceholder: false,
                     suppressCustomSpeedForNativeOBDProbe: false
                 )
 
@@ -369,16 +403,36 @@ struct NavigationHUDPreviewCard: View {
                 )
             }
 
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: state.mainVideo.preflightReady ? "checkmark.circle.fill" : "clock.arrow.circlepath")
+                    .foregroundStyle(state.mainVideo.preflightReady ? Color.green : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Parked MainVideo preflight")
+                        .font(.caption.weight(.semibold))
+                    Text(state.mainVideo.preflightSummary)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("For the next validation, remain parked until this reads ‘LIVE • frames advancing’ and the Video frames counter continues increasing. If it does not, collect the log/status files without beginning a test drive.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             DisclosureGroup(isExpanded: $showRelayDiagnostics) {
                 VStack(alignment: .leading, spacing: 7) {
                     LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
                     LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
+                    LabeledContent("MainVideo preflight", value: state.mainVideo.preflightSummary)
+                    LabeledContent("MainVideo phase", value: state.mainVideo.transportPhase)
                     LabeledContent("MainVideo", value: state.mainVideo.status)
                     LabeledContent("U2W H.264 relay", value: state.mainVideo.adapterCacheSummary)
                     LabeledContent("iPhone network", value: state.mainVideo.networkPathSummary)
                     LabeledContent("Video frames", value: "\(state.mainVideo.frameCount) • \(state.mainVideo.sourceSize)")
+                    LabeledContent("Last map frame", value: state.mainVideo.lastFrameAgeSeconds.map { String(format: "%.1f s ago", $0) } ?? "—")
                     LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
                     LabeledContent("iPhone H.264 filter", value: state.mainVideo.sanitizerSummary)
+                    LabeledContent("VideoToolbox decoder", value: state.mainVideo.decoderSummary)
                     LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
                     LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
                     LabeledContent("HUD cadence", value: "5 fps • latest frame")
@@ -406,7 +460,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v8.22 moves MainVideo off long-lived Boa CGI onto a dedicated TCP/15332 H.264 relay. The iPhone keeps the decoder connection warm while the HUD transport is ready, syntax-filters every NAL before VideoToolbox, and automatically reconnects the final JPEG ingress if the HUD relay stalls.")
+                    Text("v8.23 keeps MainVideo off Boa/CGI but removes cached-GOP replay. TCP opens only after the relay is confirmed running, waits for the next fresh live IDR, then carries only naturally arriving H.264 NALs. Before driving, wait for MainVideo preflight to read LIVE • frames advancing and confirm the frame counter keeps increasing.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -750,6 +804,28 @@ struct NavigationHUDPreviewCard: View {
                 range: 0.60...2.50,
                 step: 0.10,
                 format: { String(format: "%.2fx", $0) }
+            )
+            tuningSlider(
+                icon: "arrowtriangle.up.fill",
+                title: "Lane arrow head size",
+                value: Binding(
+                    get: { state.mapModeSettings.laneArrowHeadScale },
+                    set: { state.mapModeSettings.laneArrowHeadScale = $0 }
+                ),
+                range: 0.80...1.80,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
+            )
+            tuningSlider(
+                icon: "arrow.up.and.down",
+                title: "Lane arrow body length",
+                value: Binding(
+                    get: { state.mapModeSettings.laneArrowBodyLength },
+                    set: { state.mapModeSettings.laneArrowBodyLength = $0 }
+                ),
+                range: 0.55...1.00,
+                step: 0.05,
+                format: { String(format: "%.0f%%", $0 * 100) }
             )
             tuningSlider(
                 icon: "circle.lefthalf.filled",

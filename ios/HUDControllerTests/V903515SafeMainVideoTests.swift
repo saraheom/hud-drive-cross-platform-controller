@@ -11,9 +11,9 @@ final class V903515SafeMainVideoTests: XCTestCase {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("decoderStaleFrameInterval: TimeInterval = 20.0"))
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 15.0"))
-        XCTAssertTrue(video.contains("decoderReseedCooldown: TimeInterval = 45.0"))
+        XCTAssertTrue(video.contains("initialIDRWaitDiagnosticInterval: TimeInterval = 20.0"))
         XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
-        XCTAssertTrue(video.contains("decoderReseedInterval: TimeInterval = 45.0"))
+        XCTAssertTrue(video.contains("PRESERVE transport/decoder, no reconnect"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
     }
 

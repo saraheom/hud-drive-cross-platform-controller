@@ -17,9 +17,9 @@ def test_mainvideo_uses_continuous_dedicated_tcp():
 
 
 def test_dedicated_tcp_filter_runs_on_iphone():
-    assert 'v8.22-dedicated-tcp-15332+in-memory-gop' in VIDEO
+    assert 'v8.23-live-idr-tcp-15332' in VIDEO
     assert 'U2WMainVideoTCPWorker' in VIDEO
-    assert 'U2WH2641' in VIDEO
+    assert 'U2WH2642' in VIDEO
     assert 'port: 15332' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
     assert 'expectedWidth: Int = 800' in SAN
@@ -32,7 +32,8 @@ def test_dedicated_tcp_filter_runs_on_iphone():
 
 def test_video_self_healing_does_not_use_long_lived_boa():
     assert 'decoderStaleFrameInterval: TimeInterval = 20.0' in VIDEO
-    assert 'decoderReseedInterval: TimeInterval = 45.0' in VIDEO
+    assert 'WAITING_LIVE_IDR' in VIDEO
+    assert 'historical GOP replay=0' in VIDEO
     assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
     assert 'sourceReconnectCooldown: TimeInterval = 15.0' in VIDEO
     assert 'CONTINUE without IDR reset' in VIDEO

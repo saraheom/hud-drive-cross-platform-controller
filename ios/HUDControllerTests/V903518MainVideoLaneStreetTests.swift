@@ -12,7 +12,7 @@ final class V903518MainVideoLaneStreetTests: XCTestCase {
         XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
         XCTAssertTrue(video.contains("consecutiveErrorRebuildThreshold = 5"))
         XCTAssertTrue(video.contains("CONTINUE without IDR reset"))
-        XCTAssertTrue(video.contains("decoderReseedInterval: TimeInterval = 45.0"))
+        XCTAssertTrue(video.contains("PRESERVE transport/decoder, no reconnect"))
         XCTAssertFalse(video.contains("requestDecoderResync"))
     }
 

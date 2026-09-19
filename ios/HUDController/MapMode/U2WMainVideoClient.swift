@@ -6,13 +6,14 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.21 MainVideo client for U2W v8.22.
+/// v90.35.3.22 MainVideo client for U2W v8.23.
 ///
 /// Video no longer travels through a long-lived Boa CGI or through a cache file
 /// that is truncated underneath an active reader.  The adapter-side relay tails
-/// the stable v8.11 mirror and publishes length-framed H.264 NAL units on
-/// TCP/15332.  The iPhone keeps this connection warm as soon as the HUD BLE
-/// transport is ready, so it normally owns decoder state before navigation starts.
+/// the stable v8.11 mirror and publishes only the live edge as length-framed H.264
+/// NAL units on TCP/15332. A new iPhone connection waits for the next naturally
+/// arriving live IDR; there is no historical GOP replay or catch-up burst. The
+/// connection is prepared before navigation and remains warm for the whole car session.
 @MainActor
 @Observable
 final class U2WMainVideoClient {
@@ -31,8 +32,25 @@ final class U2WMainVideoClient {
     private(set) var acceptedSliceCount = 0
     private(set) var networkPathSummary = "Not monitoring — video idle"
     // Kept under the old property name so existing diagnostic UI bindings remain
-    // source-compatible.  In v8.22 it describes the dedicated TCP relay, not v8.21.
+    // source-compatible. In v8.23 it describes the dedicated live-IDR TCP relay.
     private(set) var adapterCacheSummary = "H.264 relay not checked"
+    private(set) var transportPhase = "IDLE"
+    private(set) var lastFrameAgeSeconds: Double?
+    private(set) var adapterRelayConfirmedRunning = false
+    private(set) var decoderSummary = "session=none • needsIDR=1 • errors=0"
+
+    var preflightReady: Bool {
+        connected && transportPhase == "LIVE" && frameCount >= 2 && (lastFrameAgeSeconds ?? .infinity) < 2.5
+    }
+
+    var preflightSummary: String {
+        if preflightReady { return "LIVE • frames advancing" }
+        if transportPhase == "WAITING_LIVE_IDR" { return "Connected • waiting for next live IDR" }
+        if transportPhase == "WAITING_RELAY" { return "Waiting for U2W v8.23 relay" }
+        if transportPhase == "TCP_WAITING" { return "TCP waiting — automatic retry armed" }
+        if transportPhase == "DECODER_BOOTSTRAP" { return "Live IDR received • decoder starting" }
+        return "Not ready • \(transportPhase)"
+    }
 
     var sanitizerSummary: String {
         "raw \(rawNALCount) • valid \(acceptedNALCount) • rejected \(rejectedNALCount) • " +
@@ -61,9 +79,8 @@ final class U2WMainVideoClient {
     private let relayStatusEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi")!
 
     private let decoderStaleFrameInterval: TimeInterval = 20.0
-    private let decoderReseedInterval: TimeInterval = 45.0
-    private let decoderReseedCooldown: TimeInterval = 45.0
     private let sourceStaleInterval: TimeInterval = 15.0
+    private let initialIDRWaitDiagnosticInterval: TimeInterval = 20.0
     private let sourceReconnectCooldown: TimeInterval = 15.0
     private let relayEnsureCooldown: TimeInterval = 5.0
 
@@ -71,15 +88,14 @@ final class U2WMainVideoClient {
 
     func start(reason: String) {
         if running {
-            if !connected {
-                Task { @MainActor [weak self] in
-                    await self?.ensureAdapterRelay(reason: "already running / \(reason)")
-                }
+            if worker == nil {
+                beginRelayBootstrapLoop(reason: "already running / \(reason)")
             }
             return
         }
         running = true
-        status = "Starting dedicated U2W H.264 relay…"
+        status = "Preparing U2W v8.23 live-IDR relay…"
+        transportPhase = "WAITING_RELAY"
         latestFrame = nil
         frameCount = 0
         sourceSize = "—"
@@ -87,10 +103,11 @@ final class U2WMainVideoClient {
         connectedAt = nil
         lastDecodedFrameAt = nil
         lastReceivedBytesAt = nil
+        lastFrameAgeSeconds = nil
         lastDecoderStaleDiagnosticAt = nil
-        lastDecoderReseedAt = nil
         lastSourceReconnectAt = nil
         lastRelayEnsureAt = nil
+        adapterRelayConfirmedRunning = false
         rawNALCount = 0
         acceptedNALCount = 0
         rejectedNALCount = 0
@@ -98,21 +115,41 @@ final class U2WMainVideoClient {
         acceptedPPSCount = 0
         acceptedIDRCount = 0
         acceptedSliceCount = 0
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.22-dedicated-tcp-15332+in-memory-gop continuousPredecode=1 longLivedBoaVideo=0")
+        decoderSummary = "session=none • needsIDR=1 • errors=0"
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.23-live-idr-tcp-15332 historicalGOPReplay=0 continuousPredecode=1 longLivedBoaVideo=0")
         startNetworkPathLogging()
+        startFreshnessWatchdog()
+        beginRelayBootstrapLoop(reason: reason)
+    }
+
+    private func beginRelayBootstrapLoop(reason: String) {
         bootstrapTask?.cancel()
         bootstrapTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.ensureAdapterRelay(reason: "video start / \(reason)")
-            guard self.running, !Task.isCancelled else { return }
-            self.startWorker(reason: reason)
-            self.startFreshnessWatchdog()
+            var attempt = 0
+            while self.running, !Task.isCancelled, self.worker == nil {
+                attempt += 1
+                self.transportPhase = "WAITING_RELAY"
+                let ready = await self.ensureAdapterRelay(reason: "bootstrap #\(attempt) / \(reason)")
+                guard self.running, !Task.isCancelled else { return }
+                if ready {
+                    self.logger.log("MAINVIDEO PREFLIGHT", "relay confirmed RUNNING before TCP open attempt=\(attempt)")
+                    self.startWorker(reason: "relay confirmed / \(reason)")
+                    return
+                }
+                self.status = "Waiting for U2W v8.23 relay…"
+                self.logger.log("MAINVIDEO PREFLIGHT", "relay not ready attempt=\(attempt); TCP intentionally NOT opened")
+                try? await Task.sleep(for: .seconds(2))
+            }
         }
     }
 
-    func ensureAdapterRelay(reason: String) async {
+    @discardableResult
+    func ensureAdapterRelay(reason: String) async -> Bool {
         let now = Date()
-        if let lastRelayEnsureAt, now.timeIntervalSince(lastRelayEnsureAt) < relayEnsureCooldown { return }
+        if let lastRelayEnsureAt, now.timeIntervalSince(lastRelayEnsureAt) < relayEnsureCooldown {
+            return adapterRelayConfirmedRunning
+        }
         lastRelayEnsureAt = now
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 3
@@ -130,10 +167,11 @@ final class U2WMainVideoClient {
         } catch {
             logger.log("U2W H264 RELAY", "ensure failed reason=\(reason) error=\(error.localizedDescription)")
         }
-        await refreshAdapterRelayStatus(reason: "after ensure")
+        return await refreshAdapterRelayStatus(reason: "after ensure")
     }
 
-    private func refreshAdapterRelayStatus(reason: String) async {
+    @discardableResult
+    private func refreshAdapterRelayStatus(reason: String) async -> Bool {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 2
         configuration.timeoutIntervalForResource = 3
@@ -150,15 +188,28 @@ final class U2WMainVideoClient {
                 if parts.count == 2 { fields[parts[0]] = parts[1] }
             }
             let process = fields["relay_process"] ?? "?"
-            let ready = fields["gop_ready"] ?? "?"
-            let gopBytes = fields["gop_bytes"] ?? "?"
-            let client = fields["client_connected"] ?? "?"
-            let overflow = fields["gop_overflow"] ?? "?"
-            adapterCacheSummary = "\(process) • GOP \(ready) \(gopBytes)B • client \(client) • overflow \(overflow)"
-            logger.log("U2W H264 RELAY", "status reason=\(reason) HTTP=\(code) \(adapterCacheSummary)")
+            let marker = fields["marker"] ?? "?"
+            let relayVersion = fields["relay_version"] ?? "?"
+            let clientState = fields["client_state"] ?? "?"
+            let haveSPS = fields["have_sps"] ?? "?"
+            let havePPS = fields["have_pps"] ?? "?"
+            let idr = fields["idr"] ?? "?"
+            let bootstraps = fields["client_live_bootstraps"] ?? "?"
+            let sendFailures = fields["client_send_failures"] ?? "?"
+            let sourceBytes = fields["source_bytes_low32"] ?? "?"
+            let generationChanges = fields["source_generation_changes"] ?? "?"
+            let droppedPreIDR = fields["pre_idr_slices_dropped"] ?? "?"
+            let lastNAL = fields["last_nal_type"] ?? "?"
+            adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
+            let ready = (200...299).contains(code) && process == "RUNNING" && marker == "YES" && relayVersion.contains("v8.23")
+            adapterRelayConfirmedRunning = ready
+            logger.log("U2W H264 RELAY", "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) \(adapterCacheSummary)")
+            return ready
         } catch {
+            adapterRelayConfirmedRunning = false
             adapterCacheSummary = "H.264 relay status unavailable"
             logger.log("U2W H264 RELAY", "status failed reason=\(reason) error=\(error.localizedDescription)")
+            return false
         }
     }
 
@@ -170,6 +221,13 @@ final class U2WMainVideoClient {
         lastReceivedBytesAt = nil
 
         let worker = U2WMainVideoTCPWorker(host: "192.168.50.2", port: 15332)
+        worker.onPhase = { [weak self] phase in
+            Task { @MainActor [weak self] in
+                guard let self, self.running, self.workerGeneration == generation else { return }
+                self.transportPhase = phase
+                self.logger.log("MAINVIDEO STATE", "phase=\(phase) generation=\(generation)")
+            }
+        }
         worker.onStatus = { [weak self] message, isConnected in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
@@ -200,16 +258,27 @@ final class U2WMainVideoClient {
                 self.acceptedSliceCount = stats.acceptedSlices
             }
         }
+        worker.onDecoderState = { [weak self] summary in
+            Task { @MainActor [weak self] in
+                guard let self, self.running, self.workerGeneration == generation else { return }
+                self.decoderSummary = summary
+            }
+        }
         worker.onFrame = { [weak self] image in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
                 self.latestFrame = image
                 self.lastDecodedFrameAt = Date()
+                self.lastFrameAgeSeconds = 0
                 self.frameCount += 1
+                self.transportPhase = "LIVE"
                 self.sourceSize = "\(Int(image.size.width))×\(Int(image.size.height))"
                 self.status = "Live U2W map video • dedicated TCP relay"
                 if self.frameCount == 1 || self.frameCount % 75 == 0 {
                     self.logger.log("U2W VIDEO", "Live frame #\(self.frameCount) source=\(self.sourceSize) filter={\(self.sanitizerSummary)}")
+                }
+                if self.frameCount == 2 {
+                    self.logger.log("MAINVIDEO PREFLIGHT", "PASS frames=2 source=\(self.sourceSize) — parked test can proceed")
                 }
             }
         }
@@ -228,54 +297,78 @@ final class U2WMainVideoClient {
         freshnessTask?.cancel()
         freshnessTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            var lastPreflightLogAt: Date?
             while !Task.isCancelled, self.running {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, self.running else { continue }
                 let now = Date()
+                self.lastFrameAgeSeconds = self.lastDecodedFrameAt.map { now.timeIntervalSince($0) }
+
+                if lastPreflightLogAt.map({ now.timeIntervalSince($0) >= 5.0 }) ?? true {
+                    lastPreflightLogAt = now
+                    let frameAge = self.lastFrameAgeSeconds.map { String(format: "%.1fs", $0) } ?? "none"
+                    let byteAge = self.lastReceivedBytesAt.map { String(format: "%.1fs", now.timeIntervalSince($0)) } ?? "none"
+                    self.logger.log("MAINVIDEO PREFLIGHT", "phase=\(self.transportPhase) ready=\(self.preflightReady ? 1 : 0) tcp=\(self.connected ? 1 : 0) bytes=\(self.receivedBytes) byteAge=\(byteAge) frames=\(self.frameCount) frameAge=\(frameAge) filter={\(self.sanitizerSummary)} decoder={\(self.decoderSummary)} relay={\(self.adapterCacheSummary)}")
+                }
 
                 if self.lastNetworkHeartbeatAt.map({ now.timeIntervalSince($0) >= 15.0 }) ?? true {
                     self.lastNetworkHeartbeatAt = now
-                    self.logNetworkContext(reason: "15s dedicated MainVideo heartbeat")
-                    await self.refreshAdapterRelayStatus(reason: "15s MainVideo heartbeat")
+                    self.logNetworkContext(reason: "15s live-IDR MainVideo heartbeat")
+                    _ = await self.refreshAdapterRelayStatus(reason: "15s MainVideo heartbeat")
                 }
 
-                guard self.connected, let connectedAt = self.connectedAt else {
-                    await self.ensureAdapterRelay(reason: "TCP disconnected watchdog")
+                guard self.worker != nil else {
+                    if self.bootstrapTask == nil || self.bootstrapTask?.isCancelled == true {
+                        self.beginRelayBootstrapLoop(reason: "watchdog worker missing")
+                    }
                     continue
                 }
 
-                let referenceFrameTime = self.lastDecodedFrameAt ?? connectedAt
-                let frameAge = now.timeIntervalSince(referenceFrameTime)
+                guard self.connected, let connectedAt = self.connectedAt else {
+                    _ = await self.ensureAdapterRelay(reason: "TCP disconnected watchdog")
+                    continue
+                }
+
+                let connectedAge = now.timeIntervalSince(connectedAt)
+                let frameAge = self.lastDecodedFrameAt.map { now.timeIntervalSince($0) } ?? connectedAge
                 let byteAge = self.lastReceivedBytesAt.map { now.timeIntervalSince($0) } ?? .infinity
                 let bytesAreFresh = byteAge < 2.0
 
+                // While the v8.23 relay is waiting for the next *live* IDR, silence is
+                // expected. Do not reconnect and restart the wait window. Status/logs
+                // make the wait visible to the parked preflight instead.
+                if self.transportPhase == "WAITING_LIVE_IDR", self.receivedBytes <= 8 {
+                    if connectedAge >= self.initialIDRWaitDiagnosticInterval,
+                       self.lastDecoderStaleDiagnosticAt.map({ now.timeIntervalSince($0) >= self.initialIDRWaitDiagnosticInterval }) ?? true {
+                        self.lastDecoderStaleDiagnosticAt = now
+                        self.logger.log("U2W VIDEO WATCH", "TCP healthy but relay still waiting for next live IDR connectedAge=\(String(format: "%.1f", connectedAge))s; no reconnect performed")
+                        _ = await self.refreshAdapterRelayStatus(reason: "waiting live IDR")
+                    }
+                    continue
+                }
+
+                // If H.264 bytes are continuing but decoded frames are stale, preserve
+                // transport + decoder history. Reconnecting here was one of the old
+                // failure amplifiers because it discarded reference-frame continuity.
                 if bytesAreFresh, frameAge >= self.decoderStaleFrameInterval {
                     let mayLog = self.lastDecoderStaleDiagnosticAt.map { now.timeIntervalSince($0) >= 20.0 } ?? true
                     if mayLog {
                         self.lastDecoderStaleDiagnosticAt = now
-                        self.status = "H.264 relay active — decoder waiting for a good picture"
-                        self.logger.log("U2W VIDEO WATCH", "framed NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s filter={\(self.sanitizerSummary)}")
-                    }
-                    if frameAge >= self.decoderReseedInterval {
-                        let mayReseed = self.lastDecoderReseedAt.map { now.timeIntervalSince($0) >= self.decoderReseedCooldown } ?? true
-                        if mayReseed {
-                            self.lastDecoderReseedAt = now
-                            self.logger.log("U2W VIDEO WATCH", "decoder stale with fresh framed NALs; reconnecting to in-memory decoder-safe GOP")
-                            self.worker?.reconnectAtLiveEdge(reason: "decoder stale >=45s")
-                        }
+                        self.status = "H.264 live stream active — decoder recovery pending"
+                        self.logger.log("U2W VIDEO WATCH", "NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; PRESERVE transport/decoder, no reconnect filter={\(self.sanitizerSummary)}")
                     }
                     continue
                 }
 
-                guard !bytesAreFresh, byteAge >= self.sourceStaleInterval else { continue }
+                guard self.receivedBytes > 8, !bytesAreFresh, byteAge >= self.sourceStaleInterval else { continue }
                 let mayReconnect = self.lastSourceReconnectAt.map { now.timeIntervalSince($0) >= self.sourceReconnectCooldown } ?? true
                 guard mayReconnect else { continue }
                 self.lastSourceReconnectAt = now
                 self.connected = false
                 self.connectedAt = nil
-                self.status = "U2W H.264 relay silent — self-healing…"
-                self.logger.log("U2W VIDEO WATCH", "TCP source silent byteAge=\(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s; ensure daemon + reconnect")
-                await self.ensureAdapterRelay(reason: "source silent")
+                self.status = "U2W H.264 relay silent — reconnecting at next live IDR…"
+                self.logger.log("U2W VIDEO WATCH", "TCP source silent byteAge=\(byteAge.isFinite ? String(format: "%.1f", byteAge) : "unknown")s; verify daemon then reconnect")
+                _ = await self.ensureAdapterRelay(reason: "source silent")
                 self.worker?.reconnectAtLiveEdge(reason: "source silent >=15s")
             }
         }
@@ -289,6 +382,8 @@ final class U2WMainVideoClient {
         worker?.stop(); worker = nil
         workerGeneration &+= 1
         connected = false
+        transportPhase = "IDLE"
+        lastFrameAgeSeconds = nil
         latestFrame = nil
         connectedAt = nil
         lastDecodedFrameAt = nil
@@ -310,7 +405,7 @@ final class U2WMainVideoClient {
         lastSourceReconnectAt = Date()
         status = "Reconnecting dedicated U2W H.264 relay…"
         logger.log("U2W VIDEO", "Manual TCP reconnect reason=\(reason)")
-        Task { @MainActor [weak self] in await self?.ensureAdapterRelay(reason: "manual reconnect") }
+        Task { @MainActor [weak self] in _ = await self?.ensureAdapterRelay(reason: "manual reconnect") }
         worker?.reconnectAtLiveEdge(reason: "manual / \(reason)")
     }
 
@@ -394,21 +489,25 @@ private final class U2WMainVideoTCPWorker {
     let host: NWEndpoint.Host
     let port: NWEndpoint.Port
     var onStatus: ((String, Bool) -> Void)?
+    var onPhase: ((String) -> Void)?
     var onBytes: ((Int) -> Void)?
     var onFrame: ((UIImage) -> Void)?
     var onDiagnostic: ((String) -> Void)?
     var onSanitizerStats: ((H264MainVideoSanitizerStats) -> Void)?
+    var onDecoderState: ((String) -> Void)?
 
     private let sanitizer = H264MainVideoSanitizer()
     private let decoder = H264VideoToolboxDecoder()
     private let queue = DispatchQueue(label: "HUD.U2WMainVideo.TCP15332", qos: .userInitiated)
     private var connection: NWConnection?
     private var running = false
-    private var buffer = Data()
-    private var handshakeComplete = false
     private var reconnectWorkItem: DispatchWorkItem?
+    private var waitingDeadlineWorkItem: DispatchWorkItem?
     private var lastStatsEmitUptime: TimeInterval = 0
-    private let magic = Data("U2WH2641".utf8)
+    private var connectionGeneration = 0
+    private var firstAcceptedIDRForConnection = false
+    private let magic = Data("U2WH2642".utf8)
+    private let maximumNALBytes = 512 * 1024
 
     init(host: String, port: UInt16) {
         self.host = NWEndpoint.Host(host)
@@ -428,117 +527,182 @@ private final class U2WMainVideoTCPWorker {
     func stop() {
         running = false
         reconnectWorkItem?.cancel(); reconnectWorkItem = nil
+        waitingDeadlineWorkItem?.cancel(); waitingDeadlineWorkItem = nil
         connection?.stateUpdateHandler = nil
         connection?.cancel(); connection = nil
-        buffer.removeAll(keepingCapacity: false)
-        handshakeComplete = false
         sanitizer.reset()
         decoder.reset()
+        onPhase?("IDLE")
     }
 
     func reconnectAtLiveEdge(reason: String) {
         queue.async { [weak self] in
             guard let self, self.running else { return }
-            self.onDiagnostic?("TCP relay reconnect requested reason=\(reason)")
-            self.connection?.stateUpdateHandler = nil
-            self.connection?.cancel()
-            self.connection = nil
-            self.buffer.removeAll(keepingCapacity: true)
-            self.handshakeComplete = false
+            self.onDiagnostic?("TCP live-edge reconnect requested reason=\(reason)")
+            self.closeCurrentConnection()
             self.sanitizer.prepareForTransportReconnect()
+            // Preserve the last-known-good VT session, but require the next live IDR
+            // before VCL decode resumes after a transport boundary.
             self.decoder.prepareForStreamRestart()
-            self.openConnection()
+            self.scheduleReconnect(reason: reason, delay: 0.25)
         }
     }
 
     private func openConnection() {
         guard running else { return }
         reconnectWorkItem?.cancel(); reconnectWorkItem = nil
-        buffer.removeAll(keepingCapacity: true)
-        handshakeComplete = false
+        waitingDeadlineWorkItem?.cancel(); waitingDeadlineWorkItem = nil
         sanitizer.prepareForTransportReconnect()
         decoder.prepareForStreamRestart()
+        firstAcceptedIDRForConnection = false
+        connectionGeneration &+= 1
+        let generation = connectionGeneration
         let connection = NWConnection(host: host, port: port, using: .tcp)
         self.connection = connection
+        onPhase?("TCP_PREPARING")
+        onStatus?("Opening U2W v8.23 live-IDR TCP/15332…", false)
+        onDiagnostic?("TCP state generation=\(generation) OPEN endpoint=192.168.50.2:15332")
+
         connection.stateUpdateHandler = { [weak self, weak connection] state in
-            guard let self, let connection, self.running, self.connection === connection else { return }
+            guard let self, let connection, self.running, self.connection === connection, self.connectionGeneration == generation else { return }
             switch state {
+            case .setup:
+                self.onPhase?("TCP_PREPARING")
+                self.onDiagnostic?("TCP state generation=\(generation) SETUP")
+            case .preparing:
+                self.onPhase?("TCP_PREPARING")
+                self.onDiagnostic?("TCP state generation=\(generation) PREPARING")
+            case .waiting(let error):
+                self.onPhase?("TCP_WAITING")
+                self.onStatus?("U2W H.264 TCP waiting: \(error.localizedDescription)", false)
+                self.onDiagnostic?("TCP state generation=\(generation) WAITING error=\(error.localizedDescription); 4s retry deadline armed")
+                self.armWaitingDeadline(connection: connection, generation: generation)
             case .ready:
-                self.onDiagnostic?("TCP MainVideo connected relay=v8.22 endpoint=192.168.50.2:15332")
-                self.onStatus?("U2W H.264 relay connected • TCP/15332", true)
-                self.receiveNext(connection)
+                self.waitingDeadlineWorkItem?.cancel(); self.waitingDeadlineWorkItem = nil
+                self.onPhase?("WAITING_HANDSHAKE")
+                self.onStatus?("U2W H.264 TCP connected • checking v8.23 handshake", true)
+                self.onDiagnostic?("TCP state generation=\(generation) READY")
+                self.receiveHandshake(connection, generation: generation)
             case .failed(let error):
+                self.onPhase?("RECONNECT_DELAY")
                 self.onStatus?("U2W H.264 TCP failed: \(error.localizedDescription)", false)
-                self.scheduleReconnect()
+                self.onDiagnostic?("TCP state generation=\(generation) FAILED error=\(error.localizedDescription)")
+                self.scheduleReconnect(reason: "NWConnection failed", delay: 1.0)
             case .cancelled:
-                if self.running { self.scheduleReconnect() }
-            default:
-                break
+                self.onDiagnostic?("TCP state generation=\(generation) CANCELLED")
+                if self.running { self.scheduleReconnect(reason: "NWConnection cancelled", delay: 1.0) }
+            @unknown default:
+                self.onDiagnostic?("TCP state generation=\(generation) UNKNOWN")
             }
         }
-        onStatus?("Opening dedicated U2W H.264 TCP/15332…", false)
         connection.start(queue: queue)
     }
 
-    private func receiveNext(_ connection: NWConnection) {
-        guard running, self.connection === connection else { return }
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 128 * 1024) { [weak self, weak connection] data, _, complete, error in
-            guard let self, let connection, self.running, self.connection === connection else { return }
-            if let data, !data.isEmpty {
-                self.onBytes?(data.count)
-                self.buffer.append(data)
-                if !self.consumeBuffer() { return }
-            }
-            if complete || error != nil {
-                self.onStatus?("U2W H.264 TCP ended\(error.map { ": \($0.localizedDescription)" } ?? "")", false)
-                self.scheduleReconnect()
+    private func armWaitingDeadline(connection: NWConnection, generation: Int) {
+        waitingDeadlineWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self, weak connection] in
+            guard let self, let connection, self.running, self.connection === connection, self.connectionGeneration == generation else { return }
+            self.onDiagnostic?("TCP WAITING deadline expired generation=\(generation); recreating NWConnection")
+            self.scheduleReconnect(reason: "TCP waiting >4s", delay: 0.5)
+        }
+        waitingDeadlineWorkItem = item
+        queue.asyncAfter(deadline: .now() + 4.0, execute: item)
+    }
+
+    private func receiveHandshake(_ connection: NWConnection, generation: Int) {
+        receiveExactly(magic.count, from: connection, generation: generation) { [weak self] data in
+            guard let self else { return }
+            guard data == self.magic else {
+                let text = String(data: data, encoding: .ascii) ?? data.map { String(format: "%02X", $0) }.joined()
+                self.onDiagnostic?("Invalid TCP relay magic={\(text)} expected=U2WH2642; reconnecting")
+                self.scheduleReconnect(reason: "invalid relay magic", delay: 1.0)
                 return
             }
-            self.receiveNext(connection)
+            self.onPhase?("WAITING_LIVE_IDR")
+            self.onStatus?("U2W v8.23 connected • waiting for next live IDR", true)
+            self.onDiagnostic?("TCP relay handshake U2WH2642 accepted; historical GOP replay=0; waiting next live IDR")
+            self.receiveLength(connection, generation: generation)
         }
     }
 
-    @discardableResult
-    private func consumeBuffer() -> Bool {
-        if !handshakeComplete {
-            guard buffer.count >= magic.count else { return true }
-            guard buffer.prefix(magic.count) == magic else {
-                onDiagnostic?("Invalid TCP relay magic; closing transport")
-                connection?.cancel()
-                scheduleReconnect()
-                return false
+    private func receiveLength(_ connection: NWConnection, generation: Int) {
+        receiveExactly(4, from: connection, generation: generation) { [weak self] header in
+            guard let self else { return }
+            let length = header.reduce(0) { ($0 << 8) | Int($1) }
+            guard length > 0, length <= self.maximumNALBytes else {
+                self.onDiagnostic?("Invalid framed NAL length=\(length); reconnecting at next live IDR")
+                self.scheduleReconnect(reason: "invalid NAL length", delay: 1.0)
+                return
             }
-            buffer.removeFirst(magic.count)
-            handshakeComplete = true
-            onDiagnostic?("TCP relay handshake U2WH2641 accepted")
+            self.receiveNAL(length: length, connection: connection, generation: generation)
         }
+    }
 
-        while buffer.count >= 4 {
-            let length = buffer.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
-            guard length > 0, length <= 512 * 1024 else {
-                onDiagnostic?("Invalid framed NAL length=\(length); reconnecting")
-                connection?.cancel()
-                scheduleReconnect()
-                return false
-            }
-            guard buffer.count >= 4 + length else { break }
-            let nal = Data(buffer[4..<(4 + length)])
-            buffer.removeFirst(4 + length)
-            if let accepted = sanitizer.process(nal) {
-                decoder.consume(accepted.data)
+    private func receiveNAL(length: Int, connection: NWConnection, generation: Int) {
+        receiveExactly(length, from: connection, generation: generation) { [weak self] nal in
+            guard let self else { return }
+            if let accepted = self.sanitizer.process(nal) {
+                self.decoder.consume(accepted.data)
                 switch accepted.kind {
-                case .sps, .pps:
-                    onDiagnostic?("iPhone filter accepted \(accepted.kind.rawValue) • \(sanitizer.stats.summary)")
+                case .sps:
+                    self.onDiagnostic?("iPhone filter accepted SPS • \(self.sanitizer.stats.summary)")
+                case .pps:
+                    self.onDiagnostic?("iPhone filter accepted PPS • \(self.sanitizer.stats.summary)")
                 case .idr:
-                    let count = sanitizer.stats.acceptedIDR
-                    if count <= 3 || count % 10 == 0 { onDiagnostic?("iPhone filter accepted IDR #\(count) • \(sanitizer.stats.summary)") }
+                    let count = self.sanitizer.stats.acceptedIDR
+                    if !self.firstAcceptedIDRForConnection {
+                        self.firstAcceptedIDRForConnection = true
+                        self.onPhase?("DECODER_BOOTSTRAP")
+                        self.onStatus?("Fresh live IDR received • starting decoder…", true)
+                        self.onDiagnostic?("FIRST LIVE IDR accepted for TCP generation=\(generation) • \(self.sanitizer.stats.summary)")
+                    } else if count <= 3 || count % 10 == 0 {
+                        self.onDiagnostic?("iPhone filter accepted IDR #\(count) • \(self.sanitizer.stats.summary)")
+                    }
                 case .slice:
-                    break
+                    let count = self.sanitizer.stats.acceptedSlices
+                    if count > 0, count % 1000 == 0 {
+                        self.onDiagnostic?("iPhone filter live slice milestone=\(count) • \(self.sanitizer.stats.summary)")
+                    }
                 }
             }
-            emitSanitizerStats()
+            self.emitSanitizerStats()
+            self.receiveLength(connection, generation: generation)
         }
-        return true
+    }
+
+    private func receiveExactly(
+        _ count: Int,
+        from connection: NWConnection,
+        generation: Int,
+        accumulated: Data = Data(),
+        completion: @escaping (Data) -> Void
+    ) {
+        guard running, self.connection === connection, self.connectionGeneration == generation else { return }
+        let remaining = count - accumulated.count
+        guard remaining > 0 else { completion(accumulated); return }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: remaining) { [weak self, weak connection] data, _, complete, error in
+            guard let self, let connection, self.running, self.connection === connection, self.connectionGeneration == generation else { return }
+            var next = accumulated
+            if let data, !data.isEmpty {
+                self.onBytes?(data.count)
+                next.append(data)
+            }
+            if let error {
+                self.onDiagnostic?("TCP read failed generation=\(generation) wanted=\(count) have=\(next.count) error=\(error.localizedDescription)")
+                self.scheduleReconnect(reason: "TCP read error", delay: 1.0)
+                return
+            }
+            if complete, next.count < count {
+                self.onDiagnostic?("TCP read EOF generation=\(generation) wanted=\(count) have=\(next.count)")
+                self.scheduleReconnect(reason: "TCP EOF", delay: 1.0)
+                return
+            }
+            if next.count == count {
+                completion(next)
+            } else {
+                self.receiveExactly(count, from: connection, generation: generation, accumulated: next, completion: completion)
+            }
+        }
     }
 
     private func emitSanitizerStats(force: Bool = false) {
@@ -546,21 +710,31 @@ private final class U2WMainVideoTCPWorker {
         guard force || lastStatsEmitUptime == 0 || now - lastStatsEmitUptime >= 1.0 else { return }
         lastStatsEmitUptime = now
         onSanitizerStats?(sanitizer.stats)
+        onDecoderState?(decoder.stateSummary)
     }
 
-    private func scheduleReconnect() {
-        guard running else { return }
+    private func closeCurrentConnection() {
+        waitingDeadlineWorkItem?.cancel(); waitingDeadlineWorkItem = nil
         connection?.stateUpdateHandler = nil
-        connection?.cancel(); connection = nil
+        connection?.cancel()
+        connection = nil
         decoder.discardPendingAccessUnit()
         emitSanitizerStats(force: true)
+    }
+
+    private func scheduleReconnect(reason: String, delay: TimeInterval = 1.0) {
+        guard running else { return }
+        closeCurrentConnection()
         reconnectWorkItem?.cancel()
+        onPhase?("RECONNECT_DELAY")
+        onStatus?("U2W H.264 reconnecting at live edge…", false)
         let item = DispatchWorkItem { [weak self] in
             guard let self, self.running else { return }
+            self.onDiagnostic?("TCP reconnect firing reason=\(reason) delay=\(String(format: "%.2f", delay))s")
             self.openConnection()
         }
         reconnectWorkItem = item
-        queue.asyncAfter(deadline: .now() + 2.0, execute: item)
+        queue.asyncAfter(deadline: .now() + delay, execute: item)
     }
 }
 
@@ -670,6 +844,8 @@ private final class H264VideoToolboxDecoder {
     private var totalDecodeErrors = 0
     private var consecutiveDecodeErrors = 0
     private let consecutiveErrorRebuildThreshold = 5
+    private var rebuildAtNextIDR = false
+    private var lastDecodeStatus: OSStatus = noErr
 
     private let publishLock = NSLock()
     private var lastPublishedUptime: TimeInterval = 0
@@ -691,6 +867,8 @@ private final class H264VideoToolboxDecoder {
         submittedAccessUnits = 0
         totalDecodeErrors = 0
         consecutiveDecodeErrors = 0
+        rebuildAtNextIDR = false
+        lastDecodeStatus = noErr
         publishLock.lock()
         lastPublishedUptime = 0
         publishLock.unlock()
@@ -707,6 +885,13 @@ private final class H264VideoToolboxDecoder {
         submittedAccessUnits = 0
         totalDecodeErrors = 0
         consecutiveDecodeErrors = 0
+        rebuildAtNextIDR = false
+        lastDecodeStatus = noErr
+    }
+
+    var stateSummary: String {
+        let session = decompressionSession == nil ? "none" : "ready"
+        return "session=\(session) • needsIDR=\(needsIDR ? 1 : 0) • rebuildOnIDR=\(rebuildAtNextIDR ? 1 : 0) • AU=\(submittedAccessUnits) • errors=\(totalDecodeErrors)/\(consecutiveDecodeErrors) • lastStatus=\(lastDecodeStatus)"
     }
 
     func discardPendingAccessUnit() {
@@ -922,8 +1107,21 @@ private final class H264VideoToolboxDecoder {
     }
 
     private func decodeAccessUnit(_ nals: [Data]) {
-        guard let decompressionSession, let formatDescription else { return }
         let hasIDR = nals.contains { ($0.first ?? 0) & 0x1F == 5 }
+
+        // Never destroy a decoder that may still recover while only P-frames are
+        // available. Five consecutive errors merely arm a rebuild. The actual
+        // VideoToolbox session swap happens atomically when a validated *future*
+        // IDR is already in hand, so recovery can never create an IDR drought.
+        if hasIDR, rebuildAtNextIDR, let activeSPS, let activePPS {
+            pendingSPS = activeSPS
+            pendingPPS = activePPS
+            onDiagnostic?("Fresh IDR arrived with rebuild armed; atomically rebuilding decoder now")
+            promoteValidParameterSetPairIfPossible()
+            rebuildAtNextIDR = false
+        }
+
+        guard let decompressionSession, let formatDescription else { return }
         if needsIDR {
             guard hasIDR else { return }
             needsIDR = false
@@ -996,6 +1194,7 @@ private final class H264VideoToolboxDecoder {
             frameRefcon: nil,
             infoFlagsOut: &infoFlags
         )
+        lastDecodeStatus = decodeStatus
 
         if decodeStatus != noErr {
             totalDecodeErrors += 1
@@ -1011,22 +1210,24 @@ private final class H264VideoToolboxDecoder {
             )
 
             if consecutiveDecodeErrors >= consecutiveErrorRebuildThreshold,
-               let activeSPS, let activePPS {
-                // Only repeated consecutive failures are treated as a poisoned
-                // VideoToolbox session. Rebuild from the last-known-good parameter
-                // sets; the outer watchdog will request one validated live-edge GOP
-                // if an IDR does not arrive naturally after the rebuild.
-                pendingSPS = activeSPS
-                pendingPPS = activePPS
-                consecutiveDecodeErrors = 0
+               activeSPS != nil, activePPS != nil, !rebuildAtNextIDR {
+                // Do NOT rebuild here. During the previous field failure this was
+                // exactly how a recoverable stream became permanently frozen: the
+                // session was destroyed while no new IDR was available. Arm the
+                // rebuild and keep feeding the existing session until either it
+                // recovers or a future validated IDR provides a safe swap point.
+                rebuildAtNextIDR = true
                 onDiagnostic?(
-                    "Rebuilding decoder after \(consecutiveErrorRebuildThreshold) consecutive decode errors; fresh IDR required only after real session rebuild"
+                    "Decoder rebuild ARMED after \(consecutiveErrorRebuildThreshold) consecutive errors; existing session preserved until future IDR"
                 )
-                promoteValidParameterSetPairIfPossible()
             }
         } else {
             if consecutiveDecodeErrors > 0 {
                 onDiagnostic?("Decoder recovered after \(consecutiveDecodeErrors) consecutive error(s) without IDR reset")
+            }
+            if rebuildAtNextIDR, !hasIDR {
+                rebuildAtNextIDR = false
+                onDiagnostic?("Decoder recovered on existing reference chain before next IDR; armed rebuild cancelled")
             }
             consecutiveDecodeErrors = 0
             if submittedAccessUnits == 1 || submittedAccessUnits % 300 == 0 {

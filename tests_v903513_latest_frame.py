@@ -22,13 +22,13 @@ def check(name, condition):
 check("5fps relay cadence frozen", ".milliseconds(200)" in app)
 check("content-blind crop wording", "Deliberately content-blind" in canvas and "Live CarPlay crop" in ui)
 check("no OCR semantic gate", "ScreenCaptureKit" not in client and "H264MainVideoSanitizer" in client)
-check("first-frame watchdog", "lastDecodedFrameAt ?? connectedAt" in client)
+check("frame-age watchdog", "lastDecodedFrameAt.map" in client and "frameAge" in client)
 check("20s decode freshness", "decoderStaleFrameInterval: TimeInterval = 20.0" in client)
-check("60s source-silence reconnect", "sourceStaleInterval: TimeInterval = 60.0" in client and "sourceReconnectCooldown: TimeInterval = 60.0" in client)
+check("bounded source-silence reconnect", "sourceStaleInterval: TimeInterval = 15.0" in client and "sourceReconnectCooldown: TimeInterval = 15.0" in client)
 check("access unit assembly", "pendingAccessUnit" in client and "firstMbInSliceIsZero" in client)
 check("synchronous VideoToolbox", "VTDecodeFrameFlags(rawValue: 0)" in client and "enableAsynchronousDecompression" not in client)
 check("fresh IDR after reset", "needsIDR = true" in client and "guard hasIDR else { return }" in client)
-check("single frame mailbox", "Single-frame mailbox" in client and "self.latestFrame = image" in client)
+check("single latest-frame mailbox", "self.latestFrame = image" in client and "minimumPublishInterval" in client)
 check("right vertical spacing persistence", all(k in settings for k in [
     "streetToManeuverSpacing", "maneuverToLaneSpacing", "laneToETASpacing"
 ]))

@@ -17,6 +17,32 @@ struct HudMapModeSnapshot: Equatable {
     var routeRoads: [String]
     var hasLiveRoute: Bool
 
+
+    /// Always-populated styling sample used only inside the customization panel.
+    /// It deliberately does not mirror the live HUD preview above the controls: the
+    /// latter remains source-faithful and blank when navigation is inactive.
+    static let customizationDemo = HudMapModeSnapshot(
+        speedMph: 32,
+        speedLimitMph: 25,
+        currentRoad: "Martin Luther King Jr Dr",
+        turningStreet: "Sweetbriar Dr",
+        maneuver: .right,
+        maneuverText: "Turn right",
+        distanceText: "0.4 mi",
+        destination: "Demo destination",
+        etaText: "6:20 PM",
+        timeLeftText: "7 min",
+        laneValues: [-4, 1, 3, -2],
+        routeRoads: [
+            "Martin Luther King Jr Dr",
+            "Sweetbriar Dr",
+            "Lansdowne Dr",
+            "Falls Bridge",
+            "Ridge Ave"
+        ],
+        hasLiveRoute: true
+    )
+
     static let previewFallback = HudMapModeSnapshot(
         speedMph: 37,
         speedLimitMph: 45,

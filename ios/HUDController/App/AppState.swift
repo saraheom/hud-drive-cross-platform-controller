@@ -288,7 +288,7 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            // v90.35.3.21: keep the dedicated TCP/15332 MainVideo decoder warm
+            // v90.35.3.22: keep the dedicated TCP/15332 MainVideo decoder warm
             // from HUD transport-ready onward.  This normally gives VideoToolbox
             // SPS/PPS/IDR state before navigation starts and removes any need to
             // bootstrap a long-lived Boa CGI in the middle of a route.

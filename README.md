@@ -1,3 +1,22 @@
+# HUD Controller v90.35.3.22 — Live-IDR MainVideo + parked preflight + lane designer + ambient NIGHT latch
+
+This release pairs the iOS app with **U2W v8.23** and is based on the 2026-09-18 evening field evidence. The stable v8.11 capture continued receiving valid CarPlay MainVideo, while v8.22 never completed a cached-GOP bootstrap and the app sessions terminated immediately after the late relay handshakes. v90.35.3.22 therefore keeps the proven capture/VideoToolbox path but removes the fragile startup/history behavior around it.
+
+Main changes:
+- MainVideo TCP opens only after v8.23 is confirmed running; `.waiting` connections are recreated automatically.
+- No historical GOP replay. A new client waits for a fresh **live IDR**, receives SPS/PPS/IDR, then follows only naturally arriving live NALs.
+- Exact bounded framed reads on iPhone; no giant receive/history burst.
+- A good VideoToolbox session is preserved through isolated/repeated errors; a rebuild is armed and performed only when a future validated IDR is already available.
+- `MAINVIDEO PREFLIGHT` logs and a parked UI gate expose every stage from relay → TCP → H.264 → decoder → decoded frames.
+- U2W restores the known-good v8.15.1 final HUD MJPEG sender.
+- Lane-guidance head size and body length are now independently adjustable.
+- Expanded Map Mode customization always has a non-live demo scene, while the top preview remains the actual HUD-equivalent output.
+- Ambient NIGHT state survives transient Center/BLEDOM BLE transport disconnects; DAY requires sustained Center absence plus Dashboard+Center BOTH-OFF corroboration.
+
+See `V90_35_3_22_BUILD_VERIFY.txt`, `V90_35_3_22_RELEASE.md`, and `u2w/v8.23_LiveIDRRelay/README.md`.
+
+---
+
 # HUD Controller v90.35.3.21 — Dedicated H.264 relay + HUD cast watchdog
 
 This release pairs the iOS app with **U2W v8.22**. It retires the v8.21 file-backed GOP/long-lived MainVideo CGI path after the 2026-09-18 drive showed decoder corruption around cache rewrites, Boa/CGI degradation, and a post-CarPlay-restart cache daemon that did not recover.

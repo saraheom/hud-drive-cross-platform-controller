@@ -17,7 +17,9 @@ def test_ios_watchdog_is_less_aggressive_and_tracks_bytes():
     assert 'onBytes' in VIDEO
     assert 'receivedBytes' in VIDEO
     assert 'CONTINUE without IDR reset' in VIDEO
-    assert 'reconnecting to in-memory decoder-safe GOP' in VIDEO
+    assert 'historical GOP replay=0' in VIDEO
+    assert 'WAITING_LIVE_IDR' in VIDEO
+    assert 'PRESERVE transport/decoder, no reconnect' in VIDEO
 
 def test_stock_hud_obd_log_protocol_is_exposed():
     assert 'requestOBDDiagnosticLogs' in CMD

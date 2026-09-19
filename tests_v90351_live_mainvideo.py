@@ -15,15 +15,15 @@ def check(name, cond):
     if not cond: raise AssertionError(name)
     checks.append(name)
 
-check('u2w endpoint', 'u2wvideo-main-stream.cgi' in client and '192.168.50.2' in client)
+check('u2w endpoint', '192.168.50.2' in client and '15332' in client and 'U2WH2642' in client)
 check('videotoolbox decoder', 'VideoToolbox' in client and 'CMVideoFormatDescriptionCreateFromH264ParameterSets' in client and 'VTDecompressionSessionDecodeFrame' in client)
 check('no OCR/screenshare imports in main video client', 'import ScreenCaptureKit' not in client and 'GoogleMapsOCRParser' not in client)
 check('source image enters canvas and renderer', 'sourceMapImage' in canvas and 'sourceMapImage' in renderer)
 check('follow/dark/light real-pixel filtering', 'case .followSource' in canvas and '.brightness(-0.30)' in canvas and '.brightness(0.08)' in canvas)
 check('crop persistence', all(x in settings for x in ['sourceMapZoom','sourceMapOffsetX','sourceMapOffsetY']))
 check('live status UI', 'LabeledContent("MainVideo"' in ui and 'state.mainVideo.frameCount' in ui and 'Reconnect U2W video' in ui)
-check('freeze before wifi handoff', app.index('mapModeFrozenSourceImage = mainVideo.latestFrame') < app.index('mainVideo.stop(reason: "Map Mode HUD-WiFi handoff') if 'Map Mode HUD-WiFi handoff' in app else app.index('mapModeFrozenSourceImage = mainVideo.latestFrame') < app.index('mainVideo.stop(reason: "Map Mode HUD-Wi-Fi handoff'))
-check('legacy map mode does not restart background video', 'mainVideo.stop(reason: "legacy Map Mode disabled — MainVideo remains off outside live U2W Map Mode")' in app)
+check('freeze before legacy wifi handoff', app.index('mapModeFrozenSourceImage = mainVideo.latestFrame') < app.index('mainVideo.stop(reason: "Map Mode HUD-Wi-Fi handoff'))
+check('live map mode keeps background predecode warm', 'live U2W Map Mode disabled — keep continuous predecode alive' in app)
 check('bundled u2w v811 image', (R/'u2w/v8.11_MainVideoLive/U2W_Update_v8.11_MainVideoLive.img').exists())
 
 print(f'v90.35.1 live-mainvideo static checks passed: {len(checks)}')
