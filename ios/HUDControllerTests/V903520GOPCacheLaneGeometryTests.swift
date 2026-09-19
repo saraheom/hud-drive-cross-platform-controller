@@ -17,7 +17,10 @@ final class V903520GOPCacheLaneGeometryTests: XCTestCase {
 
     func testLaneGeometryIsShorterButLargeManeuverArrowRemainsIndependent() throws {
         let canvas = try source("HUDController/MapMode/HudMapModeCanvas.swift")
-        XCTAssertTrue(canvas.contains("let bottom = h * 0.82"))
+        // v90.35.3.22 made shaft/body length user-adjustable. Guard the new
+        // dynamic geometry instead of the retired fixed 0.82 bottom point.
+        XCTAssertTrue(canvas.contains("let body = min(1.0, max(0.55, bodyLength))"))
+        XCTAssertTrue(canvas.contains("let bottom = h * (0.30 + 0.52 * body)"))
         XCTAssertTrue(canvas.contains("let straightApexY = h * 0.12"))
         XCTAssertTrue(canvas.contains("func turnOnlyCombined(right: Bool)"))
         XCTAssertTrue(canvas.contains("Image(systemName: snapshot.maneuver.symbol)"))
