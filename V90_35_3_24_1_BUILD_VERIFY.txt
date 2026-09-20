@@ -1,0 +1,21 @@
+v90.35.3.24.1 CI alignment verification
+
+Input CI run:
+- App build step completed successfully.
+- Unit test run executed 317 tests.
+- Four assertion failures were reported, all from stale source-string expectations in three ambient-light regression tests:
+  * V9010AmbientPowerEpochReliabilityTests.swift line 36
+  * V903522LiveIDRLaneAmbientTests.swift line 50
+  * V903523DecoderLaneAmbientTests.swift lines 51-52
+
+Correction:
+- Updated only those three test files to assert the v90.35.3.24 Center-only guarded day/night contract.
+- Added V90_35_3_24_1_CI_ALIGNMENT.md and this verification note.
+
+Production integrity (unchanged from v90.35.3.24 ZIP):
+03b5544a4ca05084ba53a7d177c402ad326e984b78c88e18f245c921c1c494b5  ios/HUDController/MapMode/U2WMainVideoClient.swift
+b588d19bd9f9acd208f75e681147eeeaf9da7a6c6e6f08f4d8e74927e8146ac4  ios/HUDController/Vehicle/AmbientLightMonitor.swift
+ab7806bcf3089ab5487dff0b303e434ef5f8049be6adb8b0028e2c61e0eabb2f  u2w/v8.24_RecentIDRRelay/U2W_Update_v8.24_RecentIDRRelay.img
+
+Local source-contract checks: 10/10 PASS.
+No production behavior or firmware bytes changed in v90.35.3.24.1.

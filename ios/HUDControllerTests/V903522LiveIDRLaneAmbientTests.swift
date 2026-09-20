@@ -47,7 +47,8 @@ final class V903522LiveIDRLaneAmbientTests: XCTestCase {
         let ambient = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
         XCTAssertTrue(ui.contains("snapshot: .customizationDemo"))
         XCTAssertTrue(ui.contains("Demo • not live HUD output"))
-        XCTAssertTrue(ambient.contains("Center BLE transport disconnected; preserving confirmed NIGHT"))
+        XCTAssertTrue(ambient.contains("Center BLE transport disconnected; preserving NIGHT briefly while Center-only"))
+        XCTAssertTrue(ambient.contains("Center-only DAY guard armed"))
         let disconnect = ambient.components(separatedBy: "didDisconnectPeripheral peripheral: CBPeripheral")[1]
             .components(separatedBy: "// MARK: - CBPeripheralDelegate")[0]
         XCTAssertFalse(disconnect.contains(#"markAbsent(reason: "persistent BLE disconnect")"#))

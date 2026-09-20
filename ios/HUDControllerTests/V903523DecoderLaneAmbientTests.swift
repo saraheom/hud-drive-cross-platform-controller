@@ -48,8 +48,11 @@ final class V903523DecoderLaneAmbientTests: XCTestCase {
         XCTAssertTrue(src.contains("centerDayGuardSeconds: TimeInterval = 1.0"))
         XCTAssertTrue(src.contains("Center-only DAY guard armed"))
         XCTAssertTrue(src.contains("Dashboard not required"))
-        XCTAssertTrue(src.contains("stable Dashboard+Center bothOff consensus"))
-        XCTAssertTrue(src.contains("single-device transport loss does not change day/night"))
+        XCTAssertTrue(src.contains("Dashboard+Center diagnostic consensus"))
+        XCTAssertTrue(src.contains("Center remained absent for"))
+        XCTAssertTrue(src.contains("through guard → DAY (Dashboard not required)"))
+        XCTAssertTrue(src.contains("Center evidence returned during DAY guard"))
+        XCTAssertFalse(src.contains("stable Dashboard+Center bothOff consensus"))
     }
     func testMapModeSTAJoinHasBoundedAutomaticRecovery() throws {
         let src = try source("HUDController/App/AppState.swift")
