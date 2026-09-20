@@ -45,16 +45,16 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
 
         let transportReady = app.components(separatedBy: "bluetooth.onTransportReady =")[1]
             .components(separatedBy: "bluetooth.onHUDSessionReset =")[0]
-        XCTAssertTrue(transportReady.contains(#"mainVideo.start(reason: "HUD BLE transport ready — continuous predecode")"#))
+        XCTAssertTrue(transportReady.contains(#"mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")"#))
         XCTAssertTrue(app.contains(#"mainVideo.start(reason: "live U2W Map Mode relay")"#))
         XCTAssertTrue(app.contains("keep continuous predecode alive"))
 
         XCTAssertTrue(video.contains("U2WMainVideoTCPWorker"))
         XCTAssertTrue(video.contains("port: 15332"))
-        XCTAssertTrue(video.contains("U2WH2642"))
+        XCTAssertTrue(video.contains("U2WH2643"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
         XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
-        XCTAssertTrue(video.contains("HARD decoder recovery, TCP preserved"))
+        XCTAssertTrue(video.contains("Fatal decoder recovery reconnecting TCP so v8.24 can replay bounded recent IDR anchor"))
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 15.0"))
         XCTAssertTrue(video.contains("u2wvideo-relay-start.cgi"))
         XCTAssertFalse(video.contains("u2wvideo-main-stream.cgi"))

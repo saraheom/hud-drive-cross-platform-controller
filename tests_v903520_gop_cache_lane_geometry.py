@@ -6,19 +6,19 @@ video=read('ios/HUDController/MapMode/U2WMainVideoClient.swift')
 canvas=read('ios/HUDController/MapMode/HudMapModeCanvas.swift')
 app=read('ios/HUDController/App/AppState.swift')
 ui=read('ios/HUDController/UI/NavigationHUDPreviewCard.swift')
-relay=read('u2w/v8.23_LiveIDRRelay/source/u2w_mainvideo_relay.c')
-cast=read('u2w/v8.23_LiveIDRRelay/source/u2whud_cast_relay_v8151.c')
-install=read('u2w/v8.23_LiveIDRRelay/source/install_once.sh')
+relay=read('u2w/v8.24_RecentIDRRelay/source/u2w_mainvideo_relay.c')
+cast=read('u2w/v8.24_RecentIDRRelay/source/u2whud_cast_relay_v8151.c')
+install=read('u2w/v8.24_RecentIDRRelay/source/install_once.sh')
 checks={
  'dedicated relay tails v8.11 live path':'/tmp/u2w_mainvideo_live.h264' in relay,
- 'dedicated relay uses separate TCP port':'15332' in relay and 'U2WH2642' in video,
- 'no historical gop cache replay':'gop_buf' not in relay and 'NO cached GOP replay' in relay,
+ 'dedicated relay uses separate TCP port':'15332' in relay and 'U2WH2643' in video,
+ 'bounded recent IDR replaces historical GOP burst':'gop_buf' not in relay and '#define RECENT_CAP (4*1024*1024)' in relay and '17-20 MiB' in relay,
  'startup scan reaches live edge before bootstrap':'startup_scan_complete' in relay and 'startup-scan-complete-live-tail' in relay,
  'active client has bounded send timeout':'SO_SNDTIMEO' in relay and 'tv.tv_sec=8' in relay,
  'installer clears legacy long-lived streamers':'killall u2w_mainvideo_streamer' in install,
  'installer leaves AppleCarPlay untouched':'pkill AppleCarPlay' not in install and 'killall AppleCarPlay' not in install and 'LD_PRELOAD' not in install,
  'known-good HUD MJPEG relay restored':'u2whud_cast_relay_v8151' in install,
- 'app starts continuous predecode on HUD BLE':'HUD BLE transport ready — continuous predecode' in app,
+ 'app reasserts continuous predecode on HUD BLE':'HUD BLE transport ready — reassert continuous predecode' in app,
  'app exposes relay status':'adapterCacheSummary' in video and 'U2W H.264 relay' in ui,
  'app logs composite heartbeat':'MAP RENDER HEARTBEAT' in app,
  'no fake route preview':'allowDesignFallback: false' in app and 'settings.showMap && snapshot.hasLiveRoute' in canvas,

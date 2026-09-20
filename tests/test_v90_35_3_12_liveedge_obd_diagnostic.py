@@ -17,9 +17,9 @@ def test_ios_watchdog_is_less_aggressive_and_tracks_bytes():
     assert 'onBytes' in VIDEO
     assert 'receivedBytes' in VIDEO
     assert 'kVTInvalidSessionErr (-12903)' in VIDEO
-    assert 'historical GOP replay=0' in VIDEO
+    assert 'bounded recent-IDR bootstrap enabled' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
-    assert 'HARD decoder recovery, TCP preserved' in VIDEO
+    assert 'HARD decoder recovery, reconnect recent-IDR bootstrap' in VIDEO
 
 def test_stock_hud_obd_log_protocol_is_exposed():
     assert 'requestOBDDiagnosticLogs' in CMD

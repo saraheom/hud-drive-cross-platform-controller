@@ -460,7 +460,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v8.23 keeps MainVideo off Boa/CGI but removes cached-GOP replay. TCP opens only after the relay is confirmed running, waits for the next fresh live IDR, then carries only naturally arriving H.264 NALs. Before driving, wait for MainVideo preflight to read LIVE • frames advancing and confirm the frame counter keeps increasing.")
+                    Text("v8.24 keeps MainVideo off Boa/CGI and adds a bounded recent-IDR bootstrap so connecting just after a keyframe no longer stalls. The iPhone prefers software VideoToolbox decode and keeps the stream warm for the car session. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified and confirm the frame counter keeps increasing.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

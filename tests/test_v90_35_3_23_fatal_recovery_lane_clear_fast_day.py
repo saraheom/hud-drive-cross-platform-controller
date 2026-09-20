@@ -11,7 +11,7 @@ def test_invalid_videotoolbox_session_is_fatal_and_tcp_is_preserved():
     assert "if decodeStatus == Self.invalidSessionStatus" in VIDEO
     assert "immediate decoder reset requested, TCP preserved" in VIDEO
     assert "hardRecoverAwaitingIDR" in VIDEO
-    assert "HARD decoder recovery, TCP preserved" in VIDEO
+    assert "Fatal decoder recovery reconnecting TCP so v8.24 can replay bounded recent IDR anchor" in VIDEO
     assert "decoderStaleFrameInterval: TimeInterval = 3.0" in VIDEO
     assert "LIVE • 20s continuity verified" in VIDEO
 
@@ -23,8 +23,8 @@ def test_no_lane_placeholder_in_live_preview_and_post_maneuver_clear_is_guarded(
     assert "lanePresentationGeneration == generation" in APP
 
 
-def test_both_off_commits_day_without_center_only_15s_wait():
-    assert "Dashboard+Center BOTH-OFF stable; fast corroborated DAY commit" in AMBIENT
-    assert "Fast corroborated BOTH-OFF → DAY" in AMBIENT
-    assert "stable Dashboard+Center bothOff consensus" in AMBIENT
-    assert "preserving confirmed NIGHT" in AMBIENT
+def test_center_only_guard_commits_day_without_dashboard_gate():
+    assert "centerDayGuardSeconds: TimeInterval = 1.0" in AMBIENT
+    assert "Center-only DAY guard armed" in AMBIENT
+    assert "Dashboard not required" in AMBIENT
+    assert "preserving NIGHT" in AMBIENT

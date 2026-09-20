@@ -14,7 +14,7 @@ def test_invalid_videotoolbox_session_is_fatal_and_tcp_is_preserved():
     assert 'requestHardRecovery(reason:' in VIDEO
     assert 'Decoder hard recovery #' in VIDEO
     assert 'waiting for validated IDR' in VIDEO
-    assert 'HARD decoder recovery, TCP preserved' in VIDEO
+    assert 'HARD decoder recovery' in VIDEO and 'recent IDR anchor' in VIDEO
 
 
 def test_silent_decoder_output_stall_recovers_even_when_decode_call_returns_noerr():
@@ -36,7 +36,7 @@ def test_preflight_requires_sustained_continuity_not_two_frames():
 def test_scene_lifecycle_is_connected_to_mainvideo_recovery():
     assert 'state.mainVideo.applicationDidEnterBackground()' in ROOTVIEW
     assert 'state.mainVideo.applicationDidBecomeActive()' in ROOTVIEW
-    assert 'foreground after background transition' in VIDEO
+    assert 'decoder preserved across lifecycle transition' in VIDEO
 
 
 def test_native_lane_layer_is_cleared_after_maneuver_without_owned_lanes():
@@ -53,12 +53,11 @@ def test_live_preview_never_invents_default_three_lanes():
     assert 'snapshot: .customizationDemo' in UI
 
 
-def test_both_headlight_devices_off_commits_day_after_stability_window():
-    assert 'Dashboard+Center BOTH-OFF stable; fast corroborated DAY commit' in AMBIENT
-    assert 'stable Dashboard+Center bothOff consensus' in AMBIENT
-    assert 'single-device transport loss does not change day/night' in AMBIENT
-    # Keep the conservative Center-only absence fallback from v90.35.3.22.
-    assert 'physical absence confirmed after' in AMBIENT
+def test_center_only_guard_commits_day_without_waiting_for_dashboard():
+    assert 'centerDayGuardSeconds: TimeInterval = 1.0' in AMBIENT
+    assert 'Center-only DAY guard armed' in AMBIENT
+    assert 'Dashboard not required' in AMBIENT
+    assert 'Dashboard+Center BOTH-OFF stable; fast corroborated DAY commit' not in AMBIENT
 
 
 def test_map_mode_sta_join_has_one_bounded_automatic_recovery():

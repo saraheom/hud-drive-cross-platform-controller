@@ -13,7 +13,7 @@ final class V903515SafeMainVideoTests: XCTestCase {
         XCTAssertTrue(video.contains("sourceStaleInterval: TimeInterval = 15.0"))
         XCTAssertTrue(video.contains("initialIDRWaitDiagnosticInterval: TimeInterval = 20.0"))
         XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
-        XCTAssertTrue(video.contains("HARD decoder recovery, TCP preserved"))
+        XCTAssertTrue(video.contains("HARD decoder recovery, reconnect recent-IDR bootstrap"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
     }
 

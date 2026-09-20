@@ -11,7 +11,7 @@ INSTALL = (ROOT/'u2w/v8.23_LiveIDRRelay/source/install_once.sh').read_text()
 
 
 def test_v823_waits_for_fresh_live_idr_without_history_burst():
-    assert 'U2WH2642' in RELAY and 'U2WH2642' in VIDEO
+    assert 'U2WH2642' in RELAY and 'U2WH2643' in VIDEO
     assert 'NO cached GOP replay' in RELAY
     assert 'client-connected-waiting-live-idr' in RELAY
     assert 'client-live-bootstrap-sps-pps-idr' in RELAY
@@ -19,7 +19,7 @@ def test_v823_waits_for_fresh_live_idr_without_history_burst():
     assert 'source-generation-change-parser-continuity-preserved' in RELAY
     generation_block = RELAY.split('if(!same_generation(fd,pos,tail_len))',1)[1].split('else sc3',1)[0]
     assert 'parse_len=0' not in generation_block
-    assert 'historical GOP replay=0' in VIDEO
+    assert 'bounded recent-IDR bootstrap enabled' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
     assert 'receiveExactly' in VIDEO
 
@@ -29,7 +29,7 @@ def test_tcp_is_not_opened_until_relay_is_confirmed_and_waiting_recovers():
     assert 'TCP intentionally NOT opened' in VIDEO
     assert 'TCP WAITING deadline expired' in VIDEO
     assert '4s retry deadline armed' in VIDEO
-    assert 'HARD decoder recovery, TCP preserved' in VIDEO
+    assert 'recent IDR anchor' in VIDEO
 
 
 def test_parked_preflight_and_diagnostic_chain_are_visible():
@@ -63,11 +63,11 @@ def test_customization_has_always_populated_demo_but_live_preview_stays_live():
 def test_center_transport_disconnect_latches_night_until_absence_is_confirmed():
     disconnect = AMBIENT.split('didDisconnectPeripheral peripheral: CBPeripheral',1)[1].split('// MARK: - CBPeripheralDelegate',1)[0]
     assert 'self.markAbsent(reason: "persistent BLE disconnect")' not in disconnect
-    assert 'preserving confirmed NIGHT' in disconnect
+    assert 'preserving NIGHT briefly' in disconnect
     assert 'centerTransportUnknownSince' in AMBIENT
-    assert 'physical absence confirmed' in AMBIENT
-    assert 'Dashboard+Center=bothOff' in AMBIENT
-    assert 'preserving confirmed NIGHT' in AMBIENT
+    assert 'Center-only DAY guard armed' in AMBIENT
+    assert 'Dashboard not required' in AMBIENT
+    assert 'preserving NIGHT' in AMBIENT
     assert 'doorTargetBrightness(night: headlightPowerSessionActive)' in AMBIENT
 
 

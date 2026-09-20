@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.24 — recent-IDR bootstrap + software decode + Center-only DAY guard
+
+This release pairs the app with **U2W v8.24**. It closes the observed IDR-before-client startup race using a bounded 4 MiB recent SPS/PPS+IDR anchor, starts MainVideo predecode earlier in the car session, prefers software VideoToolbox decoding for the 800×480 navigation surface, and reconnects hard decoder recovery to the recent anchor. Ambient NIGHT→DAY is now Center/BLEDOM-only with a 1.0-second return guard; Dashboard no longer delays DAY.
+
+The already-collected H.264 capture was replayed offline for both client-before-IDR and client-after-IDR orderings. Bounded bootstrap outputs through +3 MiB decoded as 800×480 / 514 frames with zero ffprobe errors. See `V90_35_3_24_CAPTURE_VALIDATION.md`, `V90_35_3_24_RELEASE.md`, and `V90_35_3_24_BUILD_VERIFY.txt`.
+
+**U2W v8.24 must be flashed for this app release.**
+
+---
+
 # HUD Controller v90.35.3.23 — MainVideo fatal recovery + lane clear + fast DAY transition
 
 

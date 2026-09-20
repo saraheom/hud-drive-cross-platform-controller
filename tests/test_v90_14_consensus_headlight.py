@@ -12,7 +12,7 @@ def test_two_controller_consensus_remains_stable_diagnostic_crosscheck():
     assert 'case bothOn' in MONITOR and 'case bothOff' in MONITOR and 'case mixed' in MONITOR
     assert 'headlightConsensusStabilitySeconds: TimeInterval = 0.75' in MONITOR
     assert 'Dashboard+Center diagnostic consensus' in MONITOR
-    assert 'Fast corroborated BOTH-OFF → DAY' in MONITOR
+    assert 'Center-only 1s guard owns day/night' in MONITOR
 
 
 def test_center_day_night_owner_does_not_own_animation():

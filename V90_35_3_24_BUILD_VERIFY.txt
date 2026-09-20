@@ -1,0 +1,26 @@
+HUD v90.35.3.24 + U2W v8.24 build verification
+
+App validation
+- pytest: 403/403 passed
+- historical standalone static suites: 12/12 passed
+- Swift parser check: 193/193 .swift files passed
+- New regression coverage: bounded recent-IDR bootstrap, software decoder preference, recent-anchor recovery, early car-session predecode, HUD-BLE-independent MainVideo lifetime, Center-only 1s DAY guard
+
+U2W v8.24 validation
+- relay source compiled with clang --target=arm-linux-gnueabi -fuse-ld=lld -Wall -Wextra
+- binary: ELF32 ARM EABI5 soft-float, statically linked
+- dynamic section: none
+- relay binary SHA256: 2cb2cb7af98b0a91b2b0ccde1fa8eaeccae36cf5eafcdeb50eb9972dc352f895
+- shell/CGI syntax: passed
+- install image AES decrypt/encrypt round-trip and tar-member validation: passed by build_images.py
+- install image SHA256: ab7806bcf3089ab5487dff0b303e434ef5f8049be6adb8b0028e2c61e0eabb2f
+- uninstall image SHA256: 76c0dc248649c08aee1a8688d6c212f1b0c3824fa2fe1a02fae8b092d2863329
+- uninstall restores v8.23 relay + v8.15.1 HUD cast relay
+
+Captured-stream validation
+- client before IDR: decoded 800x480 / 514 frames / no ffprobe errors
+- client immediately after IDR: bounded recent-anchor replay decoded 800x480 / 514 frames / no ffprobe errors
+- +200 KB, +1 MB, +3 MB client positions: each decoded 800x480 / 514 frames / no ffprobe errors
+- +4.5 MB: intentionally over 4 MiB cap, no historical replay; waits for next valid IDR
+
+Xcode/iOS SDK compilation is still finalized by GitHub Actions CI.

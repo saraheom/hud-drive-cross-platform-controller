@@ -17,7 +17,7 @@ installer = read("u2w/v8.20_ValidatedGOPBootstrap/source/install_once.sh")
 checks = {
     "fatal VT invalid-session is recovered": "FATAL VideoToolbox invalid session" in video,
     "consecutive-error rebuild threshold is bounded": "consecutiveErrorRebuildThreshold = 5" in video,
-    "stale-output watchdog preserves TCP": "HARD decoder recovery, TCP preserved" in video,
+    "stale-output watchdog preserves TCP": "HARD decoder recovery, reconnect recent-IDR bootstrap" in video,
     "decoder rebuild waits for future IDR": "Decoder rebuild ARMED" in video and "existing session preserved until future IDR" in video,
     "old local resync hook is gone": "requestDecoderResync" not in video,
     "v8.20 response is fingerprinted": "X-U2W-Streamer: v8.20-validated-gop-bootstrap" in streamer,

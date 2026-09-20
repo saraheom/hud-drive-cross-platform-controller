@@ -303,11 +303,11 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            // v90.35.3.22: keep the dedicated TCP/15332 MainVideo decoder warm
-            // from HUD transport-ready onward.  This normally gives VideoToolbox
-            // SPS/PPS/IDR state before navigation starts and removes any need to
-            // bootstrap a long-lived Boa CGI in the middle of a route.
-            self.mainVideo.start(reason: "HUD BLE transport ready — continuous predecode")
+            // MainVideo is intentionally independent of HUD BLE in v90.35.3.24.
+            // App launch starts the U2W predecode early, and HUD transport-ready only
+            // reasserts it. This closes the field race where the first valid CarPlay
+            // IDR arrived milliseconds before the iPhone TCP client opened.
+            self.mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
                !self.hudWiFiExposureActive {
@@ -375,10 +375,13 @@ final class AppState {
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.nowPlaying.stop(reason: "HUD BLE transport disconnected")
-            self.mainVideo.stop(reason: "HUD BLE transport disconnected")
+            // v90.35.3.24: do NOT stop MainVideo when HUD BLE drops. CarPlay/U2W
+            // is an independent session, and preserving the H.264 reference chain is
+            // more important than tying video lifetime to the physical HUD transport.
+            self.mainVideo.start(reason: "HUD BLE disconnected — preserve U2W car-session predecode")
             self.logger.log(
                 "HUD SESSION",
-                "BLE transport disconnected; Route Guidance polling stopped and HUD returned to Freeride"
+                "BLE transport disconnected; Route Guidance polling stopped, MainVideo predecode intentionally preserved"
             )
 
             if self.mapModeActive {
@@ -397,6 +400,14 @@ final class AppState {
             Task { @MainActor [weak self] in
                 self?.handleMapModeCastEvent(event)
             }
+        }
+
+        // v90.35.3.24: start adapter discovery/predecode before HUD BLE is ready.
+        // Outside the car this simply retries the private U2W address; in-car it
+        // gives the TCP client the earliest possible chance to catch the first IDR.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            self?.mainVideo.start(reason: "app launch — early U2W car-session predecode")
         }
 
     }

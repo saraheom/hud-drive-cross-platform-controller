@@ -12,7 +12,7 @@ MEDIA = (ROOT / "ios/HUDController/UI/MediaView.swift").read_text()
 def test_center_presence_is_fast_day_night_owner_and_two_light_consensus_is_diagnostic():
     assert "private enum HeadlightConsensusObservation" in MONITOR
     assert "Dashboard+Center diagnostic consensus" in MONITOR
-    assert "Fast corroborated BOTH-OFF → DAY" in MONITOR
+    assert "Center-only 1s guard owns day/night" in MONITOR
     assert "Center presence → Auto brightness ON" in MONITOR
     assert "Center absence → Auto brightness OFF" in MONITOR
     assert "setAuthoritativeHeadlightPower" not in MONITOR

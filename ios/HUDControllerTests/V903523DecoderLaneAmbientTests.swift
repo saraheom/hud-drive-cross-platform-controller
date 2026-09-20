@@ -12,7 +12,7 @@ final class V903523DecoderLaneAmbientTests: XCTestCase {
         let src = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(src.contains("private static let invalidSessionStatus: OSStatus = -12903"))
         XCTAssertTrue(src.contains("FATAL VideoToolbox invalid session"))
-        XCTAssertTrue(src.contains("HARD decoder recovery, TCP preserved"))
+        XCTAssertTrue(src.contains("HARD decoder recovery, reconnect recent-IDR bootstrap"))
         XCTAssertTrue(src.contains("VideoToolbox output callback failure"))
         XCTAssertTrue(src.contains("soft-flushing delayed VideoToolbox frames before hard recovery"))
         XCTAssertTrue(src.contains("kVTDecompressionPropertyKey_RealTime"))
@@ -45,7 +45,9 @@ final class V903523DecoderLaneAmbientTests: XCTestCase {
 
     func testStableBothOffConsensusCommitsDayQuickly() throws {
         let src = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(src.contains("Dashboard+Center BOTH-OFF stable; fast corroborated DAY commit"))
+        XCTAssertTrue(src.contains("centerDayGuardSeconds: TimeInterval = 1.0"))
+        XCTAssertTrue(src.contains("Center-only DAY guard armed"))
+        XCTAssertTrue(src.contains("Dashboard not required"))
         XCTAssertTrue(src.contains("stable Dashboard+Center bothOff consensus"))
         XCTAssertTrue(src.contains("single-device transport loss does not change day/night"))
     }

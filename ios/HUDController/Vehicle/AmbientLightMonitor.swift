@@ -253,6 +253,11 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
     /// state latched while advertisement absence is independently confirmed.
     private var centerTransportUnknownSince: Date?
     private var lastCenterAbsenceWithheldLogAt = Date.distantPast
+    private var centerDayGuardTask: Task<Void, Never>?
+    /// v90.35.3.24: Center/BLEDOM is again authoritative for NIGHT→DAY. A
+    /// one-second absence guard filters transient CoreBluetooth transport drops
+    /// without waiting for the slower Dashboard disconnect event.
+    private let centerDayGuardSeconds: TimeInterval = 1.0
     private var watchdogTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var connectionAttemptStartedAt: Date?
@@ -3066,27 +3071,12 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
             self.ambientTrace("Dashboard+Center diagnostic consensus stable observation=\(observation.rawValue) reason=\(reason)")
 
-            // v90.35.3.23: retain the v90.35.3.22 NIGHT latch for a single
-            // Center/BLEDOM transport loss, but do not wait the full 3× Center
-            // advertisement timeout once BOTH independent headlight-fed devices
-            // agree that power is absent. Two-source BOTH-OFF is the physical
-            // corroboration we wanted; commit DAY after the existing stability
-            // window rather than waiting ~15 seconds.
-            if observation == .bothOff,
-               self.headlightPowerSessionActive,
-               self.lightPresent {
-                self.logger.log(
-                    "AMBIENT POWER",
-                    "Dashboard+Center BOTH-OFF stable; fast corroborated DAY commit after \(String(format: "%.2f", self.headlightConsensusStabilitySeconds))s"
-                )
-                self.ambientTrace("Fast corroborated BOTH-OFF → DAY reason=\(reason)")
-                self.markAbsent(reason: "stable Dashboard+Center bothOff consensus")
-                return
-            }
-
+            // v90.35.3.24: Dashboard+Center consensus is diagnostic only again.
+            // NIGHT→DAY ownership belongs to Center/BLEDOM with a short guarded
+            // absence timer; Dashboard must never delay the user-visible transition.
             self.logger.log(
                 "AMBIENT POWER",
-                "Dashboard+Center diagnostic consensus=\(observation.rawValue); single-device transport loss does not change day/night"
+                "Dashboard+Center diagnostic consensus=\(observation.rawValue); Center-only 1s guard owns day/night"
             )
         }
     }
@@ -4233,6 +4223,41 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     // MARK: - Tracked Center presence / persistent connection
 
+    private func scheduleCenterOnlyDayGuard(reason: String) {
+        centerDayGuardTask?.cancel()
+        guard lightPresent, headlightPowerSessionActive else { return }
+
+        let started = Date()
+        centerTransportUnknownSince = started
+        logger.log(
+            "AMBIENT LATCH",
+            "Center transport/presence lost; preserving NIGHT for \(String(format: "%.1f", centerDayGuardSeconds))s guard reason=\(reason)"
+        )
+        ambientTrace("Center-only DAY guard armed \(String(format: "%.1f", centerDayGuardSeconds))s reason=\(reason)")
+
+        centerDayGuardTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.centerDayGuardSeconds))
+            guard !Task.isCancelled, self.lightPresent, self.headlightPowerSessionActive else { return }
+
+            let centerConnected = self.trackedPeripheral?.state == .connected
+            let age = Date().timeIntervalSince(self.lastSeen)
+            if !centerConnected, age >= self.centerDayGuardSeconds * 0.90 {
+                self.logger.log(
+                    "AMBIENT LATCH",
+                    "Center remained absent for \(String(format: "%.2f", age))s through guard → DAY (Dashboard not required)"
+                )
+                self.markAbsent(reason: "Center-only guarded absence \(String(format: "%.1f", self.centerDayGuardSeconds))s")
+            } else {
+                self.logger.log(
+                    "AMBIENT LATCH",
+                    "Center evidence returned during DAY guard connected=\(centerConnected ? 1 : 0) age=\(String(format: "%.2f", age))s; NIGHT preserved"
+                )
+            }
+            self.centerDayGuardTask = nil
+        }
+    }
+
     private func markPresent(
         name: String,
         identifier: String,
@@ -4240,6 +4265,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         reason: String
     ) {
         lastSeen = Date()
+        centerDayGuardTask?.cancel()
+        centerDayGuardTask = nil
         centerTransportUnknownSince = nil
         lastCenterAbsenceWithheldLogAt = .distantPast
         detectedName = name
@@ -4262,6 +4289,8 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
     private func markAbsent(reason: String) {
         guard lightPresent else { return }
+        centerDayGuardTask?.cancel()
+        centerDayGuardTask = nil
         centerTransportUnknownSince = nil
         lastCenterAbsenceWithheldLogAt = .distantPast
         lightPresent = false
@@ -4558,12 +4587,13 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 self.centerTransportUnknownSince = now
                 self.lastSeen = now
                 if self.headlightPowerSessionActive || self.lightPresent {
-                    self.status = "\(self.targetName) reconnecting • NIGHT latched"
+                    self.status = "\(self.targetName) reconnecting • NIGHT guard"
                     self.logger.log(
                         "AMBIENT LATCH",
-                        "Center BLE transport disconnected; preserving confirmed NIGHT. Physical OFF requires \(self.absenceConfirmationWindows) missed advertisement windows."
+                        "Center BLE transport disconnected; preserving NIGHT briefly while Center-only \(String(format: "%.1f", self.centerDayGuardSeconds))s guard checks for advertisement/reconnect."
                     )
-                    self.ambientTrace("Center transport unknown; NIGHT latched pending physical-absence confirmation")
+                    self.ambientTrace("Center transport unknown; short Center-only NIGHT guard armed")
+                    self.scheduleCenterOnlyDayGuard(reason: "BLE disconnect of Center/BLEDOM")
                 } else {
                     self.logger.log(
                         "AMBIENT LATCH",
@@ -4904,29 +4934,14 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
                 if self.lightPresent && !connected &&
                     missedWindows >= self.absenceConfirmationWindows {
-                    // A Center transport outage alone is still not enough to call the
-                    // headlight OFF. The Dashboard is powered by the same headlight rail,
-                    // so any positive Dashboard evidence vetoes a false DAY transition.
-                    // Only sustained Center absence *and* a BOTH-OFF cross-check may end
-                    // the latched NIGHT state.
-                    let consensus = self.currentHeadlightConsensus()
-                    if consensus == .bothOff {
-                        if let unknownSince = self.centerTransportUnknownSince {
-                            self.logger.log(
-                                "AMBIENT LATCH",
-                                "Center transport absent for \(String(format: "%.1f", Date().timeIntervalSince(unknownSince)))s and Dashboard+Center=bothOff; physical absence confirmed after \(self.absenceConfirmationWindows) windows → DAY"
-                            )
-                        }
-                        self.markAbsent(
-                            reason: "\(self.absenceConfirmationWindows) missed Center windows + Dashboard/Center bothOff"
-                        )
-                    } else if Date().timeIntervalSince(self.lastCenterAbsenceWithheldLogAt) >= timeout {
-                        self.lastCenterAbsenceWithheldLogAt = Date()
-                        self.logger.log(
-                            "AMBIENT LATCH",
-                            "Center advertisement absence reached \(missedWindows) windows but consensus=\(consensus.rawValue); preserving confirmed NIGHT"
-                        )
-                    }
+                    // Failsafe only. The one-second Center guard should normally have
+                    // committed DAY already; this prevents a cancelled/lost guard from
+                    // leaving NIGHT latched indefinitely. Dashboard is not required.
+                    self.logger.log(
+                        "AMBIENT LATCH",
+                        "Center sustained absence fallback after \(missedWindows) windows → DAY (Dashboard not required)"
+                    )
+                    self.markAbsent(reason: "Center sustained absence fallback")
                 }
 
                 if self.hudBrightnessTriggerEnabled,

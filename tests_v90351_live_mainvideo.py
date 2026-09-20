@@ -15,7 +15,7 @@ def check(name, cond):
     if not cond: raise AssertionError(name)
     checks.append(name)
 
-check('u2w endpoint', '192.168.50.2' in client and '15332' in client and 'U2WH2642' in client)
+check('u2w endpoint', '192.168.50.2' in client and '15332' in client and 'U2WH2643' in client)
 check('videotoolbox decoder', 'VideoToolbox' in client and 'CMVideoFormatDescriptionCreateFromH264ParameterSets' in client and 'VTDecompressionSessionDecodeFrame' in client)
 check('no OCR/screenshare imports in main video client', 'import ScreenCaptureKit' not in client and 'GoogleMapsOCRParser' not in client)
 check('source image enters canvas and renderer', 'sourceMapImage' in canvas and 'sourceMapImage' in renderer)

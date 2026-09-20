@@ -9,13 +9,13 @@ final class V903522LiveIDRLaneAmbientTests: XCTestCase {
 
     func testLiveIDRTransportHasBoundedParkedPreflight() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(video.contains("U2WH2642"))
+        XCTAssertTrue(video.contains("U2WH2643"))
         XCTAssertTrue(video.contains("WAITING_LIVE_IDR"))
-        XCTAssertTrue(video.contains("historical GOP replay=0"))
+        XCTAssertTrue(video.contains("bounded recent-IDR bootstrap enabled"))
         XCTAssertTrue(video.contains("relay confirmed RUNNING before TCP open"))
         XCTAssertTrue(video.contains("TCP WAITING deadline expired"))
         XCTAssertTrue(video.contains("MAINVIDEO PREFLIGHT"))
-        XCTAssertTrue(video.contains("HARD decoder recovery, TCP preserved"))
+        XCTAssertTrue(video.contains("recent IDR anchor"))
         XCTAssertTrue(video.contains("receiveExactly"))
     }
 

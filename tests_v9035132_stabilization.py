@@ -18,7 +18,7 @@ checks = {
     "5 fps physical HUD cadence remains unchanged": ".milliseconds(200)" in app,
     "decoder output stall watchdog is bounded": "decoderStaleFrameInterval: TimeInterval = 3.0" in video,
     "decoder-stale diagnostics remain bounded": "lastDecoderStaleDiagnosticAt" in video and "initialIDRWaitDiagnosticInterval" in video,
-    "fresh bytes recover decoder without reconnecting TCP": "HARD decoder recovery, TCP preserved" in video and "bytesAreFresh" in video,
+    "fresh bytes recover decoder without reconnecting TCP": "HARD decoder recovery, reconnect recent-IDR bootstrap" in video and "bytesAreFresh" in video,
     "accepted decoder state survives HTTP reseed": "decoder.prepareForStreamRestart()" in video,
     "SPS/PPS candidates are staged separately": all(s in video for s in ("activeSPS", "activePPS", "pendingSPS", "pendingPPS")),
     "bad SPS/PPS cannot evict known-good decoder": "preserving last-known-good decoder" in video,
