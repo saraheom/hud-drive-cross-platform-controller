@@ -1,0 +1,21 @@
+HUD Controller v90.35.3.24.3 build verification
+
+Base:
+- v90.35.3.24.2 full-repo package
+
+Focused change:
+- Physical HUD stale-lane renderer reset after a real lane payload is cleared.
+- Immediate empty-lane packet, guarded Navigation widget recreation, current-maneuver hydration, final empty-lane packet.
+- New lane data cancels the recovery task through lanePresentationGeneration.
+
+Validation:
+- Python structural/regression suite: 406 passed.
+- Swift frontend syntax parse:
+  - ios/HUDController/App/AppState.swift: PASS
+  - ios/HUDControllerTests/V9035243LaneRendererResetTests.swift: PASS
+- v90.35.3.24.2 MainVideo client: byte-for-byte unchanged.
+- AmbientLightMonitor.swift: byte-for-byte unchanged.
+- u2w/v8.24_RecentIDRRelay directory: byte-for-byte unchanged.
+
+U2W:
+- No reflash required.

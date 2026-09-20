@@ -8,14 +8,16 @@ enum HudMapModeFrameRenderer {
         snapshot: HudMapModeSnapshot,
         settings: HudMapModeSettings,
         sourceMapImage: UIImage?,
-        suppressCustomSpeedForNativeOBDProbe: Bool
+        suppressCustomSpeedForNativeOBDProbe: Bool,
+        warningHiddenTarget: HudManeuverWarningTarget? = nil
     ) -> Data? {
         let content = HudMapModeCanvas(
             snapshot: snapshot,
             settings: settings,
             sourceMapImage: sourceMapImage,
             previewLanePlaceholder: false,
-            suppressCustomSpeedForNativeOBDProbe: suppressCustomSpeedForNativeOBDProbe
+            suppressCustomSpeedForNativeOBDProbe: suppressCustomSpeedForNativeOBDProbe,
+            warningHiddenTarget: warningHiddenTarget
         )
         .frame(width: 480, height: 240)
         .background(Color.black)

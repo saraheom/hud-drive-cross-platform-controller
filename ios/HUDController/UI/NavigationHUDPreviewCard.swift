@@ -16,6 +16,8 @@ struct NavigationHUDPreviewCard: View {
     @State private var selectedDesignerComponent: HudMapDesignerComponent = .map
     @State private var designerDragOrigin = CGSize.zero
     @State private var designerDragging = false
+    @State private var maneuverWarningPreviewHidden = false
+    @State private var maneuverWarningPreviewGeneration = 0
 
     private let accent = HudTheme.accent
 
@@ -29,7 +31,8 @@ struct NavigationHUDPreviewCard: View {
                     settings: state.mapModeSettings,
                     sourceMapImage: state.mapModePreviewSourceImage,
                     previewLanePlaceholder: false,
-                    suppressCustomSpeedForNativeOBDProbe: false
+                    suppressCustomSpeedForNativeOBDProbe: false,
+                    warningHiddenTarget: state.mapModeManeuverWarningHiddenTarget
                 )
                 .aspectRatio(2.0, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -51,6 +54,7 @@ struct NavigationHUDPreviewCard: View {
                         speedLimitSignControls
                         widgetPositionControls
                         rightSideFineTuningControls
+                        maneuverWarningControls
                         componentControls
                     }
                     .padding(.top, 8)
@@ -131,7 +135,8 @@ struct NavigationHUDPreviewCard: View {
                 settings: state.mapModeSettings,
                 sourceMapImage: nil,
                 previewLanePlaceholder: false,
-                suppressCustomSpeedForNativeOBDProbe: false
+                suppressCustomSpeedForNativeOBDProbe: false,
+                warningHiddenTarget: maneuverWarningPreviewHidden ? state.mapModeSettings.maneuverWarningTarget : nil
             )
             .aspectRatio(2.0, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -675,6 +680,108 @@ struct NavigationHUDPreviewCard: View {
         }
         .padding(10)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var maneuverWarningControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Approaching-turn blink warning")
+                        .font(.subheadline.weight(.semibold))
+                    Text(state.mapModeManeuverWarningStatus)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { state.mapModeSettings.maneuverWarningEnabled },
+                    set: { state.mapModeSettings.maneuverWarningEnabled = $0 }
+                ))
+                .labelsHidden()
+            }
+
+            if state.mapModeSettings.maneuverWarningEnabled {
+                Picker("Blink target", selection: Binding(
+                    get: { state.mapModeSettings.maneuverWarningTarget },
+                    set: { state.mapModeSettings.maneuverWarningTarget = $0 }
+                )) {
+                    ForEach(HudManeuverWarningTarget.allCases) { target in
+                        Label(target.title, systemImage: target.systemImage).tag(target)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                LabeledContent(
+                    "Warning threshold",
+                    value: "below \(state.mapModeSettings.maneuverWarningThresholdFeet) ft"
+                )
+                Slider(
+                    value: Binding(
+                        get: { Double(state.mapModeSettings.maneuverWarningThresholdFeet) },
+                        set: { state.mapModeSettings.maneuverWarningThresholdFeet = Int($0.rounded()) }
+                    ),
+                    in: 100...2000,
+                    step: 50
+                )
+
+                Picker("Blink count", selection: Binding(
+                    get: { state.mapModeSettings.maneuverWarningBlinkCount },
+                    set: { state.mapModeSettings.maneuverWarningBlinkCount = $0 }
+                )) {
+                    ForEach(2...5, id: \.self) { count in
+                        Text("\(count)x").tag(count)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                LabeledContent(
+                    "Blink interval",
+                    value: String(format: "%.2f s", state.mapModeSettings.maneuverWarningIntervalSeconds)
+                )
+                Slider(
+                    value: Binding(
+                        get: { state.mapModeSettings.maneuverWarningIntervalSeconds },
+                        set: { state.mapModeSettings.maneuverWarningIntervalSeconds = $0 }
+                    ),
+                    in: 0.5...2.0,
+                    step: 0.25
+                )
+
+                Button {
+                    previewManeuverWarning()
+                } label: {
+                    Label("Preview blink", systemImage: "eye")
+                }
+                .buttonStyle(.bordered)
+
+                Text("Triggers once per maneuver when live Route Guidance first enters the selected threshold. The interval is the time between OFF and ON changes. Only the selected arrow or distance becomes transparent; its layout space stays fixed so the rest of the HUD does not jump.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func previewManeuverWarning() {
+        maneuverWarningPreviewGeneration &+= 1
+        let generation = maneuverWarningPreviewGeneration
+        let count = min(5, max(2, state.mapModeSettings.maneuverWarningBlinkCount))
+        let interval = min(2.0, max(0.5, state.mapModeSettings.maneuverWarningIntervalSeconds))
+        maneuverWarningPreviewHidden = false
+
+        Task { @MainActor in
+            for blink in 1...count {
+                guard generation == maneuverWarningPreviewGeneration else { return }
+                maneuverWarningPreviewHidden = true
+                try? await Task.sleep(for: .seconds(interval))
+                guard generation == maneuverWarningPreviewGeneration else { return }
+                maneuverWarningPreviewHidden = false
+                if blink < count {
+                    try? await Task.sleep(for: .seconds(interval))
+                }
+            }
+        }
     }
 
     private var widgetPositionControls: some View {

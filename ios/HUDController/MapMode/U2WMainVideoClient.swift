@@ -220,17 +220,21 @@ final class U2WMainVideoClient {
             let haveSPS = fields["have_sps"] ?? "?"
             let havePPS = fields["have_pps"] ?? "?"
             let idr = fields["idr"] ?? "?"
-            let bootstraps = fields["client_live_bootstraps"] ?? "?"
+            let bootstraps = fields["client_bootstraps"] ?? fields["client_live_bootstraps"] ?? "?"
             let sendFailures = fields["client_send_failures"] ?? "?"
             let sourceBytes = fields["source_bytes_low32"] ?? "?"
             let generationChanges = fields["source_generation_changes"] ?? "?"
             let droppedPreIDR = fields["pre_idr_slices_dropped"] ?? "?"
             let lastNAL = fields["last_nal_type"] ?? "?"
-            let recentReady = fields["recent_anchor_ready"] ?? "?"
-            let recentBytes = fields["recent_anchor_bytes"] ?? "?"
+            let recentReady = fields["recent_anchor_valid"] ?? fields["recent_anchor_ready"] ?? "?"
+            let recentBytes = fields["recent_spool_bytes"] ?? fields["recent_anchor_bytes"] ?? "?"
+            let recentNals = fields["recent_spool_nals"] ?? "?"
+            let recentCap = fields["recent_spool_cap"] ?? fields["recent_anchor_cap_bytes"] ?? "?"
             let recentBoots = fields["recent_bootstraps"] ?? "?"
-            let recentOverflows = fields["recent_anchor_overflows"] ?? "?"
-            adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B recentBoots \(recentBoots) overflow \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
+            let recentOverflows = fields["recent_anchor_invalidations"] ?? fields["recent_anchor_overflows"] ?? "?"
+            let liveIDRBoots = fields["live_idr_bootstraps"] ?? fields["client_live_bootstraps"] ?? "?"
+            let lastBootstrapMode = fields["last_bootstrap_mode"] ?? "?"
+            adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             let ready = (200...299).contains(code) && process == "RUNNING" && marker == "YES" && relayVersion.contains("v8.24")
             adapterRelayConfirmedRunning = ready
             logger.log("U2W H264 RELAY", "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) \(adapterCacheSummary)")
@@ -620,7 +624,16 @@ private final class U2WMainVideoTCPWorker {
     private var lastStatsEmitUptime: TimeInterval = 0
     private var connectionGeneration = 0
     private var firstAcceptedIDRForConnection = false
-    private let magic = Data("U2WH2643".utf8)
+    // v8.24 field units exist with two compatible 8-byte wire magics:
+    // - U2WH2642: deployed 1.5 MiB recent-IDR catch-up relay
+    // - U2WH2643: later 4 MiB recent-IDR relay source revision
+    // Both use the same [u32BE length][NAL] framing. Accept either so an app
+    // update cannot strand an otherwise healthy adapter on a handshake-only skew.
+    private let acceptedMagics: Set<Data> = [
+        Data("U2WH2642".utf8),
+        Data("U2WH2643".utf8),
+    ]
+    private let magicLength = 8
     private let maximumNALBytes = 512 * 1024
 
     init(host: String, port: UInt16) {
@@ -763,17 +776,17 @@ private final class U2WMainVideoTCPWorker {
     }
 
     private func receiveHandshake(_ connection: NWConnection, generation: Int) {
-        receiveExactly(magic.count, from: connection, generation: generation) { [weak self] data in
+        receiveExactly(magicLength, from: connection, generation: generation) { [weak self] data in
             guard let self else { return }
-            guard data == self.magic else {
-                let text = String(data: data, encoding: .ascii) ?? data.map { String(format: "%02X", $0) }.joined()
-                self.onDiagnostic?("Invalid TCP relay magic={\(text)} expected=U2WH2643; reconnecting")
+            let text = String(data: data, encoding: .ascii) ?? data.map { String(format: "%02X", $0) }.joined()
+            guard self.acceptedMagics.contains(data) else {
+                self.onDiagnostic?("Invalid TCP relay magic={\(text)} expected={U2WH2642|U2WH2643}; reconnecting")
                 self.scheduleReconnect(reason: "invalid relay magic", delay: 1.0)
                 return
             }
             self.onPhase?("WAITING_LIVE_IDR")
             self.onStatus?("U2W v8.24 connected • waiting for recent/live IDR bootstrap", true)
-            self.onDiagnostic?("TCP relay handshake U2WH2643 accepted; bounded recent-IDR bootstrap enabled (4 MiB max), otherwise wait next live IDR")
+            self.onDiagnostic?("TCP relay handshake \(text) accepted; v8.24 bounded recent-IDR bootstrap enabled, otherwise wait next live IDR")
             self.receiveLength(connection, generation: generation)
         }
     }

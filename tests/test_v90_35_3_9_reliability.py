@@ -34,10 +34,12 @@ def test_app_consumes_session_scoped_relay_status():
 
 
 def test_ambient_preserves_finalized_day_night_and_targets_reconnect_recovery():
-    # v90.35.3.9.1 restores the previously finalized Center state transition rule.
-    assert 'if becamePresent {' in AMBIENT
-    assert 'if becamePresent || !headlightPowerSessionActive' not in AMBIENT
-    assert 'positive presence reasserted' not in AMBIENT
+    # v90.35.3.24.4 keeps the low-blink reconnect behavior while repairing a
+    # stale-Center-identity split-brain: positive Center evidence must reconcile
+    # an impossible lightPresent=true / confirmed-DAY state back to NIGHT.
+    assert 'if becamePresent || !headlightPowerSessionActive' in AMBIENT
+    assert 'positive Center evidence' in AMBIENT
+    assert 'paired Center CoreBluetooth didConnect' in AMBIENT
 
     # Normal physical/headlight reconnects must never arm the blink-prone explicit
     # Power ON preparation. Only a deliberate app-issued manual OFF may do that.

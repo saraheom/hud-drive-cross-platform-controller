@@ -9,6 +9,7 @@ final class V903522LiveIDRLaneAmbientTests: XCTestCase {
 
     func testLiveIDRTransportHasBoundedParkedPreflight() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
+        XCTAssertTrue(video.contains("U2WH2642"))
         XCTAssertTrue(video.contains("U2WH2643"))
         XCTAssertTrue(video.contains("WAITING_LIVE_IDR"))
         XCTAssertTrue(video.contains("bounded recent-IDR bootstrap enabled"))

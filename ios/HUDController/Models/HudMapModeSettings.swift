@@ -17,6 +17,27 @@ enum HudMapAppearance: String, CaseIterable, Identifiable {
     }
 }
 
+enum HudManeuverWarningTarget: String, CaseIterable, Identifiable {
+    case maneuverArrow
+    case distance
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .maneuverArrow: return "Turn arrow"
+        case .distance: return "Distance"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .maneuverArrow: return "arrow.turn.up.right"
+        case .distance: return "ruler"
+        }
+    }
+}
+
 enum HudMapDesignerComponent: String, CaseIterable, Identifiable {
     case speed
     case speedLimit
@@ -309,6 +330,25 @@ final class HudMapModeSettings {
         }
     }
 
+    // v90.35.3.24.4 close-maneuver warning. These are intentionally global,
+    // not design-preset values: changing visual presets should not silently
+    // change when or how an approaching-turn warning is delivered.
+    var maneuverWarningEnabled: Bool {
+        didSet { defaults.set(maneuverWarningEnabled, forKey: "HUD.MapMode.maneuverWarning.enabled") }
+    }
+    var maneuverWarningTarget: HudManeuverWarningTarget {
+        didSet { defaults.set(maneuverWarningTarget.rawValue, forKey: "HUD.MapMode.maneuverWarning.target") }
+    }
+    var maneuverWarningThresholdFeet: Int {
+        didSet { defaults.set(maneuverWarningThresholdFeet, forKey: "HUD.MapMode.maneuverWarning.thresholdFeet") }
+    }
+    var maneuverWarningBlinkCount: Int {
+        didSet { defaults.set(maneuverWarningBlinkCount, forKey: "HUD.MapMode.maneuverWarning.blinkCount") }
+    }
+    var maneuverWarningIntervalSeconds: Double {
+        didSet { defaults.set(maneuverWarningIntervalSeconds, forKey: "HUD.MapMode.maneuverWarning.intervalSeconds") }
+    }
+
     // v90.35.3.13.3 designer values. They are intentionally *deltas* layered
     // on top of the user's existing calibration, so migration cannot move any
     // previously tuned component. All offsets are final 480×240 canvas pixels.
@@ -342,6 +382,10 @@ final class HudMapModeSettings {
 
         func double(_ key: String, default fallback: Double) -> Double {
             store.object(forKey: key) == nil ? fallback : store.double(forKey: key)
+        }
+
+        func integer(_ key: String, default fallback: Int) -> Int {
+            store.object(forKey: key) == nil ? fallback : store.integer(forKey: key)
         }
 
         leftScale = min(1.45, max(0.60, double("HUD.MapMode.leftScale", default: 1.0)))
@@ -400,6 +444,13 @@ final class HudMapModeSettings {
 
         let raw = store.string(forKey: "HUD.MapMode.mapAppearance") ?? HudMapAppearance.followSource.rawValue
         mapAppearance = HudMapAppearance(rawValue: raw) ?? .followSource
+
+        maneuverWarningEnabled = bool("HUD.MapMode.maneuverWarning.enabled", default: true)
+        let warningTargetRaw = store.string(forKey: "HUD.MapMode.maneuverWarning.target") ?? HudManeuverWarningTarget.distance.rawValue
+        maneuverWarningTarget = HudManeuverWarningTarget(rawValue: warningTargetRaw) ?? .distance
+        maneuverWarningThresholdFeet = min(2000, max(100, integer("HUD.MapMode.maneuverWarning.thresholdFeet", default: 500)))
+        maneuverWarningBlinkCount = min(5, max(2, integer("HUD.MapMode.maneuverWarning.blinkCount", default: 3)))
+        maneuverWarningIntervalSeconds = min(2.0, max(0.5, double("HUD.MapMode.maneuverWarning.intervalSeconds", default: 0.75)))
 
         speedScale = min(1.80, max(0.50, double("HUD.MapMode.Designer.speedScale", default: 1.0)))
         timeLeftScale = min(1.80, max(0.50, double("HUD.MapMode.Designer.timeLeftScale", default: 1.0)))

@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.24.3 — physical HUD stale-lane renderer reset
+
+This app-only release carries forward **v90.35.3.24.2 dual `U2WH2642` / `U2WH2643` MainVideo compatibility** and adds a generation-guarded physical-HUD lane reset. A 2026-09-20 field log proved the app preview cleared and three native empty-lane packets were transmitted while the HUD retained the old lane graphic once. The new path recreates the stock Navigation widget after a real lane payload ends, re-sends the current maneuver, and finishes with another empty-lane packet. New lane data cancels the reset before it can erase fresh guidance.
+
+**No U2W reflash is required from v8.24.** See `V90_35_3_24_3_RELEASE.md` and `V90_35_3_24_3_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.24 — recent-IDR bootstrap + software decode + Center-only DAY guard
 
 This release pairs the app with **U2W v8.24**. It closes the observed IDR-before-client startup race using a bounded 4 MiB recent SPS/PPS+IDR anchor, starts MainVideo predecode earlier in the car session, prefers software VideoToolbox decoding for the 800×480 navigation surface, and reconnects hard decoder recovery to the recent anchor. Ambient NIGHT→DAY is now Center/BLEDOM-only with a 1.0-second return guard; Dashboard no longer delays DAY.

@@ -9,7 +9,8 @@ STATUS = (ROOT / 'u2w/v8.24_RecentIDRRelay/source/u2wvideo-relay-status.cgi').re
 
 
 def test_v824_recent_idr_closes_client_after_keyframe_race_without_big_gop_burst():
-    assert 'U2WH2643' in RELAY and 'U2WH2643' in VIDEO
+    assert 'U2WH2643' in RELAY
+    assert 'U2WH2642' in VIDEO and 'U2WH2643' in VIDEO and 'acceptedMagics' in VIDEO
     assert '#define RECENT_CAP (4*1024*1024)' in RELAY
     assert 'recent-anchor-cap-exceeded-wait-next-idr' in RELAY
     assert 'client-connected-recent-anchor-available' in RELAY
@@ -24,7 +25,7 @@ def test_v824_recent_idr_closes_client_after_keyframe_race_without_big_gop_burst
 
 def test_ios_uses_v824_and_bounded_exact_framing_with_software_decoder_preference():
     assert 'v8.24-recent-idr-tcp-15332' in VIDEO
-    assert 'bounded recent-IDR bootstrap enabled (4 MiB max)' in VIDEO
+    assert 'v8.24 bounded recent-IDR bootstrap enabled' in VIDEO
     assert 'receiveExactly' in VIDEO
     assert 'maximumNALBytes = 512 * 1024' in VIDEO
     assert 'kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder' in VIDEO

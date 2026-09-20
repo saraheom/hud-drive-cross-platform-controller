@@ -30,8 +30,9 @@ final class V903539ReliabilityTests: XCTestCase {
 
     func testAmbientReconnectRecoveryDoesNotReintroduceHeadlightPowerOnBlink() throws {
         let monitor = try source("HUDController/Vehicle/AmbientLightMonitor.swift")
-        XCTAssertTrue(monitor.contains("if becamePresent {"))
-        XCTAssertFalse(monitor.contains("if becamePresent || !headlightPowerSessionActive"))
+        XCTAssertTrue(monitor.contains("if becamePresent || !headlightPowerSessionActive"))
+        XCTAssertTrue(monitor.contains("positive Center evidence"))
+        XCTAssertTrue(monitor.contains("paired Center CoreBluetooth didConnect"))
         XCTAssertTrue(monitor.contains("Manual Power OFF invalidated Already-On Minimal assumption"))
         XCTAssertFalse(monitor.contains("bledimExplicitPowerPrimeRequiredIDs.insert(dashboardID)"))
         XCTAssertTrue(monitor.contains("scheduleDashboardReconnectBrightnessRecovery"))

@@ -4178,12 +4178,17 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
 
         switch peripheral.state {
         case .connected:
-            if trackedPeripheral?.identifier == peripheral.identifier {
+            let pairedCenter = pairedDevice(peripheral.identifier)?.role == .centerConsole
+            if pairedCenter {
+                trackedPeripheral = peripheral
+                UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: peripheralIDKey)
+            }
+            if pairedCenter || trackedPeripheral?.identifier == peripheral.identifier {
                 markPresent(
                     name: peripheral.name ?? detectedName,
                     identifier: peripheral.identifier.uuidString,
-                    rssi: lastRSSI,
-                    reason: "persistent GATT connection"
+                    rssi: rssiByID[peripheral.identifier] ?? lastRSSI,
+                    reason: pairedCenter ? "paired Center connected maintenance" : "persistent GATT connection"
                 )
             }
             if pairedDevice(peripheral.identifier) != nil {
@@ -4278,10 +4283,15 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
         let becamePresent = !lightPresent
         lightPresent = true
 
-        if becamePresent {
+        // Positive Center evidence is authoritative even if an older/stale
+        // peripheral identity left `lightPresent` true while the confirmed state
+        // incorrectly remained DAY. Reconcile that impossible state immediately.
+        if becamePresent || !headlightPowerSessionActive {
             logger.log(
                 "AMBIENT",
-                "\(name) became present via \(reason); fast Center day/night → NIGHT"
+                becamePresent
+                    ? "\(name) became present via \(reason); fast Center day/night → NIGHT"
+                    : "\(name) positive Center evidence via \(reason) while confirmed DAY; reconciling → NIGHT"
             )
             commitConfirmedHeadlightPower(true, reason: "Center/BLEDOM present via \(reason)")
         }
@@ -4406,17 +4416,18 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
             let matchesBrightnessTarget = self.hudBrightnessTriggerEnabled &&
                 !self.targetName.isEmpty &&
                 name.localizedCaseInsensitiveContains(self.targetName)
+            let pairedCenter = self.pairedDevice(id)?.role == .centerConsole
 
-            if matchesBrightnessTarget {
+            if matchesBrightnessTarget || pairedCenter {
                 self.trackedPeripheral = peripheral
                 UserDefaults.standard.set(id.uuidString, forKey: self.peripheralIDKey)
                 self.markPresent(
                     name: name.isEmpty ? self.targetName : name,
                     identifier: id.uuidString,
                     rssi: RSSI.intValue,
-                    reason: "advertisement"
+                    reason: pairedCenter ? "paired Center advertisement" : "advertisement"
                 )
-                self.maintainConnection(to: peripheral, reason: "matched advertisement")
+                self.maintainConnection(to: peripheral, reason: pairedCenter ? "paired Center advertisement" : "matched advertisement")
             }
 
             if let device = self.pairedDevice(id), device.autoConnect {
@@ -4484,13 +4495,20 @@ final class AmbientLightMonitor: NSObject, CBCentralManagerDelegate, CBPeriphera
                 self.ambientTrace("BLE connected role=\(device.role?.rawValue ?? "unassigned") name=\(device.displayName)")
             }
 
-            if self.trackedPeripheral?.identifier == id {
+            let pairedCenter = self.pairedDevice(id)?.role == .centerConsole
+            if pairedCenter {
+                // Role assignment wins over a stale legacy tracker UUID. This is
+                // the 2:14 PM field failure: the configured Center connected under
+                // its real UUID while the old tracker still referenced another BLEDOM.
+                self.trackedPeripheral = peripheral
+            }
+            if pairedCenter || self.trackedPeripheral?.identifier == id {
                 UserDefaults.standard.set(id.uuidString, forKey: self.peripheralIDKey)
                 self.markPresent(
                     name: peripheral.name ?? self.targetName,
                     identifier: id.uuidString,
                     rssi: self.rssiByID[id] ?? self.lastRSSI,
-                    reason: "CoreBluetooth didConnect"
+                    reason: pairedCenter ? "paired Center CoreBluetooth didConnect" : "CoreBluetooth didConnect"
                 )
                 self.connectionAttemptStartedAt = nil
                 self.logger.log(

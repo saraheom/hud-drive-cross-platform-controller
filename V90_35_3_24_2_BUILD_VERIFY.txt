@@ -1,0 +1,6 @@
+v90.35.3.24.2 verification
+- App accepts U2WH2642 and U2WH2643 handshakes.
+- H.264 framing remains [u32BE length][NAL], max single NAL 512 KiB.
+- Adapter status parser supports both deployed 1.5 MiB catch-up status keys and later source-revision keys.
+- Production ambient-light logic unchanged from v90.35.3.24.1.
+- U2W firmware files unchanged from v90.35.3.24.1 full-repo package.

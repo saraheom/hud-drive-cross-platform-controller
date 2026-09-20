@@ -9,6 +9,9 @@ struct HudMapModeCanvas: View {
     var sourceMapImage: UIImage? = nil
     var previewLanePlaceholder = false
     var suppressCustomSpeedForNativeOBDProbe = false
+    /// When non-nil, keep the component's layout slot but render it transparent.
+    /// This is the close-maneuver warning blink used by Map Mode only.
+    var warningHiddenTarget: HudManeuverWarningTarget? = nil
 
     private let routeBlue = Color(red: 0.18, green: 0.62, blue: 1.00)
 
@@ -218,6 +221,7 @@ struct HudMapModeCanvas: View {
                             }
                         }
                         .foregroundStyle(.white)
+                        .opacity(warningHiddenTarget == .maneuverArrow ? 0 : 1)
                         .scaleEffect(settings.maneuverArrowScale)
                         .frame(height: CGFloat(40 * max(1.0, settings.maneuverArrowScale)))
                         .offset(
@@ -235,6 +239,7 @@ struct HudMapModeCanvas: View {
                             ))
                             .minimumScaleFactor(0.50)
                             .lineLimit(1)
+                            .opacity(warningHiddenTarget == .distance ? 0 : 1)
                             .offset(
                                 x: CGFloat(settings.designerDistanceOffsetX / max(0.01, settings.rightScale)),
                                 y: CGFloat(settings.designerDistanceOffsetY / max(0.01, settings.rightScale))

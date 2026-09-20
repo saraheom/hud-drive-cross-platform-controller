@@ -51,6 +51,7 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
 
         XCTAssertTrue(video.contains("U2WMainVideoTCPWorker"))
         XCTAssertTrue(video.contains("port: 15332"))
+        XCTAssertTrue(video.contains("U2WH2642"))
         XCTAssertTrue(video.contains("U2WH2643"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
         XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))

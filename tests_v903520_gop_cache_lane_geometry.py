@@ -11,7 +11,7 @@ cast=read('u2w/v8.24_RecentIDRRelay/source/u2whud_cast_relay_v8151.c')
 install=read('u2w/v8.24_RecentIDRRelay/source/install_once.sh')
 checks={
  'dedicated relay tails v8.11 live path':'/tmp/u2w_mainvideo_live.h264' in relay,
- 'dedicated relay uses separate TCP port':'15332' in relay and 'U2WH2643' in video,
+ 'dedicated relay uses separate TCP port':'15332' in relay and 'U2WH2642' in video and 'U2WH2643' in video,
  'bounded recent IDR replaces historical GOP burst':'gop_buf' not in relay and '#define RECENT_CAP (4*1024*1024)' in relay and '17-20 MiB' in relay,
  'startup scan reaches live edge before bootstrap':'startup_scan_complete' in relay and 'startup-scan-complete-live-tail' in relay,
  'active client has bounded send timeout':'SO_SNDTIMEO' in relay and 'tv.tv_sec=8' in relay,

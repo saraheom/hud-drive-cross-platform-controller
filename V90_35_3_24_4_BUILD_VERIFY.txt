@@ -1,0 +1,30 @@
+HUD Controller v90.35.3.24.4 BUILD VERIFY
+========================================
+Baseline: v90.35.3.24.3
+
+Scope
+-----
+1. Center/BLEDOM reconciliation fix:
+   - paired centerConsole identity is authoritative even if the legacy tracker UUID is stale
+   - positive Center evidence repairs an inconsistent confirmed-DAY state to NIGHT
+   - existing guarded NIGHT->DAY transition remains intact
+2. Approaching-turn blink warning for custom Map Mode:
+   - target: Maneuver Arrow or Distance
+   - threshold: 100-2000 ft (default 500 ft)
+   - blink count: 2-5 (default 3)
+   - interval between OFF/ON state changes: 0.50-2.00 s (default 0.75 s)
+   - triggers once per route-maneuver index while Map Mode is actively rendered
+   - opacity-based blink preserves layout
+3. v90.35.3.24.3 lane-renderer reset retained unchanged.
+4. MainVideo dual-wire compatibility and U2W v8.24 firmware retained unchanged.
+
+Validation
+----------
+Python structural regression suite: 411 passed
+Swift syntax parse: PASS for all modified Swift sources/tests
+MainVideo U2WMainVideoClient.swift: byte-identical to v90.35.3.24.3
+Entire u2w/ directory: byte-identical to v90.35.3.24.3
+
+Important scope note
+--------------------
+Selective Arrow-vs-Distance blinking is implemented in custom Map Mode, where the app owns those pixels independently. Stock Navigation mode's native maneuver packet does not expose independent visibility for its arrow and distance fields, so this release does not toggle the stock Navigation renderer for this warning.
