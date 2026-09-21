@@ -11,8 +11,9 @@ import Network
 /// Video no longer travels through a long-lived Boa CGI or through a cache file
 /// that is truncated underneath an active reader.  The adapter-side relay tails
 /// the stable v8.11 mirror and publishes length-framed H.264 NAL units on TCP/15332.
-/// v8.24 retains only a bounded recent SPS/PPS+IDR chain (4 MiB maximum) so a
-/// client that connects milliseconds after a valid IDR can still bootstrap without
+/// v8.24 retains only a bounded recent SPS/PPS+IDR chain (the deployed U2WH2642
+/// relay caps this at 1.5 MiB; the compatible U2WH2643 source revision uses 4 MiB)
+/// so a client that connects milliseconds after a valid IDR can still bootstrap without
 /// the unsafe multi-megabyte historical GOP burst used by v8.22. If that bounded
 /// anchor is unavailable, the relay waits for the next validated live IDR. The
 /// connection remains warm for the whole car session.
@@ -59,7 +60,8 @@ final class U2WMainVideoClient {
             let elapsed = min(preflightRequiredContinuity, max(0, Date().timeIntervalSince(preflightStableSince)))
             return "LIVE • validating continuity \(Int(elapsed))/\(Int(preflightRequiredContinuity))s"
         }
-        if transportPhase == "DECODER_RECOVERY" { return "Decoder recovery • requesting recent/live IDR bootstrap" }
+        if transportPhase == "DECODER_RECOVERY" { return "Decoder recovery • one bounded recent-IDR reseed" }
+        if transportPhase == "WAITING_FRESH_IDR" { return "Recovery anchor quarantined • waiting for fresh live IDR" }
         if transportPhase == "WAITING_LIVE_IDR" { return "Connected • waiting for recent/live IDR bootstrap" }
         if transportPhase == "WAITING_RELAY" { return "Waiting for U2W v8.24 relay" }
         if transportPhase == "TCP_WAITING" { return "TCP waiting — automatic retry armed" }
@@ -304,8 +306,9 @@ final class U2WMainVideoClient {
                 self.decoderRecoveryPending = true
                 self.preflightStableSince = nil
                 self.preflightPassLogged = false
-                self.transportPhase = "DECODER_RECOVERY"
-                self.status = "VideoToolbox recovery • waiting for clean live IDR"
+                // The worker owns the precise recovery phase: first attempt is
+                // DECODER_RECOVERY; a rejected recent anchor becomes
+                // WAITING_FRESH_IDR without reconnecting the healthy TCP stream.
                 self.logger.log("U2W VIDEO RECOVERY", reason)
             }
         }
@@ -412,6 +415,17 @@ final class U2WMainVideoClient {
                     continue
                 }
 
+                if self.transportPhase == "WAITING_FRESH_IDR", bytesAreFresh {
+                    if self.lastDecoderStaleDiagnosticAt.map({ now.timeIntervalSince($0) >= 15.0 }) ?? true {
+                        self.lastDecoderStaleDiagnosticAt = now
+                        self.logger.log(
+                            "U2W VIDEO WATCH",
+                            "Recent bootstrap quarantined; TCP/H.264 remain fresh while decoder waits for a genuinely new live IDR — no reconnect"
+                        )
+                    }
+                    continue
+                }
+
                 // First-stage recovery for a live source whose output callback has
                 // gone quiet: ask VideoToolbox to drain any delayed/asynchronous
                 // work without destroying its reference chain. If this produces a
@@ -426,14 +440,13 @@ final class U2WMainVideoClient {
                     self.worker?.softFlushDecoder(reason: "fresh H.264 / stale output soft probe")
                 }
 
-                // v90.35.3.23 field evidence: the TCP/H.264 source can stay fresh while
-                // VideoToolbox stops producing output for minutes, even while
-                // VTDecompressionSessionDecodeFrame still returns noErr. Treat that as
-                // a decoder-output stall, not a transport failure. Retire the decoder
-                // session and request the v8.24 bounded recent/live IDR bootstrap.
-                // The worker reconnects TCP intentionally so the adapter can replay
-                // its recent anchor; it does not reconnect the underlying CarPlay source. This also catches output-callback
-                // failures before they escalate to kVTInvalidSessionErr (-12903).
+                // Field evidence: the TCP/H.264 source can stay fresh while
+                // VideoToolbox stops producing output for minutes. Treat that as a
+                // decoder-output stall, not a transport failure. The worker gets one
+                // bounded TCP reseed so v8.24 may offer its recent anchor. If that
+                // bootstrap fails before a frame is produced, TCP is preserved and the
+                // decoder waits for a genuinely new live IDR instead of replaying the
+                // same state in a reconnect loop.
                 if bytesAreFresh, frameAge >= self.decoderStaleFrameInterval {
                     if !self.decoderRecoveryPending {
                         self.decoderRecoveryPending = true
@@ -444,7 +457,7 @@ final class U2WMainVideoClient {
                         self.transportPhase = "DECODER_RECOVERY"
                         self.logger.log(
                             "U2W VIDEO WATCH",
-                            "NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; HARD decoder recovery, reconnect recent-IDR bootstrap filter={\(self.sanitizerSummary)}"
+                            "NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; HARD decoder recovery, bounded recent-IDR reseed/fresh-IDR wait filter={\(self.sanitizerSummary)}"
                         )
                         self.worker?.recoverDecoderAtNextIDR(
                             reason: "fresh H.264 but no decoded frame for \(String(format: "%.1f", frameAge))s"
@@ -624,6 +637,12 @@ private final class U2WMainVideoTCPWorker {
     private var lastStatsEmitUptime: TimeInterval = 0
     private var connectionGeneration = 0
     private var firstAcceptedIDRForConnection = false
+    // v90.35.3.24.5: one decoder-stall episode gets at most one TCP reseed so
+    // v8.24 may offer its bounded recent anchor. If that bootstrap immediately
+    // poisons VideoToolbox again, preserve the healthy TCP stream and wait for a
+    // genuinely new live IDR instead of replaying/reconnecting in a tight loop.
+    private var recentAnchorRecoveryUsed = false
+    private var waitingForFreshLiveIDRAfterRejectedAnchor = false
     // v8.24 field units exist with two compatible 8-byte wire magics:
     // - U2WH2642: deployed 1.5 MiB recent-IDR catch-up relay
     // - U2WH2643: later 4 MiB recent-IDR relay source revision
@@ -639,21 +658,21 @@ private final class U2WMainVideoTCPWorker {
     init(host: String, port: UInt16) {
         self.host = NWEndpoint.Host(host)
         self.port = NWEndpoint.Port(rawValue: port)!
-        decoder.onFrame = { [weak self] image in self?.onFrame?(image) }
+        decoder.onFrame = { [weak self] image in
+            guard let self else { return }
+            if self.recentAnchorRecoveryUsed || self.waitingForFreshLiveIDRAfterRejectedAnchor {
+                self.onDiagnostic?("Decoder produced a frame after bounded recovery; recent-anchor retry budget reset")
+            }
+            self.recentAnchorRecoveryUsed = false
+            self.waitingForFreshLiveIDRAfterRejectedAnchor = false
+            self.onFrame?(image)
+        }
         decoder.onDiagnostic = { [weak self] message in self?.onDiagnostic?(message) }
         decoder.onRecoveryNeeded = { [weak self] reason in
             guard let self else { return }
             self.queue.async { [weak self] in
                 guard let self, self.running else { return }
-                self.decoder.hardRecoverAwaitingIDR(reason: reason)
-                self.onPhase?("DECODER_RECOVERY")
-                self.onStatus?("VideoToolbox recovery • requesting recent/live IDR bootstrap", true)
-                self.onDecoderRecovery?(reason)
-                self.emitDecoderState()
-                self.onDiagnostic?("Fatal decoder recovery reconnecting TCP so v8.24 can replay bounded recent IDR anchor")
-                self.closeCurrentConnection()
-                self.sanitizer.prepareForTransportReconnect()
-                self.scheduleReconnect(reason: "decoder recovery recent-IDR bootstrap", delay: 0.10)
+                self.performBoundedDecoderRecovery(reason: reason, origin: "VideoToolbox callback")
             }
         }
     }
@@ -661,6 +680,8 @@ private final class U2WMainVideoTCPWorker {
     func start() {
         guard !running else { return }
         running = true
+        recentAnchorRecoveryUsed = false
+        waitingForFreshLiveIDRAfterRejectedAnchor = false
         sanitizer.reset()
         decoder.reset()
         openConnection()
@@ -672,6 +693,8 @@ private final class U2WMainVideoTCPWorker {
         waitingDeadlineWorkItem?.cancel(); waitingDeadlineWorkItem = nil
         connection?.stateUpdateHandler = nil
         connection?.cancel(); connection = nil
+        recentAnchorRecoveryUsed = false
+        waitingForFreshLiveIDRAfterRejectedAnchor = false
         sanitizer.reset()
         decoder.reset()
         onPhase?("IDLE")
@@ -681,6 +704,9 @@ private final class U2WMainVideoTCPWorker {
         queue.async { [weak self] in
             guard let self, self.running else { return }
             self.onDiagnostic?("TCP live-edge reconnect requested reason=\(reason)")
+            // A real/manual transport restart begins a new recovery episode.
+            self.recentAnchorRecoveryUsed = false
+            self.waitingForFreshLiveIDRAfterRejectedAnchor = false
             self.closeCurrentConnection()
             self.sanitizer.prepareForTransportReconnect()
             // Preserve the last-known-good VT session, but require the next live IDR
@@ -702,16 +728,34 @@ private final class U2WMainVideoTCPWorker {
     func recoverDecoderAtNextIDR(reason: String) {
         queue.async { [weak self] in
             guard let self, self.running else { return }
-            self.decoder.hardRecoverAwaitingIDR(reason: reason)
-            self.onPhase?("DECODER_RECOVERY")
-            self.onStatus?("VideoToolbox recovery • requesting recent/live IDR bootstrap", true)
-            self.onDecoderRecovery?(reason)
-            self.emitDecoderState()
-            self.onDiagnostic?("Watchdog decoder recovery reconnecting TCP for bounded recent-IDR bootstrap")
-            self.closeCurrentConnection()
-            self.sanitizer.prepareForTransportReconnect()
-            self.scheduleReconnect(reason: "watchdog decoder recovery recent-IDR bootstrap", delay: 0.10)
+            self.performBoundedDecoderRecovery(reason: reason, origin: "stale-output watchdog")
         }
+    }
+
+    private func performBoundedDecoderRecovery(reason: String, origin: String) {
+        decoder.hardRecoverAwaitingIDR(reason: reason)
+        onDecoderRecovery?(reason)
+        emitDecoderState()
+
+        if !recentAnchorRecoveryUsed {
+            recentAnchorRecoveryUsed = true
+            waitingForFreshLiveIDRAfterRejectedAnchor = false
+            onPhase?("DECODER_RECOVERY")
+            onStatus?("Decoder recovery • one bounded recent-IDR reseed", true)
+            onDiagnostic?("\(origin): bounded recovery attempt #1; reconnecting TCP once so v8.24 may replay its recent anchor")
+            sanitizer.prepareForTransportReconnect()
+            scheduleReconnect(reason: "bounded decoder recovery recent-IDR reseed", delay: 0.35)
+            return
+        }
+
+        // The bounded recent anchor has already been tried during this recovery
+        // episode and no decoded frame proved it good. Do not reconnect and ask
+        // the relay to replay the same state again. Keep receiving the live edge;
+        // the decoder's needsIDR gate discards P-frames until the next true IDR.
+        waitingForFreshLiveIDRAfterRejectedAnchor = true
+        onPhase?("WAITING_FRESH_IDR")
+        onStatus?("Recent bootstrap rejected • waiting for fresh live IDR", true)
+        onDiagnostic?("\(origin): recent-anchor recovery already used and produced no frame; TCP PRESERVED, quarantining replay and waiting for next live IDR")
     }
 
     private func openConnection() {
@@ -808,6 +852,12 @@ private final class U2WMainVideoTCPWorker {
         receiveExactly(length, from: connection, generation: generation) { [weak self] nal in
             guard let self else { return }
             if let accepted = self.sanitizer.process(nal) {
+                if accepted.kind == .idr, self.waitingForFreshLiveIDRAfterRejectedAnchor {
+                    self.waitingForFreshLiveIDRAfterRejectedAnchor = false
+                    self.onPhase?("DECODER_BOOTSTRAP")
+                    self.onStatus?("Fresh live IDR arrived after quarantined recovery • rebuilding decoder…", true)
+                    self.onDiagnostic?("FRESH LIVE IDR accepted on preserved TCP after rejected recent-anchor bootstrap")
+                }
                 self.decoder.consume(accepted.data)
                 switch accepted.kind {
                 case .sps:
@@ -1431,7 +1481,7 @@ private final class H264VideoToolboxDecoder {
 
             if decodeStatus == Self.invalidSessionStatus {
                 onDiagnostic?(
-                    "FATAL VideoToolbox invalid session status=\(decodeStatus) au=\(submittedAccessUnits); immediate decoder reset requested, TCP preserved"
+                    "FATAL VideoToolbox invalid session status=\(decodeStatus) au=\(submittedAccessUnits); immediate decoder reset requested; worker applies bounded transport recovery"
                 )
                 requestHardRecovery(reason: "kVTInvalidSessionErr (-12903) from VTDecompressionSessionDecodeFrame")
                 return

@@ -37,6 +37,7 @@ struct VehicleView: View {
                                 "Supported PIDs",
                                 value: state.obd.supportedPIDs.isEmpty ? "—" : state.obd.supportedPIDs
                             )
+                            LabeledContent("Vehicle speed PID", value: state.obd.vehicleSpeedPIDSupportSummary)
 
                             Toggle("OBD speed protocol trace", isOn: Binding(
                                 get: { state.bluetooth.obdSpeedTraceEnabled },

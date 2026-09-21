@@ -20,7 +20,7 @@ def test_mainvideo_has_freshness_watchdog_and_generation_guard():
     assert 'decoderStaleFrameInterval: TimeInterval = 3.0' in VIDEO
     assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
     assert 'initialIDRWaitDiagnosticInterval: TimeInterval = 20.0' in VIDEO
-    assert 'HARD decoder recovery, reconnect recent-IDR bootstrap' in VIDEO
+    assert 'HARD decoder recovery, bounded recent-IDR reseed/fresh-IDR wait' in VIDEO
     assert 'U2W VIDEO WATCH' in VIDEO
     assert 'workerGeneration' in VIDEO
     assert 'self.workerGeneration == generation' in VIDEO

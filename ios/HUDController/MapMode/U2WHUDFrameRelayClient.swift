@@ -11,6 +11,11 @@ import Observation
 @MainActor
 @Observable
 final class U2WHUDFrameRelayClient {
+    private struct SendSample {
+        let uptime: TimeInterval
+        let bytes: Int
+    }
+
     private let logger: LogManager
     private let queue = DispatchQueue(label: "HUD.U2W.FrameRelay")
     private var connection: NWConnection?
@@ -23,6 +28,9 @@ final class U2WHUDFrameRelayClient {
     private(set) var droppedFrameCount = 0
     private(set) var reconnectCount = 0
     private(set) var lastFrameBytes = 0
+    private(set) var actualFPS: Double = 0
+    private(set) var recentKilobytesPerSecond: Double = 0
+    private var recentSendSamples: [SendSample] = []
 
     init(logger: LogManager) {
         self.logger = logger
@@ -37,6 +45,9 @@ final class U2WHUDFrameRelayClient {
         connection = nil
         sendInFlight = false
         connected = false
+        actualFPS = 0
+        recentKilobytesPerSecond = 0
+        recentSendSamples.removeAll(keepingCapacity: true)
         openConnection(reason: "start")
     }
 
@@ -132,6 +143,7 @@ final class U2WHUDFrameRelayClient {
                 }
                 self.sentFrameCount += 1
                 self.lastFrameBytes = jpeg.count
+                self.recordSuccessfulSend(bytes: jpeg.count)
                 if self.sentFrameCount == 1 || self.sentFrameCount % 50 == 0 {
                     self.logger.log(
                         "U2W RELAY",
@@ -140,6 +152,24 @@ final class U2WHUDFrameRelayClient {
                 }
             }
         })
+    }
+
+    private func recordSuccessfulSend(bytes: Int) {
+        let now = ProcessInfo.processInfo.systemUptime
+        recentSendSamples.append(SendSample(uptime: now, bytes: bytes))
+        let cutoff = now - 2.0
+        recentSendSamples.removeAll { $0.uptime < cutoff }
+        guard let first = recentSendSamples.first, let last = recentSendSamples.last else {
+            actualFPS = 0
+            recentKilobytesPerSecond = 0
+            return
+        }
+        let duration = max(0.001, last.uptime - first.uptime)
+        actualFPS = recentSendSamples.count >= 2
+            ? Double(recentSendSamples.count - 1) / duration
+            : 0
+        let bytesInWindow = recentSendSamples.reduce(0) { $0 + $1.bytes }
+        recentKilobytesPerSecond = Double(bytesInWindow) / 1024.0 / max(1.0, duration)
     }
 
     func stop(reason: String = "manual") {
@@ -152,6 +182,9 @@ final class U2WHUDFrameRelayClient {
         c?.cancel()
         sendInFlight = false
         connected = false
+        actualFPS = 0
+        recentKilobytesPerSecond = 0
+        recentSendSamples.removeAll(keepingCapacity: true)
         status = "Relay stopped"
         logger.log("U2W RELAY", "Stopped reason=\(reason)")
     }

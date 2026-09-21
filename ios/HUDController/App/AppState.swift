@@ -1173,14 +1173,18 @@ final class AppState {
                 ) {
                     renderCount += 1
                     self.hudU2WFrameRelay.sendFrame(frame)
-                    if renderCount == 1 || renderCount % 25 == 0 {
+                    let targetFPS = HudMapModeSettings.normalizedHUDFrameRate(self.mapModeSettings.hudFrameRate)
+                    let heartbeatEvery = max(1, targetFPS * 5)
+                    if renderCount == 1 || renderCount % heartbeatEvery == 0 {
                         self.logger.log(
                             "MAP RENDER HEARTBEAT",
-                            "render=\(renderCount) speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
+                            "render=\(renderCount) targetFPS=\(targetFPS) actualFPS=\(String(format: "%.1f", self.hudU2WFrameRelay.actualFPS)) throughput=\(String(format: "%.1f", self.hudU2WFrameRelay.recentKilobytesPerSecond))KBps speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
                         )
                     }
                 }
-                try? await Task.sleep(for: .milliseconds(200))
+                let targetFPS = HudMapModeSettings.normalizedHUDFrameRate(self.mapModeSettings.hudFrameRate)
+                let intervalMS = Int64(max(1, Int((1000.0 / Double(targetFPS)).rounded())))
+                try? await Task.sleep(for: .milliseconds(intervalMS))
             }
         }
     }
@@ -1193,8 +1197,8 @@ final class AppState {
             if hudU2WLiveRelayActive {
                 startHUDU2WNativeOBDSpeedProbe()
             } else {
-                hudU2WNativeOBDProbeStatus = "Armed — enable Map Mode to start item 10"
-                logger.log("OBD MAP PROBE", "Toggle ON while Map Mode inactive; probe armed for next live relay")
+                hudU2WNativeOBDProbeStatus = "Armed — enable Map Mode to run 45 s probe"
+                logger.log("OBD MAP PROBE", "Toggle ON while Map Mode inactive; v2 probe armed for next live relay")
             }
         } else {
             stopHUDU2WNativeOBDSpeedProbe(reason: "toggle off")
@@ -1204,15 +1208,11 @@ final class AppState {
 
     func startHUDU2WNativeOBDSpeedProbe() {
         guard hudU2WLiveRelayActive else {
-            hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled ? "Armed — enable Map Mode to start item 10" : "Enable Map Mode first"
+            hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled ? "Armed — enable Map Mode to run probe" : "Enable Map Mode first"
             return
         }
         guard bluetooth.state == .connected else {
             hudU2WNativeOBDProbeStatus = "HUD BLE disconnected"
-            return
-        }
-        guard hudU2WSTAConnected || isUsableHUDSTAAddress(hudU2WSTAAddress) else {
-            hudU2WNativeOBDProbeStatus = "Armed — waiting for HUD Map Mode Wi-Fi"
             return
         }
         guard !hudU2WNativeOBDProbeActive, !hudU2WNativeOBDProbePending else { return }
@@ -1221,13 +1221,12 @@ final class AppState {
         hudU2WNativeOBDProbePending = !obd.connected
         if hudU2WNativeOBDProbePending {
             hudU2WNativeOBDProbeStatus = "Waiting for HUD-side OBD connection…"
-            logger.log("OBD MAP PROBE", "Requested while OBD not yet confirmed; initiating HUD-side OBD connection and waiting up to 20s")
+            logger.log("OBD SPEED V2", "Probe requested while OBD not confirmed; requesting normal HUD-side OBD connect")
             obd.connect(force: true)
         }
 
         hudU2WNativeOBDProbeTask = Task { @MainActor [weak self] in
             guard let self else { return }
-
             if !self.obd.connected {
                 let deadline = Date().addingTimeInterval(20.0)
                 while !Task.isCancelled,
@@ -1237,7 +1236,6 @@ final class AppState {
                       Date() < deadline {
                     try? await Task.sleep(for: .milliseconds(500))
                 }
-
                 guard !Task.isCancelled else { return }
                 guard self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else {
                     self.hudU2WNativeOBDProbePending = false
@@ -1247,80 +1245,60 @@ final class AppState {
                 }
                 guard self.obd.connected else {
                     self.hudU2WNativeOBDProbePending = false
-                    self.hudU2WNativeOBDProbeStatus = "OBD connection timed out — toggle off/on to retry"
-                    self.logger.log("OBD MAP PROBE", "ABORT waited 20s but HUD-side OBD never confirmed connected")
+                    self.hudU2WNativeOBDProbeEnabled = false
+                    self.hudU2WNativeOBDProbeStatus = "OBD connection timed out"
+                    self.logger.log("OBD SPEED V2", "ABORT: HUD-side OBD never confirmed connected")
                     self.hudU2WNativeOBDProbeTask = nil
                     return
                 }
-                self.logger.log("OBD MAP PROBE", "HUD-side OBD connected; automatically starting persistent item-10 probe")
             }
 
             self.hudU2WNativeOBDProbePending = false
             self.hudU2WNativeOBDProbeActive = true
-            self.hudU2WNativeOBDProbeStatus = "Starting item 10 — custom GPS speed hidden"
-            self.bluetooth.beginOBDSpeedProbeForensics(duration: 30.0, label: "persistent mode-6 OBD_DRIVING_VELOCITY")
+            let pid0D = self.obd.vehicleSpeedPIDSupportSummary
+            self.hudU2WNativeOBDProbeStatus = "Running 45 s hidden item-10 trace — GPS display unchanged"
+            self.bluetooth.beginOBDSpeedProbeForensics(
+                duration: 46.0,
+                label: "v2 hidden OBD_DRIVING_VELOCITY; \(pid0D)"
+            )
             self.logger.log(
-                "OBD MAP PROBE",
-                "BEGIN persistent relay-mode6 test: hide custom GPS speed; request stock OBD_DRIVING_VELOCITY itemIndex=10 position=0; leave fullscreen unchanged for first 6s"
+                "OBD SPEED V2",
+                "BEGIN 45s non-disruptive probe supportedPIDs=\(self.obd.supportedPIDs.isEmpty ? "none" : self.obd.supportedPIDs) pid0D={\(pid0D)}; stock item 10 stays behind full-screen Map Mode; GPS JPEG speed remains visible"
             )
 
-            self.bluetooth.enqueue(
-                HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)),
-                label: "Relay OBD probe phase 1 → OBD_DRIVING_VELOCITY position 0"
-            )
-            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe phase 1 → KeepAlive")
+            for attempt in 1...15 {
+                guard !Task.isCancelled,
+                      self.hudU2WNativeOBDProbeActive,
+                      self.hudU2WLiveRelayActive,
+                      self.bluetooth.state == .connected else { break }
+                self.bluetooth.enqueue(
+                    HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)),
+                    label: "OBD speed v2 hidden item 10 refresh \(attempt)/15"
+                )
+                self.bluetooth.enqueue(HudCommands.keepAlive(), label: "OBD speed v2 KeepAlive \(attempt)/15")
+                self.logger.log("OBD SPEED V2", "hidden item-10 refresh attempt=\(attempt)/15 gpsDisplay=preserved fullscreen=unchanged")
+                try? await Task.sleep(for: .seconds(3))
+            }
 
-            try? await Task.sleep(for: .seconds(6))
-            guard !Task.isCancelled, self.hudU2WNativeOBDProbeActive else { return }
-
-            self.hudU2WNativeOBDProbeStatus = "ON — item 10 active; stock layer exposed until toggle off"
-            self.logger.log("OBD MAP PROBE", "PERSIST fullScreen(false) + OBD_DRIVING_VELOCITY; remains active until toggle off")
-            self.bluetooth.enqueue(HudCommands.fullScreen(false), label: "Relay OBD probe phase 2 → expose stock HUD layer")
-            self.bluetooth.enqueue(
-                HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)),
-                label: "Relay OBD probe phase 2 → OBD_DRIVING_VELOCITY position 0"
-            )
-            self.bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe phase 2 → KeepAlive")
-
-            // Persistent diagnostic mode: phase 2 stays active until the user
-            // turns the separate OBD test toggle off or Map Mode exits.
+            guard !Task.isCancelled else { return }
+            self.bluetooth.endOBDSpeedProbeForensics(reason: "45s v2 probe complete")
+            self.hudU2WNativeOBDProbeActive = false
+            self.hudU2WNativeOBDProbeEnabled = false
+            self.hudU2WNativeOBDProbePending = false
+            self.hudU2WNativeOBDProbeStatus = "Complete — inspect OBD PROBE SUMMARY / OBD SPEED V2 log"
             self.hudU2WNativeOBDProbeTask = nil
+            self.logger.log("OBD SPEED V2", "COMPLETE; no display mode/fullScreen change was performed")
         }
     }
 
     func stopHUDU2WNativeOBDSpeedProbe(reason: String = "manual") {
         hudU2WNativeOBDProbeTask?.cancel()
         hudU2WNativeOBDProbeTask = nil
-        let wasActive = hudU2WNativeOBDProbeActive
         hudU2WNativeOBDProbeActive = false
         hudU2WNativeOBDProbePending = false
         bluetooth.endOBDSpeedProbeForensics(reason: reason)
-        guard bluetooth.state == .connected else {
-            hudU2WNativeOBDProbeStatus = "Stopped locally — HUD BLE disconnected"
-            return
-        }
-        if wasActive {
-            // Field test on 2026-09-16 showed the HUD emitted connected=false in
-            // the same second that the old probe-end path cleared the custom OBD
-            // slot. Leave OBD_DRIVING_VELOCITY configured but hidden behind the
-            // restored full-screen Map Mode frame; this avoids an unnecessary OBD
-            // teardown and lets a second probe run without reconnecting.
-            bluetooth.enqueue(HudCommands.fullScreen(true), label: "Relay OBD probe → restore full screen (keep OBD slot hidden)")
-            bluetooth.enqueue(HudCommands.keepAlive(), label: "Relay OBD probe → restore KeepAlive")
-        }
-        hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled ? "Armed — custom GPS speed restored; waiting for Map Mode" : "Stopped — custom GPS speed restored"
-        logger.log("OBD MAP PROBE", "END reason=\(reason); restored custom JPEG speed without clearing OBD slot; enabled=\(hudU2WNativeOBDProbeEnabled ? 1 : 0)")
-
-        if wasActive {
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(2))
-                guard let self, self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else { return }
-                if !self.obd.connected {
-                    self.logger.log("OBD MAP PROBE", "Post-probe OBD health check found disconnected; requesting one reconnect")
-                    self.obd.connect(force: true)
-                }
-            }
-        }
+        hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled ? "Armed — waiting for Map Mode" : "Off"
+        logger.log("OBD SPEED V2", "END reason=\(reason); GPS JPEG speed/full-screen state unchanged")
     }
 
     func runHUDMode4STAPersistenceTest() {
@@ -2316,7 +2294,9 @@ final class AppState {
                 ) {
                     self.mapModeCastServer.updateFrame(frame)
                 }
-                try? await Task.sleep(for: .milliseconds(200))
+                let targetFPS = HudMapModeSettings.normalizedHUDFrameRate(self.mapModeSettings.hudFrameRate)
+                let intervalMS = Int64(max(1, Int((1000.0 / Double(targetFPS)).rounded())))
+                try? await Task.sleep(for: .milliseconds(intervalMS))
             }
         }
     }

@@ -22,8 +22,10 @@ final class V903524RecentIDRSoftwareCenterGuardTests: XCTestCase {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder"))
         XCTAssertTrue(video.contains("NSNumber(value: false)"))
-        XCTAssertTrue(video.contains("Fatal decoder recovery reconnecting TCP so v8.24 can replay bounded recent IDR anchor"))
-        XCTAssertTrue(video.contains("VideoToolbox recovery • requesting recent/live IDR bootstrap"))
+        XCTAssertTrue(video.contains("bounded recovery attempt #1"))
+        XCTAssertTrue(video.contains("WAITING_FRESH_IDR"))
+        XCTAssertTrue(video.contains("TCP PRESERVED, quarantining replay and waiting for next live IDR"))
+        XCTAssertTrue(video.contains("Decoder recovery • one bounded recent-IDR reseed"))
     }
 
     func testCenterOnlyDayGuardDoesNotWaitForDashboard() throws {

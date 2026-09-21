@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.24.5 — bounded MainVideo recovery + FPS/OBD probes
+
+This is an **app-only** follow-up to the 2026-09-21 drive. MainVideo ran correctly for several minutes, then VideoToolbox `-8969` entered repeated recent-anchor reconnects even though H.264 bytes remained fresh. The new recovery policy allows one bounded recent-anchor reseed per stall episode; if it fails before producing a frame, the iPhone keeps TCP alive and waits for a genuinely new live IDR. A successful frame resets the reseed budget.
+
+Map Mode now has a 5/8/10/12/15 fps HUD-output probe with actual send-rate and JPEG-throughput diagnostics. A separate 45-second OBD speed probe v2 reports standard PID `0x0D` support and scores hidden HUD `OBD_DRIVING_VELOCITY` traffic against GPS without changing the visible GPS speed or full-screen Map Mode.
+
+**U2W v8.24 is unchanged. Do not reflash the adapter for this release.** Ambient-light production behavior is also unchanged from v90.35.3.24.4. See `V90_35_3_24_5_RELEASE.md`.
+
+---
+
 # HUD Controller v90.35.3.24.3 — physical HUD stale-lane renderer reset
 
 This app-only release carries forward **v90.35.3.24.2 dual `U2WH2642` / `U2WH2643` MainVideo compatibility** and adds a generation-guarded physical-HUD lane reset. A 2026-09-20 field log proved the app preview cleared and three native empty-lane packets were transmitted while the HUD retained the old lane graphic once. The new path recreates the stock Navigation widget after a real lane payload ends, re-sends the current maneuver, and finishes with another empty-lane packet. New lane data cancels the reset before it can erase fresh guidance.

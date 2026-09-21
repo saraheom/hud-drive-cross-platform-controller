@@ -323,6 +323,17 @@ final class HudMapModeSettings {
         didSet { persist(nativeOBDSpeedOverlayExperiment, key: "HUD.MapMode.nativeOBDSpeedOverlayExperiment") }
     }
 
+    // v90.35.3.24.5 transport probe. This is global rather than preset-specific:
+    // changing a visual design preset must not silently change network cadence.
+    static let supportedHUDFrameRates = [5, 8, 10, 12, 15]
+    var hudFrameRate: Int {
+        didSet { defaults.set(hudFrameRate, forKey: "HUD.MapMode.hudFrameRate") }
+    }
+
+    static func normalizedHUDFrameRate(_ value: Int) -> Int {
+        supportedHUDFrameRates.min(by: { abs($0 - value) < abs($1 - value) }) ?? 5
+    }
+
     var mapAppearance: HudMapAppearance {
         didSet {
             defaults.set(mapAppearance.rawValue, forKey: "HUD.MapMode.mapAppearance")
@@ -441,6 +452,7 @@ final class HudMapModeSettings {
         showETA = bool("HUD.MapMode.showETA", default: true)
         showTimeLeft = bool("HUD.MapMode.showTimeLeft", default: true)
         nativeOBDSpeedOverlayExperiment = bool("HUD.MapMode.nativeOBDSpeedOverlayExperiment", default: false)
+        hudFrameRate = Self.normalizedHUDFrameRate(integer("HUD.MapMode.hudFrameRate", default: 5))
 
         let raw = store.string(forKey: "HUD.MapMode.mapAppearance") ?? HudMapAppearance.followSource.rawValue
         mapAppearance = HudMapAppearance(rawValue: raw) ?? .followSource

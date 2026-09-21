@@ -72,6 +72,25 @@ final class HudOBDController {
 
     private(set) var connected = false
     private(set) var supportedPIDs = ""
+
+    /// SAE J1979 Mode 01 PID 0x00 bitmap interpretation for vehicle speed 0x0D.
+    /// The HUD reports this bitmap as the first 8 hex digits of supportedPIDs.
+    var vehicleSpeedPIDSupported: Bool? {
+        guard let first = supportedPIDs.split(separator: "|").first,
+              first.count >= 8,
+              let bitmap = UInt32(first.prefix(8), radix: 16) else { return nil }
+        let pid = 0x0D
+        let bit = 32 - pid
+        return (bitmap & (UInt32(1) << UInt32(bit))) != 0
+    }
+
+    var vehicleSpeedPIDSupportSummary: String {
+        switch vehicleSpeedPIDSupported {
+        case true: return "PID 0x0D advertised: YES"
+        case false: return "PID 0x0D advertised: NO"
+        case nil: return "PID 0x0D support: unknown"
+        }
+    }
     private(set) var status = "Not connected"
     var onConnectionChanged: ((Bool) -> Void)?
     /// Some HUD firmware builds re-apply their default bottom time/weather panel

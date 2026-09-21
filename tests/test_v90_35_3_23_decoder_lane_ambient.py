@@ -14,7 +14,7 @@ def test_invalid_videotoolbox_session_is_fatal_and_tcp_is_preserved():
     assert 'requestHardRecovery(reason:' in VIDEO
     assert 'Decoder hard recovery #' in VIDEO
     assert 'waiting for validated IDR' in VIDEO
-    assert 'HARD decoder recovery' in VIDEO and 'recent IDR anchor' in VIDEO
+    assert 'bounded recent-IDR reseed/fresh-IDR wait' in VIDEO and 'TCP PRESERVED' in VIDEO
 
 
 def test_silent_decoder_output_stall_recovers_even_when_decode_call_returns_noerr():

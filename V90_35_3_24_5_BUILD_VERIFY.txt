@@ -1,0 +1,38 @@
+HUD Controller v90.35.3.24.5 build verification
+================================================
+Scope: app-only MainVideo recovery v2 + HUD FPS probe + OBD speed probe v2.
+U2W firmware: UNCHANGED from v90.35.3.24.4 / existing v8.24 flash.
+AmbientLightMonitor.swift: UNCHANGED from v90.35.3.24.4.
+
+Validation performed in build workspace:
+- Python structural/regression suite: 411 passed.
+- Legacy/static verification scripts updated for the new bounded recovery/FPS contracts and passed:
+  * tests_v9035132_stabilization.py
+  * tests_v903513_latest_frame.py
+  * tests_v903515_safe_mainvideo.py
+  * tests_v903516_iphone_mainvideo_filter.py
+  * tests_v903518_mainvideo_lane_street.py
+  * tests_v9035245_mainvideo_fps_obd.py
+- swiftc -parse: PASS for all modified production files and affected/new XCTest files.
+- Entire u2w/ directory SHA manifest: byte-for-byte unchanged versus v90.35.3.24.4.
+- ios/HUDController/Vehicle/AmbientLightMonitor.swift: byte-for-byte unchanged versus v90.35.3.24.4.
+
+MainVideo recovery contract:
+1. One decoder-stall episode may request one TCP recent-anchor reseed.
+2. If that bootstrap fails before any decoded frame, no second recovery reconnect is issued.
+3. The current TCP/H.264 stream is preserved and VideoToolbox waits for the next genuinely live IDR.
+4. A successfully decoded frame resets the one-reseed budget.
+5. Actual TCP failure/source silence retains the normal transport reconnect path.
+
+HUD FPS probe:
+- Targets: 5, 8, 10, 12, 15 fps.
+- Default: 5 fps.
+- Reports actual send FPS and recent JPEG KB/s, alongside drops/reconnects.
+
+OBD speed probe v2:
+- Reports SAE J1979 PID 0x0D support from the first Mode-01 supported-PID bitmap.
+- 45 s hidden item-10 probe; full-screen Map Mode and visible GPS speed remain unchanged.
+- Candidate values are scored against simultaneous GPS mph/km/h and summarized as OBD PROBE SUMMARY.
+- Diagnostic only; does not promote OBD speed into production display yet.
+
+Note: Linux build workspace can syntax-parse Swift but cannot run the macOS/Xcode iOS simulator CI job. GitHub iOS CI remains the authoritative compile/XCTest run after commit.

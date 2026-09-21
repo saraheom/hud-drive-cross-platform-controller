@@ -16,7 +16,8 @@ final class V903522LiveIDRLaneAmbientTests: XCTestCase {
         XCTAssertTrue(video.contains("relay confirmed RUNNING before TCP open"))
         XCTAssertTrue(video.contains("TCP WAITING deadline expired"))
         XCTAssertTrue(video.contains("MAINVIDEO PREFLIGHT"))
-        XCTAssertTrue(video.contains("recent IDR anchor"))
+        XCTAssertTrue(video.contains("recentAnchorRecoveryUsed"))
+        XCTAssertTrue(video.contains("WAITING_FRESH_IDR"))
         XCTAssertTrue(video.contains("receiveExactly"))
     }
 

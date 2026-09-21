@@ -440,7 +440,40 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("VideoToolbox decoder", value: state.mainVideo.decoderSummary)
                     LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
                     LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
-                    LabeledContent("HUD cadence", value: "5 fps • latest frame")
+                    LabeledContent(
+                        "HUD cadence",
+                        value: "\(state.mapModeSettings.hudFrameRate) fps target • \(String(format: "%.1f", state.hudU2WFrameRelay.actualFPS)) actual"
+                    )
+                    LabeledContent(
+                        "JPEG throughput",
+                        value: String(format: "%.1f KB/s", state.hudU2WFrameRelay.recentKilobytesPerSecond)
+                    )
+                    Picker(
+                        "HUD map FPS probe",
+                        selection: Binding(
+                            get: { state.mapModeSettings.hudFrameRate },
+                            set: { state.mapModeSettings.hudFrameRate = HudMapModeSettings.normalizedHUDFrameRate($0) }
+                        )
+                    ) {
+                        ForEach(HudMapModeSettings.supportedHUDFrameRates, id: \.self) { fps in
+                            Text("\(fps)").tag(fps)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    LabeledContent("OBD vehicle-speed capability", value: state.obd.vehicleSpeedPIDSupportSummary)
+                    Toggle(
+                        "45 s OBD speed probe v2",
+                        isOn: Binding(
+                            get: { state.hudU2WNativeOBDProbeEnabled },
+                            set: { state.setHUDU2WNativeOBDSpeedProbeEnabled($0) }
+                        )
+                    )
+                    LabeledContent("OBD speed probe", value: state.hudU2WNativeOBDProbeStatus)
+                    Text("The v2 probe leaves the custom GPS speed and full-screen Map Mode untouched. It refreshes the hidden stock OBD_DRIVING_VELOCITY item and scores HUD→iPhone numeric fields against GPS for 45 seconds. It does not yet replace GPS speed.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
                     LabeledContent("Last JPEG", value: state.hudU2WFrameRelay.lastFrameBytes == 0 ? "—" : "\(state.hudU2WFrameRelay.lastFrameBytes) bytes")
                     if !state.hudU2WSTAReason.isEmpty {
                         LabeledContent("Reason", value: state.hudU2WSTAReason)
@@ -465,7 +498,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v8.24 keeps MainVideo off Boa/CGI and adds a bounded recent-IDR bootstrap so connecting just after a keyframe no longer stalls. The iPhone prefers software VideoToolbox decode and keeps the stream warm for the car session. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified and confirm the frame counter keeps increasing.")
+                    Text("v8.24 remains unchanged. v90.35.3.24.5 gives each decoder-stall episode only one recent-anchor TCP reseed; if that replay immediately fails, the iPhone preserves TCP and waits for a genuinely fresh live IDR instead of entering a reconnect storm. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified and confirm the frame counter keeps increasing.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

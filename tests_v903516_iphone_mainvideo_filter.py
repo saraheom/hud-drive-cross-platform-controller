@@ -11,7 +11,7 @@ checks = {
     'live relay start remains': 'mainVideo.start(reason: "live U2W Map Mode relay")' in app,
     'Map Mode stop keeps predecode warm': 'live U2W Map Mode disabled — keep continuous predecode alive' in app,
     'transport-ready video predecode': 'mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")' in app,
-    'fatal recovery uses bounded recent anchor': 'Fatal decoder recovery reconnecting TCP so v8.24 can replay bounded recent IDR anchor' in video,
+    'fatal recovery uses one bounded recent anchor': 'bounded recovery attempt #1' in video and 'WAITING_FRESH_IDR' in video,
     'source silence is bounded': 'sourceStaleInterval: TimeInterval = 15.0' in video,
     'UI exposes filter counters': 'iPhone H.264 filter' in ui and 'sanitizerSummary' in ui,
     'manual video reconnect gated by Map Mode': '.disabled(!state.hudU2WLiveRelayActive)' in ui,

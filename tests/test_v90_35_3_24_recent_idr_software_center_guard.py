@@ -35,10 +35,11 @@ def test_ios_uses_v824_and_bounded_exact_framing_with_software_decoder_preferenc
 
 def test_decoder_recovery_reconnects_to_recent_anchor_instead_of_dead_session_loop():
     assert 'kVTInvalidSessionErr (-12903)' in VIDEO
-    assert 'Fatal decoder recovery reconnecting TCP so v8.24 can replay bounded recent IDR anchor' in VIDEO
-    assert 'Watchdog decoder recovery reconnecting TCP for bounded recent-IDR bootstrap' in VIDEO
-    assert 'decoder recovery recent-IDR bootstrap' in VIDEO
-    assert 'VideoToolbox recovery • requesting recent/live IDR bootstrap' in VIDEO
+    assert 'bounded recovery attempt #1' in VIDEO
+    assert 'WAITING_FRESH_IDR' in VIDEO
+    assert 'stale-output watchdog' in VIDEO and 'performBoundedDecoderRecovery' in VIDEO
+    assert 'bounded decoder recovery recent-IDR reseed' in VIDEO
+    assert 'Decoder recovery • one bounded recent-IDR reseed' in VIDEO
 
 
 def test_mainvideo_warms_before_hud_ble_and_survives_hud_ble_transport_loss():

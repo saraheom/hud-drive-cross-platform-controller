@@ -96,6 +96,12 @@ final class HudBluetoothManager: NSObject {
     private var obdSpeedProbeForensicsUntil = Date.distantPast
     private var obdSpeedProbeForensicsLabel = ""
     private var obdSpeedProbeForensicsFrameCount = 0
+    private struct OBDSpeedProbeScore {
+        var hits = 0
+        var distinctReferenceSpeeds = Set<Int>()
+        var lastValue = 0
+    }
+    private var obdSpeedProbeScores: [String: OBDSpeedProbeScore] = [:]
 
     var onOBDConnectionEvent: ((Bool, String) -> Void)?
     var onWiFiSTAStatusEvent: ((Int, String, String) -> Void)?
@@ -719,6 +725,7 @@ final class HudBluetoothManager: NSObject {
         obdSpeedProbeForensicsUntil = Date().addingTimeInterval(max(1.0, duration))
         obdSpeedProbeForensicsLabel = label
         obdSpeedProbeForensicsFrameCount = 0
+        obdSpeedProbeScores.removeAll(keepingCapacity: true)
         logger.log(
             "OBD PROBE FORENSICS",
             "BEGIN label=\(label) duration=\(String(format: "%.1f", duration))s gps=\(obdTraceReferenceSpeedMph)mph"
@@ -727,9 +734,21 @@ final class HudBluetoothManager: NSObject {
 
     func endOBDSpeedProbeForensics(reason: String) {
         guard obdSpeedProbeForensicsUntil > .distantPast else { return }
+        let ranked = obdSpeedProbeScores
+            .sorted {
+                if $0.value.distinctReferenceSpeeds.count != $1.value.distinctReferenceSpeeds.count {
+                    return $0.value.distinctReferenceSpeeds.count > $1.value.distinctReferenceSpeeds.count
+                }
+                return $0.value.hits > $1.value.hits
+            }
+            .prefix(10)
+            .map { key, value in
+                "\(key){hits=\(value.hits),distinctGPS=\(value.distinctReferenceSpeeds.count),last=\(value.lastValue)}"
+            }
+            .joined(separator: ";")
         logger.log(
-            "OBD PROBE FORENSICS",
-            "END label=\(obdSpeedProbeForensicsLabel) frames=\(obdSpeedProbeForensicsFrameCount) reason=\(reason)"
+            "OBD PROBE SUMMARY",
+            "label=\(obdSpeedProbeForensicsLabel) frames=\(obdSpeedProbeForensicsFrameCount) reason=\(reason) top=[\(ranked.isEmpty ? "none" : ranked)]"
         )
         obdSpeedProbeForensicsUntil = .distantPast
         obdSpeedProbeForensicsLabel = ""
@@ -744,11 +763,60 @@ final class HudBluetoothManager: NSObject {
         let payload = body.count > 3 ? body.subdata(in: 3..<body.count) : Data()
         let kmh = Int((Double(obdTraceReferenceSpeedMph) * 1.609344).rounded())
         let candidates = obdTraceScalarCandidates(payload: payload)
+        scoreOBDSpeedProbeCandidates(command: command, p1: p1, p2: p2, payload: payload)
         let signatures = obdDiagnosticSignatureHits(payload)
         logger.log(
             "OBD PROBE RX",
             "label=\(obdSpeedProbeForensicsLabel) seq=\(obdSpeedProbeForensicsFrameCount) hdr=\(command)/\(p1)/\(p2) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh candidates=[\(candidates.joined(separator: ","))] signatures=[\(signatures.joined(separator: ","))] body=\(HudProtocol.hex(body.prefix(128)))"
         )
+    }
+
+    private func scoreOBDSpeedProbeCandidates(command: Int, p1: Int, p2: Int, payload: Data) {
+        guard !payload.isEmpty else { return }
+        let bytes = [UInt8](payload)
+        let mph = obdTraceReferenceSpeedMph
+        let kmh = Int((Double(mph) * 1.609344).rounded())
+        guard mph >= 3 else { return } // parked/near-zero values create many false matches.
+
+        func record(type: String, offset: Int, value: Int, reference: Int, unit: String, tolerance: Int) {
+            guard value >= 0, value <= 300, abs(value - reference) <= tolerance else { return }
+            let key = "hdr=\(command)/\(p1)/\(p2) \(type)@\(offset)≈\(unit)"
+            var score = obdSpeedProbeScores[key] ?? OBDSpeedProbeScore()
+            score.hits += 1
+            score.distinctReferenceSpeeds.insert(reference)
+            score.lastValue = value
+            obdSpeedProbeScores[key] = score
+        }
+
+        for i in bytes.indices {
+            let value = Int(bytes[i])
+            record(type: "u8", offset: i, value: value, reference: mph, unit: "mph", tolerance: 2)
+            record(type: "u8", offset: i, value: value, reference: kmh, unit: "kmh", tolerance: 3)
+        }
+        if bytes.count >= 2 {
+            for i in 0..<(bytes.count - 1) {
+                let be = (Int(bytes[i]) << 8) | Int(bytes[i + 1])
+                let le = (Int(bytes[i + 1]) << 8) | Int(bytes[i])
+                record(type: "u16be", offset: i, value: be, reference: mph, unit: "mph", tolerance: 2)
+                record(type: "u16be", offset: i, value: be, reference: kmh, unit: "kmh", tolerance: 3)
+                record(type: "u16le", offset: i, value: le, reference: mph, unit: "mph", tolerance: 2)
+                record(type: "u16le", offset: i, value: le, reference: kmh, unit: "kmh", tolerance: 3)
+            }
+        }
+        if bytes.count >= 4 {
+            for i in 0...(bytes.count - 4) {
+                let be = (UInt32(bytes[i]) << 24) | (UInt32(bytes[i + 1]) << 16) | (UInt32(bytes[i + 2]) << 8) | UInt32(bytes[i + 3])
+                let le = (UInt32(bytes[i + 3]) << 24) | (UInt32(bytes[i + 2]) << 16) | (UInt32(bytes[i + 1]) << 8) | UInt32(bytes[i])
+                if be <= 300 {
+                    record(type: "u32be", offset: i, value: Int(be), reference: mph, unit: "mph", tolerance: 2)
+                    record(type: "u32be", offset: i, value: Int(be), reference: kmh, unit: "kmh", tolerance: 3)
+                }
+                if le <= 300 {
+                    record(type: "u32le", offset: i, value: Int(le), reference: mph, unit: "mph", tolerance: 2)
+                    record(type: "u32le", offset: i, value: Int(le), reference: kmh, unit: "kmh", tolerance: 3)
+                }
+            }
+        }
     }
 
     private func handleDiagnosticPacket(_ body: Data) -> Bool {

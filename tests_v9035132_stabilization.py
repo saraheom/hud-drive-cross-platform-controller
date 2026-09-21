@@ -4,6 +4,7 @@ from pathlib import Path
 import hashlib
 
 ROOT = Path(__file__).resolve().parent
+settings = (ROOT / 'ios/HUDController/Models/HudMapModeSettings.swift').read_text()
 
 def text(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
@@ -15,10 +16,10 @@ ble = text("ios/HUDController/Bluetooth/HudBluetoothManager.swift")
 canvas = text("ios/HUDController/MapMode/HudMapModeCanvas.swift")
 
 checks = {
-    "5 fps physical HUD cadence remains unchanged": ".milliseconds(200)" in app,
+    "selectable physical HUD cadence probe": "supportedHUDFrameRates = [5, 8, 10, 12, 15]" in settings and "1000.0 / Double(targetFPS)" in app,
     "decoder output stall watchdog is bounded": "decoderStaleFrameInterval: TimeInterval = 3.0" in video,
     "decoder-stale diagnostics remain bounded": "lastDecoderStaleDiagnosticAt" in video and "initialIDRWaitDiagnosticInterval" in video,
-    "fresh bytes recover decoder without reconnecting TCP": "HARD decoder recovery, reconnect recent-IDR bootstrap" in video and "bytesAreFresh" in video,
+    "fresh bytes use bounded reseed then same-TCP fresh IDR": "bounded recent-IDR reseed/fresh-IDR wait" in video and "TCP PRESERVED" in video and "bytesAreFresh" in video,
     "accepted decoder state survives HTTP reseed": "decoder.prepareForStreamRestart()" in video,
     "SPS/PPS candidates are staged separately": all(s in video for s in ("activeSPS", "activePPS", "pendingSPS", "pendingPPS")),
     "bad SPS/PPS cannot evict known-good decoder": "preserving last-known-good decoder" in video,

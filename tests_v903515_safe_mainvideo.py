@@ -7,7 +7,7 @@ u2w=ROOT/'u2w/v8.19_SafeMainVideoFilter'
 checks={
  'v819 source': (u2w/'source/u2w_mainvideo_streamer.c').exists(),
  'no AppleCarPlay payload': not any('AppleCarPlay' in p.name for p in (u2w/'source').iterdir()),
- 'bounded local decoder recovery': 'decoderStaleFrameInterval: TimeInterval = 3.0' in video and 'HARD decoder recovery, reconnect recent-IDR bootstrap' in video,
+ 'bounded local decoder recovery': 'decoderStaleFrameInterval: TimeInterval = 3.0' in video and 'WAITING_FRESH_IDR' in video and 'TCP PRESERVED' in video,
  'bounded source-silence hold': 'sourceStaleInterval: TimeInterval = 15.0' in video,
  '5s route inactive hold': 'inactiveRouteEndConfirmationInterval: TimeInterval = 5.0' in route,
  'OBD pending state': 'hudU2WNativeOBDProbePending' in app,

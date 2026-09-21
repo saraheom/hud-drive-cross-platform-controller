@@ -29,7 +29,7 @@ def test_tcp_is_not_opened_until_relay_is_confirmed_and_waiting_recovers():
     assert 'TCP intentionally NOT opened' in VIDEO
     assert 'TCP WAITING deadline expired' in VIDEO
     assert '4s retry deadline armed' in VIDEO
-    assert 'recent IDR anchor' in VIDEO
+    assert 'recentAnchorRecoveryUsed' in VIDEO and 'WAITING_FRESH_IDR' in VIDEO
 
 
 def test_parked_preflight_and_diagnostic_chain_are_visible():

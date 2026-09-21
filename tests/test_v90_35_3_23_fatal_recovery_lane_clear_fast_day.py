@@ -9,9 +9,10 @@ AMBIENT = (ROOT / "ios/HUDController/Vehicle/AmbientLightMonitor.swift").read_te
 
 def test_invalid_videotoolbox_session_is_fatal_and_tcp_is_preserved():
     assert "if decodeStatus == Self.invalidSessionStatus" in VIDEO
-    assert "immediate decoder reset requested, TCP preserved" in VIDEO
+    assert "immediate decoder reset requested; worker applies bounded transport recovery" in VIDEO
     assert "hardRecoverAwaitingIDR" in VIDEO
-    assert "Fatal decoder recovery reconnecting TCP so v8.24 can replay bounded recent IDR anchor" in VIDEO
+    assert 'bounded recovery attempt #1' in VIDEO
+    assert 'TCP PRESERVED, quarantining replay and waiting for next live IDR' in VIDEO
     assert "decoderStaleFrameInterval: TimeInterval = 3.0" in VIDEO
     assert "LIVE • 20s continuity verified" in VIDEO
 

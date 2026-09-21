@@ -45,8 +45,9 @@ def test_video_self_healing_does_not_use_long_lived_boa():
 def test_obd_probe_end_keeps_connection_path_alive():
     fn = APP.split('func stopHUDU2WNativeOBDSpeedProbe', 1)[1].split('func runHUDMode4STAPersistenceTest', 1)[0]
     assert 'HudOBDItem.none' not in fn
-    assert 'keep OBD slot hidden' in fn
-    assert 'Post-probe OBD health check found disconnected' in fn
+    assert 'fullScreen(false)' not in fn
+    assert 'GPS JPEG speed/full-screen state unchanged' in fn
+    assert 'obd.disconnect' not in fn
 
 
 def test_stable_v817_images_are_unchanged():
