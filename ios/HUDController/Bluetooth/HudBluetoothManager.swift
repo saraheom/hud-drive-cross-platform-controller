@@ -103,6 +103,22 @@ final class HudBluetoothManager: NSObject {
     }
     private var obdSpeedProbeScores: [String: OBDSpeedProbeScore] = [:]
 
+    // v90.35.3.24.6.1: deeper OBD speed probe. Unlike v2, this keeps a bounded
+    // in-memory sample set and performs regression against GPS only after the
+    // road window ends. It therefore does not flood the HUD log with every BLE
+    // frame while MainVideo is being stress-tested. The probe remains strictly
+    // on the existing HUD BLE link; it never opens a second OBD connection and
+    // never sends raw ELM/PID commands.
+    private(set) var obdDeepSpeedProbeActive = false
+    private(set) var obdDeepSpeedProbeStatus = "Not run"
+    private(set) var obdDeepSpeedProbeReportURL: URL?
+    private var obdDeepSpeedProbeUntil = Date.distantPast
+    private var obdDeepSpeedProbeLabel = ""
+    private var obdDeepSpeedSamples: [OBDDeepSpeedSample] = []
+    private var obdDeepGPSPoints: [OBDDeepGPSPoint] = []
+    private var obdDeepDroppedSamples = 0
+    private let obdDeepSpeedSampleCap = 12_000
+
     var onOBDConnectionEvent: ((Bool, String) -> Void)?
     var onWiFiSTAStatusEvent: ((Int, String, String) -> Void)?
     var onTransportReady: (() -> Void)?
@@ -754,6 +770,105 @@ final class HudBluetoothManager: NSObject {
         obdSpeedProbeForensicsLabel = ""
     }
 
+    func beginOBDDeepSpeedProbe(duration: TimeInterval = 92.0, label: String) {
+        obdDeepSpeedProbeActive = true
+        obdDeepSpeedProbeUntil = Date().addingTimeInterval(max(5.0, duration))
+        obdDeepSpeedProbeLabel = label
+        obdDeepSpeedSamples.removeAll(keepingCapacity: true)
+        obdDeepGPSPoints.removeAll(keepingCapacity: true)
+        obdDeepDroppedSamples = 0
+        obdDeepSpeedProbeReportURL = nil
+        obdDeepGPSPoints.append(OBDDeepGPSPoint(
+            time: Date().timeIntervalSinceReferenceDate,
+            mph: obdTraceReferenceSpeedMph
+        ))
+        obdDeepSpeedProbeStatus = "Running • collecting HUD RX + GPS"
+        logger.log(
+            "OBD SPEED V3",
+            "BEGIN duration=\(String(format: "%.0f", duration))s label={\(label)} sampleCap=\(obdDeepSpeedSampleCap); no direct OBD connection / no raw PID request"
+        )
+    }
+
+    func endOBDDeepSpeedProbe(reason: String) {
+        guard obdDeepSpeedProbeActive || !obdDeepSpeedSamples.isEmpty else { return }
+        obdDeepSpeedProbeActive = false
+        obdDeepSpeedProbeUntil = .distantPast
+
+        let samples = obdDeepSpeedSamples
+        let gps = obdDeepGPSPoints
+        let candidates = OBDDeepSpeedAnalyzer.analyze(samples: samples, gps: gps)
+        let pidHits = OBDDeepSpeedAnalyzer.directPIDHits(samples: samples, gps: gps)
+        let top = candidates.prefix(12).map(\.summary).joined(separator: "; ")
+        let gpsSpeeds = gps.map(\.mph)
+        let gpsMin = gpsSpeeds.min() ?? 0
+        let gpsMax = gpsSpeeds.max() ?? 0
+
+        logger.log(
+            "OBD DEEP SUMMARY",
+            "label={\(obdDeepSpeedProbeLabel)} reason={\(reason)} frames=\(samples.count) dropped=\(obdDeepDroppedSamples) gpsSamples=\(gps.count) gpsRange=\(gpsMin)-\(gpsMax)mph direct410D=\(pidHits.count) top=[\(top.isEmpty ? "none" : top)]"
+        )
+        for candidate in candidates.prefix(12) {
+            logger.log("OBD DEEP CANDIDATE", candidate.summary)
+        }
+        for hit in pidHits.prefix(20) {
+            logger.log("OBD DEEP PID410D", hit.summary)
+        }
+
+        let report = OBDDeepSpeedAnalyzer.report(
+            label: obdDeepSpeedProbeLabel,
+            reason: reason,
+            samples: samples,
+            gps: gps,
+            candidates: candidates,
+            pidHits: pidHits
+        )
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let filename = "HUD_OBD_SpeedProbeV3_\(formatter.string(from: Date())).txt"
+        do {
+            let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+                ?? FileManager.default.temporaryDirectory
+            let url = base.appendingPathComponent(filename)
+            try report.write(to: url, atomically: true, encoding: .utf8)
+            obdDeepSpeedProbeReportURL = url
+            obdDeepSpeedProbeStatus = candidates.isEmpty
+                ? "Complete • no strong HUD RX speed field • report saved"
+                : "Complete • \(candidates.count) correlated candidate(s) • report saved"
+            logger.log("OBD SPEED V3", "REPORT saved=\(url.lastPathComponent) bytes=\(report.utf8.count)")
+        } catch {
+            obdDeepSpeedProbeStatus = candidates.isEmpty
+                ? "Complete • no strong candidate • report save failed"
+                : "Complete • candidates found • report save failed"
+            logger.log("OBD SPEED V3", "REPORT save failed error=\(error.localizedDescription)")
+        }
+
+        obdDeepSpeedSamples.removeAll(keepingCapacity: false)
+        obdDeepGPSPoints.removeAll(keepingCapacity: false)
+        obdDeepSpeedProbeLabel = ""
+    }
+
+    private func recordOBDDeepSpeedProbeFrame(_ body: Data) {
+        guard obdDeepSpeedProbeActive else { return }
+        if Date() > obdDeepSpeedProbeUntil {
+            endOBDDeepSpeedProbe(reason: "probe deadline reached")
+            return
+        }
+        guard body.count >= 3 else { return }
+        guard obdDeepSpeedSamples.count < obdDeepSpeedSampleCap else {
+            obdDeepDroppedSamples += 1
+            return
+        }
+        // Keep enough payload for unknown speed encodings while bounding memory.
+        let payload = body.count > 3 ? body.subdata(in: 3..<min(body.count, 67)) : Data()
+        obdDeepSpeedSamples.append(OBDDeepSpeedSample(
+            time: Date().timeIntervalSinceReferenceDate,
+            command: Int(body[0]),
+            p1: Int(body[1]),
+            p2: Int(body[2]),
+            payload: payload
+        ))
+    }
+
     private func logOBDSpeedProbeForensics(_ body: Data) {
         guard Date() <= obdSpeedProbeForensicsUntil, body.count >= 3 else { return }
         obdSpeedProbeForensicsFrameCount += 1
@@ -973,6 +1088,20 @@ final class HudBluetoothManager: NSObject {
 
     func updateOBDTraceReferenceSpeed(gpsMph: Int) {
         obdTraceReferenceSpeedMph = max(0, gpsMph)
+        if obdDeepSpeedProbeActive {
+            let now = Date().timeIntervalSinceReferenceDate
+            let point = OBDDeepGPSPoint(time: now, mph: obdTraceReferenceSpeedMph)
+            if let last = obdDeepGPSPoints.last,
+               abs(last.time - point.time) < 0.20,
+               last.mph == point.mph {
+                // Avoid duplicate GPS callbacks without losing real speed edges.
+            } else {
+                obdDeepGPSPoints.append(point)
+                if obdDeepGPSPoints.count > 600 {
+                    obdDeepGPSPoints.removeFirst(obdDeepGPSPoints.count - 600)
+                }
+            }
+        }
         guard obdSpeedTraceEnabled else { return }
         let now = Date()
         guard now.timeIntervalSince(obdTraceLastHeartbeatAt) >= 1.0 else { return }
@@ -1080,6 +1209,7 @@ final class HudBluetoothManager: NSObject {
 
     private func parseVehicleEvent(_ frame: Data) {
         guard let body = HudProtocol.unescape(frame), body.count >= 3 else { return }
+        recordOBDDeepSpeedProbeFrame(body)
         logDiagnosticFrameForensics(frame, body: body)
         logOBDSpeedProbeForensics(body)
         if handleDiagnosticPacket(body) { return }

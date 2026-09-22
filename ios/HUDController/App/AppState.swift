@@ -63,6 +63,14 @@ final class AppState {
     private(set) var hudU2WNativeOBDProbePending = false
     private(set) var hudU2WNativeOBDProbeStatus = "Not running"
     private var hudU2WNativeOBDProbeTask: Task<Void, Never>?
+
+    // v90.35.3.24.6.1 deeper OBD probe. This intentionally shares no state
+    // with MainVideo beyond running during the same road session. It records
+    // HUD RX frames in memory, correlates raw/scaled/lagged fields against GPS,
+    // and keeps the existing HUD-managed OBD connection authoritative.
+    private(set) var hudOBDDeepProbeV3Active = false
+    private(set) var hudOBDDeepProbeV3Status = "Not run"
+    private var hudOBDDeepProbeV3Task: Task<Void, Never>?
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
     private var hudRehydrateTask: Task<Void, Never>?
@@ -367,6 +375,13 @@ final class AppState {
             self.hudU2WNativeOBDProbeActive = false
             self.hudU2WNativeOBDProbePending = false
             self.hudU2WNativeOBDProbeStatus = "Stopped — HUD BLE disconnected"
+            self.hudOBDDeepProbeV3Task?.cancel()
+            self.hudOBDDeepProbeV3Task = nil
+            if self.hudOBDDeepProbeV3Active {
+                self.bluetooth.endOBDDeepSpeedProbe(reason: "HUD BLE disconnected")
+            }
+            self.hudOBDDeepProbeV3Active = false
+            self.hudOBDDeepProbeV3Status = "Stopped — HUD BLE disconnected"
             self.hudU2WRelayFrameTask?.cancel()
             self.hudU2WRelayFrameTask = nil
             self.hudU2WFrameRelay.stop(reason: "HUD BLE transport disconnected")
@@ -1207,6 +1222,12 @@ final class AppState {
     }
 
     func startHUDU2WNativeOBDSpeedProbe() {
+        guard !hudOBDDeepProbeV3Active else {
+            hudU2WNativeOBDProbeEnabled = false
+            hudU2WNativeOBDProbeStatus = "Stop OBD deep probe v3 first"
+            logger.log("OBD SPEED V2", "START blocked: v3 deep probe active")
+            return
+        }
         guard hudU2WLiveRelayActive else {
             hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled ? "Armed — enable Map Mode to run probe" : "Enable Map Mode first"
             return
@@ -1299,6 +1320,114 @@ final class AppState {
         bluetooth.endOBDSpeedProbeForensics(reason: reason)
         hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled ? "Armed — waiting for Map Mode" : "Off"
         logger.log("OBD SPEED V2", "END reason=\(reason); GPS JPEG speed/full-screen state unchanged")
+    }
+
+    func startHUDOBDDeepSpeedProbeV3() {
+        guard !hudOBDDeepProbeV3Active else { return }
+        guard hudU2WLiveRelayActive else {
+            hudOBDDeepProbeV3Status = "Enable Map Mode first"
+            return
+        }
+        guard bluetooth.state == .connected else {
+            hudOBDDeepProbeV3Status = "HUD BLE disconnected"
+            return
+        }
+        guard !hudU2WNativeOBDProbeActive, !hudU2WNativeOBDProbePending else {
+            hudOBDDeepProbeV3Status = "Stop OBD probe v2 first"
+            return
+        }
+
+        hudOBDDeepProbeV3Task?.cancel()
+        hudOBDDeepProbeV3Status = obd.connected
+            ? "Starting 90 s deep probe…"
+            : "Waiting for HUD-side OBD connection…"
+
+        if !obd.connected {
+            logger.log("OBD SPEED V3", "Probe requested while OBD not confirmed; requesting normal HUD-side OBD connect")
+            obd.connect(force: true)
+        }
+
+        hudOBDDeepProbeV3Task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            if !self.obd.connected {
+                let deadline = Date().addingTimeInterval(20.0)
+                while !Task.isCancelled,
+                      self.hudU2WLiveRelayActive,
+                      self.bluetooth.state == .connected,
+                      !self.obd.connected,
+                      Date() < deadline {
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                guard !Task.isCancelled else { return }
+                guard self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else {
+                    self.hudOBDDeepProbeV3Status = "Cancelled — Map Mode/HUD disconnected"
+                    self.hudOBDDeepProbeV3Task = nil
+                    return
+                }
+                guard self.obd.connected else {
+                    self.hudOBDDeepProbeV3Status = "OBD connection timed out"
+                    self.logger.log("OBD SPEED V3", "ABORT: HUD-side OBD never confirmed connected")
+                    self.hudOBDDeepProbeV3Task = nil
+                    return
+                }
+            }
+
+            self.hudOBDDeepProbeV3Active = true
+            let pid0D = self.obd.vehicleSpeedPIDSupportSummary
+            self.hudOBDDeepProbeV3Status = "Running 90 s • deep HUD-RX/GPS correlation"
+            self.bluetooth.beginOBDDeepSpeedProbe(
+                duration: 95.0,
+                label: "v3 regression + hidden item10 stimulation; \(pid0D)"
+            )
+            self.logger.log(
+                "OBD SPEED V3",
+                "ROAD BEGIN 90s supportedPIDs=\(self.obd.supportedPIDs.isEmpty ? "none" : self.obd.supportedPIDs) pid0D={\(pid0D)}; captures in memory, checks direct 41 0D/410D, u8/u16/u32/BCD, +/-2s lag, scale/offset regression; GPS Map Mode speed remains unchanged"
+            )
+
+            for attempt in 1...30 {
+                guard !Task.isCancelled,
+                      self.hudOBDDeepProbeV3Active,
+                      self.hudU2WLiveRelayActive,
+                      self.bluetooth.state == .connected else { break }
+
+                // The stock item stays hidden behind full-screen Map Mode. Reasserting
+                // it gives the HUD OBD subsystem repeated opportunities to publish any
+                // associated phone-facing event without altering the custom JPEG speed.
+                self.bluetooth.enqueue(
+                    HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)),
+                    label: "OBD speed v3 hidden item 10 stimulus \(attempt)/30"
+                )
+                if attempt == 1 || attempt % 5 == 0 {
+                    self.bluetooth.enqueue(HudCommands.keepAlive(), label: "OBD speed v3 KeepAlive \(attempt)/30")
+                    self.logger.log(
+                        "OBD SPEED V3",
+                        "progress=\(attempt * 3)/90s hiddenItem10Stimulus=\(attempt)/30 mapMode=1 mainVideoFrames=\(self.mainVideo.frameCount)"
+                    )
+                }
+                try? await Task.sleep(for: .seconds(3))
+            }
+
+            guard !Task.isCancelled else { return }
+            self.bluetooth.endOBDDeepSpeedProbe(reason: "90s v3 road probe complete")
+            self.hudOBDDeepProbeV3Active = false
+            self.hudOBDDeepProbeV3Status = self.bluetooth.obdDeepSpeedProbeStatus
+            self.hudOBDDeepProbeV3Task = nil
+            self.logger.log(
+                "OBD SPEED V3",
+                "ROAD COMPLETE status={\(self.hudOBDDeepProbeV3Status)}; optional next step while parked: Request latest HUD OBD logs"
+            )
+        }
+    }
+
+    func stopHUDOBDDeepSpeedProbeV3(reason: String = "manual") {
+        hudOBDDeepProbeV3Task?.cancel()
+        hudOBDDeepProbeV3Task = nil
+        if hudOBDDeepProbeV3Active || bluetooth.obdDeepSpeedProbeActive {
+            bluetooth.endOBDDeepSpeedProbe(reason: reason)
+        }
+        hudOBDDeepProbeV3Active = false
+        hudOBDDeepProbeV3Status = bluetooth.obdDeepSpeedProbeStatus
+        logger.log("OBD SPEED V3", "END reason=\(reason) status={\(hudOBDDeepProbeV3Status)}")
     }
 
     func runHUDMode4STAPersistenceTest() {
@@ -1431,6 +1560,9 @@ final class AppState {
         hudU2WNativeOBDProbeStatus = hudU2WNativeOBDProbeEnabled
             ? "Armed — enable Map Mode to start item 10"
             : "Off"
+        if hudOBDDeepProbeV3Active || bluetooth.obdDeepSpeedProbeActive {
+            stopHUDOBDDeepSpeedProbeV3(reason: "Map Mode disabled")
+        }
         hudU2WRelayFrameTask?.cancel()
         hudU2WRelayFrameTask = nil
         hudU2WKivicKickTask?.cancel()

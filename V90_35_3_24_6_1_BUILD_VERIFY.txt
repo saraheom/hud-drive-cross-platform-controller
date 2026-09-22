@@ -1,0 +1,36 @@
+v90.35.3.24.6.1 app-only build verification
+
+Baseline:
+- v90.35.3.24.6 AppOnly CI-fixed repository
+- Paired adapter remains U2W v8.25 Validated GOP Recovery; no U2W files are included in this app-only ZIP.
+
+Changes:
+- Added 90 s OBD deep speed probe v3.
+- Added bounded in-memory HUD RX capture (12,000 samples).
+- Added binary 41 0D / ASCII 410D detection.
+- Added u8/u16/u32/BCD regression against simultaneous GPS with +/-2 s lag.
+- Added shareable HUD_OBD_SpeedProbeV3_<timestamp>.txt report.
+- Added Map Mode control and mutual exclusion with v2.
+- MainVideo, HUD JPEG relay, Map Mode cadence/settings, Route Guidance, and AmbientLightMonitor unchanged from v90.35.3.24.6.
+
+Validation:
+- pytest: 358 passed
+- swiftc frontend parse: 199 Swift files passed
+- standalone OBDDeepSpeedAnalyzer synthetic regression: PASS
+  * synthetic km/h byte detected at u8@1
+  * fitted slope to mph ~0.6215
+  * R2 > 0.99
+  * binary 41 0D 3C detected as 60 km/h
+- u2w/ directory absent: confirmed
+
+Unchanged production SHA256 from v90.35.3.24.6:
+- ios/HUDController/MapMode/U2WMainVideoClient.swift
+  1a148eba3a28ad823be5e47138092b3c32943d41a7a1bc514c4f98477ab53aa8
+- ios/HUDController/MapMode/U2WHUDFrameRelayClient.swift
+  fc5793735ba88dc7e5c3a316a5181218ef343286b9b372f583bcb826521aea96
+- ios/HUDController/Vehicle/AmbientLightMonitor.swift
+  1f816614d42a49a0b0fd49b23c11819533ebd8e3372fca2065c979c83c484ef9
+- ios/HUDController/Models/HudMapModeSettings.swift
+  de19a7075261d8b91a7822a1982d03ed0063fdd1fcd5ac59963eb46fb31c14fa
+- ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift
+  e2564ec4f223edcae794b2fcfe23b3ab4d5b56bbc841875af23223b079714128

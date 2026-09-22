@@ -469,8 +469,29 @@ struct NavigationHUDPreviewCard: View {
                             set: { state.setHUDU2WNativeOBDSpeedProbeEnabled($0) }
                         )
                     )
+                    .disabled(state.hudOBDDeepProbeV3Active)
                     LabeledContent("OBD speed probe", value: state.hudU2WNativeOBDProbeStatus)
                     Text("The v2 probe leaves the custom GPS speed and full-screen Map Mode untouched. It refreshes the hidden stock OBD_DRIVING_VELOCITY item and scores HUD→iPhone numeric fields against GPS for 45 seconds. It does not yet replace GPS speed.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+                    Button(state.hudOBDDeepProbeV3Active ? "Stop OBD deep probe v3" : "Run 90 s OBD deep probe v3") {
+                        if state.hudOBDDeepProbeV3Active {
+                            state.stopHUDOBDDeepSpeedProbeV3(reason: "Map Mode UI stop")
+                        } else {
+                            state.startHUDOBDDeepSpeedProbeV3()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive)
+                    LabeledContent("OBD deep probe", value: state.hudOBDDeepProbeV3Status)
+                    if let reportURL = state.bluetooth.obdDeepSpeedProbeReportURL {
+                        ShareLink(item: reportURL) {
+                            Label("Share OBD speed probe v3 report", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    Text("v3 is the deeper road probe: it records HUD→iPhone RX in memory while Map Mode runs, searches binary/ASCII PID 41 0D, and tests changing u8/u16/u32/BCD fields against GPS using scale/offset regression and ±2 s lag. It does not open a second OBD connection or send raw ELM/PID commands. The normal HUD log contains OBD DEEP SUMMARY/CANDIDATE lines; the optional report preserves the bounded raw sample set for offline analysis.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -498,7 +519,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.6 pairs this app with U2W v8.25. On a new or recovered TCP client, v8.25 rescans the bounded v8.11 rolling file for the newest validated 800×480 SPS/PPS/IDR GOP before falling back to the next live IDR. The iPhone still limits each decoder-stall episode to one reseed. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified and confirm the frame counter keeps increasing. For the next road test, 10 fps is recommended before retesting 15 fps.")
+                    Text("v90.35.3.24.6.1 pairs this app with the same U2W v8.25. On a new or recovered TCP client, v8.25 rescans the bounded v8.11 rolling file for the newest validated 800×480 SPS/PPS/IDR GOP before falling back to the next live IDR. The iPhone still limits each decoder-stall episode to one reseed. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified and confirm the frame counter keeps increasing. For the next road test, 10 fps is recommended before retesting 15 fps.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

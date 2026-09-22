@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.24.6.1 + U2W v8.25 — validated-GOP recovery + deep OBD speed probe v3
+
+This app-only follow-up keeps the v90.35.3.24.6 MainVideo/v8.25 recovery code unchanged and adds a deeper 90-second OBD road probe for the same commute. The v3 probe records bounded HUD→iPhone RX frames in memory, correlates changing u8/u16/u32/BCD fields against simultaneous GPS using scale/offset regression and ±2-second lag, explicitly scans for binary `41 0D` and ASCII `410D` responses, and saves a shareable text report. It never opens a second OBD connection and never sends raw ELM/PID requests. While Map Mode is active it periodically reasserts the stock hidden `OBD_DRIVING_VELOCITY` item behind the full-screen JPEG so the visible GPS speed is unchanged.
+
+Use the **same U2W v8.25 image** as v90.35.3.24.6; no new adapter firmware was built for .24.6.1. After the 90-second probe, the normal HUD log contains `OBD DEEP SUMMARY`, `OBD DEEP CANDIDATE`, and (if found) `OBD DEEP PID410D`. The existing parked **Request latest HUD OBD logs** tool remains available as a second forensic path. See `V90_35_3_24_6_1_RELEASE.md`.
+
+---
+
 # HUD Controller v90.35.3.24.6 + U2W v8.25 — validated-GOP recovery
 
 This is a **paired app + adapter update** based on the 2026-09-21 evening drive. v8.25 keeps the stable v8.11 AppleCarPlay MainVideo exporter intact but replaces v8.24’s fragile in-memory recent-anchor recovery with a scan for the newest validated 800×480 SPS/PPS/IDR GOP in the bounded v8.11 rolling file. The iOS app understands the new diagnostics and retains the bounded one-reseed decoder policy from v90.35.3.24.5.
