@@ -1,0 +1,27 @@
+HUD Controller v90.35.3.24.6 + U2W v8.25 build verification
+
+Final checks:
+- Python structural regression suite: 417/417 PASS
+- Modified iOS production/test Swift sources: swiftc frontend parse PASS
+- v8.25 ARM relay: compile with -Wall -Wextra -Werror PASS
+- relay binary: ARM EABI5, static, no dynamic section
+- install/uninstall shell syntax: PASS
+- firmware AES wrapper round-trip + tar member validation: PASS (build_images.py)
+- old u2w/ versions from v90.35.3.24.5: byte-for-byte unchanged; v8.25 is additive
+- AmbientLightMonitor.swift: byte-for-byte unchanged from v90.35.3.24.5
+- AppState.swift (including FPS/OBD probe implementation): byte-for-byte unchanged from v90.35.3.24.5
+
+Offline validated-GOP replay check using a previously captured full v8.11 file:
+- input: 37,201,056 bytes
+- newest validated GOP selected by the v8.25 validator: SPS@0, PPS@24, IDR@32
+- clean validated output: 36,660,827 bytes / 5,168 decoded frames
+- rejected malformed/false start-code candidates: 517
+- ffprobe output: 800x480; 5,168 frames; zero error lines
+
+U2W install image SHA256:
+d5cacb2db2efdbeac71b9cf42a200ca0262094f4e7f1f11217973c643b692042
+
+U2W uninstall image SHA256:
+fb5e4985f3b1444cd0d002990db43c60dfee7c95af9622674662966cfeea868e
+
+See u2w/v8.25_ValidatedGOPRecovery/BUILD_VERIFY.txt and BUILD_OUTPUT.txt for adapter details.

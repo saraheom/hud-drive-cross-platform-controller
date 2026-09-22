@@ -19,7 +19,7 @@ def test_v823_waits_for_fresh_live_idr_without_history_burst():
     assert 'source-generation-change-parser-continuity-preserved' in RELAY
     generation_block = RELAY.split('if(!same_generation(fd,pos,tail_len))',1)[1].split('else sc3',1)[0]
     assert 'parse_len=0' not in generation_block
-    assert 'bounded recent-IDR bootstrap enabled' in VIDEO
+    assert 'validated/recent/live IDR bootstrap enabled' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
     assert 'receiveExactly' in VIDEO
 

@@ -498,7 +498,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v8.24 remains unchanged. v90.35.3.24.5 gives each decoder-stall episode only one recent-anchor TCP reseed; if that replay immediately fails, the iPhone preserves TCP and waits for a genuinely fresh live IDR instead of entering a reconnect storm. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified and confirm the frame counter keeps increasing.")
+                    Text("v90.35.3.24.6 pairs this app with U2W v8.25. On a new or recovered TCP client, v8.25 rescans the bounded v8.11 rolling file for the newest validated 800×480 SPS/PPS/IDR GOP before falling back to the next live IDR. The iPhone still limits each decoder-stall episode to one reseed. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified and confirm the frame counter keeps increasing. For the next road test, 10 fps is recommended before retesting 15 fps.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

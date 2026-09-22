@@ -17,7 +17,7 @@ def test_mainvideo_uses_continuous_dedicated_tcp():
 
 
 def test_dedicated_tcp_filter_runs_on_iphone():
-    assert 'v8.24-recent-idr-tcp-15332' in VIDEO
+    assert 'v8.24/v8.25-tcp-15332' in VIDEO
     assert 'U2WMainVideoTCPWorker' in VIDEO
     assert 'U2WH2642' in VIDEO and 'U2WH2643' in VIDEO
     assert 'port: 15332' in VIDEO
@@ -33,7 +33,7 @@ def test_dedicated_tcp_filter_runs_on_iphone():
 def test_video_self_healing_does_not_use_long_lived_boa():
     assert 'decoderStaleFrameInterval: TimeInterval = 3.0' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
-    assert 'bounded recent-IDR bootstrap enabled' in VIDEO
+    assert 'validated/recent/live IDR bootstrap enabled' in VIDEO
     assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
     assert 'sourceReconnectCooldown: TimeInterval = 15.0' in VIDEO
     assert 'kVTInvalidSessionErr (-12903)' in VIDEO

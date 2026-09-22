@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24 MainVideo client for U2W v8.24.
+/// v90.35.3.24.6 MainVideo client for U2W v8.24/v8.25.
 ///
 /// Video no longer travels through a long-lived Boa CGI or through a cache file
 /// that is truncated underneath an active reader.  The adapter-side relay tails
@@ -60,10 +60,10 @@ final class U2WMainVideoClient {
             let elapsed = min(preflightRequiredContinuity, max(0, Date().timeIntervalSince(preflightStableSince)))
             return "LIVE • validating continuity \(Int(elapsed))/\(Int(preflightRequiredContinuity))s"
         }
-        if transportPhase == "DECODER_RECOVERY" { return "Decoder recovery • one bounded recent-IDR reseed" }
+        if transportPhase == "DECODER_RECOVERY" { return "Decoder recovery • one validated-GOP reseed" }
         if transportPhase == "WAITING_FRESH_IDR" { return "Recovery anchor quarantined • waiting for fresh live IDR" }
         if transportPhase == "WAITING_LIVE_IDR" { return "Connected • waiting for recent/live IDR bootstrap" }
-        if transportPhase == "WAITING_RELAY" { return "Waiting for U2W v8.24 relay" }
+        if transportPhase == "WAITING_RELAY" { return "Waiting for U2W MainVideo relay" }
         if transportPhase == "TCP_WAITING" { return "TCP waiting — automatic retry armed" }
         if transportPhase == "DECODER_BOOTSTRAP" { return "Live IDR received • decoder starting" }
         return "Not ready • \(transportPhase)"
@@ -144,7 +144,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.24-recent-idr-tcp-15332 recentAnchorCap=4MiB continuousPredecode=1 longLivedBoaVideo=0 softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.24/v8.25-tcp-15332 validatedGOPRecovery=1 continuousPredecode=1 longLivedBoaVideo=0 softwareDecoder=1")
         startNetworkPathLogging()
         startFreshnessWatchdog()
         beginRelayBootstrapLoop(reason: reason)
@@ -165,7 +165,7 @@ final class U2WMainVideoClient {
                     self.startWorker(reason: "relay confirmed / \(reason)")
                     return
                 }
-                self.status = "Waiting for U2W v8.24 relay…"
+                self.status = "Waiting for U2W MainVideo relay…"
                 self.logger.log("MAINVIDEO PREFLIGHT", "relay not ready attempt=\(attempt); TCP intentionally NOT opened")
                 try? await Task.sleep(for: .seconds(2))
             }
@@ -236,8 +236,25 @@ final class U2WMainVideoClient {
             let recentOverflows = fields["recent_anchor_invalidations"] ?? fields["recent_anchor_overflows"] ?? "?"
             let liveIDRBoots = fields["live_idr_bootstraps"] ?? fields["client_live_bootstraps"] ?? "?"
             let lastBootstrapMode = fields["last_bootstrap_mode"] ?? "?"
-            adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
-            let ready = (200...299).contains(code) && process == "RUNNING" && marker == "YES" && relayVersion.contains("v8.24")
+            if relayVersion.contains("v8.25") {
+                let scanAttempts = fields["file_gop_scan_attempts"] ?? "?"
+                let scanMisses = fields["file_gop_scan_misses"] ?? "?"
+                let scanCapRejects = fields["file_gop_cap_rejects"] ?? "?"
+                let fileGOPBoots = fields["file_gop_bootstraps"] ?? "?"
+                let generationReseeds = fields["generation_reseeds"] ?? "?"
+                let catchupCap = fields["file_gop_catchup_cap"] ?? "?"
+                let catchupBytes = fields["last_bootstrap_bytes"] ?? "?"
+                let catchupActive = fields["catchup_active"] ?? "?"
+                let catchupProgressBytes = fields["catchup_bytes"] ?? "?"
+                let catchupFrames = fields["catchup_frames"] ?? "?"
+                let catchupTarget = fields["catchup_target_bytes"] ?? "?"
+                let rejected = fields["rejected_nals"] ?? "?"
+                adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) fileGOP \(fileGOPBoots) liveIDR \(liveIDRBoots) mode \(lastBootstrapMode) lastCatchup \(catchupBytes)B cap \(catchupCap) • active \(catchupActive) \(catchupProgressBytes)B/\(catchupTarget) frames \(catchupFrames) • scan \(scanAttempts)/miss \(scanMisses)/cap \(scanCapRejects) genReseed \(generationReseeds) • rejected \(rejected) sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
+            } else {
+                adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
+            }
+            let supportedRelay = relayVersion.contains("v8.24") || relayVersion.contains("v8.25")
+            let ready = (200...299).contains(code) && process == "RUNNING" && marker == "YES" && supportedRelay
             adapterRelayConfirmedRunning = ready
             logger.log("U2W H264 RELAY", "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) \(adapterCacheSummary)")
             return ready
@@ -457,7 +474,7 @@ final class U2WMainVideoClient {
                         self.transportPhase = "DECODER_RECOVERY"
                         self.logger.log(
                             "U2W VIDEO WATCH",
-                            "NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; HARD decoder recovery, bounded recent-IDR reseed/fresh-IDR wait filter={\(self.sanitizerSummary)}"
+                            "NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; HARD decoder recovery, bounded validated-GOP reseed/fresh-IDR wait filter={\(self.sanitizerSummary)}"
                         )
                         self.worker?.recoverDecoderAtNextIDR(
                             reason: "fresh H.264 but no decoded frame for \(String(format: "%.1f", frameAge))s"
@@ -637,7 +654,7 @@ private final class U2WMainVideoTCPWorker {
     private var lastStatsEmitUptime: TimeInterval = 0
     private var connectionGeneration = 0
     private var firstAcceptedIDRForConnection = false
-    // v90.35.3.24.5: one decoder-stall episode gets at most one TCP reseed so
+    // v90.35.3.24.6: keep one bounded decoder-stall reseed; v8.25 serves the newest validated file GOP so
     // v8.24 may offer its bounded recent anchor. If that bootstrap immediately
     // poisons VideoToolbox again, preserve the healthy TCP stream and wait for a
     // genuinely new live IDR instead of replaying/reconnecting in a tight loop.
@@ -741,10 +758,10 @@ private final class U2WMainVideoTCPWorker {
             recentAnchorRecoveryUsed = true
             waitingForFreshLiveIDRAfterRejectedAnchor = false
             onPhase?("DECODER_RECOVERY")
-            onStatus?("Decoder recovery • one bounded recent-IDR reseed", true)
-            onDiagnostic?("\(origin): bounded recovery attempt #1; reconnecting TCP once so v8.24 may replay its recent anchor")
+            onStatus?("Decoder recovery • one validated-GOP reseed", true)
+            onDiagnostic?("\(origin): bounded recovery attempt #1; reconnecting TCP once so v8.25 can rescan the newest validated GOP (v8.24 falls back to its recent anchor)")
             sanitizer.prepareForTransportReconnect()
-            scheduleReconnect(reason: "bounded decoder recovery recent-IDR reseed", delay: 0.35)
+            scheduleReconnect(reason: "bounded decoder recovery validated-GOP reseed", delay: 0.35)
             return
         }
 
@@ -754,8 +771,8 @@ private final class U2WMainVideoTCPWorker {
         // the decoder's needsIDR gate discards P-frames until the next true IDR.
         waitingForFreshLiveIDRAfterRejectedAnchor = true
         onPhase?("WAITING_FRESH_IDR")
-        onStatus?("Recent bootstrap rejected • waiting for fresh live IDR", true)
-        onDiagnostic?("\(origin): recent-anchor recovery already used and produced no frame; TCP PRESERVED, quarantining replay and waiting for next live IDR")
+        onStatus?("Recovery bootstrap rejected • waiting for fresh live IDR", true)
+        onDiagnostic?("\(origin): validated recovery bootstrap already used and produced no frame; TCP PRESERVED, quarantining replay and waiting for next live IDR")
     }
 
     private func openConnection() {
@@ -770,7 +787,7 @@ private final class U2WMainVideoTCPWorker {
         let connection = NWConnection(host: host, port: port, using: .tcp)
         self.connection = connection
         onPhase?("TCP_PREPARING")
-        onStatus?("Opening U2W v8.24 recent-IDR TCP/15332…", false)
+        onStatus?("Opening U2W MainVideo TCP/15332…", false)
         onDiagnostic?("TCP state generation=\(generation) OPEN endpoint=192.168.50.2:15332")
 
         connection.stateUpdateHandler = { [weak self, weak connection] state in
@@ -790,7 +807,7 @@ private final class U2WMainVideoTCPWorker {
             case .ready:
                 self.waitingDeadlineWorkItem?.cancel(); self.waitingDeadlineWorkItem = nil
                 self.onPhase?("WAITING_HANDSHAKE")
-                self.onStatus?("U2W H.264 TCP connected • checking v8.24 handshake", true)
+                self.onStatus?("U2W H.264 TCP connected • checking relay handshake", true)
                 self.onDiagnostic?("TCP state generation=\(generation) READY")
                 self.receiveHandshake(connection, generation: generation)
             case .failed(let error):
@@ -829,8 +846,8 @@ private final class U2WMainVideoTCPWorker {
                 return
             }
             self.onPhase?("WAITING_LIVE_IDR")
-            self.onStatus?("U2W v8.24 connected • waiting for recent/live IDR bootstrap", true)
-            self.onDiagnostic?("TCP relay handshake \(text) accepted; v8.24 bounded recent-IDR bootstrap enabled, otherwise wait next live IDR")
+            self.onStatus?("U2W relay connected • waiting for validated/recent/live IDR bootstrap", true)
+            self.onDiagnostic?("TCP relay handshake \(text) accepted; validated/recent/live IDR bootstrap enabled")
             self.receiveLength(connection, generation: generation)
         }
     }

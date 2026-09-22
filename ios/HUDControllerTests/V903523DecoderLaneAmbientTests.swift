@@ -12,7 +12,7 @@ final class V903523DecoderLaneAmbientTests: XCTestCase {
         let src = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(src.contains("private static let invalidSessionStatus: OSStatus = -12903"))
         XCTAssertTrue(src.contains("FATAL VideoToolbox invalid session"))
-        XCTAssertTrue(src.contains("HARD decoder recovery, bounded recent-IDR reseed/fresh-IDR wait"))
+        XCTAssertTrue(src.contains("HARD decoder recovery, bounded validated-GOP reseed/fresh-IDR wait"))
         XCTAssertTrue(src.contains("TCP PRESERVED, quarantining replay and waiting for next live IDR"))
         XCTAssertTrue(src.contains("VideoToolbox output callback failure"))
         XCTAssertTrue(src.contains("soft-flushing delayed VideoToolbox frames before hard recovery"))

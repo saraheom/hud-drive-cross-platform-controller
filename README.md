@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.24.6 + U2W v8.25 — validated-GOP recovery
+
+This is a **paired app + adapter update** based on the 2026-09-21 evening drive. v8.25 keeps the stable v8.11 AppleCarPlay MainVideo exporter intact but replaces v8.24’s fragile in-memory recent-anchor recovery with a scan for the newest validated 800×480 SPS/PPS/IDR GOP in the bounded v8.11 rolling file. The iOS app understands the new diagnostics and retains the bounded one-reseed decoder policy from v90.35.3.24.5.
+
+**U2W v8.25 must be flashed for this release.** For the first road validation, use 10 FPS; the 15 FPS setting remains available as a probe. OBD probe v2 remains diagnostic-only, and ambient-light production behavior is unchanged from v90.35.3.24.5. See `V90_35_3_24_6_RELEASE.md`.
+
+---
+
 # HUD Controller v90.35.3.24.5 — bounded MainVideo recovery + FPS/OBD probes
 
 This is an **app-only** follow-up to the 2026-09-21 drive. MainVideo ran correctly for several minutes, then VideoToolbox `-8969` entered repeated recent-anchor reconnects even though H.264 bytes remained fresh. The new recovery policy allows one bounded recent-anchor reseed per stall episode; if it fails before producing a frame, the iPhone keeps TCP alive and waits for a genuinely new live IDR. A successful frame resets the reseed budget.
