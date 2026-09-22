@@ -6,8 +6,17 @@ final class V9035246ValidatedGOPRecoveryTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
+    private func optionalU2WSource(_ relative: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let url = root.appendingPathComponent(relative)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw XCTSkip("U2W source is intentionally absent from the app-only repository package")
+        }
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
     func testV825UsesValidatedFileGOPAndBoundedCatchup() throws {
-        let relay = try source("../u2w/v8.25_ValidatedGOPRecovery/source/u2w_mainvideo_relay.c")
+        let relay = try optionalU2WSource("../u2w/v8.25_ValidatedGOPRecovery/source/u2w_mainvideo_relay.c")
         XCTAssertTrue(relay.contains("#define EXPECT_WIDTH 800"))
         XCTAssertTrue(relay.contains("#define EXPECT_HEIGHT 480"))
         XCTAssertTrue(relay.contains("#define CATCHUP_CAP (48*1024*1024)"))
@@ -34,7 +43,7 @@ final class V9035246ValidatedGOPRecoveryTests: XCTestCase {
     }
 
     func testV825InstallerDoesNotReplaceStableCaptureOrHUDRelay() throws {
-        let install = try source("../u2w/v8.25_ValidatedGOPRecovery/source/install_once.sh")
+        let install = try optionalU2WSource("../u2w/v8.25_ValidatedGOPRecovery/source/install_once.sh")
         XCTAssertTrue(install.contains("applecarplay_hook_changed=0"))
         XCTAssertTrue(install.contains("route_guidance_changed=0"))
         XCTAssertTrue(install.contains("now_playing_changed=0"))
