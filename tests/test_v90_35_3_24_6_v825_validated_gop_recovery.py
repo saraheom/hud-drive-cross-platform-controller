@@ -45,19 +45,19 @@ def test_v825_install_is_scoped_to_mainvideo_relay_only():
 
 
 def test_ios_accepts_v824_or_v825_and_surfaces_v825_diagnostics():
-    assert 'relayVersion.contains("v8.24") || relayVersion.contains("v8.25")' in VIDEO
-    assert 'U2WH2642' in VIDEO and 'U2WH2643' in VIDEO
+    assert 'relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26")' in VIDEO
+    assert 'U2WH2642' in VIDEO and 'U2WH2643' in VIDEO and 'U2WH2644' in VIDEO
     for token in ['file_gop_scan_attempts', 'file_gop_scan_misses', 'file_gop_cap_rejects',
                   'file_gop_bootstraps', 'generation_reseeds', 'file_gop_catchup_cap',
                   'catchup_active', 'catchup_bytes', 'catchup_frames', 'catchup_target_bytes']:
         assert token in VIDEO
-    assert 'bounded decoder recovery validated-GOP reseed' in VIDEO
+    assert 'bounded decoder recovery persistent-GOP reseed' in VIDEO
     assert 'TCP PRESERVED' in VIDEO
 
 
-def test_ui_calls_out_paired_v825_and_recommends_10fps_first():
-    assert 'pairs this app with U2W v8.25' in UI
-    assert '10 fps is recommended before retesting 15 fps' in UI
+def test_ui_keeps_10fps_validation_guidance_and_documents_v826_successor():
+    assert 'pairs with U2W v8.26' in UI
+    assert '10 fps remains the recommended validation cadence' in UI
 
 
 def test_ambient_has_no_new_246_door_reassert_feature():

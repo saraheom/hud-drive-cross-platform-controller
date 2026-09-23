@@ -31,15 +31,16 @@ final class V9035246ValidatedGOPRecoveryTests: XCTestCase {
 
     func testIOSSupportsV824RollbackAndV825Diagnostics() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(video.contains("relayVersion.contains(\"v8.24\") || relayVersion.contains(\"v8.25\")"))
+        XCTAssertTrue(video.contains("relayVersion.contains(\"v8.24\") || relayVersion.contains(\"v8.25\") || relayVersion.contains(\"v8.26\")"))
         XCTAssertTrue(video.contains("U2WH2642"))
         XCTAssertTrue(video.contains("U2WH2643"))
+        XCTAssertTrue(video.contains("U2WH2644"))
         XCTAssertTrue(video.contains("file_gop_scan_attempts"))
         XCTAssertTrue(video.contains("file_gop_bootstraps"))
         XCTAssertTrue(video.contains("generation_reseeds"))
         XCTAssertTrue(video.contains("catchup_active"))
         XCTAssertTrue(video.contains("catchup_frames"))
-        XCTAssertTrue(video.contains("bounded decoder recovery validated-GOP reseed"))
+        XCTAssertTrue(video.contains("bounded decoder recovery persistent-GOP reseed"))
     }
 
     func testV825InstallerDoesNotReplaceStableCaptureOrHUDRelay() throws {

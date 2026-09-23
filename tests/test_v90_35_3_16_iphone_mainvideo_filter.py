@@ -17,7 +17,7 @@ def test_mainvideo_uses_continuous_dedicated_tcp():
 
 
 def test_dedicated_tcp_filter_runs_on_iphone():
-    assert 'v8.24/v8.25-tcp-15332' in VIDEO
+    assert 'v8.24/v8.25/v8.26-tcp-15332' in VIDEO
     assert 'U2WMainVideoTCPWorker' in VIDEO
     assert 'U2WH2642' in VIDEO and 'U2WH2643' in VIDEO
     assert 'port: 15332' in VIDEO

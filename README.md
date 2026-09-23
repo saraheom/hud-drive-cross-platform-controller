@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.24.7 + U2W v8.26 — deterministic MainVideo bootstrap + HUD-internal OBD probe v4
+
+This paired release keeps the proven v8.11 AppleCarPlay MainVideo capture and v8.15.1 HUD JPEG relay unchanged. U2W v8.26 preserves validated H.264 codec state and a disk-backed current-GOP recovery bridge across ordinary v8.11 rolling-file rotations, while the iOS client suppresses reconnect churn during intentional bootstrap waits and adds startup decoder hysteresis so the first decoded frame cannot be reset by the stale-output watchdog.
+
+For OBD speed, the prior phone-facing v3 regression probe remains available, but the new v4 path moves deeper: it stimulates the HUD's stock hidden `OBD_DRIVING_VELOCITY` item during a 90-second road phase, then requests the HUD's own recent `LOG_CATEGORY_OBD` diagnostic files while parked for offline inspection of `010D`/`410D`, ELM `AT` traffic, internal speed values, or other stock OBD-service clues. It does not open a second OBD connection and does not replace visible GPS speed.
+
+**Flash U2W v8.26 for this release.** For the first road test, use 10 FPS and start the OBD v4 road phase while parked. See `V90_35_3_24_7_RELEASE.md` and `V90_35_3_24_7_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.24.6.1 + U2W v8.25 — validated-GOP recovery + deep OBD speed probe v3
 
 This app-only follow-up keeps the v90.35.3.24.6 MainVideo/v8.25 recovery code unchanged and adds a deeper 90-second OBD road probe for the same commute. The v3 probe records bounded HUD→iPhone RX frames in memory, correlates changing u8/u16/u32/BCD fields against simultaneous GPS using scale/offset regression and ±2-second lag, explicitly scans for binary `41 0D` and ASCII `410D` responses, and saves a shareable text report. It never opens a second OBD connection and never sends raw ELM/PID requests. While Map Mode is active it periodically reasserts the stock hidden `OBD_DRIVING_VELOCITY` item behind the full-screen JPEG so the visible GPS speed is unchanged.

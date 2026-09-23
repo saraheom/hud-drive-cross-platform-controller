@@ -17,6 +17,7 @@ _U2W_INTEGRATION_TESTS = {
     "test_v90_35_3_22_live_idr_lane_ambient_preview.py",
     "test_v90_35_3_24_recent_idr_software_center_guard.py",
     "test_v90_35_3_24_6_v825_validated_gop_recovery.py",
+    "test_v90_35_3_24_7_v826_persistent_gop_obd_internal.py",
 }
 
 

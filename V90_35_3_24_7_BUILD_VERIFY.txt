@@ -1,0 +1,33 @@
+HUD Controller v90.35.3.24.7 + U2W v8.26 build verification
+
+Regression suite:
+- Python structural/regression tests: 427 passed
+
+Swift syntax:
+- all production Swift files under ios/HUDController parsed together: PASS
+- affected XCTest sources parse: PASS
+
+U2W v8.26 native relay:
+- ELF32 ARM EABI5 static binary: PASS
+- no dynamic section: PASS
+- install/uninstall shell syntax (bash -n): PASS
+- firmware wrapper decrypt/tar round-trip: PASS via build_images.py
+- install image SHA256: 3f8ee661446848e23a0e6aba5996aef28948f1f3faa0783f2c24f83dbc631ffc
+- uninstall image SHA256: 7d57ed9de002d921bf2c0483b445a93289c8210cde1557df74452466376fa853
+- relay binary SHA256: 816113f33f0c98d06ea8fdc2fa0867aa59d7c0c05b9ba2ade76088e00b224887
+
+Preservation checks:
+- u2w/v8.11_MainVideoLive: byte-identical to v90.35.3.24.6 full baseline
+- u2w/v8.15.1_NoFallbackPrimer: byte-identical to v90.35.3.24.6 full baseline
+- AmbientLightMonitor.swift: byte-identical to v90.35.3.24.6.1 app baseline
+- RouteGuidanceAdapterClient.swift: byte-identical to v90.35.3.24.6.1 app baseline
+- CarPlayNowPlayingClient.swift: byte-identical to v90.35.3.24.6.1 app baseline
+- HudBluetoothManager.swift: byte-identical to v90.35.3.24.6.1 app baseline (v3 retained)
+
+Intentional production changes from v90.35.3.24.6.1 app baseline:
+- ios/HUDController/MapMode/U2WMainVideoClient.swift
+- ios/HUDController/App/AppState.swift
+- ios/HUDController/UI/NavigationHUDPreviewCard.swift
+- new u2w/v8.26_PersistentGOPBridge
+
+Road validation required. The release targets the observed v8.25 current-file scan misses, reconnect storm, and startup frame-#1 watchdog race; unrelated HUD Wi-Fi STA/viewer failures remain separately observable.

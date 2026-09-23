@@ -469,7 +469,7 @@ struct NavigationHUDPreviewCard: View {
                             set: { state.setHUDU2WNativeOBDSpeedProbeEnabled($0) }
                         )
                     )
-                    .disabled(state.hudOBDDeepProbeV3Active)
+                    .disabled(state.hudOBDDeepProbeV3Active || state.hudOBDInternalProbeV4Active)
                     LabeledContent("OBD speed probe", value: state.hudU2WNativeOBDProbeStatus)
                     Text("The v2 probe leaves the custom GPS speed and full-screen Map Mode untouched. It refreshes the hidden stock OBD_DRIVING_VELOCITY item and scores HUD→iPhone numeric fields against GPS for 45 seconds. It does not yet replace GPS speed.")
                         .font(.caption2)
@@ -484,7 +484,7 @@ struct NavigationHUDPreviewCard: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive)
+                    .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive || state.hudOBDInternalProbeV4Active)
                     LabeledContent("OBD deep probe", value: state.hudOBDDeepProbeV3Status)
                     if let reportURL = state.bluetooth.obdDeepSpeedProbeReportURL {
                         ShareLink(item: reportURL) {
@@ -492,6 +492,42 @@ struct NavigationHUDPreviewCard: View {
                         }
                     }
                     Text("v3 is the deeper road probe: it records HUD→iPhone RX in memory while Map Mode runs, searches binary/ASCII PID 41 0D, and tests changing u8/u16/u32/BCD fields against GPS using scale/offset regression and ±2 s lag. It does not open a second OBD connection or send raw ELM/PID commands. The normal HUD log contains OBD DEEP SUMMARY/CANDIDATE lines; the optional report preserves the bounded raw sample set for offline analysis.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+                    Button(state.hudOBDInternalProbeV4Active ? "Stop HUD-internal OBD probe v4" : "Run 90 s HUD-internal OBD probe v4") {
+                        if state.hudOBDInternalProbeV4Active {
+                            state.stopHUDOBDInternalSpeedProbeV4(reason: "Map Mode UI stop")
+                        } else {
+                            state.startHUDOBDInternalSpeedProbeV4()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive || state.hudOBDDeepProbeV3Active)
+                    LabeledContent("OBD HUD-internal probe", value: state.hudOBDInternalProbeV4Status)
+                    Button("Collect HUD OBD logs (parked)") {
+                        state.collectHUDOBDInternalProbeV4Logs()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(state.hudOBDInternalProbeV4Active || state.bluetooth.state != .connected || state.bluetooth.obdDiagnosticTransferActive)
+                    LabeledContent("HUD OBD log transfer", value: state.bluetooth.obdDiagnosticStatus)
+                    if let reportURL = state.hudOBDInternalProbeV4ReportURL {
+                        ShareLink(item: reportURL) {
+                            Label("Share OBD internal probe v4 manifest", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    if let url = state.bluetooth.obdDiagnosticLogURL {
+                        ShareLink(item: url) {
+                            Label("Share HUD OBD diagnostic ZIP", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    if let url = state.bluetooth.obdDiagnosticRawCaptureURL {
+                        ShareLink(item: url) {
+                            Label("Share raw HUD BLE diagnostic capture", systemImage: "waveform.badge.magnifyingglass")
+                        }
+                    }
+                    Text("v4 moves below the phone-facing packet layer. Start the 90 s road phase while parked, then drive normally; it timestamps GPS range and repeatedly stimulates the HUD's hidden stock OBD_DRIVING_VELOCITY path without opening a second OBD connection. After the road phase, park and tap Collect HUD OBD logs so the stock LOG_CATEGORY_OBD archive can be inspected for 010D/410D, ELM/AT traffic, internal speed values, or HUD OBD-service traces.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -519,7 +555,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.6.1 pairs this app with the same U2W v8.25. On a new or recovered TCP client, v8.25 rescans the bounded v8.11 rolling file for the newest validated 800×480 SPS/PPS/IDR GOP before falling back to the next live IDR. The iPhone still limits each decoder-stall episode to one reseed. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified and confirm the frame counter keeps increasing. For the next road test, 10 fps is recommended before retesting 15 fps.")
+                    Text("v90.35.3.24.7 pairs with U2W v8.26. v8.26 keeps validated codec state and a single disk-backed GOP recovery seed across ordinary v8.11 rolling-file rotations instead of treating each file generation as a decoder epoch. While the relay explicitly waits for a cached/live bootstrap and its source is still advancing, the iPhone preserves the same TCP client instead of entering a reconnect loop. Startup decoder recovery also has an 8 s / 10-frame hysteresis so frame #1 cannot be reset by the stale-output watchdog. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified; 10 fps remains the recommended validation cadence.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

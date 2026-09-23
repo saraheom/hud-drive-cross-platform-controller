@@ -71,6 +71,16 @@ final class AppState {
     private(set) var hudOBDDeepProbeV3Active = false
     private(set) var hudOBDDeepProbeV3Status = "Not run"
     private var hudOBDDeepProbeV3Task: Task<Void, Never>?
+
+    // v90.35.3.24.7 HUD-internal OBD probe. The prior v3 road tests proved that
+    // ordinary HUD→iPhone events do not expose a usable vehicle-speed field. v4
+    // instead timestamps/stimulates the HUD's own stock OBD speed path during the
+    // drive, then requests LOG_CATEGORY_OBD after parking so we can inspect the
+    // HUD-side ELM/ECU subsystem without opening a competing iPhone→OBD link.
+    private(set) var hudOBDInternalProbeV4Active = false
+    private(set) var hudOBDInternalProbeV4Status = "Not run"
+    private(set) var hudOBDInternalProbeV4ReportURL: URL?
+    private var hudOBDInternalProbeV4Task: Task<Void, Never>?
     private(set) var externalCapture27: Any?
     private var musicFilterInitialized = false
     private var hudRehydrateTask: Task<Void, Never>?
@@ -382,6 +392,10 @@ final class AppState {
             }
             self.hudOBDDeepProbeV3Active = false
             self.hudOBDDeepProbeV3Status = "Stopped — HUD BLE disconnected"
+            self.hudOBDInternalProbeV4Task?.cancel()
+            self.hudOBDInternalProbeV4Task = nil
+            self.hudOBDInternalProbeV4Active = false
+            self.hudOBDInternalProbeV4Status = "Stopped — HUD BLE disconnected"
             self.hudU2WRelayFrameTask?.cancel()
             self.hudU2WRelayFrameTask = nil
             self.hudU2WFrameRelay.stop(reason: "HUD BLE transport disconnected")
@@ -1336,6 +1350,10 @@ final class AppState {
             hudOBDDeepProbeV3Status = "Stop OBD probe v2 first"
             return
         }
+        guard !hudOBDInternalProbeV4Active else {
+            hudOBDDeepProbeV3Status = "Stop HUD-internal probe v4 first"
+            return
+        }
 
         hudOBDDeepProbeV3Task?.cancel()
         hudOBDDeepProbeV3Status = obd.connected
@@ -1428,6 +1446,164 @@ final class AppState {
         hudOBDDeepProbeV3Active = false
         hudOBDDeepProbeV3Status = bluetooth.obdDeepSpeedProbeStatus
         logger.log("OBD SPEED V3", "END reason=\(reason) status={\(hudOBDDeepProbeV3Status)}")
+    }
+
+    func startHUDOBDInternalSpeedProbeV4() {
+        guard !hudOBDInternalProbeV4Active else { return }
+        guard hudU2WLiveRelayActive else {
+            hudOBDInternalProbeV4Status = "Enable Map Mode first"
+            return
+        }
+        guard bluetooth.state == .connected else {
+            hudOBDInternalProbeV4Status = "HUD BLE disconnected"
+            return
+        }
+        guard !hudU2WNativeOBDProbeActive, !hudU2WNativeOBDProbePending, !hudOBDDeepProbeV3Active else {
+            hudOBDInternalProbeV4Status = "Stop OBD probe v2/v3 first"
+            return
+        }
+
+        hudOBDInternalProbeV4Task?.cancel()
+        hudOBDInternalProbeV4ReportURL = nil
+        hudOBDInternalProbeV4Status = obd.connected
+            ? "Starting 90 s HUD-internal road phase…"
+            : "Waiting for HUD-side OBD connection…"
+
+        if !obd.connected {
+            logger.log("OBD INTERNAL V4", "Probe requested while OBD not confirmed; requesting normal HUD-side OBD connection")
+            obd.connect(force: true)
+        }
+
+        hudOBDInternalProbeV4Task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            if !self.obd.connected {
+                let deadline = Date().addingTimeInterval(20.0)
+                while !Task.isCancelled,
+                      self.hudU2WLiveRelayActive,
+                      self.bluetooth.state == .connected,
+                      !self.obd.connected,
+                      Date() < deadline {
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                guard !Task.isCancelled else { return }
+                guard self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else {
+                    self.hudOBDInternalProbeV4Status = "Cancelled — Map Mode/HUD disconnected"
+                    self.hudOBDInternalProbeV4Task = nil
+                    return
+                }
+                guard self.obd.connected else {
+                    self.hudOBDInternalProbeV4Status = "OBD connection timed out"
+                    self.logger.log("OBD INTERNAL V4", "ABORT: HUD-side OBD never confirmed connected")
+                    self.hudOBDInternalProbeV4Task = nil
+                    return
+                }
+            }
+
+            self.hudOBDInternalProbeV4Active = true
+            let started = Date()
+            let pid0D = self.obd.vehicleSpeedPIDSupportSummary
+            var minSpeed = self.speedEngine.currentSpeedMph
+            var maxSpeed = self.speedEngine.currentSpeedMph
+            var stimulusCount = 0
+            self.hudOBDInternalProbeV4Status = "Running 90 s • HUD-native OBD path"
+            self.logger.log(
+                "OBD INTERNAL V4",
+                "ROAD BEGIN supportedPIDs=\(self.obd.supportedPIDs.isEmpty ? "none" : self.obd.supportedPIDs) pid0D={\(pid0D)}; no second OBD connection; hidden stock OBD_DRIVING_VELOCITY will be stimulated every 5s; collect LOG_CATEGORY_OBD only after parking"
+            )
+
+            for attempt in 1...18 {
+                guard !Task.isCancelled,
+                      self.hudOBDInternalProbeV4Active,
+                      self.hudU2WLiveRelayActive,
+                      self.bluetooth.state == .connected else { break }
+
+                let gps = self.speedEngine.currentSpeedMph
+                minSpeed = min(minSpeed, gps)
+                maxSpeed = max(maxSpeed, gps)
+                stimulusCount += 1
+                self.bluetooth.enqueue(
+                    HudCommands.obdCustomItem(position: 0, itemIndex: Int32(HudOBDItem.drivingVelocity.rawValue)),
+                    label: "OBD internal v4 hidden item 10 stimulus \(attempt)/18"
+                )
+                if attempt == 1 || attempt % 3 == 0 {
+                    self.bluetooth.enqueue(HudCommands.keepAlive(), label: "OBD internal v4 KeepAlive \(attempt)/18")
+                    self.logger.log(
+                        "OBD INTERNAL V4",
+                        "ROAD progress=\(attempt * 5)/90s gps=\(gps)mph range=\(minSpeed)-\(maxSpeed)mph item10Stimuli=\(stimulusCount) obdConnected=\(self.obd.connected ? 1 : 0) mainVideoFrames=\(self.mainVideo.frameCount) mainVideo={\(self.mainVideo.preflightSummary)}"
+                    )
+                }
+                try? await Task.sleep(for: .seconds(5))
+            }
+
+            guard !Task.isCancelled else { return }
+            self.hudOBDInternalProbeV4Active = false
+            self.hudOBDInternalProbeV4Task = nil
+            let ended = Date()
+            let manifest = [
+                "HUD OBD internal probe v4",
+                "appVersion=v90.35.3.24.7",
+                "started=\(started.ISO8601Format())",
+                "ended=\(ended.ISO8601Format())",
+                "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
+                "pid0D=\(pid0D)",
+                "supportedPIDs=\(self.obd.supportedPIDs.isEmpty ? "none" : self.obd.supportedPIDs)",
+                "gpsRangeMph=\(minSpeed)-\(maxSpeed)",
+                "hiddenItem10Stimuli=\(stimulusCount)",
+                "mainVideoFramesAtEnd=\(self.mainVideo.frameCount)",
+                "mainVideoPreflight=\(self.mainVideo.preflightSummary)",
+                "nextStep=Park the vehicle, keep HUD powered, then tap Collect HUD OBD logs (parked). Share the resulting diagnostic ZIP, raw BLE capture if produced, this manifest, and the normal HUD log."
+            ].joined(separator: "\n") + "\n"
+            self.hudOBDInternalProbeV4ReportURL = self.saveHUDOBDInternalProbeV4Manifest(manifest, date: ended)
+            self.hudOBDInternalProbeV4Status = "Road phase complete • park, then collect HUD OBD logs"
+            self.logger.log(
+                "OBD INTERNAL V4",
+                "ROAD COMPLETE gpsRange=\(minSpeed)-\(maxSpeed)mph stimuli=\(stimulusCount) manifest=\(self.hudOBDInternalProbeV4ReportURL?.lastPathComponent ?? "save-failed"); PARKED COLLECTION REQUIRED"
+            )
+        }
+    }
+
+    func stopHUDOBDInternalSpeedProbeV4(reason: String = "manual") {
+        hudOBDInternalProbeV4Task?.cancel()
+        hudOBDInternalProbeV4Task = nil
+        hudOBDInternalProbeV4Active = false
+        hudOBDInternalProbeV4Status = "Stopped — \(reason)"
+        logger.log("OBD INTERNAL V4", "ROAD END reason=\(reason)")
+    }
+
+    func collectHUDOBDInternalProbeV4Logs() {
+        guard !hudOBDInternalProbeV4Active else {
+            hudOBDInternalProbeV4Status = "Finish road phase before collecting logs"
+            return
+        }
+        guard bluetooth.state == .connected else {
+            hudOBDInternalProbeV4Status = "HUD BLE disconnected"
+            return
+        }
+        guard !bluetooth.obdDiagnosticTransferActive else {
+            hudOBDInternalProbeV4Status = "HUD OBD log transfer already active"
+            return
+        }
+        hudOBDInternalProbeV4Status = "Collecting HUD-native OBD logs • keep parked/powered"
+        logger.log(
+            "OBD INTERNAL V4",
+            "PARKED COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gps=\(speedEngine.currentSpeedMph)mph; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
+        )
+        bluetooth.requestOBDDiagnosticLogs(maxLastFilesCount: 5)
+    }
+
+    private func saveHUDOBDInternalProbeV4Manifest(_ text: String, date: Date) -> URL? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HUD_OBD_InternalProbeV4_\(formatter.string(from: date)).txt")
+        do {
+            try text.data(using: .utf8)?.write(to: url, options: .atomic)
+            return url
+        } catch {
+            logger.log("OBD INTERNAL V4", "Manifest save failed error=\(error.localizedDescription)")
+            return nil
+        }
     }
 
     func runHUDMode4STAPersistenceTest() {
@@ -1562,6 +1738,9 @@ final class AppState {
             : "Off"
         if hudOBDDeepProbeV3Active || bluetooth.obdDeepSpeedProbeActive {
             stopHUDOBDDeepSpeedProbeV3(reason: "Map Mode disabled")
+        }
+        if hudOBDInternalProbeV4Active {
+            stopHUDOBDInternalSpeedProbeV4(reason: "Map Mode disabled")
         }
         hudU2WRelayFrameTask?.cancel()
         hudU2WRelayFrameTask = nil
