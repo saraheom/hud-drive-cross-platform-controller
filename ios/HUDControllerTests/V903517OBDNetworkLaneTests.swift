@@ -20,7 +20,8 @@ final class V903517OBDNetworkLaneTests: XCTestCase {
         XCTAssertTrue(video.contains("NWPathMonitor(requiredInterfaceType: .wifi)"))
         XCTAssertTrue(video.contains("NWPathMonitor(requiredInterfaceType: .cellular)"))
         XCTAssertTrue(video.contains("IPHONE NETWORK"))
-        XCTAssertTrue(video.contains("15s MainVideo heartbeat"))
+        XCTAssertTrue(video.contains("relayHealthInterval: TimeInterval = self.adapterRelayVersion.contains(\"v8.27\") ? 60.0 : 15.0"))
+        XCTAssertTrue(video.contains("live-IDR MainVideo heartbeat"))
     }
 
     func testSpeedLimitSlotAndLaneWindowing() throws {

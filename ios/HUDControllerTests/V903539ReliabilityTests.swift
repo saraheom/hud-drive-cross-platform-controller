@@ -12,8 +12,8 @@ final class V903539ReliabilityTests: XCTestCase {
         XCTAssertTrue(route.contains("transportFailureHoldoverInterval: TimeInterval = 90.0"))
         XCTAssertTrue(route.contains("malformedResponseHoldoverInterval: TimeInterval = 180.0"))
         XCTAssertTrue(route.contains("CARPLAY RGD HOLD"))
-        XCTAssertTrue(route.contains("Ignoring first inactive sample"))
-        XCTAssertTrue(route.contains("inactiveRouteEndConfirmationInterval: TimeInterval = 5.0"))
+        XCTAssertTrue(route.contains("Ignoring transient inactive run"))
+        XCTAssertTrue(route.contains("inactiveRouteEndConfirmationInterval: TimeInterval = 12.0"))
     }
 
     func testMainVideoFreshnessWatchdogCanRecoverFrozenCrop() throws {

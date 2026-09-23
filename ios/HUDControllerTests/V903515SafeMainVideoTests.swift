@@ -18,11 +18,11 @@ final class V903515SafeMainVideoTests: XCTestCase {
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
     }
 
-    func testRouteInactiveNeedsFiveSecondsBeforeFreeride() throws {
+    func testRouteInactiveNeedsTwelveSecondsBeforeFreeride() throws {
         let route = try source("HUDController/Navigation/RouteGuidanceAdapterClient.swift")
-        XCTAssertTrue(route.contains("inactiveRouteEndConfirmationInterval: TimeInterval = 5.0"))
+        XCTAssertTrue(route.contains("inactiveRouteEndConfirmationInterval: TimeInterval = 12.0"))
         XCTAssertTrue(route.contains("inactiveStartedAtBySource"))
-        XCTAssertTrue(route.contains("holding active HUD guidance for 5s"))
+        XCTAssertTrue(route.contains("holding active HUD guidance for \\(Int(inactiveRouteEndConfirmationInterval))s"))
     }
 
     func testItem10MapModeProbeIsRetiredFromUI() throws {
