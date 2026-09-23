@@ -158,7 +158,7 @@ final class RouteGuidanceAdapterClient {
     private var lastEndpointSuccessAt: Date?
     private var transportHoldoverStartedAt: Date?
     private var inactiveStartedAtBySource: [SourceKind: Date] = [:]
-    private let inactiveRouteEndConfirmationInterval: TimeInterval = 5.0
+    private let inactiveRouteEndConfirmationInterval: TimeInterval = 12.0
     private var lastValidInstruction: NavigationInstruction?
     private var rerouteAwaitingFreshManeuver = false
     private var rerouteCandidateSignature: String?
@@ -363,11 +363,13 @@ final class RouteGuidanceAdapterClient {
         }
         lastSequenceBySource[kind] = snapshot.sequence
 
-        // v90.35.3.15: Google Maps can emit a short run of valid state-0 samples
-        // while navigation is still active. Two samples at the 750 ms poll cadence
-        // proved too aggressive in field testing. Hold the previously active route
-        // for a full five seconds of continuously decoded inactive state. A genuinely
-        // active sample immediately cancels this timer.
+        // v90.35.3.24.8: Google Maps can emit a short run of valid state-0 samples
+        // while navigation is still active. The 2026-09-23 field capture held state 0
+        // for 5.2 s, tripped the old five-second route-end threshold, then returned to
+        // a valid state 3 roughly one second later. Hold a previously active route for
+        // 12 seconds of continuously decoded inactive state; any genuinely active
+        // sample immediately cancels this timer. Transport/malformed holdovers remain
+        // substantially longer and unchanged.
         if kind != .other,
            (!snapshot.active || snapshot.routeState == 0),
            let previous = snapshots[kind]?.snapshot,
@@ -380,7 +382,7 @@ final class RouteGuidanceAdapterClient {
                 status = "Confirming CarPlay route end…"
                 logger.log(
                     "CARPLAY RGD HOLD",
-                    "Ignoring first inactive sample / transient inactive run source=\(kind.rawValue) seq=\(snapshot.sequence) state=\(snapshot.routeState) elapsed=\(String(format: "%.1f", elapsed))s; holding active HUD guidance for 5s"
+                    "Ignoring transient inactive run source=\(kind.rawValue) seq=\(snapshot.sequence) state=\(snapshot.routeState) elapsed=\(String(format: "%.1f", elapsed))s; holding active HUD guidance for \(Int(inactiveRouteEndConfirmationInterval))s"
                 )
                 return
             }

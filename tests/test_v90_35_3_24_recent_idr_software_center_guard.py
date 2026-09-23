@@ -24,7 +24,7 @@ def test_v824_recent_idr_closes_client_after_keyframe_race_without_big_gop_burst
 
 
 def test_ios_uses_v824_and_bounded_exact_framing_with_software_decoder_preference():
-    assert 'v8.24/v8.25/v8.26-tcp-15332' in VIDEO
+    assert 'v8.24/v8.25/v8.26/v8.27-tcp-15332' in VIDEO
     assert 'validated/recent/live IDR bootstrap enabled' in VIDEO
     assert 'receiveExactly' in VIDEO
     assert 'maximumNALBytes = 512 * 1024' in VIDEO
@@ -39,7 +39,7 @@ def test_decoder_recovery_reconnects_to_recent_anchor_instead_of_dead_session_lo
     assert 'WAITING_FRESH_IDR' in VIDEO
     assert 'stale-output watchdog' in VIDEO and 'performBoundedDecoderRecovery' in VIDEO
     assert 'bounded decoder recovery persistent-GOP reseed' in VIDEO
-    assert 'Decoder recovery • one persistent-GOP reseed' in VIDEO
+    assert 'Decoder recovery • waiting for a clean IDR' in VIDEO
 
 
 def test_mainvideo_warms_before_hud_ble_and_survives_hud_ble_transport_loss():

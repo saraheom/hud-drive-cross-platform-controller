@@ -71,11 +71,15 @@ final class HudBluetoothManager: NSObject {
     private var obdDiagnosticObservedCategorySet = Set<String>()
     private var obdDiagnosticForensicFrameCount = 0
     private var obdDiagnosticMalformedFrameCount = 0
-    private var obdDiagnosticLastForwardedBLEFragment: Data?
-    private var obdDiagnosticLastForwardedBLEFragmentAt = Date.distantPast
+    private struct OBDDiagnosticRecentFragment {
+        var data: Data
+        var at: Date
+    }
+    private var obdDiagnosticRecentContinuationFragments: [OBDDiagnosticRecentFragment] = []
     private var obdDiagnosticSuppressedDuplicateFragments = 0
+    private var obdDiagnosticSuppressedDuplicateStarts = 0
 
-    // v90.35.3.14: diagnostic payloads are much larger than a BLE notification
+    // v90.35.3.24.8: diagnostic payloads are much larger than a BLE notification
     // and the HUD can emit ordinary status/UART events between their continuation
     // notifications.  The generic single-stream STX/ETX parser must resynchronize
     // at such a nested STX, which necessarily discards the interrupted diagnostic
@@ -444,14 +448,14 @@ final class HudBluetoothManager: NSObject {
         obdDiagnosticObservedCategories = "—"
         obdDiagnosticForensicFrameCount = 0
         obdDiagnosticMalformedFrameCount = 0
-        obdDiagnosticLastForwardedBLEFragment = nil
-        obdDiagnosticLastForwardedBLEFragmentAt = .distantPast
         obdDiagnosticSuppressedDuplicateFragments = 0
         obdDiagnosticWireFrame.removeAll(keepingCapacity: true)
         obdDiagnosticWireCollecting = false
         obdDiagnosticWireRestartCount = 0
         obdDiagnosticInterleavedEventCount = 0
         obdDiagnosticReassembledFrameCount = 0
+        obdDiagnosticRecentContinuationFragments.removeAll(keepingCapacity: true)
+        obdDiagnosticSuppressedDuplicateStarts = 0
         obdDiagnosticTransferActive = true
         obdDiagnosticStatus = "Requesting HUD OBD diagnostic ZIP + raw capture…"
         logger.log("OBD HUD LOG", "Request LOG_CATEGORY_OBD maxLastFilesCount=\(maxLastFilesCount)")
@@ -493,32 +497,41 @@ final class HudBluetoothManager: NSObject {
 
     private func shouldSuppressDuplicateDiagnosticBLEFragment(_ data: Data) -> Bool {
         guard obdDiagnosticTransferActive, !data.isEmpty else { return false }
-        let now = Date()
-        defer {
-            obdDiagnosticLastForwardedBLEFragment = data
-            obdDiagnosticLastForwardedBLEFragmentAt = now
-        }
 
-        // Field capture showed continuation notifications repeated verbatim two to
-        // six times in immediate succession. Preserve every byte in the raw capture,
-        // but feed only the first copy to the protocol assemblers. Ordinary framed
-        // HUD events are never suppressed; an exact repeated *diagnostic start*
-        // notification is safe to suppress while the same large diagnostic frame is
-        // already being collected.
-        let isDiagnosticStart = isDiagnosticStartNotification(data)
-        guard (data.first != HudProtocol.stx || isDiagnosticStart),
-              data == obdDiagnosticLastForwardedBLEFragment,
-              now.timeIntervalSince(obdDiagnosticLastForwardedBLEFragmentAt) < 0.20 else {
-            return false
+        // A diagnostic packet's *first* BLE notification is intentionally almost
+        // identical for every archive chunk (STX + 05/01/01 + Java UTF category).
+        // v4 treated identical starts inside a 200 ms window as duplicate BLE
+        // delivery, which can silently discard the start of the next real chunk and
+        // splice its continuation bytes onto the previous packet. Never de-duplicate
+        // an STX-bearing notification here. consumeDiagnosticBLEFragment() can safely
+        // identify a duplicate start only while the same packet is still incomplete.
+        if data.first == HudProtocol.stx { return false }
+
+        // Field captures also contain true duplicate *continuation* notifications,
+        // sometimes interleaved A/B/A/B rather than adjacent. De-duplicate only
+        // within the current diagnostic wire frame and only in a short time window.
+        // The history is cleared at every authoritative diagnostic STX, so an equal
+        // compressed block in a later archive chunk is never suppressed.
+        let now = Date()
+        let duplicateWindow: TimeInterval = 0.15
+        obdDiagnosticRecentContinuationFragments.removeAll {
+            now.timeIntervalSince($0.at) > duplicateWindow
         }
-        obdDiagnosticSuppressedDuplicateFragments += 1
-        if obdDiagnosticSuppressedDuplicateFragments == 1 || obdDiagnosticSuppressedDuplicateFragments % 50 == 0 {
-            logger.log(
-                "OBD HUD RAW",
-                "Suppressed duplicate BLE continuation fragment count=\(obdDiagnosticSuppressedDuplicateFragments) bytes=\(data.count); raw capture still retains every notification"
-            )
+        if obdDiagnosticRecentContinuationFragments.contains(where: { $0.data == data }) {
+            obdDiagnosticSuppressedDuplicateFragments += 1
+            if obdDiagnosticSuppressedDuplicateFragments == 1 || obdDiagnosticSuppressedDuplicateFragments % 50 == 0 {
+                logger.log(
+                    "OBD HUD RAW",
+                    "Suppressed duplicate continuation within current diagnostic frame count=\(obdDiagnosticSuppressedDuplicateFragments) bytes=\(data.count); raw capture still retains every notification"
+                )
+            }
+            return true
         }
-        return true
+        obdDiagnosticRecentContinuationFragments.append(OBDDiagnosticRecentFragment(data: data, at: now))
+        if obdDiagnosticRecentContinuationFragments.count > 24 {
+            obdDiagnosticRecentContinuationFragments.removeFirst(obdDiagnosticRecentContinuationFragments.count - 24)
+        }
+        return false
     }
 
     private func isDiagnosticStartNotification(_ data: Data) -> Bool {
@@ -537,14 +550,22 @@ final class HudBluetoothManager: NSObject {
         if data.first == HudProtocol.stx {
             if isDiagnosticStartNotification(data) {
                 if obdDiagnosticWireCollecting, !obdDiagnosticWireFrame.isEmpty {
+                    // A fresh diagnostic STX is authoritative. Every archive chunk
+                    // begins with an almost identical category/header prefix, so the
+                    // prefix itself cannot distinguish a retransmitted start from the
+                    // next real chunk. Restarting here is lossless for a true duplicate
+                    // and prevents a missing/incomplete prior chunk from consuming the
+                    // next chunk's continuation bytes. Missing chunks are recovered by
+                    // the indexed archive reassembler rather than by splicing frames.
                     obdDiagnosticWireRestartCount += 1
                     logger.log(
                         "OBD HUD REASM",
-                        "New diagnostic STX replaced incomplete frame bytes=\(obdDiagnosticWireFrame.count) restarts=\(obdDiagnosticWireRestartCount)"
+                        "Fresh diagnostic STX replaced incomplete frame bytes=\(obdDiagnosticWireFrame.count) restarts=\(obdDiagnosticWireRestartCount)"
                     )
                 }
                 obdDiagnosticWireFrame = data
                 obdDiagnosticWireCollecting = true
+                obdDiagnosticRecentContinuationFragments.removeAll(keepingCapacity: true)
             } else if obdDiagnosticWireCollecting {
                 // A normal HUD event is interleaved between continuation
                 // notifications. Leave the diagnostic accumulator untouched and
@@ -573,6 +594,7 @@ final class HudBluetoothManager: NSObject {
             )
             obdDiagnosticWireFrame.removeAll(keepingCapacity: true)
             obdDiagnosticWireCollecting = false
+            obdDiagnosticRecentContinuationFragments.removeAll(keepingCapacity: true)
             return true
         }
 
@@ -587,6 +609,7 @@ final class HudBluetoothManager: NSObject {
         let trailing = obdDiagnosticWireFrame.distance(from: endExclusive, to: obdDiagnosticWireFrame.endIndex)
         obdDiagnosticWireFrame.removeAll(keepingCapacity: true)
         obdDiagnosticWireCollecting = false
+        obdDiagnosticRecentContinuationFragments.removeAll(keepingCapacity: true)
 
         if trailing > 0 {
             // We have not observed packed multiple frames in one HUD notification;
@@ -638,7 +661,7 @@ final class HudBluetoothManager: NSObject {
             obdDiagnosticRawCaptureURL = url
             logger.log(
                 "OBD HUD RAW",
-                "Saved \(url.lastPathComponent) bytes=\(obdDiagnosticRawBLE.count) frames=\(obdDiagnosticForensicFrameCount) malformed=\(obdDiagnosticMalformedFrameCount) categories=\(obdDiagnosticObservedCategories) reason=\(reason)"
+                "Saved \(url.lastPathComponent) bytes=\(obdDiagnosticRawBLE.count) frames=\(obdDiagnosticForensicFrameCount) malformed=\(obdDiagnosticMalformedFrameCount) dupContinuation=\(obdDiagnosticSuppressedDuplicateFragments) dupStart=\(obdDiagnosticSuppressedDuplicateStarts) categories=\(obdDiagnosticObservedCategories) reason=\(reason)"
             )
         } catch {
             logger.log("OBD HUD RAW", "Raw capture save failed: \(error.localizedDescription)")
@@ -720,11 +743,16 @@ final class HudBluetoothManager: NSObject {
             let chunksText = allChunks.map { String($0) } ?? "?"
             let indexText = chunkIndex.map { String($0 + 1) } ?? "?"
             let declaredText = chunkSize.map { String($0) } ?? "?"
-            logger.log(
-                "OBD HUD RAW",
-                "event#\(obdDiagnosticForensicFrameCount) category=\(categoryText) requested=\(obdDiagnosticRequestedCategory) total=\(totalText) chunk=\(indexText)/\(chunksText) declared=\(declaredText) available=\(available) wireBytes=\(frame.count) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh hits=[\(hits.joined(separator: ","))]"
-            )
-            if let category, category != obdDiagnosticRequestedCategory {
+            let shouldLogFrame = obdDiagnosticForensicFrameCount <= 5 ||
+                obdDiagnosticForensicFrameCount % 50 == 0 || !hits.isEmpty
+            if shouldLogFrame {
+                logger.log(
+                    "OBD HUD RAW",
+                    "event#\(obdDiagnosticForensicFrameCount) category=\(categoryText) requested=\(obdDiagnosticRequestedCategory) total=\(totalText) chunk=\(indexText)/\(chunksText) declared=\(declaredText) available=\(available) wireBytes=\(frame.count) bodyBytes=\(body.count) gps=\(obdTraceReferenceSpeedMph)mph/\(kmh)kmh hits=[\(hits.joined(separator: ","))]"
+                )
+            }
+            if let category, category != obdDiagnosticRequestedCategory,
+               (obdDiagnosticForensicFrameCount <= 5 || obdDiagnosticForensicFrameCount % 100 == 0) {
                 logger.log("OBD HUD RAW", "CATEGORY MISMATCH requested=\(obdDiagnosticRequestedCategory) received=\(category)")
             }
         } else {
@@ -985,10 +1013,12 @@ final class HudBluetoothManager: NSObject {
 
             let chunk = body.subdata(in: index..<(index + chunkSize))
             let hits = obdDiagnosticSignatureHits(chunk)
-            logger.log(
-                "OBD HUD LOG",
-                "VALID chunk category=\(category) requested=\(obdDiagnosticRequestedCategory) index=\(chunkIndex + 1)/\(allChunks) bytes=\(chunkSize) total=\(totalSize) hits=[\(hits.joined(separator: ","))]"
-            )
+            if chunkIndex < 3 || (chunkIndex + 1) % 25 == 0 || chunkIndex + 1 == allChunks || !hits.isEmpty {
+                logger.log(
+                    "OBD HUD LOG",
+                    "VALID chunk category=\(category) requested=\(obdDiagnosticRequestedCategory) index=\(chunkIndex + 1)/\(allChunks) bytes=\(chunkSize) total=\(totalSize) hits=[\(hits.joined(separator: ","))]"
+                )
+            }
 
             // The 2026-09-14 HUD returned LOG_CATEGORY_CRUSH even though the request
             // explicitly named LOG_CATEGORY_OBD. Do not discard a structurally valid
@@ -1497,13 +1527,14 @@ extension HudBluetoothManager: CBPeripheralDelegate {
             // text log so a forensic download cannot flood the main actor/log UI.
             self.captureOBDDiagnosticRawBLE(data)
             if self.shouldSuppressDuplicateDiagnosticBLEFragment(data) { return }
-            self.logger.log("RX CHUNK", self.lastRX)
 
-            // Large diagnostic frames are notification-multiplexed with ordinary
-            // HUD events. Consume their start/continuation fragments in the
-            // dedicated reassembler and keep interleaved short events on the
-            // normal parser path.
+            // Large diagnostic transfers can exceed four thousand BLE notifications.
+            // Logging every compressed continuation on the main actor adds enough UI/
+            // file-I/O pressure to make notification loss more likely. Feed diagnostic
+            // fragments directly into the dedicated reassembler first; ordinary
+            // interleaved HUD events still fall through to the normal RX logger/parser.
             if self.consumeDiagnosticBLEFragment(data) { return }
+            self.logger.log("RX CHUNK", self.lastRX)
 
             self.rxBuffer.append(data)
             let frames = HudProtocol.extractFrames(from: &self.rxBuffer)

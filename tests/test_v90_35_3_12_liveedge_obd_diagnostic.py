@@ -19,7 +19,7 @@ def test_ios_watchdog_is_less_aggressive_and_tracks_bytes():
     assert 'kVTInvalidSessionErr (-12903)' in VIDEO
     assert 'validated/recent/live IDR bootstrap enabled' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
-    assert 'HARD decoder recovery, bounded validated-GOP reseed/fresh-IDR wait' in VIDEO
+    assert 'HARD decoder recovery, relay-aware live-IDR wait' in VIDEO
 
 def test_stock_hud_obd_log_protocol_is_exposed():
     assert 'requestOBDDiagnosticLogs' in CMD

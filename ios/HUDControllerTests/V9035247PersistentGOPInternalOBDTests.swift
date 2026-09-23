@@ -48,6 +48,6 @@ final class V9035247PersistentGOPInternalOBDTests: XCTestCase {
         XCTAssertTrue(app.contains("requestOBDDiagnosticLogs(maxLastFilesCount: 5)"))
         XCTAssertTrue(app.contains("no second OBD connection"))
         XCTAssertTrue(ui.contains("Run 90 s HUD-internal OBD probe v4"))
-        XCTAssertTrue(ui.contains("Collect HUD OBD logs (parked)"))
+        XCTAssertTrue(ui.contains("Collect/reconstruct HUD OBD ZIP (parked)"))
     }
 }

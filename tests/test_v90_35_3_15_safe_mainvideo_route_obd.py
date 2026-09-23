@@ -18,14 +18,14 @@ def test_mainvideo_recovery_is_conservative():
     assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
     assert 'initialIDRWaitDiagnosticInterval: TimeInterval = 20.0' in VIDEO
     assert 'kVTInvalidSessionErr (-12903)' in VIDEO
-    assert 'HARD decoder recovery, bounded validated-GOP reseed/fresh-IDR wait' in VIDEO
+    assert 'HARD decoder recovery, relay-aware live-IDR wait' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
 
 def test_route_inactive_requires_five_seconds():
-    assert 'inactiveRouteEndConfirmationInterval: TimeInterval = 5.0' in ROUTE
+    assert 'inactiveRouteEndConfirmationInterval: TimeInterval = 12.0' in ROUTE
     assert 'inactiveStartedAtBySource' in ROUTE
-    assert 'holding active HUD guidance for 5s' in ROUTE
+    assert r'holding active HUD guidance for \(Int(inactiveRouteEndConfirmationInterval))s' in ROUTE
     assert 'transportFailureHoldoverInterval: TimeInterval = 90.0' in ROUTE
     assert 'malformedResponseHoldoverInterval: TimeInterval = 180.0' in ROUTE
 

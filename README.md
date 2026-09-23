@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.24.8 + U2W v8.27 — lightweight live-edge MainVideo + OBD diagnostic ZIP reconstruction
+
+This paired release replaces v8.26's large persistent-GOP replay/cache with a lightweight live-edge relay that waits on one persistent TCP session for the next validated live IDR. It also adds physical-HUD STA/viewer fail-safe recovery and reconstructs the HUD's chunked binary diagnostic archive for the next OBD-speed investigation. **Ambient lighting and the Door speed-warning animation are unchanged.**
+
+**Flash U2W v8.27 for this release.** Use 10 FPS for the first validation. See `V90_35_3_24_8_RELEASE.md` and `V90_35_3_24_8_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.24.7 + U2W v8.26 — deterministic MainVideo bootstrap + HUD-internal OBD probe v4
 
 This paired release keeps the proven v8.11 AppleCarPlay MainVideo capture and v8.15.1 HUD JPEG relay unchanged. U2W v8.26 preserves validated H.264 codec state and a disk-backed current-GOP recovery bridge across ordinary v8.11 rolling-file rotations, while the iOS client suppresses reconnect churn during intentional bootstrap waits and adds startup decoder hysteresis so the first decoded frame cannot be reset by the stale-output watchdog.

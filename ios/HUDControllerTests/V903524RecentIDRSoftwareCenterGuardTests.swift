@@ -25,7 +25,7 @@ final class V903524RecentIDRSoftwareCenterGuardTests: XCTestCase {
         XCTAssertTrue(video.contains("bounded recovery attempt #1"))
         XCTAssertTrue(video.contains("WAITING_FRESH_IDR"))
         XCTAssertTrue(video.contains("TCP PRESERVED, quarantining replay and waiting for next live IDR"))
-        XCTAssertTrue(video.contains("Decoder recovery • one persistent-GOP reseed"))
+        XCTAssertTrue(video.contains("Decoder recovery • waiting for a clean IDR"))
     }
 
     func testCenterOnlyDayGuardDoesNotWaitForDashboard() throws {

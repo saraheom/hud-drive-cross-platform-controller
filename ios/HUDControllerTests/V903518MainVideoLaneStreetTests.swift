@@ -12,7 +12,7 @@ final class V903518MainVideoLaneStreetTests: XCTestCase {
         XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
         XCTAssertTrue(video.contains("consecutiveErrorRebuildThreshold = 5"))
         XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
-        XCTAssertTrue(video.contains("HARD decoder recovery, bounded validated-GOP reseed/fresh-IDR wait"))
+        XCTAssertTrue(video.contains("HARD decoder recovery, relay-aware live-IDR wait"))
         XCTAssertFalse(video.contains("requestDecoderResync"))
     }
 

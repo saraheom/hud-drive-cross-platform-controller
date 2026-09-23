@@ -68,10 +68,10 @@ def test_obd_v4_targets_hud_internal_logs_without_second_obd_connection():
     assert 'LOG_CATEGORY_OBD' in APP
     assert 'no second OBD connection' in APP
     assert 'Run 90 s HUD-internal OBD probe v4' in UI
-    assert 'Collect HUD OBD logs (parked)' in UI
+    assert 'Collect/reconstruct HUD OBD ZIP (parked)' in UI
     assert 'Share HUD OBD diagnostic ZIP' in UI
 
 
 def test_ui_documents_v247_v826_pair_and_10fps_validation():
-    assert 'v90.35.3.24.7 pairs with U2W v8.26' in UI
+    assert 'v90.35.3.24.8 pairs with U2W v8.27' in UI
     assert '10 fps remains the recommended validation cadence' in UI

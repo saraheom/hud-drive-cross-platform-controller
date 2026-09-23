@@ -40,6 +40,18 @@ final class AppState {
     private var hudU2WLastManualDisplayRetryAt = Date.distantPast
     private var hudU2WSTAResetInProgress = false
     private var hudU2WIgnoreEmptyStatusUntil = Date.distantPast
+    // v90.35.3.24.8: current-session readiness in v8.15.1 is a one-time latch,
+    // not proof that the physical HUD is still consuming MJPEG frames.  Once a
+    // session has really displayed a live frame, periodically verify the HUD's
+    // stock STA state. Two consecutive no-address results (or a missing STA
+    // response for >12 s) fail safe to stock Navigation/Freeride and perform one
+    // bounded viewer rejoin without disturbing MainVideo or the iPhone renderer.
+    private var hudU2WDisplayHealthTask: Task<Void, Never>?
+    private var hudU2WDisplayRecoveryTask: Task<Void, Never>?
+    private var hudU2WCurrentSessionWasReady = false
+    private var hudU2WConsecutiveUnhealthySTAStatus = 0
+    private var hudU2WLastSTAStatusAt = Date.distantPast
+    private var hudU2WDisplayRecoveryCount = 0
     private(set) var hudU2WLiveRelayActive = false
 
     // v90.35.3.11 read-only/temporary topology experiment: while the proven
@@ -248,6 +260,7 @@ final class AppState {
 
         bluetooth.onWiFiSTAStatusEvent = { [weak self] status, reason, address in
             guard let self else { return }
+            self.hudU2WLastSTAStatusAt = Date()
 
             // Field evidence from v90.35.3.4: the HUD can report stock status=6
             // ("Empty network") while simultaneously returning a valid DHCP address
@@ -288,6 +301,29 @@ final class AppState {
                 self.hudU2WSTAStatus = "Joining U2W Wi-Fi…"
             default:
                 self.hudU2WSTAStatus = "Status \(status)"
+            }
+
+            if self.hudU2WLiveRelayActive, self.hudU2WCurrentSessionWasReady {
+                if linkUp {
+                    if self.hudU2WConsecutiveUnhealthySTAStatus > 0 {
+                        self.logger.log(
+                            "HUD/U2W HEALTH",
+                            "STA recovered before fail-safe status=\(status) address=\(address.isEmpty ? "—" : address) priorFailures=\(self.hudU2WConsecutiveUnhealthySTAStatus)"
+                        )
+                    }
+                    self.hudU2WConsecutiveUnhealthySTAStatus = 0
+                } else {
+                    self.hudU2WConsecutiveUnhealthySTAStatus += 1
+                    self.logger.log(
+                        "HUD/U2W HEALTH",
+                        "STA unhealthy after proven live session count=\(self.hudU2WConsecutiveUnhealthySTAStatus)/2 status=\(status) reason=\(reason) address=\(address.isEmpty ? "—" : address)"
+                    )
+                    if self.hudU2WConsecutiveUnhealthySTAStatus >= 2 {
+                        self.scheduleHUDU2WDisplayHealthRecovery(
+                            reason: "two consecutive HUD STA failures after live session: status=\(status) \(reason)"
+                        )
+                    }
+                }
             }
 
             if self.hudU2WLiveRelayActive, linkUp, self.hudU2WKivicKickCount == 0 {
@@ -811,6 +847,14 @@ final class AppState {
         hudU2WKivicKickCount = 0
         hudU2WAutomaticViewerRecoveryCount = 0
         hudU2WAutomaticJoinRecoveryCount = 0
+        hudU2WDisplayHealthTask?.cancel()
+        hudU2WDisplayHealthTask = nil
+        hudU2WDisplayRecoveryTask?.cancel()
+        hudU2WDisplayRecoveryTask = nil
+        hudU2WCurrentSessionWasReady = false
+        hudU2WConsecutiveUnhealthySTAStatus = 0
+        hudU2WLastSTAStatusAt = .distantPast
+        hudU2WDisplayRecoveryCount = 0
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
@@ -978,6 +1022,147 @@ final class AppState {
         }
     }
 
+    private func startHUDU2WDisplayHealthMonitor() {
+        guard hudU2WLiveRelayActive, hudU2WCurrentSessionWasReady else { return }
+        guard hudU2WDisplayHealthTask == nil || hudU2WDisplayHealthTask?.isCancelled == true else { return }
+
+        hudU2WDisplayHealthTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.hudU2WDisplayHealthTask = nil }
+            while !Task.isCancelled, self.hudU2WLiveRelayActive {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+                guard self.hudU2WCurrentSessionWasReady else { continue }
+
+                // This is a BLE/HUD-local liveness check; it does not touch the
+                // MainVideo relay or poll Boa at high frequency.
+                self.requestHUDU2WSTAStatus()
+                let age = Date().timeIntervalSince(self.hudU2WLastSTAStatusAt)
+                if age > 12.0 {
+                    self.logger.log(
+                        "HUD/U2W HEALTH",
+                        "No STA status response for \(String(format: "%.1f", age))s after proven live session; fail-safe viewer recovery"
+                    )
+                    self.scheduleHUDU2WDisplayHealthRecovery(reason: "HUD STA status silent >12s after live session")
+                }
+            }
+        }
+    }
+
+    private func failSafeHUDU2WDisplayToStock(reason: String) {
+        guard bluetooth.state == .connected else { return }
+        bluetooth.enqueue(
+            HudCommands.kivicMode(4),
+            label: "HUD/U2W display health → fail-safe IOS_HUD_MODE(4)"
+        )
+        bluetooth.enqueue(
+            HudCommands.fullScreen(true),
+            label: "HUD/U2W display health → fail-safe full screen ON"
+        )
+        restoreDashboardOperatingMode(reason: "HUD/U2W display health fallback / \(reason)")
+        logger.log(
+            "HUD/U2W HEALTH",
+            "Physical Map Mode fail-safe → stock dashboard reason=\(reason); MainVideo + iPhone JPEG relay intentionally kept alive"
+        )
+    }
+
+    private func scheduleHUDU2WDisplayHealthRecovery(reason: String) {
+        guard hudU2WLiveRelayActive, bluetooth.state == .connected else { return }
+        guard hudU2WDisplayRecoveryTask == nil else { return }
+
+        // Never leave a known-stale full-screen map on the windshield while the
+        // app tries to recover. After two bounded automatic recoveries in one
+        // Map Mode session, stay on stock Navigation/Freeride until the user
+        // explicitly retries; do not create an endless mode/HTTP loop.
+        if hudU2WDisplayRecoveryCount >= 2 {
+            hudU2WSTAStatus = "HUD map viewer unavailable — staying on stock dashboard"
+            failSafeHUDU2WDisplayToStock(reason: "automatic recovery budget exhausted / \(reason)")
+            return
+        }
+
+        hudU2WDisplayRecoveryCount += 1
+        let recoveryNumber = hudU2WDisplayRecoveryCount
+        hudU2WDisplayRecoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.hudU2WDisplayRecoveryTask = nil }
+            guard self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else { return }
+
+            self.hudU2WCurrentSessionWasReady = false
+            self.hudU2WConsecutiveUnhealthySTAStatus = 0
+            self.hudU2WSTAConnected = false
+            self.hudU2WKivicKickTask?.cancel()
+            self.hudU2WKivicKickTask = nil
+            self.hudU2WKivicKickCount = 0
+            // Disable the inner one-shot mode4→mode6 viewer bounce for this
+            // recovery attempt. This outer routine already owns exactly one
+            // controlled recreation and must remain bounded.
+            self.hudU2WAutomaticViewerRecoveryCount = 1
+            self.hudU2WSTAStatus = "HUD map link lost — stock dashboard active; rebuilding viewer…"
+            self.failSafeHUDU2WDisplayToStock(reason: reason)
+
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+
+            // Start a fresh v8.15.1 session marker while reusing the existing
+            // relay daemons. This makes client/live-frame readiness meaningful
+            // again without restarting MainVideo or AppleCarPlay.
+            do {
+                let url = URL(string: "http://192.168.50.2/cgi-bin/u2whud-start.cgi")!
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 3
+                let (_, response) = try await URLSession.shared.data(for: request)
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                self.logger.log("HUD/U2W HEALTH", "viewer recovery #\(recoveryNumber) fresh relay session HTTP=\(code)")
+                guard (200...299).contains(code) else {
+                    self.hudU2WSTAStatus = "HUD viewer restart failed — staying on stock dashboard"
+                    return
+                }
+            } catch {
+                self.logger.log("HUD/U2W HEALTH", "viewer recovery #\(recoveryNumber) relay start failed: \(error.localizedDescription)")
+                self.hudU2WSTAStatus = "HUD viewer restart unreachable — staying on stock dashboard"
+                return
+            }
+
+            let cleanSSID = (UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.ssid") ?? "NISSAN68")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanPassword = UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.password") ?? ""
+            guard !cleanSSID.isEmpty, !cleanPassword.isEmpty else {
+                self.hudU2WSTAStatus = "Saved U2W Wi-Fi credentials unavailable — staying on stock dashboard"
+                return
+            }
+
+            self.bluetooth.enqueue(
+                HudCommands.kivicMode(6),
+                label: "HUD/U2W health recovery #\(recoveryNumber) → IOS_KIVICCAST_STA_MODE(6)"
+            )
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+            self.bluetooth.enqueue(
+                HudCommands.wifiSTAMode(ssid: cleanSSID, password: cleanPassword, security: 2),
+                label: "HUD/U2W health recovery #\(recoveryNumber) → STA credentials"
+            )
+            self.hudU2WSTAStatus = "Rejoining HUD map viewer…"
+
+            // The normal STA callback will call primeHUDU2WKivicViewer(), which
+            // sets hudU2WCurrentSessionWasReady only after the fresh session has
+            // accepted a HUD client and sent a live frame.
+            for checkpoint in 1...3 {
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+                if self.hudU2WCurrentSessionWasReady {
+                    self.logger.log("HUD/U2W HEALTH", "viewer recovery #\(recoveryNumber) succeeded checkpoint=\(checkpoint)")
+                    self.hudU2WAutomaticViewerRecoveryCount = 0
+                    return
+                }
+                self.requestHUDU2WSTAStatus()
+            }
+
+            self.failSafeHUDU2WDisplayToStock(reason: "viewer recovery #\(recoveryNumber) did not establish a fresh current session")
+            self.hudU2WSTAStatus = "HUD map viewer did not recover — staying on stock dashboard"
+            self.logger.log("HUD/U2W HEALTH", "viewer recovery #\(recoveryNumber) exhausted; stock dashboard retained")
+        }
+    }
+
     private func isUsableHUDSTAAddress(_ address: String) -> Bool {
         let parts = address.split(separator: ".")
         guard parts.count == 4,
@@ -1082,6 +1267,10 @@ final class AppState {
                     lastRelay = relay
                     if relay.currentSessionReady {
                         self.hudU2WSTAStatus = "Connected — current HUD stream active"
+                        self.hudU2WCurrentSessionWasReady = true
+                        self.hudU2WConsecutiveUnhealthySTAStatus = 0
+                        self.hudU2WLastSTAStatusAt = Date()
+                        self.startHUDU2WDisplayHealthMonitor()
                         self.logger.log(
                             "HUD/U2W STA",
                             "CURRENT SESSION READY phase=\(phase) session=\(relay.sessionID) client=\(relay.clientSeen) liveFrame=\(relay.liveFrameSent) genericEstablished=\(relay.established)"
@@ -1541,7 +1730,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.7",
+                "appVersion=v90.35.3.24.8",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -1583,10 +1772,15 @@ final class AppState {
             hudOBDInternalProbeV4Status = "HUD OBD log transfer already active"
             return
         }
-        hudOBDInternalProbeV4Status = "Collecting HUD-native OBD logs • keep parked/powered"
+        guard speedEngine.currentSpeedMph <= 1 else {
+            hudOBDInternalProbeV4Status = "Stop the vehicle before collecting HUD logs"
+            logger.log("OBD INTERNAL V4", "PARKED COLLECT blocked gps=\(speedEngine.currentSpeedMph)mph; diagnostic ZIP transfer requires stationary vehicle")
+            return
+        }
+        hudOBDInternalProbeV4Status = "Collecting/reconstructing HUD diagnostic ZIP • keep parked/powered"
         logger.log(
             "OBD INTERNAL V4",
-            "PARKED COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gps=\(speedEngine.currentSpeedMph)mph; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
+            "PARKED COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gps=\(speedEngine.currentSpeedMph)mph; v24.8 length/framing reconstruction active; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
         )
         bluetooth.requestOBDDiagnosticLogs(maxLastFilesCount: 5)
     }
@@ -1725,6 +1919,14 @@ final class AppState {
         hudU2WSTAStatusTask = nil
         hudU2WJoinRecoveryTask?.cancel()
         hudU2WJoinRecoveryTask = nil
+        hudU2WDisplayHealthTask?.cancel()
+        hudU2WDisplayHealthTask = nil
+        hudU2WDisplayRecoveryTask?.cancel()
+        hudU2WDisplayRecoveryTask = nil
+        hudU2WCurrentSessionWasReady = false
+        hudU2WConsecutiveUnhealthySTAStatus = 0
+        hudU2WLastSTAStatusAt = .distantPast
+        hudU2WDisplayRecoveryCount = 0
         hudSTAPersistenceTestTask?.cancel()
         hudSTAPersistenceTestTask = nil
         hudSTAPersistenceTestActive = false

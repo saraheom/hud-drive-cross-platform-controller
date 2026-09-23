@@ -21,8 +21,8 @@ def test_route_holdover_distinguishes_reachable_malformed_from_network_failure()
     assert 'Route feed malformed — holding last guidance' in ROUTE
     # Explicit decoded inactivity remains authoritative and still uses the existing
     # time-based confirmation logic rather than the transport holdover.
-    assert 'inactiveRouteEndConfirmationInterval: TimeInterval = 5.0' in ROUTE
-    assert 'Ignoring first inactive sample' in ROUTE
+    assert 'inactiveRouteEndConfirmationInterval: TimeInterval = 12.0' in ROUTE
+    assert 'Ignoring transient inactive run' in ROUTE
 
 
 def test_obd_has_notification_aware_diagnostic_reassembler():

@@ -506,7 +506,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive || state.hudOBDDeepProbeV3Active)
                     LabeledContent("OBD HUD-internal probe", value: state.hudOBDInternalProbeV4Status)
-                    Button("Collect HUD OBD logs (parked)") {
+                    Button("Collect/reconstruct HUD OBD ZIP (parked)") {
                         state.collectHUDOBDInternalProbeV4Logs()
                     }
                     .buttonStyle(.bordered)
@@ -555,7 +555,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.7 pairs with U2W v8.26. v8.26 keeps validated codec state and a single disk-backed GOP recovery seed across ordinary v8.11 rolling-file rotations instead of treating each file generation as a decoder epoch. While the relay explicitly waits for a cached/live bootstrap and its source is still advancing, the iPhone preserves the same TCP client instead of entering a reconnect loop. Startup decoder recovery also has an 8 s / 10-frame hysteresis so frame #1 cannot be reset by the stale-output watchdog. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified; 10 fps remains the recommended validation cadence.")
+                    Text("v90.35.3.24.8 pairs with U2W v8.27. v8.27 removes the large persistent GOP cache and historical file scan: it tails the proven v8.11 capture at the live edge, keeps only validated SPS/PPS parser state, and waits on the same TCP session for the next clean live IDR. Zero-length transport heartbeats keep that intentional wait distinct from a dead relay. The app also monitors the physical HUD STA after a proven display session; if the HUD link is lost it immediately falls back to the stock dashboard and performs one bounded viewer rejoin without restarting MainVideo. Before driving, wait for MainVideo preflight to read LIVE • 20s continuity verified; 10 fps remains the recommended validation cadence.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

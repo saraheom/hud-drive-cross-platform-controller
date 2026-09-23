@@ -1,0 +1,46 @@
+HUD Controller v90.35.3.24.8 + U2W v8.27 build verification
+
+Regression suites:
+- Full paired repository Python tests: 434 passed
+- App-only repository Python tests: 358 passed
+
+Swift syntax:
+- all production + XCTest Swift files parsed with swiftc -frontend -parse: PASS (180 files)
+
+U2W v8.27 native relay:
+- clang target arm-linux-gnueabi with -Wall -Wextra -Werror: PASS
+- ELF32 ARM EABI5, statically linked: PASS
+- no PT_INTERP / dynamic runtime dependency: PASS
+- install/start/status/rollback shell syntax: PASS
+- firmware AES wrapper decrypt + gzip/tar round-trip: PASS
+- install payload contains only once.sh, native MainVideo relay, start CGI, status CGI: PASS
+- install script does not kill/restart AppleCarPlay: PASS
+- persistent v8.26 GOP cache removed; v8.27 creates no replacement cache: PASS
+
+Final U2W artifacts:
+- U2W_Update_v8.27_LiveEdgeIDRRelay.img
+  SHA256 1f075cfea42a4ca3a2192b3d57554a68dc08229740c94c2ade397ac768a7aa56
+- U2W_Update_v8.27_LiveEdgeIDRRelay_SAFE_ROLLBACK_v8.23.img
+  SHA256 4eaef7761ee108f8923fc3316a8c08fcc436ab533eb0ea0eacf1cb2cd86519ba
+- source/u2w_mainvideo_relay
+  SHA256 92f82832fada3af7822dc1534262973f4c8e96b2ba40ad4721695424b313ca69
+
+Preservation checks against the v90.35.3.24.7 CI-fixed baseline:
+- AmbientLightMonitor.swift: BYTE-IDENTICAL
+  SHA256 1f816614d42a49a0b0fd49b23c11819533ebd8e3372fca2065c979c83c484ef9
+- v8.11 MainVideo firmware image: BYTE-IDENTICAL
+  SHA256 71e170df276640a849bf51f56523aedbdffa13f73a61d538871d7835b064c4ad
+- Door speed-warning sequence: no intentional production-code change
+- v8.15.1 HUD JPEG relay implementation: unchanged
+- Now Playing: unchanged
+- speed-limit engine: unchanged
+
+Intentional production changes from v90.35.3.24.7:
+- ios/HUDController/MapMode/U2WMainVideoClient.swift
+- ios/HUDController/App/AppState.swift (HUD viewer liveness/fail-safe + parked OBD collection orchestration only)
+- ios/HUDController/Bluetooth/HudBluetoothManager.swift (diagnostic binary archive reassembly)
+- ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift (12 s decoded-inactive confirmation to preserve stock Navigation during the observed transient state-0 hole)
+- ios/HUDController/UI/NavigationHUDPreviewCard.swift (diagnostic/release UI text)
+- new u2w/v8.27_LiveEdgeIDRRelay
+
+Field validation is still required. The design deliberately removes the two high-resource v8.26 mechanisms (48 MiB persistent GOP cache and historical replay/catch-up) and keeps MainVideo isolated from AppleCarPlay.
