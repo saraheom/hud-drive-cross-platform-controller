@@ -17,7 +17,7 @@ final class V903523DecoderLaneAmbientTests: XCTestCase {
         XCTAssertTrue(src.contains("VideoToolbox output callback failure"))
         XCTAssertTrue(src.contains("soft-flushing delayed VideoToolbox frames before hard recovery"))
         XCTAssertTrue(src.contains("kVTDecompressionPropertyKey_RealTime"))
-        XCTAssertTrue(src.contains("LIVE • 20s continuity verified"))
+        XCTAssertTrue(src.contains("LIVE • 5m continuity verified"))
     }
 
     func testSceneLifecycleNotifiesMainVideoClient() throws {

@@ -44,10 +44,10 @@ def test_v827_installer_removes_old_cache_without_touching_applecarplay_or_hud_c
 def test_ios_v827_keeps_tcp_during_expected_idr_wait_and_understands_heartbeats():
     assert 'Data("U2WH2645".utf8)' in VIDEO
     assert 'if length == 0' in VIDEO
-    assert 'v8.27 relay transport heartbeat' in VIDEO
-    assert 'v8.27 LIVE-IDR recovery; TCP PRESERVED' in VIDEO
+    assert 'live-IDR relay transport heartbeat' in VIDEO
+    assert 'live-IDR recovery (v8.27/v8.28); TCP PRESERVED' in VIDEO
     assert 'waiting for next live IDR' in VIDEO
-    assert 'relayHealthInterval: TimeInterval = self.adapterRelayVersion.contains("v8.27") ? 60.0 : 15.0' in VIDEO
+    assert 'self.adapterRelayVersion.contains("v8.27") || self.adapterRelayVersion.contains("v8.28")' in VIDEO
     assert 'source-silence reconnect SUPPRESSED until real TCP failure/EOF or manual request' in VIDEO
 
 
@@ -82,9 +82,10 @@ def test_obd_zip_reassembly_preserves_real_chunk_starts_and_reduces_logging_pres
     assert '(chunkIndex + 1) % 25 == 0' in OBD
 
 
-def test_obd_archive_collection_is_parked_only_and_ui_documents_v248_v827():
-    assert 'guard speedEngine.currentSpeedMph <= 1 else' in APP
+def test_obd_archive_collection_remains_manual_and_no_longer_trusts_stale_gps():
+    assert 'guard speedEngine.currentSpeedMph <= 1 else' not in APP
+    assert 'no GPS gate' in APP
     assert 'Collecting/reconstructing HUD diagnostic ZIP' in APP
     assert 'Collect/reconstruct HUD OBD ZIP (parked)' in UI
-    assert 'v90.35.3.24.8 pairs with U2W v8.27' in UI
+    assert 'v90.35.3.24.9 pairs with U2W v8.28' in UI
     assert '10 fps remains the recommended validation cadence' in UI

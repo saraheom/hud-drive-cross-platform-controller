@@ -20,7 +20,7 @@ final class V903517OBDNetworkLaneTests: XCTestCase {
         XCTAssertTrue(video.contains("NWPathMonitor(requiredInterfaceType: .wifi)"))
         XCTAssertTrue(video.contains("NWPathMonitor(requiredInterfaceType: .cellular)"))
         XCTAssertTrue(video.contains("IPHONE NETWORK"))
-        XCTAssertTrue(video.contains("relayHealthInterval: TimeInterval = self.adapterRelayVersion.contains(\"v8.27\") ? 60.0 : 15.0"))
+        XCTAssertTrue(video.contains("relayHealthInterval: TimeInterval = (self.adapterRelayVersion.contains(\"v8.27\") || self.adapterRelayVersion.contains(\"v8.28\")) ? 60.0 : 15.0"))
         XCTAssertTrue(video.contains("live-IDR MainVideo heartbeat"))
     }
 

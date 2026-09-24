@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.24.9 + U2W v8.28 — safe MainVideo source reacquisition
+
+This paired release addresses the focus-dependent MainVideo failure isolated on 2026-09-23. U2W v8.28 can conservatively invalidate and reacquire a stale/wrong mirrored AppleCarPlay H.264 source without killing, signaling, or restarting `AppleCarPlay`; the standalone relay fully validates the stream and fences every source generation until fresh SPS/PPS/IDR. The iOS app treats VideoToolbox `codecBadDataErr (-8969)` as source-epoch corruption and preserves TCP while waiting for a clean epoch. Manual HUD OBD ZIP collection is no longer blocked by stale GPS speed. **Ambient lighting and the Door speed-warning behavior are unchanged.**
+
+**Flash U2W v8.28 and fully power-cycle the adapter** before the first test. Use 10 FPS and leave the Nissan display on CarPlay during the initial 5-minute continuity validation. See `V90_35_3_24_9_RELEASE.md` and `V90_35_3_24_9_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.24.8 + U2W v8.27 — lightweight live-edge MainVideo + OBD diagnostic ZIP reconstruction
 
 This paired release replaces v8.26's large persistent-GOP replay/cache with a lightweight live-edge relay that waits on one persistent TCP session for the next validated live IDR. It also adds physical-HUD STA/viewer fail-safe recovery and reconstructs the HUD's chunked binary diagnostic archive for the next OBD-speed investigation. **Ambient lighting and the Door speed-warning animation are unchanged.**

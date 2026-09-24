@@ -35,7 +35,7 @@ def test_tcp_is_not_opened_until_relay_is_confirmed_and_waiting_recovers():
 def test_parked_preflight_and_diagnostic_chain_are_visible():
     for token in ['MAINVIDEO PREFLIGHT', 'preflightSummary', 'Last map frame', 'Parked MainVideo preflight']:
         assert token in VIDEO + UI
-    assert 'LIVE • 20s continuity verified' in VIDEO
+    assert 'LIVE • 5m continuity verified' in VIDEO
     assert 'source_generation_changes' in VIDEO
     assert 'pre_idr_slices_dropped' in VIDEO
     assert 'MAP RENDER HEARTBEAT' in (ROOT/'ios/HUDController/App/AppState.swift').read_text()

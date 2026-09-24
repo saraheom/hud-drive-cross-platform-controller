@@ -1,0 +1,48 @@
+HUD Controller v90.35.3.24.9 + U2W v8.28 build verification
+
+Repository regression suite:
+- Full paired repository Python tests: 440 passed
+- HUD-only GitHub package Python tests (no u2w tree): 358 passed
+- Swift syntax parse: 201 files PASS
+- Current Swift XCTest literal-alignment scan: PASS (no stale v8.27/20-second assertions)
+
+U2W v8.28 selector:
+- ARMv7 ELF32 EABI5 shared object: PASS
+- clang -Wall -Wextra -Werror: PASS
+- real outbound calls execute before observation: PASS by source inspection/tests
+- selector lock: non-blocking try-lock: PASS
+- AppleCarPlay kill/signal/restart from installer: NONE
+- hot-path snprintf/rename/status-file writes: NONE
+- bounded candidate SPS -> PPS -> IDR proof: PASS
+- external full-validator reselect polling: once per 64 observed calls
+
+U2W v8.28 standalone relay:
+- ARMv7 ELF32 EABI5 statically linked: PASS
+- no PT_INTERP: PASS
+- clang -Wall -Wextra -Werror: PASS
+- wire: U2WH2646
+- full-validator source-reselect threshold: 2 MiB without valid VCL
+- mirror generation policy: reset parser/SPS/PPS/client epoch, wait for fresh SPS/PPS/IDR
+- persistent GOP cache: NONE
+- historical GOP replay/scan: NONE
+- client send timeout: 1 second
+
+Host selector behavior simulation:
+- initial candidate promotion: PASS
+- one-shot external starvation/reselect request consumption: PASS
+- old selected-fd association invalidated without process control: PASS
+- alternate fd promoted only after fresh SPS/PPS/IDR bootstrap: PASS
+
+Preservation checks:
+- AmbientLightMonitor.swift SHA256: 1f816614d42a49a0b0fd49b23c11819533ebd8e3372fca2065c979c83c484ef9 (byte-identical to v90.35.3.24.8)
+- rollback v8.11 selector SHA1: 7ab8e227893277c9c1135a398e24e41c8f84d4df
+- rollback v8.27 relay SHA256: 92f82832fada3af7822dc1534262973f4c8e96b2ba40ad4721695424b313ca69
+
+U2W images:
+- U2W_Update_v8.28_SafeFDReacquire.img
+  SHA256 489689c5ab0c22764390ac9765f60f8700c83f8d43fa71c05ddf9bcf03df79f7
+- U2W_Update_v8.28_SAFE_ROLLBACK_v8.27.img
+  SHA256 dfcccee393d751f36a652d207fa541b15604adcd956edb664bf69062a2aa330b
+
+Important limitation:
+- macOS/Xcode is not available in this build container, so the actual xcodebuild/TestFlight compile is performed by the repository's GitHub Actions workflow. Swift parsing and repository regression suites were completed locally before packaging.

@@ -1730,7 +1730,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.8",
+                "appVersion=v90.35.3.24.9",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -1772,15 +1772,13 @@ final class AppState {
             hudOBDInternalProbeV4Status = "HUD OBD log transfer already active"
             return
         }
-        guard speedEngine.currentSpeedMph <= 1 else {
-            hudOBDInternalProbeV4Status = "Stop the vehicle before collecting HUD logs"
-            logger.log("OBD INTERNAL V4", "PARKED COLLECT blocked gps=\(speedEngine.currentSpeedMph)mph; diagnostic ZIP transfer requires stationary vehicle")
-            return
-        }
+        // v90.35.3.24.9: collection is an explicit user action performed after
+        // parking. GPS can remain falsely non-zero after the car stops, so it is
+        // diagnostic context only and must never block the HUD's binary archive.
         hudOBDInternalProbeV4Status = "Collecting/reconstructing HUD diagnostic ZIP • keep parked/powered"
         logger.log(
             "OBD INTERNAL V4",
-            "PARKED COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gps=\(speedEngine.currentSpeedMph)mph; v24.8 length/framing reconstruction active; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
+            "MANUAL COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gpsAdvisory=\(speedEngine.currentSpeedMph)mph; no GPS gate; v24.9 length/framing reconstruction active; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
         )
         bluetooth.requestOBDDiagnosticLogs(maxLastFilesCount: 5)
     }

@@ -19,6 +19,7 @@ _U2W_INTEGRATION_TESTS = {
     "test_v90_35_3_24_6_v825_validated_gop_recovery.py",
     "test_v90_35_3_24_7_v826_persistent_gop_obd_internal.py",
     "test_v90_35_3_24_8_live_edge_idr_obd_zip.py",
+    "test_v90_35_3_24_9_safe_fd_reacquire.py",
 }
 
 

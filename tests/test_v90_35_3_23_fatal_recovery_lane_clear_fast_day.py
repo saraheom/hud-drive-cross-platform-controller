@@ -14,7 +14,7 @@ def test_invalid_videotoolbox_session_is_fatal_and_tcp_is_preserved():
     assert 'bounded recovery attempt #1' in VIDEO
     assert 'TCP PRESERVED, quarantining replay and waiting for next live IDR' in VIDEO
     assert "decoderStaleFrameInterval: TimeInterval = 3.0" in VIDEO
-    assert "LIVE • 20s continuity verified" in VIDEO
+    assert "LIVE • 5m continuity verified" in VIDEO
 
 
 def test_no_lane_placeholder_in_live_preview_and_post_maneuver_clear_is_guarded():

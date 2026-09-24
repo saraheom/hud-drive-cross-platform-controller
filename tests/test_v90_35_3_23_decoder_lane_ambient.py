@@ -27,10 +27,10 @@ def test_silent_decoder_output_stall_recovers_even_when_decode_call_returns_noer
 
 
 def test_preflight_requires_sustained_continuity_not_two_frames():
-    assert 'preflightRequiredContinuity: TimeInterval = 20.0' in VIDEO
+    assert 'preflightRequiredContinuity: TimeInterval = 300.0' in VIDEO
     assert 'frameCount >= 30' in VIDEO
-    assert 'LIVE • 20s continuity verified' in VIDEO
-    assert 'PASS 20s continuous decode' in VIDEO
+    assert 'LIVE • 5m continuity verified' in VIDEO
+    assert 'PASS 5m continuous decode' in VIDEO
 
 
 def test_scene_lifecycle_is_connected_to_mainvideo_recovery():
