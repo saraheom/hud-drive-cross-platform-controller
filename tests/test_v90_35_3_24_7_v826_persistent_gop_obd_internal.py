@@ -73,5 +73,5 @@ def test_obd_v4_targets_hud_internal_logs_without_second_obd_connection():
 
 
 def test_ui_documents_v247_v826_pair_and_10fps_validation():
-    assert 'v90.35.3.24.9 pairs with U2W v8.28' in UI
+    assert 'v90.35.3.24.10 pairs with U2W v8.29' in UI
     assert '10 fps remains the recommended validation cadence' in UI

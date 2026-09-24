@@ -24,7 +24,7 @@ def test_v824_recent_idr_closes_client_after_keyframe_race_without_big_gop_burst
 
 
 def test_ios_uses_v824_and_bounded_exact_framing_with_software_decoder_preference():
-    assert 'v8.24/v8.25/v8.26/v8.27/v8.28-tcp-15332' in VIDEO
+    assert 'v8.24/v8.25/v8.26/v8.27/v8.28/v8.29-tcp-15332' in VIDEO
     assert 'validated/recent/live IDR bootstrap enabled' in VIDEO
     assert 'receiveExactly' in VIDEO
     assert 'maximumNALBytes = 512 * 1024' in VIDEO

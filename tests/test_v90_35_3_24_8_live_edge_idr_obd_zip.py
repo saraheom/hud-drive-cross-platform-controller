@@ -45,7 +45,7 @@ def test_ios_v827_keeps_tcp_during_expected_idr_wait_and_understands_heartbeats(
     assert 'Data("U2WH2645".utf8)' in VIDEO
     assert 'if length == 0' in VIDEO
     assert 'live-IDR relay transport heartbeat' in VIDEO
-    assert 'live-IDR recovery (v8.27/v8.28); TCP PRESERVED' in VIDEO
+    assert 'live-IDR recovery (v8.27/v8.28/v8.29); TCP PRESERVED' in VIDEO
     assert 'waiting for next live IDR' in VIDEO
     assert 'self.adapterRelayVersion.contains("v8.27") || self.adapterRelayVersion.contains("v8.28")' in VIDEO
     assert 'source-silence reconnect SUPPRESSED until real TCP failure/EOF or manual request' in VIDEO
@@ -87,5 +87,5 @@ def test_obd_archive_collection_remains_manual_and_no_longer_trusts_stale_gps():
     assert 'no GPS gate' in APP
     assert 'Collecting/reconstructing HUD diagnostic ZIP' in APP
     assert 'Collect/reconstruct HUD OBD ZIP (parked)' in UI
-    assert 'v90.35.3.24.9 pairs with U2W v8.28' in UI
+    assert 'v90.35.3.24.10 pairs with U2W v8.29' in UI
     assert '10 fps remains the recommended validation cadence' in UI

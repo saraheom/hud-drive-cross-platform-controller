@@ -69,7 +69,7 @@ def test_obd_zip_manual_collection_has_no_gps_gate():
 
 
 def test_release_ui_documents_v249_v828_and_crash_safety():
-    assert 'v90.35.3.24.9 pairs with U2W v8.28' in UI
+    assert 'v90.35.3.24.10 pairs with U2W v8.29' in UI
     assert 'never kills/signals/restarts AppleCarPlay' in UI
     assert 'codecBadDataErr (-8969)' in UI
     assert 'LIVE • 5m continuity verified' in UI

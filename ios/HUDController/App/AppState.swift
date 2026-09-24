@@ -1730,7 +1730,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.9",
+                "appVersion=v90.35.3.24.10",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -1778,7 +1778,7 @@ final class AppState {
         hudOBDInternalProbeV4Status = "Collecting/reconstructing HUD diagnostic ZIP • keep parked/powered"
         logger.log(
             "OBD INTERNAL V4",
-            "MANUAL COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gpsAdvisory=\(speedEngine.currentSpeedMph)mph; no GPS gate; v24.9 length/framing reconstruction active; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
+            "MANUAL COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gpsAdvisory=\(speedEngine.currentSpeedMph)mph; no GPS gate; v24.10 length/framing reconstruction active; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
         )
         bluetooth.requestOBDDiagnosticLogs(maxLastFilesCount: 5)
     }

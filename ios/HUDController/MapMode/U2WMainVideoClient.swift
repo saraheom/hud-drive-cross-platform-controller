@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.9 MainVideo client for U2W v8.24/v8.25/v8.26/v8.27/v8.28.
+/// v90.35.3.24.10 MainVideo client for U2W v8.24/v8.25/v8.26/v8.27/v8.28/v8.29.
 ///
 /// Video no longer travels through a long-lived Boa CGI or through a cache file
 /// that is truncated underneath an active reader.  The adapter-side relay tails
@@ -156,7 +156,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.24/v8.25/v8.26/v8.27/v8.28-tcp-15332 preferred=v8.28-safe-fd-reacquire continuousPredecode=1 longLivedBoaVideo=0 softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.24/v8.25/v8.26/v8.27/v8.28/v8.29-tcp-15332 preferred=v8.29-incremental-source-acquire+v8.28-relay-core continuousPredecode=1 longLivedBoaVideo=0 softwareDecoder=1")
         startNetworkPathLogging()
         startFreshnessWatchdog()
         beginRelayBootstrapLoop(reason: reason)
@@ -821,7 +821,7 @@ private final class U2WMainVideoTCPWorker {
         onDecoderRecovery?(reason)
         emitDecoderState()
 
-        // v8.27/v8.28 deliberately have no historical/persistent GOP replay. A decoder
+        // v8.27/v8.28/v8.29 deliberately have no historical/persistent GOP replay. A decoder
         // reset therefore stays on the same healthy TCP stream and waits for the
         // next naturally arriving validated live IDR. Reconnecting would only
         // replace a healthy client and cannot improve the bootstrap boundary.
@@ -829,7 +829,7 @@ private final class U2WMainVideoTCPWorker {
             waitingForFreshLiveIDRAfterRejectedAnchor = true
             onPhase?("WAITING_FRESH_IDR")
             onStatus?("Decoder reset • waiting for next live IDR", true)
-            onDiagnostic?("\(origin): live-IDR recovery (v8.27/v8.28); TCP PRESERVED, no GOP replay/reconnect requested")
+            onDiagnostic?("\(origin): live-IDR recovery (v8.27/v8.28/v8.29); TCP PRESERVED, no GOP replay/reconnect requested")
             return
         }
 
