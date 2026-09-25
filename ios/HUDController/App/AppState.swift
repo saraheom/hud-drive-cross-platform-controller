@@ -18,6 +18,7 @@ final class AppState {
     let mapModeSettings = HudMapModeSettings()
     let mapModeCastServer = HudMapModeCastServer()
     let mainVideo: U2WMainVideoClient
+    let mainVideoDiagnostic: U2WMainVideoDiagnosticClient
     let hudU2WFrameRelay: U2WHUDFrameRelayClient
     private var mapModeFrameTask: Task<Void, Never>?
     private var mapModeOBDOverlayTask: Task<Void, Never>?
@@ -187,6 +188,8 @@ final class AppState {
         self.logger = logger
         let mainVideo = U2WMainVideoClient(logger: logger)
         self.mainVideo = mainVideo
+        let mainVideoDiagnostic = U2WMainVideoDiagnosticClient(logger: logger)
+        self.mainVideoDiagnostic = mainVideoDiagnostic
         let hudU2WFrameRelay = U2WHUDFrameRelayClient(logger: logger)
         self.hudU2WFrameRelay = hudU2WFrameRelay
         let maintenance = HudMaintenanceManager(logger: logger)
@@ -205,6 +208,9 @@ final class AppState {
         self.navigation = navigation
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
+        routeGuidance.onAdapterReachable = { [weak mainVideoDiagnostic] in
+            mainVideoDiagnostic?.ensureStarted(reason: "Route Guidance endpoint reachable")
+        }
         let nowPlaying = CarPlayNowPlayingClient(logger: logger)
         self.nowPlaying = nowPlaying
         let obd = HudOBDController(bluetooth: bluetooth, logger: logger)
@@ -375,11 +381,10 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            // MainVideo is intentionally independent of HUD BLE in v90.35.3.24.
-            // App launch starts the U2W predecode early, and HUD transport-ready only
-            // reasserts it. This closes the field race where the first valid CarPlay
-            // IDR arrived milliseconds before the iPhone TCP client opened.
-            self.mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")
+            // v90.35.3.24.11 diagnostic build: do not open the MainVideo TCP path
+            // during an ordinary commute. The passive v8.11 exporter + read-only
+            // topology probe collect source-lifecycle evidence without Map Mode load.
+            self.mainVideoDiagnostic.ensureStarted(reason: "HUD BLE transport ready")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
                !self.hudWiFiExposureActive {
@@ -463,13 +468,15 @@ final class AppState {
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.nowPlaying.stop(reason: "HUD BLE transport disconnected")
-            // v90.35.3.24: do NOT stop MainVideo when HUD BLE drops. CarPlay/U2W
-            // is an independent session, and preserving the H.264 reference chain is
-            // more important than tying video lifetime to the physical HUD transport.
-            self.mainVideo.start(reason: "HUD BLE disconnected — preserve U2W car-session predecode")
+            // v90.35.3.24.11: passive diagnostic commute mode keeps MainVideo
+            // closed unless the user explicitly enables live Map Mode. The adapter's
+            // v8.11 mirror continues independently and is observed by the read-only probe.
+            if !self.hudU2WLiveRelayActive {
+                self.mainVideo.stop(reason: "HUD BLE disconnected outside live Map Mode")
+            }
             self.logger.log(
                 "HUD SESSION",
-                "BLE transport disconnected; Route Guidance polling stopped, MainVideo predecode intentionally preserved"
+                "BLE transport disconnected; Route Guidance polling stopped; MainVideo remains off outside explicit Map Mode"
             )
 
             if self.mapModeActive {
@@ -490,13 +497,9 @@ final class AppState {
             }
         }
 
-        // v90.35.3.24: start adapter discovery/predecode before HUD BLE is ready.
-        // Outside the car this simply retries the private U2W address; in-car it
-        // gives the TCP client the earliest possible chance to catch the first IDR.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(250))
-            self?.mainVideo.start(reason: "app launch — early U2W car-session predecode")
-        }
+        // v90.35.3.24.11: no automatic MainVideo predecode at app launch.
+        // Normal CarPlay + Route Guidance can run with zero live-map decoder load;
+        // the passive diagnostic is started only after the U2W endpoint is reachable.
 
     }
 
@@ -1730,7 +1733,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.10",
+                "appVersion=v90.35.3.24.11",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -1778,7 +1781,7 @@ final class AppState {
         hudOBDInternalProbeV4Status = "Collecting/reconstructing HUD diagnostic ZIP • keep parked/powered"
         logger.log(
             "OBD INTERNAL V4",
-            "MANUAL COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gpsAdvisory=\(speedEngine.currentSpeedMph)mph; no GPS gate; v24.10 length/framing reconstruction active; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
+            "MANUAL COLLECT BEGIN LOG_CATEGORY_OBD maxLastFilesCount=5 gpsAdvisory=\(speedEngine.currentSpeedMph)mph; no GPS gate; v24.10 length/framing reconstruction retained; inspect returned archive for 010D/410D, ELM/AT traffic, internal speed values and OBD service traces"
         )
         bluetooth.requestOBDDiagnosticLogs(maxLastFilesCount: 5)
     }
@@ -1952,7 +1955,7 @@ final class AppState {
         hudU2WSTAResetInProgress = false
         hudU2WIgnoreEmptyStatusUntil = .distantPast
         hudU2WFrameRelay.stop(reason: "relay stopped")
-        mainVideo.start(reason: "live U2W Map Mode disabled — keep continuous predecode alive")
+        mainVideo.stop(reason: "live U2W Map Mode disabled — passive diagnostic commute mode")
         hudU2WLiveRelayActive = false
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
@@ -3082,7 +3085,8 @@ final class AppState {
             if self.hudU2WLiveRelayActive {
                 self.mainVideo.start(reason: "firmware maintenance ended — live U2W Map Mode active")
             } else {
-                self.mainVideo.start(reason: "firmware maintenance ended — resume continuous predecode")
+                self.mainVideo.stop(reason: "firmware maintenance ended — passive diagnostic commute mode")
+                self.mainVideoDiagnostic.ensureStarted(reason: "firmware maintenance ended")
             }
         }
     }

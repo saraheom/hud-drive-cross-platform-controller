@@ -3,20 +3,29 @@ ROOT = Path(__file__).resolve().parents[1]
 VIDEO = (ROOT / 'ios/HUDController/MapMode/U2WMainVideoClient.swift').read_text()
 APP = (ROOT / 'ios/HUDController/App/AppState.swift').read_text()
 UI = (ROOT / 'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
+DIAG = (ROOT / 'ios/HUDController/MapMode/U2WMainVideoDiagnosticClient.swift').read_text()
+OLD = (ROOT / 'V90_35_3_24_10_RELEASE.md').read_text()
 
-def test_v2410_pairs_to_v829_without_changing_wire_or_decoder_strategy():
-    assert 'v8.29-incremental-source-acquire+v8.28-relay-core' in VIDEO
-    assert 'Data("U2WH2646".utf8)' in VIDEO
-    assert 'codecBadDataErr (-8969) quarantined current H.264 epoch' in VIDEO
+def test_v2410_history_is_preserved_but_current_release_is_passive_diagnostic():
+    assert 'U2W v8.29' in OLD
+    assert 'v8.27.1-passive-diagnostic-tcp-15332' in VIDEO
     assert 'self.latestFrame = image' in VIDEO
     assert 'self.transportPhase = "LIVE"' in VIDEO
 
-def test_v2410_obd_manual_collection_still_has_no_gps_gate():
-    assert 'appVersion=v90.35.3.24.10' in APP
-    assert 'no GPS gate; v24.10 length/framing reconstruction active' in APP
+def test_v2411_obd_manual_collection_still_has_no_gps_gate():
+    assert 'appVersion=v90.35.3.24.11' in APP
+    assert 'no GPS gate; v24.10 length/framing reconstruction retained' in APP
     assert 'guard speedEngine.currentSpeedMph <= 1 else' not in APP
 
-def test_v2410_ui_explains_immediate_map_and_extended_stability_only():
-    assert 'v90.35.3.24.10 pairs with U2W v8.29' in UI
-    assert 'live map image should appear as soon as the first valid frame decodes' in UI
-    assert 'only the extended stability milestone' in UI
+def test_v2411_disables_automatic_mainvideo_predecode_outside_map_mode():
+    assert 'app launch — early U2W car-session predecode' not in APP
+    assert 'HUD BLE transport ready — reassert continuous predecode' not in APP
+    assert 'live U2W Map Mode relay' in APP
+    assert 'passive diagnostic commute mode' in APP
+
+def test_v2411_passive_probe_is_read_only_and_shareable():
+    assert 'u2wvideo-diag-start.cgi' in DIAG
+    assert 'u2wvideo-diag-mark.cgi' in DIAG
+    assert 'u2wvideo-diag-bundle.cgi' in DIAG
+    assert 'Collect U2W MainVideo diagnostic bundle' in UI
+    assert 'does not enable Map Mode' in UI

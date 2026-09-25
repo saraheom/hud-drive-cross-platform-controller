@@ -45,9 +45,10 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
 
         let transportReady = app.components(separatedBy: "bluetooth.onTransportReady =")[1]
             .components(separatedBy: "bluetooth.onHUDSessionReset =")[0]
-        XCTAssertTrue(transportReady.contains(#"mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")"#))
+        XCTAssertFalse(transportReady.contains(#"mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")"#))
+        XCTAssertTrue(transportReady.contains(#"mainVideoDiagnostic.ensureStarted(reason: "HUD BLE transport ready")"#))
         XCTAssertTrue(app.contains(#"mainVideo.start(reason: "live U2W Map Mode relay")"#))
-        XCTAssertTrue(app.contains("keep continuous predecode alive"))
+        XCTAssertTrue(app.contains("passive diagnostic commute mode"))
 
         XCTAssertTrue(video.contains("U2WMainVideoTCPWorker"))
         XCTAssertTrue(video.contains("port: 15332"))

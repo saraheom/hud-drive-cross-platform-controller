@@ -171,6 +171,7 @@ final class RouteGuidanceAdapterClient {
     private var lastLaneTelemetrySignature = ""
 
     var onWillActivate: (() -> Void)?
+    var onAdapterReachable: (() -> Void)?
     var onRoadContextChanged: ((CarPlayRouteContext?) -> Void)?
     var onLaneGuidanceChanged: ((LiveLaneGuidanceState?) -> Void)?
     // Fired immediately after a native HUD maneuver packet is enqueued. Lane
@@ -261,6 +262,9 @@ final class RouteGuidanceAdapterClient {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 throw URLError(.badServerResponse)
+            }
+            if requestCounter == 1 || requestCounter % 80 == 0 {
+                onAdapterReachable?()
             }
 
             // Decode faults are intentionally handled separately from reachability.

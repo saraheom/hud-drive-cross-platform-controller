@@ -1,0 +1,24 @@
+HUD Controller v90.35.3.24.11 verification
+
+Scope:
+- passive MainVideo source-lifecycle diagnostic
+- automatic read-only adapter probe start when Route Guidance endpoint is reachable
+- manual snapshot + downloadable diagnostic bundle
+- disable automatic MainVideo predecode outside explicit live Map Mode
+- no intended ambient/navigation/lane/speed/media layout changes
+
+Validation:
+- Python regression suite: 362/362 passed
+- Swift syntax parse: 203/203 files passed
+- U2W v8.27.1 shell syntax: PASS
+- U2W encrypted firmware round-trip: PASS
+- U2W diagnostic CGI smoke test: PASS (start/status/mark/bundle)
+- Restored v8.11 selector SHA256: f2ac899e4a03fad537a306a66664ce2c29d9e549e35c46883cbf6aed34a99d1f
+- Exact v8.27 relay SHA256: 92f82832fada3af7822dc1534262973f4c8e96b2ba40ad4721695424b313ca69
+- U2W v8.27.1 image SHA256: 201e27953d77819d81f81d167bfe980d1344717952afb476e45c650c2049883e
+
+Safety boundary:
+- no new AppleCarPlay hooks/preload code
+- no AppleCarPlay kill/signal/restart/fd close
+- no CarPlay traffic injection
+- passive probe only reads /proc and existing /tmp exporter/relay status

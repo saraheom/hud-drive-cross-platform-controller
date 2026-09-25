@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.10 MainVideo client for U2W v8.24/v8.25/v8.26/v8.27/v8.28/v8.29.
+/// v90.35.3.24.11 MainVideo client. The diagnostic commute baseline is exact v8.11 + v8.27.1; live Map Mode still uses TCP/15332 only when explicitly enabled.
 ///
 /// Video no longer travels through a long-lived Boa CGI or through a cache file
 /// that is truncated underneath an active reader.  The adapter-side relay tails
@@ -156,7 +156,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.24/v8.25/v8.26/v8.27/v8.28/v8.29-tcp-15332 preferred=v8.29-incremental-source-acquire+v8.28-relay-core continuousPredecode=1 longLivedBoaVideo=0 softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.27.1-passive-diagnostic-tcp-15332 base=v8.11+v8.27 explicitMapModeOnly=1 longLivedBoaVideo=0 softwareDecoder=1")
         startNetworkPathLogging()
         startFreshnessWatchdog()
         beginRelayBootstrapLoop(reason: reason)

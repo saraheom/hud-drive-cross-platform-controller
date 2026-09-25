@@ -438,6 +438,42 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
                     LabeledContent("iPhone H.264 filter", value: state.mainVideo.sanitizerSummary)
                     LabeledContent("VideoToolbox decoder", value: state.mainVideo.decoderSummary)
+
+                    Divider()
+                    Text("Passive MainVideo source diagnostic")
+                        .font(.subheadline.weight(.semibold))
+                    LabeledContent("Adapter probe", value: state.mainVideoDiagnostic.status)
+                    LabeledContent("Manual snapshot", value: state.mainVideoDiagnostic.lastSnapshotStatus)
+                    HStack(spacing: 8) {
+                        Button("Start passive probe") {
+                            state.mainVideoDiagnostic.ensureStarted(reason: "manual UI")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button("Capture source snapshot") {
+                            state.mainVideoDiagnostic.captureSnapshot()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    Button("Refresh probe status") {
+                        state.mainVideoDiagnostic.refreshStatus()
+                    }
+                    .buttonStyle(.bordered)
+                    Button(state.mainVideoDiagnostic.collecting ? "Collecting U2W diagnostic…" : "Collect U2W MainVideo diagnostic bundle") {
+                        state.mainVideoDiagnostic.collectBundle()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(state.mainVideoDiagnostic.collecting)
+                    if let url = state.mainVideoDiagnostic.bundleURL {
+                        ShareLink(item: url) {
+                            Label("Share U2W MainVideo diagnostic bundle", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    Text("v8.27.1 automatically starts a low-frequency read-only /proc topology probe when the Route Guidance endpoint becomes reachable. It does not enable Map Mode, hook/restart/signal AppleCarPlay, or modify CarPlay traffic. Capture source snapshot records the current AppleCarPlay fd table plus a bounded MainVideo tail. Collect bundle packages the automatic timeline and snapshots after parking.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
                     LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
                     LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
                     LabeledContent(
@@ -555,7 +591,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.10 pairs with U2W v8.29. v8.29 fixes the zero-byte bootstrap deadlock observed on 9/24 by restoring the proven v8.11 initial source rule: the first outbound AppleCarPlay fd that presents an Annex-B SPS header is mirrored immediately, while the unchanged strict relay still withholds iPhone delivery until a clean SPS/PPS/IDR epoch is validated. If that source later becomes contaminated, the relay can request a one-shot source reselect without killing, signaling, or restarting AppleCarPlay. iOS keeps the v24.9 codecBadDataErr (-8969) epoch quarantine and persistent TCP behavior unchanged. OBD ZIP collection remains manual with no GPS-speed gate. The live map image should appear as soon as the first valid frame decodes; LIVE • 5m continuity verified is only the extended stability milestone and does not delay preview or HUD rendering.")
+                    Text("v90.35.3.24.11 is a passive-diagnostic release paired with U2W v8.27.1. The firmware restores the exact field-proven v8.11 AppleCarPlay MainVideo selector and exact v8.27 external relay, then adds only read-only topology CGI/scripts outside AppleCarPlay. During ordinary driving the app no longer starts MainVideo predecode automatically; video TCP/VideoToolbox starts only when live Map Mode is explicitly enabled. This keeps normal CarPlay as the priority while the passive probe records source fd/socket lifecycle needed for the next robust live-map fix.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

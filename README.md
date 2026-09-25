@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.24.11 + U2W v8.27.1 — passive MainVideo source diagnostic
+
+This diagnostic-first release restores the exact field-proven **v8.11 AppleCarPlay MainVideo selector** and exact **v8.27 external live-edge relay**, then adds only a low-frequency **read-only `/proc` topology probe outside AppleCarPlay**. The iOS app no longer opens MainVideo TCP/VideoToolbox during an ordinary commute; live video starts only when Map Mode is explicitly enabled. Route Guidance remains available, while the passive probe records AppleCarPlay PID/fd/socket lifecycle, v8.11 mirror progress, periodic fd tables, and bounded manual H.264 tails.
+
+After the drive, use **Capture source snapshot** before/after a controlled OEM-screen switch and **Collect U2W MainVideo diagnostic bundle** to package the evidence. A full adapter power cycle is required after flashing v8.27.1 so AppleCarPlay remaps the restored v8.11 shim. No ambient-light, lane, speed-limit, media, or HUD-layout behavior is intentionally changed. See `V90_35_3_24_11_RELEASE.md` and `V90_35_3_24_11_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.24.9 + U2W v8.28 — safe MainVideo source reacquisition
 
 This paired release addresses the focus-dependent MainVideo failure isolated on 2026-09-23. U2W v8.28 can conservatively invalidate and reacquire a stale/wrong mirrored AppleCarPlay H.264 source without killing, signaling, or restarting `AppleCarPlay`; the standalone relay fully validates the stream and fences every source generation until fresh SPS/PPS/IDR. The iOS app treats VideoToolbox `codecBadDataErr (-8969)` as source-epoch corruption and preserves TCP while waiting for a clean epoch. Manual HUD OBD ZIP collection is no longer blocked by stale GPS speed. **Ambient lighting and the Door speed-warning behavior are unchanged.**
