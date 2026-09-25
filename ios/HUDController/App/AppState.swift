@@ -381,7 +381,7 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            // v90.35.3.24.11 diagnostic build: do not open the MainVideo TCP path
+            // v90.35.3.24.12 automatic codec diagnostic build: do not open the MainVideo TCP path
             // during an ordinary commute. The passive v8.11 exporter + read-only
             // topology probe collect source-lifecycle evidence without Map Mode load.
             self.mainVideoDiagnostic.ensureStarted(reason: "HUD BLE transport ready")
@@ -468,7 +468,7 @@ final class AppState {
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.nowPlaying.stop(reason: "HUD BLE transport disconnected")
-            // v90.35.3.24.11: passive diagnostic commute mode keeps MainVideo
+            // v90.35.3.24.12: automatic passive codec diagnostic commute mode keeps MainVideo
             // closed unless the user explicitly enables live Map Mode. The adapter's
             // v8.11 mirror continues independently and is observed by the read-only probe.
             if !self.hudU2WLiveRelayActive {
@@ -497,7 +497,7 @@ final class AppState {
             }
         }
 
-        // v90.35.3.24.11: no automatic MainVideo predecode at app launch.
+        // v90.35.3.24.12: no automatic MainVideo predecode at app launch; codec observer is independent/read-only.
         // Normal CarPlay + Route Guidance can run with zero live-map decoder load;
         // the passive diagnostic is started only after the U2W endpoint is reachable.
 
@@ -1733,7 +1733,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.11",
+                "appVersion=v90.35.3.24.12",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

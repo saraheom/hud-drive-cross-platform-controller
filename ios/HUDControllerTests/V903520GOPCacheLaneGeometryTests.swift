@@ -45,7 +45,7 @@ final class V903520GOPCacheLaneGeometryTests: XCTestCase {
         XCTAssertTrue(app.contains(#"mainVideoDiagnostic.ensureStarted(reason: "HUD BLE transport ready")"#))
         XCTAssertTrue(video.contains("u2wvideo-relay-start.cgi"))
         XCTAssertTrue(video.contains("u2wvideo-relay-status.cgi"))
-        XCTAssertTrue(video.contains("v8.27.1-passive-diagnostic-tcp-15332"))
+        XCTAssertTrue(video.contains("v8.27.2-passive-codec-diagnostic-tcp-15332"))
         XCTAssertTrue(ui.contains("U2W H.264 relay"))
     }
 }

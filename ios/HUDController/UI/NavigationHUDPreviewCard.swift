@@ -440,36 +440,31 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("VideoToolbox decoder", value: state.mainVideo.decoderSummary)
 
                     Divider()
-                    Text("Passive MainVideo source diagnostic")
+                    Text("Automatic MainVideo codec diagnostic")
                         .font(.subheadline.weight(.semibold))
-                    LabeledContent("Adapter probe", value: state.mainVideoDiagnostic.status)
-                    LabeledContent("Manual snapshot", value: state.mainVideoDiagnostic.lastSnapshotStatus)
+                    LabeledContent("Automatic probe", value: state.mainVideoDiagnostic.status)
                     HStack(spacing: 8) {
-                        Button("Start passive probe") {
-                            state.mainVideoDiagnostic.ensureStarted(reason: "manual UI")
+                        Button("Refresh status") {
+                            state.mainVideoDiagnostic.refreshStatus()
                         }
                         .buttonStyle(.bordered)
 
-                        Button("Capture source snapshot") {
-                            state.mainVideoDiagnostic.captureSnapshot()
+                        Button("Restart automatic probe") {
+                            state.mainVideoDiagnostic.restartProbe()
                         }
                         .buttonStyle(.bordered)
                     }
-                    Button("Refresh probe status") {
-                        state.mainVideoDiagnostic.refreshStatus()
-                    }
-                    .buttonStyle(.bordered)
-                    Button(state.mainVideoDiagnostic.collecting ? "Collecting U2W diagnostic…" : "Collect U2W MainVideo diagnostic bundle") {
+                    Button(state.mainVideoDiagnostic.collecting ? "Collecting codec diagnostic…" : "Collect automatic codec diagnostic bundle") {
                         state.mainVideoDiagnostic.collectBundle()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(state.mainVideoDiagnostic.collecting)
                     if let url = state.mainVideoDiagnostic.bundleURL {
                         ShareLink(item: url) {
-                            Label("Share U2W MainVideo diagnostic bundle", systemImage: "square.and.arrow.up")
+                            Label("Share automatic codec diagnostic bundle", systemImage: "square.and.arrow.up")
                         }
                     }
-                    Text("v8.27.1 automatically starts a low-frequency read-only /proc topology probe when the Route Guidance endpoint becomes reachable. It does not enable Map Mode, hook/restart/signal AppleCarPlay, or modify CarPlay traffic. Capture source snapshot records the current AppleCarPlay fd table plus a bounded MainVideo tail. Collect bundle packages the automatic timeline and snapshots after parking.")
+                    Text("U2W v8.27.2 starts the topology sampler and passive codec observer automatically when the adapter becomes reachable. During the drive you do not need to enable Map Mode, start a probe, take snapshots, or switch screens. After parking, tap Collect automatic codec diagnostic bundle once and share the archive. The observer only reads the v8.11 mirror and records coherent 800×480 SPS/PPS/slice/access-unit continuity plus bounded gap/recovery samples; it does not hook, signal, restart, or send traffic to AppleCarPlay.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -591,7 +586,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.11 is a passive-diagnostic release paired with U2W v8.27.1. The firmware restores the exact field-proven v8.11 AppleCarPlay MainVideo selector and exact v8.27 external relay, then adds only read-only topology CGI/scripts outside AppleCarPlay. During ordinary driving the app no longer starts MainVideo predecode automatically; video TCP/VideoToolbox starts only when live Map Mode is explicitly enabled. This keeps normal CarPlay as the priority while the passive probe records source fd/socket lifecycle needed for the next robust live-map fix.")
+                    Text("v90.35.3.24.12 is an automatic codec-diagnostic release paired with U2W v8.27.2. The exact working v8.11 AppleCarPlay selector and exact v8.27 relay remain untouched. A separate read-only adapter daemon automatically observes the v8.11 mirror for coherent 800×480 H.264 SPS/PPS/IDR/P-slice access-unit continuity and captures bounded gap/recovery evidence. MainVideo TCP/VideoToolbox still starts only when live Map Mode is explicitly enabled, so ordinary CarPlay remains isolated from the diagnostic path.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

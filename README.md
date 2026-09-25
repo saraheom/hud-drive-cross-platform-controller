@@ -1,3 +1,9 @@
+# HUD Controller v90.35.3.24.12 — Automatic passive MainVideo codec diagnostic
+
+Pairs with **U2W v8.27.2 Automatic Passive Codec Probe**. The working v8.11 AppleCarPlay selector and v8.27 relay are unchanged. During a normal commute the adapter automatically records topology plus coherent 800×480 H.264 SPS/PPS/IDR/P-access-unit continuity from the v8.11 mirror. Keep Map Mode off; after parking, use **Collect automatic codec diagnostic bundle** once. See `V90_35_3_24_12_RELEASE.md`.
+
+---
+
 # HUD Controller v90.35.3.24.11 + U2W v8.27.1 — passive MainVideo source diagnostic
 
 This diagnostic-first release restores the exact field-proven **v8.11 AppleCarPlay MainVideo selector** and exact **v8.27 external live-edge relay**, then adds only a low-frequency **read-only `/proc` topology probe outside AppleCarPlay**. The iOS app no longer opens MainVideo TCP/VideoToolbox during an ordinary commute; live video starts only when Map Mode is explicitly enabled. Route Guidance remains available, while the passive probe records AppleCarPlay PID/fd/socket lifecycle, v8.11 mirror progress, periodic fd tables, and bounded manual H.264 tails.

@@ -1,0 +1,43 @@
+HUD Controller v90.35.3.24.12 build verification
+================================================
+
+Scope
+-----
+Automatic passive MainVideo codec diagnostic only. Ordinary CarPlay/Route Guidance remains the working v8.11 + v8.27 baseline. Map Mode MainVideo TCP remains explicit-only.
+
+App validation
+--------------
+- Python regression suite: 362 passed.
+- Swift frontend parse: 203/203 Swift files passed.
+- AmbientLightMonitor.swift SHA256 unchanged from v90.35.3.24.11:
+  1f816614d42a49a0b0fd49b23c11819533ebd8e3372fca2065c979c83c484ef9
+- HudMapModeCanvas.swift SHA256 unchanged from v90.35.3.24.11:
+  92bade118e575b2291c4f7c524e479ec9362c4369695dfd9f5e98bc905b2f45c
+
+Paired adapter
+--------------
+U2W v8.27.2 Automatic Passive Codec Probe.
+The incremental firmware does NOT contain or replace the AppleCarPlay selector and does NOT contain or replace the v8.27 H.264 relay. Installer gates on the exact working hashes already installed by v8.27.1:
+- v8.11 selector SHA1: 7ab8e227893277c9c1135a398e24e41c8f84d4df
+- v8.27 relay SHA1:    86ebdaa0b0d8c83d3ab6c1e8f181804ce31e28e6
+No AppleCarPlay signal/restart and no adapter power cycle are required.
+
+Passive parser replay validation
+--------------------------------
+The exact C parser source used for the ARM daemon was also compiled as a host replay validator.
+
+Known-good U2W_MAINVIDEO_V811_DUMP (17):
+- probe: SPS 1 valid / 0 invalid; PPS 1 valid / 0 invalid
+- probe: IDR access units 1; P access units 5167; invalid slices 2
+- probe: frame-number discontinuities 0
+- FFprobe: h264, 800x480, 5169 readable frames (one more than the 5168 completed observer AUs because the static file ends with a trailing NAL that has no following delimiter)
+
+Failure-state U2W_MAINVIDEO_V811_DUMP (18):
+- probe: no valid SPS/PPS/access units
+- FFprobe: h264 0x0, no readable frame count
+
+2026-09-25 end-of-drive U2W_MAINVIDEO_V811_DUMP (26):
+- probe: no valid SPS/PPS/access units
+- FFprobe: h264 0x0, no readable frame count
+
+The observer records a five-second health timeline and automatically captures a bounded 256 KiB raw ring when an initial/ongoing coherent-access-unit gap is detected and when coherent access units later recover, up to eight event captures.
