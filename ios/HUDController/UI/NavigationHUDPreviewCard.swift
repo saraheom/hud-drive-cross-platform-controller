@@ -440,31 +440,31 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("VideoToolbox decoder", value: state.mainVideo.decoderSummary)
 
                     Divider()
-                    Text("Automatic MainVideo codec diagnostic")
+                    Text("Optional MainVideo diagnostics")
                         .font(.subheadline.weight(.semibold))
-                    LabeledContent("Automatic probe", value: state.mainVideoDiagnostic.status)
+                    LabeledContent("Passive probe", value: state.mainVideoDiagnostic.status)
                     HStack(spacing: 8) {
                         Button("Refresh status") {
                             state.mainVideoDiagnostic.refreshStatus()
                         }
                         .buttonStyle(.bordered)
 
-                        Button("Restart automatic probe") {
+                        Button("Restart passive probe") {
                             state.mainVideoDiagnostic.restartProbe()
                         }
                         .buttonStyle(.bordered)
                     }
-                    Button(state.mainVideoDiagnostic.collecting ? "Collecting codec diagnostic…" : "Collect automatic codec diagnostic bundle") {
+                    Button(state.mainVideoDiagnostic.collecting ? "Collecting codec diagnostic…" : "Collect passive codec diagnostic bundle") {
                         state.mainVideoDiagnostic.collectBundle()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(state.mainVideoDiagnostic.collecting)
                     if let url = state.mainVideoDiagnostic.bundleURL {
                         ShareLink(item: url) {
-                            Label("Share automatic codec diagnostic bundle", systemImage: "square.and.arrow.up")
+                            Label("Share passive codec diagnostic bundle", systemImage: "square.and.arrow.up")
                         }
                     }
-                    Text("U2W v8.27.2 starts the topology sampler and passive codec observer automatically when the adapter becomes reachable. During the drive you do not need to enable Map Mode, start a probe, take snapshots, or switch screens. After parking, tap Collect automatic codec diagnostic bundle once and share the archive. The observer only reads the v8.11 mirror and records coherent 800×480 SPS/PPS/slice/access-unit continuity plus bounded gap/recovery samples; it does not hook, signal, restart, or send traffic to AppleCarPlay.")
+                    Text("These controls are optional legacy forensics from the v8.27.2 validation stage. v90.35.3.24.13 does not auto-start the passive probe during ordinary driving: U2W v8.30 now uses the validated parser directly in the production TCP relay while the iPhone keeps an early predecoder warm. Use the passive bundle only if a later field failure needs deeper capture; it never hooks, signals, or restarts AppleCarPlay.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -586,7 +586,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.12 is an automatic codec-diagnostic release paired with U2W v8.27.2. The exact working v8.11 AppleCarPlay selector and exact v8.27 relay remain untouched. A separate read-only adapter daemon automatically observes the v8.11 mirror for coherent 800×480 H.264 SPS/PPS/IDR/P-slice access-unit continuity and captures bounded gap/recovery evidence. MainVideo TCP/VideoToolbox still starts only when live Map Mode is explicitly enabled, so ordinary CarPlay remains isolated from the diagnostic path.")
+                    Text("v90.35.3.24.13 pairs with U2W v8.30. The exact working v8.11 AppleCarPlay exporter remains untouched. v8.30 filters the mixed mirror in a standalone native relay, preserves codec/reference state across file rotations, and keeps only a bounded complete current reference chain for initial client synchronization. The iPhone predecodes as soon as U2W is reachable—even while Map Mode is off—so sparse IDRs are not missed. Isolated codecBadDataErr (-8969) no longer destroys the working decoder. A moving-near-turn Route Guidance watchdog also releases a demonstrably stale maneuver if the adapter sequence stops advancing, then resumes automatically on a fresh sequence. v8.30 never kills/signals/restarts AppleCarPlay.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

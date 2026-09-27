@@ -208,8 +208,12 @@ final class AppState {
         self.navigation = navigation
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
-        routeGuidance.onAdapterReachable = { [weak mainVideoDiagnostic] in
-            mainVideoDiagnostic?.ensureStarted(reason: "Route Guidance endpoint reachable")
+        routeGuidance.onAdapterReachable = { [weak mainVideo] in
+            // v90.35.3.24.13: v8.30 is the production MainVideo path. Do not
+            // automatically run the old v8.27.2 passive diagnostic during normal
+            // driving; simply use adapter reachability as another idempotent early-
+            // predecode trigger after Wi-Fi transitions or firmware maintenance.
+            mainVideo?.start(reason: "Route Guidance endpoint reachable — keep early predecode warm")
         }
         let nowPlaying = CarPlayNowPlayingClient(logger: logger)
         self.nowPlaying = nowPlaying
@@ -235,6 +239,9 @@ final class AppState {
         }
         routeGuidance.onRoadContextChanged = { [weak speedEngine] context in
             speedEngine?.updateCarPlayRouteContext(context)
+        }
+        routeGuidance.vehicleSpeedMphProvider = { [weak speedEngine] in
+            speedEngine?.currentSpeedMph ?? 0
         }
         let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
         self.ambientLight = ambientLight
@@ -381,10 +388,10 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            // v90.35.3.24.12 automatic codec diagnostic build: do not open the MainVideo TCP path
-            // during an ordinary commute. The passive v8.11 exporter + read-only
-            // topology probe collect source-lifecycle evidence without Map Mode load.
-            self.mainVideoDiagnostic.ensureStarted(reason: "HUD BLE transport ready")
+            // v90.35.3.24.13: keep the v8.30 MainVideo reference chain warm even
+            // when Map Mode is not currently rendered. This is an immediate retry
+            // point in addition to the app-session predecode started during init.
+            self.mainVideo.start(reason: "HUD BLE transport ready — early predecode")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
                !self.hudWiFiExposureActive {
@@ -468,15 +475,12 @@ final class AppState {
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.nowPlaying.stop(reason: "HUD BLE transport disconnected")
-            // v90.35.3.24.12: automatic passive codec diagnostic commute mode keeps MainVideo
-            // closed unless the user explicitly enables live Map Mode. The adapter's
-            // v8.11 mirror continues independently and is observed by the read-only probe.
-            if !self.hudU2WLiveRelayActive {
-                self.mainVideo.stop(reason: "HUD BLE disconnected outside live Map Mode")
-            }
+            // v90.35.3.24.13: HUD BLE loss must not destroy the CarPlay H.264
+            // reference chain. MainVideo predecode remains attached to U2W independently
+            // so a transient HUD transport outage cannot force a long fresh-IDR wait.
             self.logger.log(
                 "HUD SESSION",
-                "BLE transport disconnected; Route Guidance polling stopped; MainVideo remains off outside explicit Map Mode"
+                "BLE transport disconnected; Route Guidance polling stopped; MainVideo predecode intentionally preserved"
             )
 
             if self.mapModeActive {
@@ -497,9 +501,12 @@ final class AppState {
             }
         }
 
-        // v90.35.3.24.12: no automatic MainVideo predecode at app launch; codec observer is independent/read-only.
-        // Normal CarPlay + Route Guidance can run with zero live-map decoder load;
-        // the passive diagnostic is started only after the U2W endpoint is reachable.
+        // v90.35.3.24.13: begin MainVideo synchronization at app-session start,
+        // before HUD BLE or Route Guidance becomes active. U2W v8.30 can then replay
+        // only its bounded current reference-chain spool if the iPhone joins a few
+        // seconds after the first SPS/PPS/IDR, and Map Mode can render an already-live
+        // decoder rather than creating a decoder at turn-by-turn start.
+        mainVideo.start(reason: "app session early predecode")
 
     }
 
@@ -1733,7 +1740,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.12",
+                "appVersion=v90.35.3.24.13",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -1955,7 +1962,8 @@ final class AppState {
         hudU2WSTAResetInProgress = false
         hudU2WIgnoreEmptyStatusUntil = .distantPast
         hudU2WFrameRelay.stop(reason: "relay stopped")
-        mainVideo.stop(reason: "live U2W Map Mode disabled — passive diagnostic commute mode")
+        // Keep MainVideo predecode alive after display relay exit; only rendering stops.
+        mainVideo.start(reason: "live U2W Map Mode disabled — preserve predecode")
         hudU2WLiveRelayActive = false
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
@@ -2723,7 +2731,7 @@ final class AppState {
             mapModeStatus = "Could not start Map Mode cast server: \(error.localizedDescription)"
             routeGuidance.start(reason: "Map Mode cast-server start failed")
             nowPlaying.start(reason: "Map Mode cast-server start failed")
-            mainVideo.stop(reason: "legacy Map Mode cast-server failed — live U2W Map Mode is off")
+            mainVideo.start(reason: "legacy Map Mode cast-server failed — resume U2W predecode")
             UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
             logger.log("MAP MODE", "Cast server start failed: \(error.localizedDescription)")
             return
@@ -2784,7 +2792,7 @@ final class AppState {
         speedEngine.reassertOriginalSpeedMarker(reason: "Map Mode disabled")
         routeGuidance.start(reason: "Map Mode disabled — resume U2W polling")
         nowPlaying.start(reason: "Map Mode disabled — resume U2W polling")
-        mainVideo.stop(reason: "legacy Map Mode disabled — MainVideo remains off outside live U2W Map Mode")
+        mainVideo.start(reason: "legacy Map Mode disabled — resume U2W predecode")
         UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
         mapModeStatus = "Map Mode off — normal Freeride/Navigation restored"
         logger.log("MAP MODE", "Disabled reason=\(reason); normal HUD state restored")
@@ -3082,12 +3090,7 @@ final class AppState {
             guard let self, self.bluetooth.state == .connected, !self.firmwareMaintenanceActive else { return }
             self.routeGuidance.start(reason: "firmware maintenance ended")
             self.nowPlaying.start(reason: "firmware maintenance ended")
-            if self.hudU2WLiveRelayActive {
-                self.mainVideo.start(reason: "firmware maintenance ended — live U2W Map Mode active")
-            } else {
-                self.mainVideo.stop(reason: "firmware maintenance ended — passive diagnostic commute mode")
-                self.mainVideoDiagnostic.ensureStarted(reason: "firmware maintenance ended")
-            }
+            self.mainVideo.start(reason: "firmware maintenance ended — resume U2W predecode")
         }
     }
 

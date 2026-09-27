@@ -14,22 +14,21 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
         XCTAssertTrue(video.contains("self.latestFrame = image"))
         XCTAssertTrue(video.contains("self.transportPhase = \"LIVE\""))
         XCTAssertTrue(video.contains("preflightRequiredContinuity: TimeInterval = 300.0"))
-        XCTAssertTrue(video.contains("v8.27.2-passive-codec-diagnostic-tcp-15332"))
+        XCTAssertTrue(video.contains("v8.30-reference-chain-tcp-15332"))
     }
 
     func testV2411OBDArchiveCollectionHasNoGPSGate() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.12"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.13"))
         XCTAssertTrue(app.contains("no GPS gate; v24.10 length/framing reconstruction retained"))
         XCTAssertFalse(app.contains("guard speedEngine.currentSpeedMph <= 1 else"))
     }
 
-    func testV2411KeepsMainVideoOffOutsideExplicitLiveMapMode() throws {
+    func testV2413KeepsMainVideoPredecodeWarmOutsideMapMode() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertFalse(app.contains("app launch — early U2W car-session predecode"))
-        XCTAssertFalse(app.contains("HUD BLE transport ready — reassert continuous predecode"))
-        XCTAssertTrue(app.contains("live U2W Map Mode relay"))
-        XCTAssertTrue(app.contains("passive diagnostic commute mode"))
+        XCTAssertTrue(app.contains("app session early predecode"))
+        XCTAssertTrue(app.contains("HUD BLE transport ready — early predecode"))
+        XCTAssertTrue(app.contains("MainVideo predecode intentionally preserved"))
     }
 
     func testV2412AutomaticCodecProbeEndpointsAndUI() throws {
