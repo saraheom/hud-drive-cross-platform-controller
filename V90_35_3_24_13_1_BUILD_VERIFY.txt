@@ -1,0 +1,30 @@
+HUD Controller v90.35.3.24.13.1 — CI alignment verification
+==============================================================
+
+Source runtime boundary:
+- ios/HUDController/: byte-for-byte IDENTICAL to v90.35.3.24.13
+- Production MainVideo behavior: unchanged
+- Production Route Guidance stall watchdog: unchanged
+- Ambient light behavior: unchanged
+- OBD behavior/diagnostics: unchanged
+- Map Mode canvas/layout: unchanged
+- Paired U2W firmware remains v8.30; no firmware reflash required
+
+GitHub Actions failure analyzed:
+- run: 98251133504
+- app build/compile: succeeded
+- Swift test phase: 8 stale source-string assertion failures across 6 test files
+- cause: tests still described pre-v8.30 passive-probe/recovery/UI strings
+
+CI alignment changes:
+- V903515SafeMainVideoTests.swift
+- V903516iPhoneMainVideoFilterTests.swift
+- V903517OBDNetworkLaneTests.swift
+- V903518MainVideoLaneStreetTests.swift
+- V903523DecoderLaneAmbientTests.swift
+- V90352410IncrementalSourceAcquireTests.swift
+
+Local validation after alignment:
+- pytest: 370 / 370 PASS
+- Swift frontend parse: 203 / 203 PASS
+- production ios/HUDController tree comparison against v90.35.3.24.13: IDENTICAL

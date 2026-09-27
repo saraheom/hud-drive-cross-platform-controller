@@ -36,7 +36,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         XCTAssertTrue(diagnostic.contains("u2wvideo-diag-start.cgi"))
         XCTAssertTrue(diagnostic.contains("u2wvideo-diag-bundle.cgi"))
-        XCTAssertTrue(ui.contains("Collect automatic codec diagnostic bundle"))
-        XCTAssertTrue(ui.contains("do not need to enable Map Mode"))
+        XCTAssertTrue(ui.contains("Collect passive codec diagnostic bundle"))
+        XCTAssertTrue(ui.contains("optional legacy forensics from the v8.27.2 validation stage"))
     }
 }

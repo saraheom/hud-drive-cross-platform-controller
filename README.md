@@ -1,3 +1,11 @@
+# v90.35.3.24.13.1 — CI alignment only
+
+GitHub Actions run `98251133504` compiled the app successfully but exposed eight stale source-string unit assertions left over from the pre-v8.30 MainVideo behavior. This package updates only those test expectations. **All files under `ios/HUDController/` are byte-for-byte identical to v90.35.3.24.13.** Continue using the same U2W v8.30 image; do not reflash it for this CI-only update.
+
+See `V90_35_3_24_13_1_CI_ALIGNMENT.md`.
+
+---
+
 # HUD Controller v90.35.3.24.13 + U2W v8.30 — reference-chain MainVideo + stale Route Guidance protection
 
 This paired release moves the validated MainVideo codec work into the production path while preserving the exact known-safe v8.11 AppleCarPlay exporter. U2W v8.30 is a standalone native TCP/15332 parser/relay with a bounded complete current reference-chain spool for initial client synchronization. The iPhone predecodes early even while Map Mode is off, preserves a healthy decoder across isolated `-8969` compressed-data errors, and waits for a validated future IDR before an atomic nonfatal rebuild.

@@ -46,14 +46,15 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
         let transportReady = app.components(separatedBy: "bluetooth.onTransportReady =")[1]
             .components(separatedBy: "bluetooth.onHUDSessionReset =")[0]
         XCTAssertFalse(transportReady.contains(#"mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")"#))
-        XCTAssertTrue(transportReady.contains(#"mainVideoDiagnostic.ensureStarted(reason: "HUD BLE transport ready")"#))
+        XCTAssertTrue(transportReady.contains(#"mainVideo.start(reason: "HUD BLE transport ready — early predecode")"#))
         XCTAssertTrue(app.contains(#"mainVideo.start(reason: "live U2W Map Mode relay")"#))
-        XCTAssertTrue(app.contains("passive diagnostic commute mode"))
+        XCTAssertTrue(app.contains("app session early predecode"))
 
         XCTAssertTrue(video.contains("U2WMainVideoTCPWorker"))
         XCTAssertTrue(video.contains("port: 15332"))
         XCTAssertTrue(video.contains("U2WH2642"))
         XCTAssertTrue(video.contains("U2WH2643"))
+        XCTAssertTrue(video.contains("U2WH2647"))
         XCTAssertTrue(video.contains("H264MainVideoSanitizer"))
         XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
         XCTAssertTrue(video.contains("bounded recovery attempt #1"))
