@@ -71,6 +71,10 @@ struct RootView: View {
                 consumePendingShortcut()
                 state.nowPlaying.refreshNow()
             case .background:
+                if state.hudU2WLiveRelayActive {
+                    state.logger.log("NAV PRIORITY", "App backgrounded during Map Mode; restoring stock Navigation before VideoToolbox lifecycle invalidation")
+                    state.stopHUDU2WSTAHomeProbe()
+                }
                 state.mainVideo.applicationDidEnterBackground()
             default:
                 break

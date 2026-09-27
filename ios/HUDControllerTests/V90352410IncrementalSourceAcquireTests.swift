@@ -14,21 +14,22 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
         XCTAssertTrue(video.contains("self.latestFrame = image"))
         XCTAssertTrue(video.contains("self.transportPhase = \"LIVE\""))
         XCTAssertTrue(video.contains("preflightRequiredContinuity: TimeInterval = 300.0"))
-        XCTAssertTrue(video.contains("v8.30-reference-chain-tcp-15332"))
+        XCTAssertTrue(video.contains("v8.31-navigation-priority-raw-tcp-15332"))
     }
 
     func testV2411OBDArchiveCollectionHasNoGPSGate() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.13"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.14"))
         XCTAssertTrue(app.contains("no GPS gate; v24.10 length/framing reconstruction retained"))
         XCTAssertFalse(app.contains("guard speedEngine.currentSpeedMph <= 1 else"))
     }
 
-    func testV2413KeepsMainVideoPredecodeWarmOutsideMapMode() throws {
+    func testV2414NavigationPriorityKeepsMainVideoOffOutsideMapMode() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("app session early predecode"))
-        XCTAssertTrue(app.contains("HUD BLE transport ready — early predecode"))
-        XCTAssertTrue(app.contains("MainVideo predecode intentionally preserved"))
+        XCTAssertFalse(app.contains("app session early predecode"))
+        XCTAssertFalse(app.contains("HUD BLE transport ready — early predecode"))
+        XCTAssertTrue(app.contains(#"self.mainVideo.start(reason: "explicit Map Mode only")"#))
+        XCTAssertTrue(app.contains("MainVideo remains idle"))
     }
 
     func testV2412AutomaticCodecProbeEndpointsAndUI() throws {

@@ -464,7 +464,7 @@ struct NavigationHUDPreviewCard: View {
                             Label("Share passive codec diagnostic bundle", systemImage: "square.and.arrow.up")
                         }
                     }
-                    Text("These controls are optional legacy forensics from the v8.27.2 validation stage. v90.35.3.24.13 does not auto-start the passive probe during ordinary driving: U2W v8.30 now uses the validated parser directly in the production TCP relay while the iPhone keeps an early predecoder warm. Use the passive bundle only if a later field failure needs deeper capture; it never hooks, signals, or restarts AppleCarPlay.")
+                    Text("These controls are optional legacy forensics from the v8.27.2 validation stage. v90.35.3.24.14 does not auto-start any MainVideo or passive probe during ordinary Navigation Mode. U2W v8.31 starts its tiny raw relay only for an explicit Map Mode attempt; the iPhone owns H.264 parsing. Use the passive bundle only if a later field failure needs deeper capture; it never hooks, signals, or restarts AppleCarPlay.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -586,7 +586,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.13 pairs with U2W v8.30. The exact working v8.11 AppleCarPlay exporter remains untouched. v8.30 filters the mixed mirror in a standalone native relay, preserves codec/reference state across file rotations, and keeps only a bounded complete current reference chain for initial client synchronization. The iPhone predecodes as soon as U2W is reachable—even while Map Mode is off—so sparse IDRs are not missed. Isolated codecBadDataErr (-8969) no longer destroys the working decoder. A moving-near-turn Route Guidance watchdog also releases a demonstrably stale maneuver if the adapter sequence stops advancing, then resumes automatically on a fresh sequence. v8.30 never kills/signals/restarts AppleCarPlay.")
+                    Text("v90.35.3.24.14 pairs with U2W v8.31 Navigation-Priority Raw Relay. The exact working v8.11 AppleCarPlay exporter and v8.8 Route Guidance path remain untouched. In ordinary Navigation Mode the v8.31 video relay is not running at all. Explicit Map Mode starts one tiny raw-byte relay with a 32 KiB buffer and no adapter H.264 parser/cache/reference-chain spool; all parsing and VideoToolbox work runs on the iPhone. Map Mode does not switch the HUD into mode 6 until a real live CarPlay frame is decoded, and a video failure returns to stock Navigation and stops the relay. v8.31 never kills/signals/restarts AppleCarPlay.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

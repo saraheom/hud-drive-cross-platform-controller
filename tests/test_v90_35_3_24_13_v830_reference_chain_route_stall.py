@@ -33,13 +33,14 @@ def test_fresh_sequence_automatically_recovers_route_guidance():
     assert "staleSequenceBySource[kind] = nil" in RGD
 
 
-def test_v830_predecode_is_early_and_not_map_mode_gated():
-    assert "app session early predecode" in APP
-    assert "HUD BLE transport ready — early predecode" in APP
-    assert "Route Guidance endpoint reachable — keep early predecode warm" in APP
-    assert "MainVideo predecode intentionally preserved" in APP
-    assert "architecture=v8.30-reference-chain-tcp-15332" in VIDEO
-    assert 'Data("U2WH2647".utf8)' in VIDEO
+def test_v831_mainvideo_is_explicit_map_mode_only_and_navigation_independent():
+    assert "app session early predecode" not in APP
+    assert "HUD BLE transport ready — early predecode" not in APP
+    assert "Route Guidance endpoint reachable — keep early predecode warm" not in APP
+    assert 'self.mainVideo.start(reason: "explicit Map Mode only")' in APP
+    assert "architecture=v8.31-navigation-priority-raw-tcp-15332" in VIDEO
+    assert 'Data("U2WH2648".utf8)' in VIDEO
+    assert "adapter parser/cache=NONE" in VIDEO
 
 
 def test_isolated_minus8969_preserves_decoder_and_future_idr_swap_is_atomic():
@@ -52,7 +53,7 @@ def test_isolated_minus8969_preserves_decoder_and_future_idr_swap_is_atomic():
 def test_old_passive_codec_probe_is_not_auto_started_in_production_release():
     assert "mainVideoDiagnostic?.ensureStarted(reason: \"Route Guidance endpoint reachable\")" not in APP
     assert "optional legacy forensics" in UI
-    assert "v90.35.3.24.13 pairs with U2W v8.30" in UI
+    assert "v90.35.3.24.14 pairs with U2W v8.31" in UI
     assert "never kills/signals/restarts AppleCarPlay" in UI
 
 

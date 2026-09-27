@@ -1,0 +1,39 @@
+HUD v90.35.3.24.14 Navigation-Priority Raw MainVideo - build verification
+======================================================================
+
+Pair: U2W v8.31 Navigation-Priority Raw MainVideo Relay
+
+Regression validation:
+- pytest: 378 / 378 PASS
+- Swift frontend parse: 203 / 203 PASS
+
+Navigation-priority invariants:
+- production MainVideo start call count in AppState: 1
+- sole start reason: explicit Map Mode only
+- app-session early predecode: ABSENT
+- HUD-BLE early predecode: ABSENT
+- Route-Guidance-reachability MainVideo start: ABSENT
+- Map Mode waits for a fresh decoded frame BEFORE IOS_KIVICCAST_STA_MODE(6)
+- startup failure: Navigation retained + MainVideo stopped
+- active-video stale failure: Navigation restored + MainVideo stopped
+- app background during Map Mode: Navigation restored + MainVideo stopped
+- v8.31 raw TCP failure: FAIL CLOSED, no reconnect loop
+
+Decoder recovery:
+- isolated -8969 preserves current decoder/reference chain
+- compressed-AU submission does NOT cancel an armed rebuild
+- successful decoded-image callback is required to confirm recovery
+- -12903 remains a hard invalid-session condition
+
+Unchanged critical production files vs v90.35.3.24.13.1:
+- HudMapModeCanvas.swift SHA256 92bade118e575b2291c4f7c524e479ec9362c4369695dfd9f5e98bc905b2f45c
+- HudBluetoothManager.swift SHA256 e7b133b63548ec70de10e22f8241fe7d11f6d5b7dfebc77ee93adc30337c42a2
+- RouteGuidanceAdapterClient.swift SHA256 5d0c27b25b4de8063db10ba5bd7eef1670368646b297b616e3bed71b891a8a35
+- CarPlayNowPlayingClient.swift SHA256 61f17cfb16a7e25e38a17b6be3ac407aa042b5d598a1ebf79ad06b47f99aa5a3
+
+Expected unchanged hashes:
+- HudMapModeCanvas.swift 92bade118e575b2291c4f7c524e479ec9362c4369695dfd9f5e98bc905b2f45c
+- HudBluetoothManager.swift e7b133b63548ec70de10e22f8241fe7d11f6d5b7dfebc77ee93adc30337c42a2
+- RouteGuidanceAdapterClient.swift 5d0c27b25b4de8063db10ba5bd7eef1670368646b297b616e3bed71b891a8a35
+- CarPlayNowPlayingClient.swift 61f17cfb16a7e25e38a17b6be3ac407aa042b5d598a1ebf79ad06b47f99aa5a3
+actual AppState mainVideo.start count: 1
