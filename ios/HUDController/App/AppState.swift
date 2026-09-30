@@ -54,6 +54,8 @@ final class AppState {
     private var hudU2WLastSTAStatusAt = Date.distantPast
     private var hudU2WDisplayRecoveryCount = 0
     private(set) var hudU2WLiveRelayActive = false
+    private(set) var mainVideoPreviewActive = false
+    private var hudU2WMapModeAttemptGeneration: UInt64 = 0
 
     // v90.35.3.11 read-only/temporary topology experiment: while the proven
     // U2W relay infrastructure stays alive, switch the physical HUD from mode 6
@@ -208,8 +210,11 @@ final class AppState {
         self.navigation = navigation
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
-        routeGuidance.onAdapterReachable = { [weak mainVideoDiagnostic] in
-            mainVideoDiagnostic?.ensureStarted(reason: "Route Guidance endpoint reachable")
+        routeGuidance.onAdapterReachable = { [weak logger] in
+            // v90.35.3.24.15 navigation-priority boundary: ordinary Route Guidance
+            // NEVER starts MainVideo. Navigation Mode therefore has no dependency on
+            // the experimental live-map relay.
+            logger?.log("NAV PRIORITY", "Route Guidance endpoint reachable; MainVideo intentionally idle unless Map Mode is explicitly enabled")
         }
         let nowPlaying = CarPlayNowPlayingClient(logger: logger)
         self.nowPlaying = nowPlaying
@@ -236,8 +241,15 @@ final class AppState {
         routeGuidance.onRoadContextChanged = { [weak speedEngine] context in
             speedEngine?.updateCarPlayRouteContext(context)
         }
+        routeGuidance.vehicleSpeedMphProvider = { [weak speedEngine] in
+            speedEngine?.currentSpeedMph ?? 0
+        }
         let ambientLight = AmbientLightMonitor(bluetooth: bluetooth, logger: logger)
         self.ambientLight = ambientLight
+        navigation.physicalNavigationModeAllowed = { [weak self] in
+            guard let self else { return true }
+            return !self.hudU2WLiveRelayActive
+        }
         obd.onDashboardProfileApplied = { [weak self] profile in
             self?.scheduleTimeWeatherPostDashboardReassert(reason: "\(profile) dashboard profile applied")
         }
@@ -310,26 +322,11 @@ final class AppState {
             }
 
             if self.hudU2WLiveRelayActive, self.hudU2WCurrentSessionWasReady {
-                if linkUp {
-                    if self.hudU2WConsecutiveUnhealthySTAStatus > 0 {
-                        self.logger.log(
-                            "HUD/U2W HEALTH",
-                            "STA recovered before fail-safe status=\(status) address=\(address.isEmpty ? "—" : address) priorFailures=\(self.hudU2WConsecutiveUnhealthySTAStatus)"
-                        )
-                    }
-                    self.hudU2WConsecutiveUnhealthySTAStatus = 0
-                } else {
-                    self.hudU2WConsecutiveUnhealthySTAStatus += 1
-                    self.logger.log(
-                        "HUD/U2W HEALTH",
-                        "STA unhealthy after proven live session count=\(self.hudU2WConsecutiveUnhealthySTAStatus)/2 status=\(status) reason=\(reason) address=\(address.isEmpty ? "—" : address)"
-                    )
-                    if self.hudU2WConsecutiveUnhealthySTAStatus >= 2 {
-                        self.scheduleHUDU2WDisplayHealthRecovery(
-                            reason: "two consecutive HUD STA failures after live session: status=\(status) \(reason)"
-                        )
-                    }
-                }
+                // Once U2W proved currentSessionReady (clientSeen + liveFrameSent),
+                // BLE STA status becomes diagnostic only. Never bounce mode 6/4 from
+                // a weak/missing status packet; the first Sep-27 drive proved that
+                // policy can hide a healthy physical stream.
+                self.logger.log("HUD/U2W HEALTH", "post-ready STA diagnostic only status=\(status) linkUp=\(linkUp ? 1 : 0) address=\(address.isEmpty ? "—" : address); no automatic mode change")
             }
 
             if self.hudU2WLiveRelayActive, linkUp, self.hudU2WKivicKickCount == 0 {
@@ -381,10 +378,9 @@ final class AppState {
             self.speedEngine.primeRectangularStyle()
             self.routeGuidance.start(reason: "HUD BLE transport ready")
             self.nowPlaying.start(reason: "HUD BLE transport ready")
-            // v90.35.3.24.12 automatic codec diagnostic build: do not open the MainVideo TCP path
-            // during an ordinary commute. The passive v8.11 exporter + read-only
-            // topology probe collect source-lifecycle evidence without Map Mode load.
-            self.mainVideoDiagnostic.ensureStarted(reason: "HUD BLE transport ready")
+            // v90.35.3.24.15: MainVideo deliberately remains OFF in ordinary
+            // Navigation/Freeride. Only an explicit Map Mode attempt may start it.
+            self.logger.log("NAV PRIORITY", "HUD BLE ready; Route Guidance + Now Playing active; MainVideo remains idle")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
                !self.hudWiFiExposureActive {
@@ -468,15 +464,11 @@ final class AppState {
             self.obd.transportDisconnected()
             self.routeGuidance.stop(reason: "HUD BLE transport disconnected")
             self.nowPlaying.stop(reason: "HUD BLE transport disconnected")
-            // v90.35.3.24.12: automatic passive codec diagnostic commute mode keeps MainVideo
-            // closed unless the user explicitly enables live Map Mode. The adapter's
-            // v8.11 mirror continues independently and is observed by the read-only probe.
-            if !self.hudU2WLiveRelayActive {
-                self.mainVideo.stop(reason: "HUD BLE disconnected outside live Map Mode")
-            }
+            self.mainVideoPreviewActive = false
+            self.mainVideo.stop(reason: "HUD BLE transport disconnected — navigation-priority fail closed")
             self.logger.log(
                 "HUD SESSION",
-                "BLE transport disconnected; Route Guidance polling stopped; MainVideo remains off outside explicit Map Mode"
+                "BLE transport disconnected; experimental MainVideo stopped so no adapter video relay remains active"
             )
 
             if self.mapModeActive {
@@ -497,9 +489,9 @@ final class AppState {
             }
         }
 
-        // v90.35.3.24.12: no automatic MainVideo predecode at app launch; codec observer is independent/read-only.
-        // Normal CarPlay + Route Guidance can run with zero live-map decoder load;
-        // the passive diagnostic is started only after the U2W endpoint is reachable.
+        // v90.35.3.24.15: do NOT start MainVideo at app launch. This is the
+        // central Navigation-priority invariant: the adapter does zero v8.31 video
+        // work until the user explicitly requests Map Mode.
 
     }
 
@@ -805,6 +797,32 @@ final class AppState {
     // MARK: - v90.35.3.11 road-test relay + v8.15.1 no-fallback primer
     // U2W v8.15 keeps the proven mode-6 join sequence while making relay status session-scoped.
 
+    /// App-only live CarPlay map preview. This starts only the tiny v8.31 raw
+    /// relay + iPhone parser/decoder. It does NOT start the U2W HUD JPEG relay,
+    /// change HUD Wi-Fi state, or send KivicCast mode 6. Navigation Mode therefore
+    /// remains authoritative on the physical HUD while the preview is running.
+    func startMainVideoPreview() {
+        guard !firmwareMaintenanceActive else {
+            logger.log("MAINVIDEO PREVIEW", "Start blocked during HUD firmware maintenance")
+            return
+        }
+        guard !mainVideoPreviewActive else { return }
+        mainVideoPreviewActive = true
+        logger.log("MAINVIDEO PREVIEW", "App-only live preview START; physical HUD mode unchanged")
+        mainVideo.start(reason: "app-only live preview")
+    }
+
+    func stopMainVideoPreview(reason: String = "manual") {
+        guard mainVideoPreviewActive else { return }
+        mainVideoPreviewActive = false
+        logger.log("MAINVIDEO PREVIEW", "App-only live preview STOP reason=\(reason)")
+        if !hudU2WLiveRelayActive {
+            mainVideo.stop(reason: "app-only live preview stopped — \(reason)")
+        } else {
+            logger.log("MAINVIDEO PREVIEW", "Decoder retained because physical Map Mode is active")
+        }
+    }
+
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
         guard bluetooth.state == .connected else {
@@ -841,6 +859,8 @@ final class AppState {
         timeWeatherColdOffSyncTask = nil
 
         hudU2WSTAStatusTask?.cancel()
+        hudU2WMapModeAttemptGeneration &+= 1
+        let mapModeAttemptGeneration = hudU2WMapModeAttemptGeneration
         hudU2WRelayFrameTask?.cancel()
         hudU2WKivicKickTask?.cancel()
         hudU2WJoinRecoveryTask?.cancel()
@@ -866,7 +886,7 @@ final class AppState {
         logger.log("HUD/U2W STA", "live relay start ssid=\(cleanSSID); iPhone remains on U2W AP")
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
             do {
                 let url = URL(string: "http://192.168.50.2/cgi-bin/u2whud-start.cgi")!
                 var request = URLRequest(url: url)
@@ -886,27 +906,80 @@ final class AppState {
                 return
             }
 
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
+
+            // NAVIGATION-PRIORITY GATE: keep the physical HUD on its stock dashboard
+            // until a real 800×480 CarPlay frame has decoded on the iPhone. A failed
+            // Map Mode experiment therefore never replaces a working Navigation Mode.
+            self.hudU2WSTAStatus = "Waiting for v8.31 TCP + live CarPlay map anchor — Navigation remains visible…"
+            self.mainVideo.start(reason: "explicit Map Mode only")
+            var liveVideoReady = self.mainVideo.frameCount > 0 && (self.mainVideo.lastFrameAgeSeconds ?? .infinity) < 1.5
+            var transportReady = self.mainVideo.connected || self.mainVideo.receivedBytes > 0
+
+            // Stage 1: allow the relay bootstrap + NWConnection handshake to finish.
+            // The v24.14 bug treated this asynchronous period as FAILED_SAFE after
+            // roughly one second. A real worker error may still terminate early.
+            if !liveVideoReady, !transportReady {
+                for _ in 0..<120 { // up to 12 s to establish TCP/receive first bytes
+                    guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else {
+                        if !self.mainVideoPreviewActive { self.mainVideo.stop(reason: "Map Mode start cancelled") }
+                        return
+                    }
+                    liveVideoReady = self.mainVideo.frameCount > 0 && (self.mainVideo.lastFrameAgeSeconds ?? .infinity) < 1.5
+                    if liveVideoReady { break }
+                    transportReady = self.mainVideo.connected || self.mainVideo.receivedBytes > 0
+                    if transportReady || self.mainVideo.transportPhase == "FAILED_SAFE" { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+
+            // Stage 2: only after TCP/bytes are established do we spend the actual
+            // decoder bootstrap window waiting for a validated SPS/PPS/IDR → frame.
+            if !liveVideoReady, transportReady, self.mainVideo.transportPhase != "FAILED_SAFE" {
+                self.hudU2WSTAStatus = "MainVideo connected — waiting for live decoder anchor…"
+                for _ in 0..<200 { // up to 20 s after transport readiness
+                    guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else {
+                        if !self.mainVideoPreviewActive { self.mainVideo.stop(reason: "Map Mode start cancelled") }
+                        return
+                    }
+                    if self.mainVideo.frameCount > 0, (self.mainVideo.lastFrameAgeSeconds ?? .infinity) < 1.5 {
+                        liveVideoReady = true
+                        break
+                    }
+                    if self.mainVideo.transportPhase == "FAILED_SAFE" { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+
+            guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
+            guard liveVideoReady else {
+                self.logger.log(
+                    "NAV PRIORITY",
+                    "Map Mode startup failed closed after staged transport/decoder window phase=\(self.mainVideo.transportPhase) tcp=\(self.mainVideo.connected ? 1 : 0) bytes=\(self.mainVideo.receivedBytes); stock Navigation retained"
+                )
+                self.hudU2WSTAStatus = "Live map unavailable — Navigation retained"
+                if !self.mainVideoPreviewActive {
+                    self.mainVideo.stop(reason: "Map Mode startup fail closed")
+                } else {
+                    self.logger.log("MAINVIDEO PREVIEW", "Map Mode failed but app-only preview remains armed")
+                }
+                if let stopURL = URL(string: "http://192.168.50.2/cgi-bin/u2whud-stop.cgi") { _ = try? await URLSession.shared.data(from: stopURL) }
+                return
+            }
+
             let prewarmStartCount = self.hudU2WFrameRelay.sentFrameCount
             self.hudU2WFrameRelay.start()
             self.hudU2WLiveRelayActive = true
-            // Start raw MainVideo only after the lightweight HUD relay endpoint has
-            // successfully started. The iPhone performs all H.264 validation.
-            self.mainVideo.start(reason: "live U2W Map Mode relay")
             self.startHUDU2WRelayFrameLoop()
-
-            // v90.35.3.10 prewarms one real iPhone-rendered 480×240 frame before
-            // asking the HUD to enter KivicCast STA mode. U2W v8.15.1 then primes
-            // the stock decoder with this live frame instead of the old known image.
-            self.hudU2WSTAStatus = "Preparing first HUD frame…"
+            self.hudU2WSTAStatus = "Live map decoded — preparing first HUD frame…"
             for _ in 0..<20 {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
                 if self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount { break }
                 try? await Task.sleep(for: .milliseconds(100))
             }
             self.logger.log(
                 "HUD/U2W STA",
-                "relay prewarm complete newFrame=\(self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount) sentCount=\(self.hudU2WFrameRelay.sentFrameCount)"
+                "navigation-priority prewarm complete liveVideo=1 newFrame=\(self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount) sentCount=\(self.hudU2WFrameRelay.sentFrameCount)"
             )
 
             // v90.35.3.7 intentionally restores the exact control ordering from the
@@ -919,7 +992,7 @@ final class AppState {
             self.logger.log("HUD/U2W STA", "known-good join sequence: mode 6 once → credentials once → wait")
             self.bluetooth.enqueue(HudCommands.kivicMode(6), label: "HUD/U2W live relay → IOS_KIVICCAST_STA_MODE(6) [single start]")
             try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
             self.bluetooth.enqueue(
                 HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
                 label: "HUD/U2W live relay → Wi-Fi STA credentials for \(cleanSSID) [single start]"
@@ -929,11 +1002,11 @@ final class AppState {
             // returns status=6 together with a valid 192.168.50.x address, the status
             // callback treats that as link-up and immediately kicks the KivicCast viewer.
             try? await Task.sleep(for: .seconds(4.0))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
             self.requestHUDU2WSTAStatus()
 
             try? await Task.sleep(for: .seconds(4.0))
-            guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
+            guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration, !self.hudU2WSTAConnected else { return }
 
             // One non-destructive credentials refresh only. Never send empty SSID here.
             self.hudU2WSTAStatus = "Still joining — refreshing credentials once…"
@@ -942,7 +1015,7 @@ final class AppState {
                 label: "HUD/U2W live relay → one-shot Wi-Fi credential refresh for \(cleanSSID)"
             )
             try? await Task.sleep(for: .seconds(4.0))
-            guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
+            guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration, !self.hudU2WSTAConnected else { return }
             self.requestHUDU2WSTAStatus()
 
             // v90.35.3.23: a real road test showed the stock HUD can remain in
@@ -952,7 +1025,7 @@ final class AppState {
             // recreation. This mirrors the proven manual recovery sequence but is
             // bounded to one automatic attempt per Map Mode session.
             try? await Task.sleep(for: .seconds(2.0))
-            guard !Task.isCancelled, !self.hudU2WSTAConnected else { return }
+            guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration, !self.hudU2WSTAConnected else { return }
             self.scheduleHUDU2WAutomaticJoinRecovery(
                 reason: "STA still not linked after initial join + credential refresh",
                 ssid: cleanSSID,
@@ -1028,25 +1101,17 @@ final class AppState {
     private func startHUDU2WDisplayHealthMonitor() {
         guard hudU2WLiveRelayActive, hudU2WCurrentSessionWasReady else { return }
         guard hudU2WDisplayHealthTask == nil || hudU2WDisplayHealthTask?.isCancelled == true else { return }
-
         hudU2WDisplayHealthTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.hudU2WDisplayHealthTask = nil }
             while !Task.isCancelled, self.hudU2WLiveRelayActive {
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
-                guard self.hudU2WCurrentSessionWasReady else { continue }
-
-                // This is a BLE/HUD-local liveness check; it does not touch the
-                // MainVideo relay or poll Boa at high frequency.
-                self.requestHUDU2WSTAStatus()
-                let age = Date().timeIntervalSince(self.hudU2WLastSTAStatusAt)
-                if age > 12.0 {
-                    self.logger.log(
-                        "HUD/U2W HEALTH",
-                        "No STA status response for \(String(format: "%.1f", age))s after proven live session; fail-safe viewer recovery"
-                    )
-                    self.scheduleHUDU2WDisplayHealthRecovery(reason: "HUD STA status silent >12s after live session")
+                let age = self.mainVideo.lastFrameAgeSeconds ?? .infinity
+                if self.mainVideo.transportPhase == "FAILED_SAFE" || age > 5.0 {
+                    self.logger.log("NAV PRIORITY", "Active Map Mode lost fresh live video frameAge=\(age.isFinite ? String(format: "%.1f", age) : "none")s phase=\(self.mainVideo.transportPhase); restoring stock Navigation and stopping all experimental video work")
+                    self.stopHUDU2WSTAHomeProbe()
+                    return
                 }
             }
         }
@@ -1733,7 +1798,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.12",
+                "appVersion=v90.35.3.24.15",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -1915,6 +1980,7 @@ final class AppState {
     }
 
     func stopHUDU2WSTAHomeProbe() {
+        hudU2WMapModeAttemptGeneration &+= 1
         resetMapModeManeuverWarning(reason: "live Map Mode relay stopped", clearTriggered: true)
         hudU2WSTAStatusTask?.cancel()
         hudU2WSTAStatusTask = nil
@@ -1955,7 +2021,14 @@ final class AppState {
         hudU2WSTAResetInProgress = false
         hudU2WIgnoreEmptyStatusUntil = .distantPast
         hudU2WFrameRelay.stop(reason: "relay stopped")
-        mainVideo.stop(reason: "live U2W Map Mode disabled — passive diagnostic commute mode")
+        // Navigation-priority v8.31: the physical casting stack always stops here.
+        // If the user explicitly enabled app-only Live Preview, retain only the
+        // tiny raw relay + iPhone decoder; otherwise return to zero video workload.
+        if mainVideoPreviewActive {
+            logger.log("MAINVIDEO PREVIEW", "Physical Map Mode stopped; app-only preview retained")
+        } else {
+            mainVideo.stop(reason: "live U2W Map Mode disabled — restore Navigation-only adapter load")
+        }
         hudU2WLiveRelayActive = false
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
@@ -2723,7 +2796,7 @@ final class AppState {
             mapModeStatus = "Could not start Map Mode cast server: \(error.localizedDescription)"
             routeGuidance.start(reason: "Map Mode cast-server start failed")
             nowPlaying.start(reason: "Map Mode cast-server start failed")
-            mainVideo.stop(reason: "legacy Map Mode cast-server failed — live U2W Map Mode is off")
+            mainVideo.stop(reason: "legacy Map Mode cast-server failed — navigation-priority cleanup")
             UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
             logger.log("MAP MODE", "Cast server start failed: \(error.localizedDescription)")
             return
@@ -2784,7 +2857,7 @@ final class AppState {
         speedEngine.reassertOriginalSpeedMarker(reason: "Map Mode disabled")
         routeGuidance.start(reason: "Map Mode disabled — resume U2W polling")
         nowPlaying.start(reason: "Map Mode disabled — resume U2W polling")
-        mainVideo.stop(reason: "legacy Map Mode disabled — MainVideo remains off outside live U2W Map Mode")
+        mainVideo.stop(reason: "legacy Map Mode disabled — navigation-priority cleanup")
         UserDefaults.standard.set(false, forKey: hudWiFiRecoveryKey)
         mapModeStatus = "Map Mode off — normal Freeride/Navigation restored"
         logger.log("MAP MODE", "Disabled reason=\(reason); normal HUD state restored")
@@ -3031,6 +3104,7 @@ final class AppState {
         firmwareMaintenanceActive = true
         routeGuidance.stop(reason: "HUD firmware maintenance Wi-Fi")
         nowPlaying.stop(reason: "HUD firmware maintenance Wi-Fi")
+        mainVideoPreviewActive = false
         mainVideo.stop(reason: "HUD firmware maintenance Wi-Fi")
         enableHUDWiFiExposure()
         logger.log("HUD MAINT", "Starting boot-animation maintenance: stock 5GHz force=false mode 5")
@@ -3082,12 +3156,7 @@ final class AppState {
             guard let self, self.bluetooth.state == .connected, !self.firmwareMaintenanceActive else { return }
             self.routeGuidance.start(reason: "firmware maintenance ended")
             self.nowPlaying.start(reason: "firmware maintenance ended")
-            if self.hudU2WLiveRelayActive {
-                self.mainVideo.start(reason: "firmware maintenance ended — live U2W Map Mode active")
-            } else {
-                self.mainVideo.stop(reason: "firmware maintenance ended — passive diagnostic commute mode")
-                self.mainVideoDiagnostic.ensureStarted(reason: "firmware maintenance ended")
-            }
+            self.mainVideo.stop(reason: "firmware maintenance ended — MainVideo remains idle until explicit Map Mode")
         }
     }
 
@@ -3443,6 +3512,7 @@ final class AppState {
         applyNotificationSettings()
         obd.hudDidBecomeReady()
         restoreDashboardOperatingMode(reason: "phase 2 persisted state / \(reason)")
+        routeGuidance.reassertPhysicalHUD(reason: "HUD rehydrate phase 2 / \(reason)")
         // Important ordering: dashboard/profile packets can restore firmware's
         // default bottom panel, so the persisted time/weather state must follow.
         applyTimeWeather()
@@ -3475,6 +3545,7 @@ final class AppState {
         applyColorTheme()
         obd.applyWidgetSelection()
         restoreDashboardOperatingMode(reason: "phase 3 display reassert / \(reason)")
+        routeGuidance.reassertPhysicalHUD(reason: "HUD rehydrate phase 3 / \(reason)")
         // Final authoritative packet after dashboard reconstruction. The
         // onDashboardProfileApplied callback also performs one delayed reassert.
         applyTimeWeather()

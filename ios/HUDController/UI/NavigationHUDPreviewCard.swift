@@ -391,6 +391,29 @@ struct NavigationHUDPreviewCard: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
 
+            HStack(spacing: 8) {
+                if state.mainVideoPreviewActive {
+                    Button("Stop Live Preview", role: .destructive) {
+                        state.stopMainVideoPreview(reason: "Map Mode UI")
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button("Start Live Preview (app only)") {
+                        state.startMainVideoPreview()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(accent)
+                }
+                Spacer()
+                Text(state.mainVideoPreviewActive ? state.mainVideo.transportPhase : "OFF")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Live Preview starts only the tiny v8.31 raw relay and iPhone decoder. It updates the preview above without changing the physical HUD mode or starting KivicCast; Navigation remains authoritative on the HUD.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             if state.hudU2WLiveRelayActive {
                 Button("Disable Map Mode", role: .destructive) {
                     state.stopHUDU2WSTAHomeProbe()
@@ -440,31 +463,31 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("VideoToolbox decoder", value: state.mainVideo.decoderSummary)
 
                     Divider()
-                    Text("Automatic MainVideo codec diagnostic")
+                    Text("Optional MainVideo diagnostics")
                         .font(.subheadline.weight(.semibold))
-                    LabeledContent("Automatic probe", value: state.mainVideoDiagnostic.status)
+                    LabeledContent("Passive probe", value: state.mainVideoDiagnostic.status)
                     HStack(spacing: 8) {
                         Button("Refresh status") {
                             state.mainVideoDiagnostic.refreshStatus()
                         }
                         .buttonStyle(.bordered)
 
-                        Button("Restart automatic probe") {
+                        Button("Restart passive probe") {
                             state.mainVideoDiagnostic.restartProbe()
                         }
                         .buttonStyle(.bordered)
                     }
-                    Button(state.mainVideoDiagnostic.collecting ? "Collecting codec diagnostic…" : "Collect automatic codec diagnostic bundle") {
+                    Button(state.mainVideoDiagnostic.collecting ? "Collecting codec diagnostic…" : "Collect passive codec diagnostic bundle") {
                         state.mainVideoDiagnostic.collectBundle()
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(state.mainVideoDiagnostic.collecting)
                     if let url = state.mainVideoDiagnostic.bundleURL {
                         ShareLink(item: url) {
-                            Label("Share automatic codec diagnostic bundle", systemImage: "square.and.arrow.up")
+                            Label("Share passive codec diagnostic bundle", systemImage: "square.and.arrow.up")
                         }
                     }
-                    Text("U2W v8.27.2 starts the topology sampler and passive codec observer automatically when the adapter becomes reachable. During the drive you do not need to enable Map Mode, start a probe, take snapshots, or switch screens. After parking, tap Collect automatic codec diagnostic bundle once and share the archive. The observer only reads the v8.11 mirror and records coherent 800×480 SPS/PPS/slice/access-unit continuity plus bounded gap/recovery samples; it does not hook, signal, restart, or send traffic to AppleCarPlay.")
+                    Text("These controls are optional legacy forensics from the v8.27.2 validation stage. v90.35.3.24.15 does not auto-start any MainVideo or passive probe during ordinary Navigation Mode. U2W v8.31 starts its tiny raw relay only for an explicit Map Mode attempt; the iPhone owns H.264 parsing. Use the passive bundle only if a later field failure needs deeper capture; it never hooks, signals, or restarts AppleCarPlay.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -586,7 +609,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.12 is an automatic codec-diagnostic release paired with U2W v8.27.2. The exact working v8.11 AppleCarPlay selector and exact v8.27 relay remain untouched. A separate read-only adapter daemon automatically observes the v8.11 mirror for coherent 800×480 H.264 SPS/PPS/IDR/P-slice access-unit continuity and captures bounded gap/recovery evidence. MainVideo TCP/VideoToolbox still starts only when live Map Mode is explicitly enabled, so ordinary CarPlay remains isolated from the diagnostic path.")
+                    Text("v90.35.3.24.15 pairs with U2W v8.31 Navigation-Priority Raw Relay. The exact working v8.11 AppleCarPlay exporter and v8.8 Route Guidance path remain untouched. In ordinary Navigation Mode the v8.31 video relay is not running unless the user explicitly starts app-only Live Preview. Live Preview never changes the physical HUD mode. Explicit Map Mode reuses or starts the same tiny raw-byte relay with a 32 KiB buffer and no adapter H.264 parser/cache/reference-chain spool; all parsing and VideoToolbox work runs on the iPhone. Map Mode does not switch the HUD into mode 6 until a real live CarPlay frame is decoded, and a video failure returns to stock Navigation and stops the relay. v8.31 never kills/signals/restarts AppleCarPlay.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

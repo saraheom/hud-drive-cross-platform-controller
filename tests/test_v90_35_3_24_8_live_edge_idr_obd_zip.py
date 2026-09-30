@@ -87,5 +87,5 @@ def test_obd_archive_collection_remains_manual_and_no_longer_trusts_stale_gps():
     assert 'no GPS gate' in APP
     assert 'Collecting/reconstructing HUD diagnostic ZIP' in APP
     assert 'Collect/reconstruct HUD OBD ZIP (parked)' in UI
-    assert 'v90.35.3.24.10 pairs with U2W v8.29' in UI
+    assert 'v90.35.3.24.13 pairs with U2W v8.30' in UI
     assert '10 fps remains the recommended validation cadence' in UI

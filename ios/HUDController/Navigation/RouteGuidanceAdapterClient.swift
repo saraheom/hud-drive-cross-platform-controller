@@ -155,7 +155,17 @@ final class RouteGuidanceAdapterClient {
     private var successCounter = 0
     private var lastSequenceBySource: [SourceKind: Int] = [:]
     private var lastSequenceProgressAtBySource: [SourceKind: Date] = [:]
+    private var stagnationConfirmationsBySource: [SourceKind: Int] = [:]
+    private var staleSequenceBySource: [SourceKind: Int] = [:]
     private var lastEndpointSuccessAt: Date?
+    /// v90.35.3.24.13: supplied by AppState from the existing iPhone GPS speed pipeline.
+    /// It is used only as corroborating evidence before declaring a successful-HTTP
+    /// Route Guidance snapshot stale; speed never substitutes for CarPlay guidance.
+    var vehicleSpeedMphProvider: (() -> Int)?
+    private let movingStagnationAge: TimeInterval = 10.0
+    private let movingStagnationConfirmations = 3
+    private let movingStagnationMinimumSpeedMph = 7
+    private let movingStagnationNearManeuverMeters = 45
     private var transportHoldoverStartedAt: Date?
     private var inactiveStartedAtBySource: [SourceKind: Date] = [:]
     private let inactiveRouteEndConfirmationInterval: TimeInterval = 12.0
@@ -218,6 +228,8 @@ final class RouteGuidanceAdapterClient {
         snapshots.removeAll()
         lastSequenceBySource.removeAll()
         lastSequenceProgressAtBySource.removeAll()
+        stagnationConfirmationsBySource.removeAll()
+        staleSequenceBySource.removeAll()
         lastEndpointSuccessAt = nil
         transportHoldoverStartedAt = nil
         inactiveStartedAtBySource.removeAll()
@@ -363,9 +375,56 @@ final class RouteGuidanceAdapterClient {
         lastSequence = snapshot.sequence
         let progressed = lastSequenceBySource[kind] != snapshot.sequence
         if progressed || lastSequenceProgressAtBySource[kind] == nil {
+            if let staleSequence = staleSequenceBySource[kind], staleSequence != snapshot.sequence {
+                logger.log(
+                    "CARPLAY RGD STALE",
+                    "Fresh sequence resumed source=\(kind.rawValue) oldStaleSeq=\(staleSequence) newSeq=\(snapshot.sequence); automatic HUD navigation recovery allowed"
+                )
+            }
             lastSequenceProgressAtBySource[kind] = now
+            stagnationConfirmationsBySource[kind] = 0
+            staleSequenceBySource[kind] = nil
         }
         lastSequenceBySource[kind] = snapshot.sequence
+
+        // v90.35.3.24.13 regression: the 2026-09-26 Google Maps feed recovered
+        // from a short HTTP timeout but then served the same seq=1428 / 15 m Adams
+        // Ave snapshot for minutes while GPS showed the vehicle continuing to move.
+        // A successful HTTP response is therefore not sufficient liveness evidence.
+        // Only declare a snapshot stale when sequence age + near-turn distance +
+        // sustained vehicle motion agree. This preserves legitimate unchanged
+        // Apple Maps snapshots at stoplights while preventing an obsolete 50-ft
+        // maneuver from remaining on the physical HUD indefinitely.
+        if kind != .other, snapshot.active, snapshot.routeState == 1, !progressed,
+           let progressAt = lastSequenceProgressAtBySource[kind] {
+            let sequenceAge = now.timeIntervalSince(progressAt)
+            let speedMph = max(0, vehicleSpeedMphProvider?() ?? 0)
+            let nearTurn = snapshot.distanceToManeuverMeters > 0 &&
+                snapshot.distanceToManeuverMeters <= movingStagnationNearManeuverMeters
+            if sequenceAge >= movingStagnationAge, nearTurn, speedMph >= movingStagnationMinimumSpeedMph {
+                let confirmations = (stagnationConfirmationsBySource[kind] ?? 0) + 1
+                stagnationConfirmationsBySource[kind] = confirmations
+                if confirmations >= movingStagnationConfirmations {
+                    let alreadyDeclared = staleSequenceBySource[kind] == snapshot.sequence
+                    staleSequenceBySource[kind] = snapshot.sequence
+                    snapshots.removeValue(forKey: kind)
+                    if !alreadyDeclared {
+                        logger.log(
+                            "CARPLAY RGD STALE",
+                            "DECLARED stale source=\(kind.rawValue) seq=\(snapshot.sequence) age=\(String(format: "%.1f", sequenceAge))s speed=\(speedMph)mph maneuverDistance=\(snapshot.distanceToManeuverMeters)m currentRoad=\(snapshot.currentRoad) action=release-obsolete-HUD-guidance-until-sequence-advances"
+                        )
+                    }
+                    lastError = "Route Guidance sequence stalled while vehicle continued moving"
+                    pruneAndSelect(now: now)
+                    status = "Route feed stale — waiting for fresh maneuver"
+                    return
+                }
+            } else {
+                stagnationConfirmationsBySource[kind] = 0
+            }
+        } else if progressed {
+            stagnationConfirmationsBySource[kind] = 0
+        }
 
         // v90.35.3.24.8: Google Maps can emit a short run of valid state-0 samples
         // while navigation is still active. The 2026-09-23 field capture held state 0
@@ -591,6 +650,12 @@ final class RouteGuidanceAdapterClient {
         if !navigation.navigationActive || navigation.feedOwner != .carPlayAdapter || sourceChanged {
             onWillActivate?()
             navigation.navigationOn(owner: .carPlayAdapter)
+        } else {
+            navigation.assurePhysicalNavigationMode(
+                owner: .carPlayAdapter,
+                reason: "live Route Guidance heartbeat seq=\(snapshot.sequence)",
+                minimumInterval: 8.0
+            )
         }
 
         let arrivalMs = calculatedArrivalMilliseconds(snapshot)
@@ -636,6 +701,40 @@ final class RouteGuidanceAdapterClient {
                 "source=\(selectedSource) seq=\(snapshot.sequence) routeState=\(snapshot.routeState) primary=\(primaryCurrentIndex(in: snapshot).map(String.init) ?? "nil") exportedCurrent=\(snapshot.currentManeuverIndex.map(String.init) ?? "nil") exportedSecond=\(snapshot.nextManeuverIndex.map(String.init) ?? "nil") maneuver=\(instruction.maneuver.label) distance=\(instruction.distanceMeters)m display=\(instruction.displayDistanceText) street=\(instruction.streetName) eta=\(etaText) signature=\(signature)"
             )
         }
+    }
+
+    /// Rebuild the physical HUD Navigation presentation from the currently
+    /// selected live CarPlay snapshot without changing route ownership. Used after
+    /// a HUD firmware/session reset, where the iPhone can keep receiving fresh
+    /// Route Guidance while the physical HUD has fallen back to Freeride.
+    func reassertPhysicalHUD(reason: String) {
+        guard let selectedKind,
+              let timed = snapshots[selectedKind],
+              timed.snapshot.active,
+              timed.snapshot.routeState != 0,
+              navigation.navigationActive,
+              navigation.feedOwner == .carPlayAdapter,
+              let instruction = lastValidInstruction else {
+            logger.log("CARPLAY RGD RESYNC", "No active selected guidance to reassert reason=\(reason)")
+            return
+        }
+
+        let snapshot = timed.snapshot
+        onWillActivate?()
+        navigation.reassertNavigationMode(owner: .carPlayAdapter, reason: reason, delayed: true)
+        if let arrivalMs = calculatedArrivalMilliseconds(snapshot) {
+            navigation.sendETA(arrivalTimeMilliseconds: arrivalMs, owner: .carPlayAdapter)
+            lastEtaMilliseconds = arrivalMs
+        }
+        navigation.current = instruction
+        navigation.sendCurrent(owner: .carPlayAdapter)
+        publishLiveLaneGuidance(snapshot, source: selectedSource)
+        onManeuverDelivered?(primaryCurrentIndex(in: snapshot))
+        lastDeliveredSignature = ""
+        logger.log(
+            "CARPLAY RGD RESYNC",
+            "Reasserted Navigation mode + ETA + maneuver + lanes from source=\(selectedSource) seq=\(snapshot.sequence) reason=\(reason)"
+        )
     }
 
     private func publishLiveLaneGuidance(_ snapshot: Snapshot, source: String) {

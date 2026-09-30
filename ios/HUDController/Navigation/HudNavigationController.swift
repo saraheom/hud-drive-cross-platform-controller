@@ -27,6 +27,13 @@ final class HudNavigationController {
     /// (e.g. “Turn right”) without changing the maneuver graphic or road name.
     var showCurrentTurnText = true
     private var simulatorTask: Task<Void, Never>?
+    private var physicalModeReassertTask: Task<Void, Never>?
+    private var lastPhysicalNavigationAssertAt = Date.distantPast
+
+    /// AppState blocks physical Navigation-mode reassertions while the HUD is
+    /// intentionally in KivicCast mode 6. Logical Route Guidance ownership
+    /// remains active so Map Mode can still render maneuver/ETA/lane overlays.
+    var physicalNavigationModeAllowed: (() -> Bool)?
 
     let bluetooth: HudBluetoothManager
     let logger: LogManager
@@ -59,9 +66,62 @@ final class HudNavigationController {
         feedOwner = owner
         navigationActive = true
         if changed {
-            bluetooth.enqueue(HudCommands.navigationState(true), label: "Navigation ON (\(owner.rawValue))")
+            if physicalNavigationModeAllowed?() ?? true {
+                bluetooth.enqueue(HudCommands.navigationState(true), label: "Navigation ON (\(owner.rawValue))")
+                lastPhysicalNavigationAssertAt = Date()
+            } else {
+                logger.log("DASHBOARD MODE", "Deferred physical Navigation ON while HUD casting owns display owner=\(owner.rawValue)")
+            }
             logger.log("DASHBOARD MODE", "Navigation active owner=\(owner.rawValue)")
             onNavigationModeChanged?(true)
+            if owner == .carPlayAdapter {
+                schedulePhysicalNavigationReassert(reason: "CarPlay activation")
+            }
+        }
+    }
+
+    /// Reassert the *physical* HUD mode without changing logical Route Guidance
+    /// ownership. This is intentionally idempotent and is used after HUD firmware
+    /// reboots and as a sparse live-route heartbeat so one lost Navigation-ON
+    /// packet cannot strand the physical HUD in Freeride while the app continues
+    /// to deliver maneuvers.
+    func reassertNavigationMode(owner: NavigationFeedOwner = .carPlayAdapter, reason: String, delayed: Bool = true) {
+        guard navigationActive, feedOwner == owner else { return }
+        guard physicalNavigationModeAllowed?() ?? true else {
+            logger.log("DASHBOARD MODE", "Suppressed physical Navigation reassert while HUD casting owns display reason=\(reason)")
+            return
+        }
+        bluetooth.enqueue(HudCommands.navigationState(true), label: "Navigation ON reassert (\(owner.rawValue)) — \(reason)")
+        lastPhysicalNavigationAssertAt = Date()
+        logger.log("DASHBOARD MODE", "Physical Navigation ON reasserted owner=\(owner.rawValue) reason=\(reason)")
+        if delayed { schedulePhysicalNavigationReassert(reason: reason) }
+    }
+
+    /// Sparse self-healing assertion during a live CarPlay route. Eight seconds
+    /// is deliberately much slower than maneuver delivery and negligible BLE
+    /// traffic, but bounds recovery if the HUD reboots or ignores one mode packet.
+    func assurePhysicalNavigationMode(owner: NavigationFeedOwner = .carPlayAdapter, reason: String, minimumInterval: TimeInterval = 8.0) {
+        guard navigationActive, feedOwner == owner else { return }
+        guard Date().timeIntervalSince(lastPhysicalNavigationAssertAt) >= minimumInterval else { return }
+        reassertNavigationMode(owner: owner, reason: reason, delayed: false)
+    }
+
+    private func schedulePhysicalNavigationReassert(reason: String) {
+        physicalModeReassertTask?.cancel()
+        physicalModeReassertTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for delay in [450, 1400] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                guard !Task.isCancelled, self.navigationActive, self.feedOwner == .carPlayAdapter else { return }
+                guard self.physicalNavigationModeAllowed?() ?? true else { continue }
+                self.bluetooth.enqueue(
+                    HudCommands.navigationState(true),
+                    label: "Navigation ON recovery pulse — \(reason)"
+                )
+                self.lastPhysicalNavigationAssertAt = Date()
+                self.logger.log("DASHBOARD MODE", "Physical Navigation recovery pulse reason=\(reason)")
+            }
+            self.physicalModeReassertTask = nil
         }
     }
 
@@ -81,6 +141,9 @@ final class HudNavigationController {
         guard navigationActive else { return }
         navigationActive = false
         feedOwner = .manual
+        physicalModeReassertTask?.cancel()
+        physicalModeReassertTask = nil
+        lastPhysicalNavigationAssertAt = .distantPast
         bluetooth.enqueue(HudCommands.navigationState(false), label: "Navigation OFF (\(owner.rawValue))")
         logger.log("DASHBOARD MODE", "Navigation inactive; HUD Freeride mode active")
         onNavigationModeChanged?(false)

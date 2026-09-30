@@ -1,0 +1,72 @@
+HUD v90.35.3.24.15 BUILD VERIFY
+================================
+
+PAIR
+----
+HUD app: v90.35.3.24.15
+U2W firmware: existing v8.31 Navigation-Priority Raw MainVideo (UNCHANGED)
+U2W v8.31 SHA256: d730f913530c77dee01481f94f0b19b7ce3f1e4c983fec1c151caaa341a12c40
+
+VALIDATION
+----------
+pytest: 387 / 387 PASS
+Swift frontend parse: 204 / 204 Swift files PASS
+Focused v24.15 regression: 9 / 9 PASS
+
+PRODUCTION SOURCE DELTA VS v24.14
+---------------------------------
+Only these HUDController production Swift files changed:
+- ios/HUDController/App/AppState.swift
+- ios/HUDController/MapMode/U2WMainVideoClient.swift
+- ios/HUDController/Navigation/HudNavigationController.swift
+- ios/HUDController/Navigation/RouteGuidanceAdapterClient.swift
+- ios/HUDController/UI/NavigationHUDPreviewCard.swift
+- ios/HUDController/UI/RootView.swift
+
+NAVIGATION / HUD REBOOT RESILIENCE
+----------------------------------
+- HUD physical firmware/session reset no longer relies on one Navigation ON packet.
+- Active CarPlay Route Guidance is reasserted after rehydration phases 2 and 3.
+- Reassert bundle includes Navigation ON + ETA + current maneuver + live lane state.
+- Initial Navigation ON gets bounded delayed recovery pulses.
+- Live CarPlay Route Guidance provides an idempotent physical Navigation ON assurance, rate-limited to >=8 s.
+- Physical Navigation ON is gated off while physical Map Mode/KivicCast mode 6 owns the HUD.
+
+APP-ONLY LIVE PREVIEW
+---------------------
+- Explicit user action only; no Route Guidance/HUD BLE/app-start automatic MainVideo start.
+- Starts v8.31 raw TCP relay + iPhone H.264 decoder only.
+- Does NOT start physical HUD JPEG/KivicCast relay.
+- Does NOT send HUD mode 6.
+- Existing top Map Mode preview consumes mainVideo.latestFrame and can update while physical Map Mode is off.
+- Preview is stopped on app background.
+
+MAP MODE STARTUP FIX
+--------------------
+- Removed v24.14 false FAILED_SAFE transition for normal TCP_PREPARING/TCP_WAITING/WAITING_HANDSHAKE states.
+- Actual TCP worker remains authoritative for genuine failed/EOF conditions.
+- Stage 1: <=12 s for relay/TCP/first-byte readiness.
+- Stage 2: <=20 s after transport readiness for a fresh decoded frame.
+- Physical mode 6 occurs only after a fresh decoded frame.
+- Every Map Mode attempt is generation-fenced; stale tasks cannot terminate a newer attempt.
+- Failure remains fail-closed to stock Navigation.
+- If explicit app-only preview pre-existed, a physical Map Mode failure preserves only that preview session.
+
+UNCHANGED CRITICAL MODULE HASHES VS v24.14
+------------------------------------------
+ios/HUDController/Bluetooth/HudBluetoothManager.swift
+  e7b133b63548ec70de10e22f8241fe7d11f6d5b7dfebc77ee93adc30337c42a2
+
+ios/HUDController/MapMode/HudMapModeCanvas.swift
+  92bade118e575b2291c4f7c524e479ec9362c4369695dfd9f5e98bc905b2f45c
+
+ios/HUDController/Vehicle/AmbientLightMonitor.swift
+  1f816614d42a49a0b0fd49b23c11819533ebd8e3372fca2065c979c83c484ef9
+
+ios/HUDController/Media/CarPlayNowPlayingClient.swift
+  61f17cfb16a7e25e38a17b6be3ac407aa042b5d598a1ebf79ad06b47f99aa5a3
+
+U2W SAFETY BOUNDARY
+-------------------
+No new U2W image is required for v24.15. Keep the currently installed v8.31 image.
+Navigation Mode remains independent of MainVideo by design.

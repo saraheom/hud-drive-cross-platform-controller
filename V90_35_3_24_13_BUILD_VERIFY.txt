@@ -1,0 +1,33 @@
+HUD Controller v90.35.3.24.13 - build verification
+=================================================
+
+Regression suite: 370 / 370 pytest tests PASS.
+Swift frontend parse: 203 / 203 Swift files PASS.
+
+New Route Guidance physical regression fixture:
+- tests/fixtures/u2wrgd_stall_seq1428.json
+- Google Maps sequence 1428
+- currentRoad Rising Sun Ave
+- current maneuver Adams Ave
+- distance 15 m
+- policy requires unchanged sequence >=10 s, active route state 1, distance 1..45 m, speed >=7 mph, and 3 consecutive confirmations before stale release.
+- stopped-vehicle regression confirms the same unchanged snapshot does NOT trip the watchdog.
+- fresh sequence clears stale state and automatically restores eligible navigation ownership.
+
+MainVideo production behavior checks:
+- appVersion=v90.35.3.24.13
+- U2W v8.30 architecture marker present
+- U2WH2647 accepted
+- app-session early predecode present
+- HUD BLE loss preserves MainVideo predecode
+- old v8.27.2 passive probe is NOT automatically started during ordinary driving
+- isolated VideoToolbox -8969 preserves the current decoder/reference chain
+- repeated nonfatal failures arm an atomic future-IDR rebuild instead of destroying the current session immediately
+- -12903 remains a true invalid-session hard-recovery condition
+
+Unrelated production paths verified byte-identical to v90.35.3.24.12:
+- AmbientLightMonitor.swift SHA256 1f816614d42a49a0b0fd49b23c11819533ebd8e3372fca2065c979c83c484ef9
+- HudMapModeCanvas.swift SHA256 92bade118e575b2291c4f7c524e479ec9362c4369695dfd9f5e98bc905b2f45c
+- HudBluetoothManager.swift SHA256 e7b133b63548ec70de10e22f8241fe7d11f6d5b7dfebc77ee93adc30337c42a2
+
+The HUD GitHub repo contains no U2W .img firmware file; firmware is delivered separately.

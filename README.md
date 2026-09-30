@@ -1,3 +1,19 @@
+# v90.35.3.24.13.1 — CI alignment only
+
+GitHub Actions run `98251133504` compiled the app successfully but exposed eight stale source-string unit assertions left over from the pre-v8.30 MainVideo behavior. This package updates only those test expectations. **All files under `ios/HUDController/` are byte-for-byte identical to v90.35.3.24.13.** Continue using the same U2W v8.30 image; do not reflash it for this CI-only update.
+
+See `V90_35_3_24_13_1_CI_ALIGNMENT.md`.
+
+---
+
+# HUD Controller v90.35.3.24.13 + U2W v8.30 — reference-chain MainVideo + stale Route Guidance protection
+
+This paired release moves the validated MainVideo codec work into the production path while preserving the exact known-safe v8.11 AppleCarPlay exporter. U2W v8.30 is a standalone native TCP/15332 parser/relay with a bounded complete current reference-chain spool for initial client synchronization. The iPhone predecodes early even while Map Mode is off, preserves a healthy decoder across isolated `-8969` compressed-data errors, and waits for a validated future IDR before an atomic nonfatal rebuild.
+
+It also incorporates the September 26 Google Maps sequence-1428 stall: if Route Guidance stays on the same near-turn sequence while the vehicle continues moving, the app releases the demonstrably stale maneuver after a conservative 10-second / 3-confirmation gate and automatically resumes when a fresh sequence arrives. The U2W v8.8 Route Guidance shim is unchanged. Ambient-light behavior and the Map Mode canvas are unchanged from v90.35.3.24.12. See `V90_35_3_24_13_RELEASE.md`.
+
+---
+
 # HUD Controller v90.35.3.24.12 — Automatic passive MainVideo codec diagnostic
 
 Pairs with **U2W v8.27.2 Automatic Passive Codec Probe**. The working v8.11 AppleCarPlay selector and v8.27 relay are unchanged. During a normal commute the adapter automatically records topology plus coherent 800×480 H.264 SPS/PPS/IDR/P-access-unit continuity from the v8.11 mirror. Keep Map Mode off; after parking, use **Collect automatic codec diagnostic bundle** once. See `V90_35_3_24_12_RELEASE.md`.
