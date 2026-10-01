@@ -1,3 +1,15 @@
+# HUD Controller v90.35.3.24.18 — robust physical Map Mode + next-IDR MainVideo recovery
+
+This app-only release keeps U2W v8.31 unchanged and combines two fixes isolated by the 2026-10-01 field drive. Physical Map Mode is restored to the proven fallback-first contract: iPhone→U2W TCP/15331 must accept a JPEG, then HUD mode 6/STA starts whether or not MainVideo is currently decoded. The center map uses live MainVideo only while its frame is fresh; otherwise the existing schematic map remains visible without exiting Map Mode. TCP/15331 now has bounded `.preparing`/`.waiting` recovery. MainVideo `codecBadDataErr (-8969)` now invalidates the poisoned VideoToolbox/reference chain while preserving validated SPS/PPS and the healthy v8.31 TCP stream, then resumes on the next validated IDR.
+
+# HUD Controller v90.35.3.24.17 — reference-continuity live-map recovery
+
+This app-only release uses the 2026-10-01 one-drive forensic bundle to fix the remaining v8.31 live-map freeze. The adapter/v8.11 source remained live while VideoToolbox entered thousands of `-8969` failures across H.264 reference/source-generation discontinuities. The iPhone now enforces reference `frame_num` continuity, quarantines dependent P-slices immediately when a reference picture is missing, escalates a three-error `-8969` burst to the existing fresh SPS/PPS/IDR recovery path, and no longer intentionally destroys an active MainVideo session merely because the app enters background.
+
+**Keep the existing U2W v8.31 image; no adapter reflash is required.** See `V90_35_3_24_17_RELEASE.md` and `V90_35_3_24_17_BUILD_VERIFY.txt`.
+
+---
+
 # HUD Controller v90.35.3.24.16 — one-drive live-map forensic recorder
 
 This app-only diagnostic release pairs with the **existing U2W v8.31 Navigation-Priority Raw MainVideo image**. It adds a bounded iPhone-side exact-raw H.264 recorder, automatic failure/recovery evidence windows, decoded/HUD image samples, low-frequency passive adapter source/topology observation, and a one-tap parked **Live Map Diagnostic ZIP** containing the normal HUD log plus synchronized iPhone/adapter evidence. The v8.11 AppleCarPlay exporter, v8.8 Route Guidance path, v8.31 raw relay, Map Mode layout, ambient-light behavior, and OBD behavior are otherwise unchanged.

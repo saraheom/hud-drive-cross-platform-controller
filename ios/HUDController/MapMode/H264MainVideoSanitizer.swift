@@ -15,11 +15,14 @@ struct H264MainVideoSanitizerStats: Equatable {
     var acceptedPPS = 0
     var acceptedIDR = 0
     var acceptedSlices = 0
+    var frameNumDiscontinuities = 0
+    var waitingForReferenceIDR = true
     var lastAcceptedAt: Date?
 
     var summary: String {
         "raw \(rawNALs) • valid \(acceptedNALs) • rejected \(rejectedNALs) • " +
-        "SPS \(acceptedSPS) PPS \(acceptedPPS) IDR \(acceptedIDR) slices \(acceptedSlices)"
+        "SPS \(acceptedSPS) PPS \(acceptedPPS) IDR \(acceptedIDR) slices \(acceptedSlices) • " +
+        "frameBreaks \(frameNumDiscontinuities) waitIDR \(waitingForReferenceIDR ? 1 : 0)"
     }
 }
 
@@ -125,6 +128,10 @@ final class H264MainVideoSanitizer {
     private var spsByID: [UInt32: SPSInfo] = [:]
     private var ppsByID: [UInt32: PPSInfo] = [:]
     private var continuationFrame: SliceFrameKey?
+    private var lastReferenceFrameNum: UInt32?
+    private var lastReferenceFrameModulus: UInt32?
+    private var awaitingReferenceIDR = true
+    private var pendingContinuityBreakReason: String?
     private(set) var stats = H264MainVideoSanitizerStats()
 
     init(expectedWidth: Int = 800, expectedHeight: Int = 480) {
@@ -135,6 +142,11 @@ final class H264MainVideoSanitizer {
     func reset(clearParameterSets: Bool = true) {
         stats = H264MainVideoSanitizerStats()
         continuationFrame = nil
+        lastReferenceFrameNum = nil
+        lastReferenceFrameModulus = nil
+        awaitingReferenceIDR = true
+        pendingContinuityBreakReason = nil
+        stats.waitingForReferenceIDR = true
         if clearParameterSets {
             spsByID.removeAll(keepingCapacity: true)
             ppsByID.removeAll(keepingCapacity: true)
@@ -146,7 +158,28 @@ final class H264MainVideoSanitizer {
     /// segment; retaining known-good SPS/PPS lets a later genuine slice recover
     /// without forcing another adapter-side scan.
     func prepareForTransportReconnect() {
+        quarantineReferenceChainUntilIDR()
+    }
+
+    /// Drop only reference-picture continuity state while retaining validated
+    /// SPS/PPS relationships. Used after VideoToolbox codecBadDataErr (-8969):
+    /// the transport is still healthy, so recovery should begin at the next
+    /// validated IDR without unnecessarily waiting for repeated parameter sets.
+    func quarantineReferenceChainUntilIDR() {
         continuationFrame = nil
+        lastReferenceFrameNum = nil
+        lastReferenceFrameModulus = nil
+        awaitingReferenceIDR = true
+        stats.waitingForReferenceIDR = true
+    }
+
+    /// Returns one reference-chain discontinuity notice to the transport worker.
+    /// The worker uses this to invalidate VideoToolbox immediately while preserving
+    /// the last validated SPS/PPS.  Subsequent P-slices remain quarantined here
+    /// until a validated IDR establishes a new reference chain.
+    func takeContinuityBreakReason() -> String? {
+        defer { pendingContinuityBreakReason = nil }
+        return pendingContinuityBreakReason
     }
 
     func process(_ nal: Data) -> H264SanitizedNAL? {
@@ -172,6 +205,10 @@ final class H264MainVideoSanitizer {
             // random bytes after a generation rollover.
             ppsByID = ppsByID.filter { $0.value.spsID != info.id }
             continuationFrame = nil
+            lastReferenceFrameNum = nil
+            lastReferenceFrameModulus = nil
+            awaitingReferenceIDR = true
+            stats.waitingForReferenceIDR = true
             accept(kind: .sps)
             stats.acceptedSPS += 1
             return H264SanitizedNAL(data: nal, kind: .sps)
@@ -199,8 +236,55 @@ final class H264MainVideoSanitizer {
                 nalType: info.nalType,
                 idrPicID: info.idrPicID
             )
+
             if info.firstMacroblock == 0 {
-                continuationFrame = key
+                // A valid IDR is an explicit reference-chain reset.  It is always
+                // allowed to end a quarantine, regardless of the prior frame_num.
+                if type == 5 {
+                    continuationFrame = key
+                    awaitingReferenceIDR = false
+                    stats.waitingForReferenceIDR = false
+                    if let modulus = frameNumModulus(forPPS: info.ppsID) {
+                        lastReferenceFrameNum = info.frameNum
+                        lastReferenceFrameModulus = modulus
+                    } else {
+                        lastReferenceFrameNum = nil
+                        lastReferenceFrameModulus = nil
+                    }
+                } else {
+                    // Never feed dependent P-slices after startup/SPS/reconnect or
+                    // a detected reference discontinuity until a real IDR arrives.
+                    guard !awaitingReferenceIDR else {
+                        continuationFrame = nil
+                        reject()
+                        return nil
+                    }
+
+                    let nalRefIDC = (first >> 5) & 0x03
+                    if nalRefIDC != 0,
+                       let modulus = frameNumModulus(forPPS: info.ppsID),
+                       let previous = lastReferenceFrameNum,
+                       let previousModulus = lastReferenceFrameModulus,
+                       previousModulus == modulus {
+                        let expected = (previous + 1) % modulus
+                        if info.frameNum != expected {
+                            stats.frameNumDiscontinuities += 1
+                            awaitingReferenceIDR = true
+                            stats.waitingForReferenceIDR = true
+                            continuationFrame = nil
+                            pendingContinuityBreakReason =
+                                "reference frame_num discontinuity previous=\(previous) expected=\(expected) actual=\(info.frameNum) modulus=\(modulus) pps=\(info.ppsID)"
+                            reject()
+                            return nil
+                        }
+                    }
+
+                    continuationFrame = key
+                    if nalRefIDC != 0, let modulus = frameNumModulus(forPPS: info.ppsID) {
+                        lastReferenceFrameNum = info.frameNum
+                        lastReferenceFrameModulus = modulus
+                    }
+                }
             } else {
                 // Multi-slice pictures are allowed only when the continuation
                 // immediately belongs to an already-validated first slice.
@@ -223,6 +307,13 @@ final class H264MainVideoSanitizer {
             reject()
             return nil
         }
+    }
+
+    private func frameNumModulus(forPPS ppsID: UInt32) -> UInt32? {
+        guard let pps = ppsByID[ppsID], let sps = spsByID[pps.spsID] else { return nil }
+        let bits = Int(sps.log2MaxFrameNumMinus4 + 4)
+        guard (4...16).contains(bits) else { return nil }
+        return UInt32(1) << UInt32(bits)
     }
 
     private func accept(kind: H264MainVideoNALKind) {

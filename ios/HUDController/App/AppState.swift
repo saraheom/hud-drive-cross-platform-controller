@@ -217,13 +217,13 @@ final class AppState {
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
         routeGuidance.onAdapterReachable = { [weak logger, weak mainVideoDiagnostic, weak liveMapDiagnostics] in
-            // v90.35.3.24.16 keeps the navigation-priority boundary: ordinary
+            // v90.35.3.24.18 keeps the navigation-priority boundary: ordinary
             // Route Guidance NEVER starts MainVideo. The low-frequency passive
             // v8.27.2 source/topology observer is diagnostic-only and does not
             // hook, signal, or restart AppleCarPlay.
             logger?.log("NAV PRIORITY", "Route Guidance endpoint reachable; MainVideo intentionally idle unless Map Mode is explicitly enabled")
             liveMapDiagnostics?.record("adapter", "route_guidance_reachable_passive_probe_ensure")
-            mainVideoDiagnostic?.ensureStarted(reason: "v24.16 one-drive live-map diagnostic")
+            mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")
         }
         let nowPlaying = CarPlayNowPlayingClient(logger: logger)
         self.nowPlaying = nowPlaying
@@ -336,6 +336,12 @@ final class AppState {
                 // a weak/missing status packet; the first Sep-27 drive proved that
                 // policy can hide a healthy physical stream.
                 self.logger.log("HUD/U2W HEALTH", "post-ready STA diagnostic only status=\(status) linkUp=\(linkUp ? 1 : 0) address=\(address.isEmpty ? "—" : address); no automatic mode change")
+            }
+
+            if self.hudU2WLiveRelayActive, linkUp {
+                // A positive HUD STA/DHCP event is a deterministic recovery
+                // checkpoint for the independent iPhone -> U2W JPEG ingress.
+                self.hudU2WFrameRelay.ensureConnection(reason: "HUD STA link-up status=\(status)")
             }
 
             if self.hudU2WLiveRelayActive, linkUp, self.hudU2WKivicKickCount == 0 {
@@ -810,7 +816,7 @@ final class AppState {
     /// relay + iPhone parser/decoder. It does NOT start the U2W HUD JPEG relay,
     /// change HUD Wi-Fi state, or send KivicCast mode 6. Navigation Mode therefore
     /// remains authoritative on the physical HUD while the preview is running.
-    /// v90.35.3.24.16: one parked tap collects the synchronized iPhone-side
+    /// v90.35.3.24.18: one parked tap collects the synchronized iPhone-side
     /// MainVideo evidence plus best-effort adapter snapshots. Large adapter
     /// downloads are deferred until collection; only the existing low-frequency
     /// passive source/topology observer may run during the diagnostic drive.
@@ -864,7 +870,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.16 — final live-map state
+            HUD Controller v90.35.3.24.18 — final live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.31 Navigation-Priority Raw MainVideo (unchanged)
             map_mode_active=\(self.mapModeActive)
@@ -1043,78 +1049,68 @@ final class AppState {
 
             guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
 
-            // NAVIGATION-PRIORITY GATE: keep the physical HUD on its stock dashboard
-            // until a real 800×480 CarPlay frame has decoded on the iPhone. A failed
-            // Map Mode experiment therefore never replaces a working Navigation Mode.
-            self.hudU2WSTAStatus = "Waiting for v8.31 TCP + live CarPlay map anchor — Navigation remains visible…"
-            self.mainVideo.start(reason: "explicit Map Mode only")
-            var liveVideoReady = self.mainVideo.frameCount > 0 && (self.mainVideo.lastFrameAgeSeconds ?? .infinity) < 1.5
-            var transportReady = self.mainVideo.connected || self.mainVideo.receivedBytes > 0
-
-            // Stage 1: allow the relay bootstrap + NWConnection handshake to finish.
-            // The v24.14 bug treated this asynchronous period as FAILED_SAFE after
-            // roughly one second. A real worker error may still terminate early.
-            if !liveVideoReady, !transportReady {
-                for _ in 0..<120 { // up to 12 s to establish TCP/receive first bytes
-                    guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else {
-                        if !self.mainVideoPreviewActive { self.mainVideo.stop(reason: "Map Mode start cancelled") }
-                        return
-                    }
-                    liveVideoReady = self.mainVideo.frameCount > 0 && (self.mainVideo.lastFrameAgeSeconds ?? .infinity) < 1.5
-                    if liveVideoReady { break }
-                    transportReady = self.mainVideo.connected || self.mainVideo.receivedBytes > 0
-                    if transportReady || self.mainVideo.transportPhase == "FAILED_SAFE" { break }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-            }
-
-            // Stage 2: only after TCP/bytes are established do we spend the actual
-            // decoder bootstrap window waiting for a validated SPS/PPS/IDR → frame.
-            if !liveVideoReady, transportReady, self.mainVideo.transportPhase != "FAILED_SAFE" {
-                self.hudU2WSTAStatus = "MainVideo connected — waiting for live decoder anchor…"
-                for _ in 0..<200 { // up to 20 s after transport readiness
-                    guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else {
-                        if !self.mainVideoPreviewActive { self.mainVideo.stop(reason: "Map Mode start cancelled") }
-                        return
-                    }
-                    if self.mainVideo.frameCount > 0, (self.mainVideo.lastFrameAgeSeconds ?? .infinity) < 1.5 {
-                        liveVideoReady = true
-                        break
-                    }
-                    if self.mainVideo.transportPhase == "FAILED_SAFE" { break }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-            }
-
-            guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
-            guard liveVideoReady else {
-                self.logger.log(
-                    "NAV PRIORITY",
-                    "Map Mode startup failed closed after staged transport/decoder window phase=\(self.mainVideo.transportPhase) tcp=\(self.mainVideo.connected ? 1 : 0) bytes=\(self.mainVideo.receivedBytes); stock Navigation retained"
-                )
-                self.hudU2WSTAStatus = "Live map unavailable — Navigation retained"
-                if !self.mainVideoPreviewActive {
-                    self.mainVideo.stop(reason: "Map Mode startup fail closed")
-                } else {
-                    self.logger.log("MAINVIDEO PREVIEW", "Map Mode failed but app-only preview remains armed")
-                }
-                if let stopURL = URL(string: "http://192.168.50.2/cgi-bin/u2whud-stop.cgi") { _ = try? await URLSession.shared.data(from: stopURL) }
-                return
-            }
+            // v90.35.3.24.18 restores the field-proven Map Mode contract: the
+            // physical HUD JPEG compositor is independent of MainVideo. Start the
+            // raw MainVideo decoder opportunistically, but never require a live
+            // CarPlay frame before entering Map Mode. If MainVideo is absent or is
+            // recovering, HudMapModeCanvas renders its schematic/fallback map.
+            self.mainVideo.start(reason: "physical Map Mode live source (optional)")
 
             let prewarmStartCount = self.hudU2WFrameRelay.sentFrameCount
             self.hudU2WFrameRelay.start()
             self.hudU2WLiveRelayActive = true
             self.startHUDU2WRelayFrameLoop()
-            self.hudU2WSTAStatus = "Live map decoded — preparing first HUD frame…"
-            for _ in 0..<20 {
+            self.hudU2WSTAStatus = "Preparing first HUD Map Mode frame…"
+
+            // Historical successful runs connected TCP/15331 and delivered the
+            // first JPEG before mode 6. Preserve that sequence. The relay client
+            // now has its own 2.5 s Network.framework deadline/reconnect watchdog;
+            // this outer window verifies that U2W actually accepted one JPEG.
+            var firstFrameDelivered = false
+            for _ in 0..<70 { // up to 7 s including one bounded reconnect
                 guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
-                if self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount { break }
+                if self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount {
+                    firstFrameDelivered = true
+                    break
+                }
                 try? await Task.sleep(for: .milliseconds(100))
             }
+
+            if !firstFrameDelivered {
+                self.hudU2WFrameRelay.ensureConnection(reason: "Map Mode prewarm did not deliver first JPEG")
+                for _ in 0..<30 { // final bounded 3 s verification
+                    guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
+                    if self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount {
+                        firstFrameDelivered = true
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+
+            guard firstFrameDelivered else {
+                self.logger.log(
+                    "HUD/U2W STA",
+                    "Map Mode prewarm failed: TCP/15331 delivered no JPEG after bounded recovery; stock Navigation retained; MainVideo state is independent"
+                )
+                self.hudU2WSTAStatus = "HUD frame relay unavailable — Navigation retained"
+                self.hudU2WLiveRelayActive = false
+                self.hudU2WRelayFrameTask?.cancel()
+                self.hudU2WRelayFrameTask = nil
+                self.hudU2WFrameRelay.stop(reason: "Map Mode prewarm failed")
+                if !self.mainVideoPreviewActive {
+                    self.mainVideo.stop(reason: "Map Mode physical relay unavailable")
+                }
+                if let stopURL = URL(string: "http://192.168.50.2/cgi-bin/u2whud-stop.cgi") {
+                    _ = try? await URLSession.shared.data(from: stopURL)
+                }
+                return
+            }
+
+            let liveVideoReady = self.mainVideo.frameCount > 0 && (self.mainVideo.lastFrameAgeSeconds ?? .infinity) < 1.5
             self.logger.log(
                 "HUD/U2W STA",
-                "navigation-priority prewarm complete liveVideo=1 newFrame=\(self.hudU2WFrameRelay.sentFrameCount > prewarmStartCount) sentCount=\(self.hudU2WFrameRelay.sentFrameCount)"
+                "fallback-first prewarm complete liveVideo=\(liveVideoReady ? 1 : 0) newFrame=1 sentCount=\(self.hudU2WFrameRelay.sentFrameCount); physical Map Mode no longer depends on MainVideo readiness"
             )
 
             // v90.35.3.7 intentionally restores the exact control ordering from the
@@ -1585,10 +1581,14 @@ final class AppState {
                     useFrozenRouteWhenUnavailable: false,
                     allowDesignFallback: false
                 )
+                let freshLiveMapImage: UIImage? = {
+                    guard let age = self.mainVideo.lastFrameAgeSeconds, age < 1.5 else { return nil }
+                    return self.mainVideo.latestFrame
+                }()
                 if let frame = HudMapModeFrameRenderer.jpeg(
                     snapshot: snapshot,
                     settings: self.mapModeSettings,
-                    sourceMapImage: self.mainVideo.latestFrame,
+                    sourceMapImage: freshLiveMapImage,
                     suppressCustomSpeedForNativeOBDProbe: false,
                     warningHiddenTarget: self.mapModeManeuverWarningHiddenTarget
                 ) {
@@ -1933,7 +1933,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.16",
+                "appVersion=v90.35.3.24.18",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

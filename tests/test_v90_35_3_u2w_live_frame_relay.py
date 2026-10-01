@@ -6,7 +6,8 @@ def test_v90353_live_relay_sources():
     relay = (ROOT/'ios/HUDController/MapMode/U2WHUDFrameRelayClient.swift').read_text()
     ui = (ROOT/'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
     assert 'U2W v8.15' in app
-    assert 'sourceMapImage: self.mainVideo.latestFrame' in app
+    assert 'sourceMapImage: freshLiveMapImage' in app
+    assert 'age < 1.5' in app
     assert '15331' in relay
     assert 'UInt32(jpeg.count).bigEndian' in relay
     assert 'CarPlay adapter Wi-Fi name' in ui

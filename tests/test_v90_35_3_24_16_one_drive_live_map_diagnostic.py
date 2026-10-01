@@ -9,8 +9,8 @@ UI = (ROOT / 'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 
 def test_v2416_version_and_unchanged_v831_pair():
-    assert 'appVersion=v90.35.3.24.16' in APP
-    assert 'v90.35.3.24.16 pairs with unchanged U2W v8.31' in UI
+    assert 'appVersion=v90.35.3.24.18' in APP
+    assert 'v90.35.3.24.18 pairs with unchanged U2W v8.31' in UI
     assert 'v8.31-navigation-priority-raw' in CLIENT
 
 
@@ -69,7 +69,7 @@ def test_hud_output_sample_is_retained_for_bundle():
 
 
 def test_passive_source_probe_is_auto_ensured_without_mainvideo_autostart():
-    assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.16 one-drive live-map diagnostic")' in APP
+    assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")' in APP
     reachable = APP.index('routeGuidance.onAdapterReachable')
     block = APP[reachable: reachable + 1500]
     assert '.start(reason:' not in block or 'mainVideo.start(reason:' not in block

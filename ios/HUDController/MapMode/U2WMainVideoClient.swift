@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.16 MainVideo client for U2W v8.31. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.18 MainVideo client for U2W v8.31. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.31 is intentionally dumb: it exposes raw bytes from the frozen v8.11 mirror
 /// through a tiny one-client TCP relay with no adapter-side H.264 parser, reference-chain
@@ -629,7 +629,7 @@ final class U2WMainVideoClient {
         preflightPassLogged = false
         logger.log(
             "U2W VIDEO LIFECYCLE",
-            "App entered background during explicit Map Mode; AppState should fail closed to Navigation and stop raw relay before decoder lifecycle loss"
+            "App entered background; v24.18 preserves active MainVideo/Map Mode instead of intentionally tearing down the healthy raw relay. Background location/BLE scheduling remains authoritative; foreground recovery handles any actual suspension gap."
         )
     }
 
@@ -911,19 +911,21 @@ private final class U2WMainVideoTCPWorker {
     private func performBoundedDecoderRecovery(reason: String, origin: String) {
         let sourceEpochCorruption = reason.contains("codecBadDataErr (-8969)")
         if sourceEpochCorruption, liveIDROnlyRecovery {
-            // -8969 means VideoToolbox rejected the compressed reference chain, not
-            // merely that output was slow.  Never rebuild against the same active
-            // SPS/PPS and P-frame epoch.  Clear both iPhone validation state and VT
-            // codec state, preserve the healthy TCP session, and require a completely
-            // fresh SPS -> PPS -> IDR sequence from the v8.28 epoch-fenced relay.
-            sanitizer.reset(clearParameterSets: true)
-            decoder.hardRecoverAwaitingFreshCodecEpoch(reason: reason)
+            // 2026-10-01 field evidence is stronger than the earlier fresh-epoch
+            // hypothesis: the same TCP/raw source stayed healthy and VideoToolbox
+            // recovered when its session was rebuilt at a later IDR. SPS/PPS are
+            // not guaranteed to repeat at every IDR, so preserve the last validated
+            // parameter-set pair, quarantine dependent P-frames, and rebuild at the
+            // very next validated IDR. This minimizes blackout time without touching
+            // the healthy v8.31 TCP relay.
+            sanitizer.quarantineReferenceChainUntilIDR()
+            decoder.hardRecoverAwaitingIDR(reason: reason)
             waitingForFreshLiveIDRAfterRejectedAnchor = true
             onDecoderRecovery?(reason)
             emitDecoderState()
             onPhase?("WAITING_FRESH_IDR")
-            onStatus?("Source epoch quarantined • waiting for fresh SPS/PPS/IDR", true)
-            onDiagnostic?("\(origin): codecBadDataErr (-8969) quarantined current H.264 epoch; TCP PRESERVED; decoder + sanitizer parameter sets cleared")
+            onStatus?("Decoder reset • waiting for next validated IDR", true)
+            onDiagnostic?("\(origin): codecBadDataErr (-8969) reset VideoToolbox + reference chain; validated SPS/PPS PRESERVED; TCP PRESERVED; waiting for next validated IDR")
             return
         }
 
@@ -1128,7 +1130,25 @@ private final class U2WMainVideoTCPWorker {
     }
 
     private func processNAL(_ nal: Data, generation: Int) {
-        if let accepted = sanitizer.process(nal) {
+        let accepted = sanitizer.process(nal)
+
+        // v24.17: the field recorder proved the raw v8.11 mirror can cross a
+        // rolling-source boundary with a missing reference picture while TCP and
+        // AppleCarPlay remain healthy.  The sanitizer already parses frame_num,
+        // so consume its continuity signal *before* another dependent slice can
+        // poison VideoToolbox. Preserve validated SPS/PPS, invalidate the broken
+        // reference state, and quarantine P-slices until the next validated IDR.
+        if let continuityBreak = sanitizer.takeContinuityBreakReason() {
+            onDiagnostic?("REFERENCE CHAIN BREAK detected on raw TCP generation=\(generation): \(continuityBreak)")
+            decoder.hardRecoverAwaitingIDR(reason: continuityBreak)
+            waitingForFreshLiveIDRAfterRejectedAnchor = true
+            onDecoderRecovery?(continuityBreak)
+            emitDecoderState()
+            onPhase?("WAITING_FRESH_IDR")
+            onStatus?("Reference discontinuity detected • waiting for clean live IDR", true)
+        }
+
+        if let accepted {
             if accepted.kind == .idr, waitingForFreshLiveIDRAfterRejectedAnchor {
                 waitingForFreshLiveIDRAfterRejectedAnchor = false
                 onPhase?("DECODER_BOOTSTRAP")
@@ -1751,10 +1771,14 @@ private final class H264VideoToolboxDecoder {
 
             if decodeStatus == Self.codecBadDataStatus {
                 onDiagnostic?(
-                    "VideoToolbox codecBadDataErr status=\(decodeStatus) au=\(submittedAccessUnits) consecutive=\(consecutiveDecodeErrors); dropping this AU and PRESERVING current decoder/reference chain"
+                    "VideoToolbox codecBadDataErr status=\(decodeStatus) au=\(submittedAccessUnits) consecutive=\(consecutiveDecodeErrors); dropping this AU"
                 )
                 if consecutiveDecodeErrors >= 3 {
-                    armRebuildAtNextIDR(reason: "\(consecutiveDecodeErrors) consecutive codecBadDataErr (-8969) submissions")
+                    // The 2026-10-01 drive showed that merely arming an IDR swap can
+                    // leave the session poisoned for thousands of access units.
+                    // Escalate bounded -8969 bursts to the worker's fresh-epoch
+                    // quarantine path while preserving the healthy TCP connection.
+                    requestHardRecovery(reason: "\(consecutiveDecodeErrors) consecutive codecBadDataErr (-8969) submissions")
                 }
                 return
             }
@@ -1805,7 +1829,12 @@ private final class H264VideoToolboxDecoder {
             }
             if status == Self.codecBadDataStatus {
                 if outputCallbackErrors >= 3 {
-                    armRebuildAtNextIDR(reason: "\(outputCallbackErrors) codecBadDataErr (-8969) output callback failures")
+                    // Output-callback -8969 was the dominant field failure: raw
+                    // bytes remained live while 4,111 callbacks failed.  Do not
+                    // keep feeding that poisoned epoch. The worker recognizes the
+                    // codecBadDataErr reason and performs the existing fresh
+                    // SPS/PPS/IDR quarantine without reconnecting TCP.
+                    requestHardRecovery(reason: "\(outputCallbackErrors) codecBadDataErr (-8969) output callback failures")
                 }
             } else if status == Self.invalidSessionStatus {
                 requestHardRecovery(reason: "kVTInvalidSessionErr (-12903) from VideoToolbox output callback")

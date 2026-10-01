@@ -37,24 +37,27 @@ def test_v831_mainvideo_is_explicit_map_mode_only_and_navigation_independent():
     assert "app session early predecode" not in APP
     assert "HUD BLE transport ready — early predecode" not in APP
     assert "Route Guidance endpoint reachable — keep early predecode warm" not in APP
-    assert 'self.mainVideo.start(reason: "explicit Map Mode only")' in APP
+    assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
     assert "architecture=v8.31-navigation-priority-raw-tcp-15332" in VIDEO
     assert 'Data("U2WH2648".utf8)' in VIDEO
     assert "adapter parser/cache=NONE" in VIDEO
 
 
-def test_isolated_minus8969_preserves_decoder_and_future_idr_swap_is_atomic():
-    assert "dropping this AU and PRESERVING current decoder/reference chain" in VIDEO
-    assert "armRebuildAtNextIDR" in VIDEO
-    assert "swap occurs only when a validated future IDR is already in hand" in VIDEO
+def test_minus8969_burst_uses_fresh_epoch_quarantine_instead_of_poisoned_wait():
+    assert "dropping this AU" in VIDEO
+    assert 'requestHardRecovery(reason: "\(consecutiveDecodeErrors) consecutive codecBadDataErr (-8969) submissions")' in VIDEO
+    assert 'requestHardRecovery(reason: "\(outputCallbackErrors) codecBadDataErr (-8969) output callback failures")' in VIDEO
+    assert 'sourceEpochCorruption = reason.contains("codecBadDataErr (-8969)")' in VIDEO
+    assert "hardRecoverAwaitingFreshCodecEpoch" in VIDEO
+    assert "TCP PRESERVED" in VIDEO
     assert "kVTInvalidSessionErr (-12903)" in VIDEO
 
 
 def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
-    assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.16 one-drive live-map diagnostic")' in APP
+    assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")' in APP
     assert 'passive v8.27.2 source/topology observer' in UI
     assert 'never starts MainVideo' in UI
-    assert "v90.35.3.24.16 pairs with unchanged U2W v8.31" in UI
+    assert "v90.35.3.24.18 pairs with unchanged U2W v8.31" in UI
     assert "never kills/signals/restarts AppleCarPlay" in UI
 
 

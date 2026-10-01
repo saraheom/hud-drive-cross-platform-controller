@@ -13,14 +13,14 @@ def test_v2410_history_is_preserved_but_current_release_is_passive_diagnostic():
     assert 'self.transportPhase = "LIVE"' in VIDEO
 
 def test_v2411_obd_manual_collection_still_has_no_gps_gate():
-    assert 'appVersion=v90.35.3.24.16' in APP
+    assert 'appVersion=v90.35.3.24.18' in APP
     assert 'no GPS gate; v24.10 length/framing reconstruction retained' in APP
     assert 'guard speedEngine.currentSpeedMph <= 1 else' not in APP
 
 def test_v2414_navigation_priority_keeps_mainvideo_off_outside_map_mode():
     assert 'app session early predecode' not in APP
     assert 'HUD BLE transport ready — early predecode' not in APP
-    assert 'self.mainVideo.start(reason: "explicit Map Mode only")' in APP
+    assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
     assert 'MainVideo remains idle' in APP
 
 def test_v2413_passive_codec_probe_is_optional_and_shareable():

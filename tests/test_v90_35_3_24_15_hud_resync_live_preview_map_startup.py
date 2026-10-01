@@ -40,10 +40,11 @@ def test_app_only_live_preview_never_starts_physical_hud_casting():
     assert 'physical HUD mode unchanged' in APP
 
 
-def test_preview_is_explicit_and_stops_on_background_for_navigation_safety():
+def test_preview_is_explicit_but_background_no_longer_intentionally_stops_it():
     assert 'mainVideoPreviewActive = false' in APP
-    assert 'if state.mainVideoPreviewActive' in ROOTVIEW
-    assert 'state.stopMainVideoPreview(reason: "app background")' in ROOTVIEW
+    background = ROOTVIEW.split("case .background:", 1)[1].split("default:", 1)[0]
+    assert 'state.hudU2WLiveRelayActive || state.mainVideoPreviewActive' in background
+    assert 'state.stopMainVideoPreview(reason: "app background")' not in background
     assert 'Route Guidance endpoint reachable; MainVideo intentionally idle unless Map Mode is explicitly enabled' in APP
 
 
@@ -54,12 +55,13 @@ def test_v2414_false_failed_safe_during_tcp_connect_is_removed():
     assert 'authority for real failed/EOF states' in VIDEO
 
 
-def test_map_mode_uses_separate_transport_and_decoder_deadlines():
-    assert 'for _ in 0..<120' in APP
-    assert 'up to 12 s to establish TCP/receive first bytes' in APP
-    assert 'for _ in 0..<200' in APP
-    assert 'up to 20 s after transport readiness' in APP
-    assert 'transportReady = self.mainVideo.connected || self.mainVideo.receivedBytes > 0' in APP
+def test_map_mode_uses_fallback_first_physical_jpeg_prewarm_with_bounded_recovery():
+    assert 'for _ in 0..<70' in APP
+    assert 'up to 7 s including one bounded reconnect' in APP
+    assert 'hudU2WFrameRelay.ensureConnection(reason: "Map Mode prewarm did not deliver first JPEG")' in APP
+    assert 'for _ in 0..<30' in APP
+    assert 'guard firstFrameDelivered else' in APP
+    assert 'physical Map Mode no longer depends on MainVideo readiness' in APP
 
 
 def test_map_mode_attempt_generation_fences_stale_cancellation():
@@ -75,5 +77,5 @@ def test_map_mode_stop_preserves_only_explicit_preview():
 
 
 def test_current_version_and_pairing_marker():
-    assert 'appVersion=v90.35.3.24.16' in APP
-    assert 'v90.35.3.24.16 pairs with unchanged U2W v8.31' in UI
+    assert 'appVersion=v90.35.3.24.18' in APP
+    assert 'v90.35.3.24.18 pairs with unchanged U2W v8.31' in UI

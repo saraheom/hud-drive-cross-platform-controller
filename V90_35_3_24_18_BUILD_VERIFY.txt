@@ -1,0 +1,40 @@
+HUD v90.35.3.24.18 ROBUST MAP MODE + MAINVIDEO NEXT-IDR RECOVERY — BUILD VERIFY
+================================================================================
+
+PAIR
+----
+HUD app: v90.35.3.24.18
+U2W firmware: existing v8.31 Navigation-Priority Raw MainVideo (UNCHANGED)
+U2W v8.31 SHA256: d730f913530c77dee01481f94f0b19b7ce3f1e4c983fec1c151caaa341a12c40
+No U2W reflash required.
+
+VALIDATION
+----------
+pytest: 404 / 404 PASS
+Swift frontend parse: 207 / 207 Swift files PASS
+git diff --check: PASS
+
+FOCUSED v24.18 REGRESSION
+-------------------------
+- Physical Map Mode no longer requires a decoded MainVideo frame.
+- Existing schematic fallback is selected whenever MainVideo frame age >= 1.5 s.
+- TCP/15331 handles setup/preparing/waiting and has a bounded 2.5 s connect deadline.
+- First JPEG must be accepted by U2W before HUD mode-6 handoff.
+- Positive HUD STA/DHCP status re-checks a non-ready TCP/15331 connection.
+- Three codecBadDataErr (-8969) failures trigger hard VideoToolbox recovery.
+- Validated SPS/PPS are preserved across -8969 recovery.
+- Dependent P-frames are quarantined until the next validated IDR.
+- U2W TCP/15332 remains alive during decoder recovery.
+- H.264 frame_num reference-continuity guard retained.
+- App background no longer deliberately tears down active Map Mode/MainVideo.
+
+UNCHANGED CRITICAL MODULE HASHES
+-------------------------------
+ios/HUDController/Bluetooth/HudBluetoothManager.swift
+  e7b133b63548ec70de10e22f8241fe7d11f6d5b7dfebc77ee93adc30337c42a2
+
+ios/HUDController/MapMode/HudMapModeCanvas.swift
+  92bade118e575b2291c4f7c524e479ec9362c4369695dfd9f5e98bc905b2f45c
+
+ios/HUDController/Vehicle/AmbientLightMonitor.swift
+  1f816614d42a49a0b0fd49b23c11819533ebd8e3372fca2065c979c83c484ef9

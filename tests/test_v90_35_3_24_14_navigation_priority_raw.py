@@ -9,18 +9,20 @@ def test_navigation_mode_has_zero_automatic_mainvideo_starts():
     starts = [line.strip() for line in APP.splitlines() if "mainVideo.start(" in line]
     assert starts == [
         'mainVideo.start(reason: "app-only live preview")',
-        'self.mainVideo.start(reason: "explicit Map Mode only")',
+        'self.mainVideo.start(reason: "physical Map Mode live source (optional)")',
     ]
     assert "Route Guidance endpoint reachable; MainVideo intentionally idle" in APP
     assert 'mainVideo.start(reason: "HUD BLE' not in APP
     assert 'mainVideo.start(reason: "Route Guidance' not in APP
 
-def test_map_mode_proves_live_frame_before_mode6():
-    live_guard = APP.index("guard liveVideoReady else")
-    mode6 = APP.index("HudCommands.kivicMode(6)", live_guard)
-    assert live_guard < mode6
-    assert "Live map unavailable — Navigation retained" in APP
-    assert "Map Mode startup fail closed" in APP
+def test_map_mode_proves_first_jpeg_before_mode6_but_does_not_require_mainvideo():
+    prewarm = APP.index("Preparing first HUD Map Mode frame")
+    first_jpeg_guard = APP.index("guard firstFrameDelivered else", prewarm)
+    mode6 = APP.index("HudCommands.kivicMode(6)", first_jpeg_guard)
+    assert prewarm < first_jpeg_guard < mode6
+    assert 'physical Map Mode no longer depends on MainVideo readiness' in APP
+    assert 'physical Map Mode live source (optional)' in APP
+    assert 'Live map unavailable — Navigation retained' not in APP
 
 def test_map_mode_stop_stops_experimental_video_work():
     assert 'mainVideo.stop(reason: "live U2W Map Mode disabled — restore Navigation-only adapter load")' in APP
@@ -44,6 +46,9 @@ def test_post_ready_sta_status_never_bounces_mode_automatically():
     assert "post-ready STA diagnostic only" in APP
     assert "no automatic mode change" in APP
 
-def test_background_map_mode_fails_closed_to_navigation():
-    assert "App backgrounded during Map Mode; restoring stock Navigation" in ROOTVIEW
-    assert "state.stopHUDU2WSTAHomeProbe()" in ROOTVIEW
+def test_background_preserves_live_session_instead_of_guaranteed_teardown():
+    background = ROOTVIEW.split("case .background:", 1)[1].split("default:", 1)[0]
+    assert "preserving decoder/TCP/HUD cast session" in background
+    assert "state.stopHUDU2WSTAHomeProbe()" not in background
+    assert 'state.stopMainVideoPreview(reason: "app background")' not in background
+    assert "state.mainVideo.applicationDidEnterBackground()" in background

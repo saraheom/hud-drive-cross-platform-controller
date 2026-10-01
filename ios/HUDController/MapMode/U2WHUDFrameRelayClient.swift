@@ -20,6 +20,7 @@ final class U2WHUDFrameRelayClient {
     private let queue = DispatchQueue(label: "HUD.U2W.FrameRelay")
     private var connection: NWConnection?
     private var reconnectTask: Task<Void, Never>?
+    private var connectDeadlineTask: Task<Void, Never>?
     private var shouldRun = false
     private var sendInFlight = false
     private(set) var connected = false
@@ -41,6 +42,8 @@ final class U2WHUDFrameRelayClient {
         shouldRun = true
         reconnectTask?.cancel()
         reconnectTask = nil
+        connectDeadlineTask?.cancel()
+        connectDeadlineTask = nil
         connection?.stateUpdateHandler = nil
         connection?.cancel()
         connection = nil
@@ -68,16 +71,34 @@ final class U2WHUDFrameRelayClient {
             Task { @MainActor in
                 guard self.connection === c else { return }
                 switch state {
+                case .setup:
+                    self.status = "Preparing U2W frame ingress…"
+                case .preparing:
+                    self.status = "Connecting to U2W frame ingress…"
+                case .waiting(let error):
+                    // The 2026-10-01 field run exposed a Network.framework state
+                    // where TCP/15331 never reached .ready or .failed. Keep the
+                    // bounded deadline armed so a transient path-selection stall
+                    // cannot leave physical Map Mode dropping JPEGs indefinitely.
+                    self.connected = false
+                    self.status = "U2W frame ingress waiting: \(error.localizedDescription)"
+                    self.logger.log("U2W RELAY", "Frame ingress waiting: \(error.localizedDescription)")
                 case .ready:
+                    self.connectDeadlineTask?.cancel()
+                    self.connectDeadlineTask = nil
                     self.connected = true
                     self.status = "U2W frame ingress connected"
                     self.logger.log("U2W RELAY", "Frame ingress connected reconnects=\(self.reconnectCount)")
                 case .failed(let error):
+                    self.connectDeadlineTask?.cancel()
+                    self.connectDeadlineTask = nil
                     self.connected = false
                     self.status = "Relay failed: \(error.localizedDescription)"
                     self.logger.log("U2W RELAY", "Frame ingress failed: \(error.localizedDescription)")
                     self.scheduleReconnect(reason: "connection failed")
                 case .cancelled:
+                    self.connectDeadlineTask?.cancel()
+                    self.connectDeadlineTask = nil
                     self.connected = false
                     if self.shouldRun {
                         self.status = "Relay reconnecting…"
@@ -85,16 +106,39 @@ final class U2WHUDFrameRelayClient {
                     } else {
                         self.status = "Relay stopped"
                     }
-                default:
+                @unknown default:
                     break
                 }
             }
         }
         c.start(queue: queue)
+        armConnectDeadline(for: c, reason: reason)
+    }
+
+    private func armConnectDeadline(for connection: NWConnection, reason: String) {
+        connectDeadlineTask?.cancel()
+        connectDeadlineTask = Task { @MainActor [weak self, weak connection] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard let self, let connection, !Task.isCancelled, self.shouldRun else { return }
+            guard self.connection === connection, !self.connected else { return }
+            self.logger.log("U2W RELAY", "Frame ingress connect deadline expired reason=\(reason); recreating TCP/15331")
+            self.scheduleReconnect(reason: "connect deadline expired")
+        }
+    }
+
+    /// Recreate a not-yet-ready ingress connection at a deterministic recovery
+    /// checkpoint (for example when the HUD itself has completed STA/DHCP).
+    /// Healthy connections are never disturbed.
+    func ensureConnection(reason: String) {
+        guard shouldRun, !connected else { return }
+        logger.log("U2W RELAY", "Ensuring frame ingress connection reason=\(reason)")
+        scheduleReconnect(reason: "ensure connection / \(reason)")
     }
 
     private func scheduleReconnect(reason: String) {
         guard shouldRun, reconnectTask == nil else { return }
+        connectDeadlineTask?.cancel()
+        connectDeadlineTask = nil
         let old = connection
         connection = nil
         old?.stateUpdateHandler = nil
@@ -178,6 +222,8 @@ final class U2WHUDFrameRelayClient {
         shouldRun = false
         reconnectTask?.cancel()
         reconnectTask = nil
+        connectDeadlineTask?.cancel()
+        connectDeadlineTask = nil
         let c = connection
         connection = nil
         c?.stateUpdateHandler = nil

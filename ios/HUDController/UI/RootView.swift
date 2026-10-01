@@ -71,12 +71,14 @@ struct RootView: View {
                 consumePendingShortcut()
                 state.nowPlaying.refreshNow()
             case .background:
-                if state.hudU2WLiveRelayActive {
-                    state.logger.log("NAV PRIORITY", "App backgrounded during Map Mode; restoring stock Navigation before VideoToolbox lifecycle invalidation")
-                    state.stopHUDU2WSTAHomeProbe()
-                }
-                if state.mainVideoPreviewActive {
-                    state.stopMainVideoPreview(reason: "app background")
+                // v24.18: do not intentionally destroy a healthy live-map session
+                // just because SwiftUI moves to the background. The app already
+                // owns background location/BLE work during a drive. If iOS truly
+                // suspends networking/VideoToolbox, the existing source/output
+                // watchdogs recover when execution resumes; proactively stopping
+                // guaranteed that no later clean codec epoch could ever recover.
+                if state.hudU2WLiveRelayActive || state.mainVideoPreviewActive {
+                    state.logger.log("NAV PRIORITY", "App backgrounded with live MainVideo active; preserving decoder/TCP/HUD cast session")
                 }
                 state.mainVideo.applicationDidEnterBackground()
             default:

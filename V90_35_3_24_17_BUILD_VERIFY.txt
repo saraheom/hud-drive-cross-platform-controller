@@ -1,0 +1,60 @@
+HUD v90.35.3.24.17 MAINVIDEO REFERENCE-CONTINUITY RECOVERY — BUILD VERIFY
+============================================================================
+
+PAIR
+----
+HUD app: v90.35.3.24.17
+U2W firmware: existing v8.31 Navigation-Priority Raw MainVideo (UNCHANGED)
+No adapter reflash required.
+
+2026-10-01 FIELD EVIDENCE TARGETED
+----------------------------------
+- raw TCP/15332 bytes remained fresh after decoded output stopped
+- last sustained decoded output around 12:58:49Z / 08:58:49 EDT
+- VideoToolbox output callback accumulated 4,111 codecBadDataErr (-8969) failures
+- passive v8.11 source observer remained LIVE for the rest of the drive
+- passive observer recorded source-generation changes + frame_num discontinuities
+- therefore AppleCarPlay/exporter liveness was not the primary failure
+
+PRODUCTION FIX
+--------------
+1. H264MainVideoSanitizer enforces reference frame_num continuity for reference P pictures.
+2. A frame_num discontinuity rejects the offending picture and quarantines P-slices until IDR.
+3. Worker immediately invalidates the broken VT reference chain while preserving known-good SPS/PPS.
+4. Three consecutive codecBadDataErr (-8969) submission OR output-callback failures escalate to existing fresh-epoch quarantine.
+5. Fresh-epoch quarantine preserves TCP but requires fresh SPS -> PPS -> IDR.
+6. SwiftUI background transition no longer intentionally stops app-only preview or physical Map Mode.
+7. Ordinary Navigation still never auto-starts MainVideo.
+
+FIELD-STREAM REPLAY CHECK
+-------------------------
+Known-good recorded 800x480 startup NALs were replayed through the new sanitizer.
+After a real reference picture was deliberately omitted, the continuity gate reported:
+  previous=1 expected=2 actual=3 modulus=4096 pps=0
+and entered wait-for-IDR quarantine before the discontinuous P-slice could reach VideoToolbox.
+
+SAFETY BOUNDARY
+---------------
+- U2W v8.31 unchanged
+- v8.11 AppleCarPlay exporter unchanged
+- v8.8 Route Guidance / Now Playing unchanged
+- no AppleCarPlay process control added
+- adapter relay remains on-demand raw-copy only
+- physical mode 6 still requires a real decoded live frame
+- one-drive diagnostic recorder retained
+
+VALIDATION
+----------
+pytest: 399 / 399 PASS
+Swift frontend parse: 206 / 206 Swift files PASS
+Focused real-NAL reference continuity replay: PASS
+  baseline IDR -> frame_num 1 accepted
+  omitted frame_num 2 -> frame_num 3 rejected
+  reported previous=1 expected=2 actual=3 modulus=4096
+Git diff whitespace check: PASS
+
+UNCHANGED U2W v8.31 IMAGE
+-------------------------
+SHA256:
+d730f913530c77dee01481f94f0b19b7ce3f1e4c983fec1c151caaa341a12c40
+U2W_Update_v8.31_NavigationPriority_RawMainVideo.img
