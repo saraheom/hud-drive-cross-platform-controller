@@ -29,7 +29,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
         XCTAssertFalse(app.contains("app session early predecode"))
         XCTAssertFalse(app.contains("HUD BLE transport ready — early predecode"))
         XCTAssertTrue(app.contains(#"mainVideo.start(reason: "app-only live preview")"#))
-        XCTAssertTrue(app.contains(#"self.mainVideo.start(reason: "explicit Map Mode only")"#))
+        XCTAssertTrue(app.contains(#"self.mainVideo.start(reason: "physical Map Mode live source (optional)")"#))
         XCTAssertTrue(app.contains("MainVideo remains idle"))
     }
 

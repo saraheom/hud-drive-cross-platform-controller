@@ -30,8 +30,10 @@ final class V90352415HUDResyncLivePreviewMapStartupTests: XCTestCase {
     func testMapModeStartupNoLongerFailsDuringTCPPreparing() throws {
         let app = try source("HUDController/App/AppState.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(app.contains("up to 12 s to establish TCP/receive first bytes"))
-        XCTAssertTrue(app.contains("up to 20 s after transport readiness"))
+        // v24.18 restores fallback-first physical Map Mode: MainVideo may still be
+        // preparing while the JPEG relay establishes and projects the fallback canvas.
+        XCTAssertTrue(app.contains("physical Map Mode no longer depends on MainVideo readiness"))
+        XCTAssertTrue(app.contains("guard firstFrameDelivered else"))
         XCTAssertTrue(video.contains("TCP_PREPARING / TCP_WAITING /"))
         XCTAssertTrue(video.contains("authority for real failed/EOF states"))
     }

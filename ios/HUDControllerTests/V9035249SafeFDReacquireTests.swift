@@ -15,12 +15,12 @@ final class V9035249SafeFDReacquireTests: XCTestCase {
         XCTAssertTrue(video.contains("v8.31-navigation-priority-raw-tcp-15332"))
     }
 
-    func testCodecBadDataPreservesReferenceChainAndArmsFutureIDRRebuild() throws {
+    func testCodecBadDataResetsDecoderButPreservesValidatedParameterSetsUntilIDR() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("codecBadDataStatus: OSStatus = -8969"))
-        XCTAssertTrue(video.contains("dropping this AU and PRESERVING current decoder/reference chain"))
-        XCTAssertTrue(video.contains("armRebuildAtNextIDR"))
-        XCTAssertTrue(video.contains("swap occurs only when a validated future IDR is already in hand"))
+        XCTAssertTrue(video.contains("sanitizer.quarantineReferenceChainUntilIDR()"))
+        XCTAssertTrue(video.contains("decoder.hardRecoverAwaitingIDR(reason: reason)"))
+        XCTAssertTrue(video.contains("validated SPS/PPS PRESERVED; TCP PRESERVED"))
     }
 
     func testManualOBDArchiveCollectionDoesNotTrustStaleGPS() throws {

@@ -47,6 +47,6 @@ final class V903520GOPCacheLaneGeometryTests: XCTestCase {
         XCTAssertTrue(video.contains("u2wvideo-relay-status.cgi"))
         XCTAssertTrue(video.contains("v8.31-navigation-priority-raw-tcp-15332"))
         XCTAssertTrue(ui.contains("U2W H.264 relay"))
-        XCTAssertTrue(app.contains(#"mainVideo.start(reason: "explicit Map Mode only")"#))
+        XCTAssertTrue(app.contains(#"mainVideo.start(reason: "physical Map Mode live source (optional)")"#))
     }
 }

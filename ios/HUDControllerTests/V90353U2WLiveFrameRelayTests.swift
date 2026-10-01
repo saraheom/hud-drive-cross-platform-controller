@@ -16,9 +16,10 @@ final class V90353U2WLiveFrameRelayTests: XCTestCase {
         XCTAssertTrue(relay.contains("packet.append(jpeg)"))
     }
 
-    func testLiveRelayKeepsMainVideoLiveAndUsesMode6() throws {
+    func testLiveRelayUsesFreshMainVideoWhenAvailableAndUsesMode6() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("sourceMapImage: self.mainVideo.latestFrame"))
+        XCTAssertTrue(app.contains("sourceMapImage: freshLiveMapImage"))
+        XCTAssertTrue(app.contains("physical Map Mode no longer depends on MainVideo readiness"))
         XCTAssertTrue(app.contains("HudCommands.kivicMode(6)"))
         XCTAssertTrue(app.contains("U2W v8.15"))
         XCTAssertFalse(app.contains("status == 1 && !address.isEmpty"))

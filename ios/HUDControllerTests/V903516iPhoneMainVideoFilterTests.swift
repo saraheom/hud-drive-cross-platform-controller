@@ -47,7 +47,7 @@ final class V903516iPhoneMainVideoFilterTests: XCTestCase {
             .components(separatedBy: "bluetooth.onHUDSessionReset =")[0]
         XCTAssertFalse(transportReady.contains(#"mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")"#))
         XCTAssertFalse(transportReady.contains("mainVideo.start("))
-        XCTAssertTrue(app.contains(#"self.mainVideo.start(reason: "explicit Map Mode only")"#))
+        XCTAssertTrue(app.contains(#"self.mainVideo.start(reason: "physical Map Mode live source (optional)")"#))
         XCTAssertFalse(app.contains("app session early predecode"))
 
         XCTAssertTrue(video.contains("U2WMainVideoTCPWorker"))
