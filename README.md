@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.24.16 — one-drive live-map forensic recorder
+
+This app-only diagnostic release pairs with the **existing U2W v8.31 Navigation-Priority Raw MainVideo image**. It adds a bounded iPhone-side exact-raw H.264 recorder, automatic failure/recovery evidence windows, decoded/HUD image samples, low-frequency passive adapter source/topology observation, and a one-tap parked **Live Map Diagnostic ZIP** containing the normal HUD log plus synchronized iPhone/adapter evidence. The v8.11 AppleCarPlay exporter, v8.8 Route Guidance path, v8.31 raw relay, Map Mode layout, ambient-light behavior, and OBD behavior are otherwise unchanged.
+
+For the diagnostic commute, explicitly start **Live Preview (app only)** before driving and leave it running; after parking, tap **Collect Live Map Diagnostic ZIP (parked)** once and share the resulting single ZIP. See `V90_35_3_24_16_RELEASE.md`.
+
+---
+
 # v90.35.3.24.13.1 — CI alignment only
 
 GitHub Actions run `98251133504` compiled the app successfully but exposed eight stale source-string unit assertions left over from the pre-v8.30 MainVideo behavior. This package updates only those test expectations. **All files under `ios/HUDController/` are byte-for-byte identical to v90.35.3.24.13.** Continue using the same U2W v8.30 image; do not reflash it for this CI-only update.

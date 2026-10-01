@@ -50,10 +50,11 @@ def test_isolated_minus8969_preserves_decoder_and_future_idr_swap_is_atomic():
     assert "kVTInvalidSessionErr (-12903)" in VIDEO
 
 
-def test_old_passive_codec_probe_is_not_auto_started_in_production_release():
-    assert "mainVideoDiagnostic?.ensureStarted(reason: \"Route Guidance endpoint reachable\")" not in APP
-    assert "optional legacy forensics" in UI
-    assert "v90.35.3.24.15 pairs with U2W v8.31" in UI
+def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
+    assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.16 one-drive live-map diagnostic")' in APP
+    assert 'passive v8.27.2 source/topology observer' in UI
+    assert 'never starts MainVideo' in UI
+    assert "v90.35.3.24.16 pairs with unchanged U2W v8.31" in UI
     assert "never kills/signals/restarts AppleCarPlay" in UI
 
 

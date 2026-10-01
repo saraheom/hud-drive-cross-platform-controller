@@ -1,0 +1,74 @@
+HUD v90.35.3.24.16 ONE-DRIVE LIVE MAP DIAGNOSTIC — BUILD VERIFY
+==================================================================
+
+PAIR
+----
+HUD app: v90.35.3.24.16
+U2W firmware: existing v8.31 Navigation-Priority Raw MainVideo (UNCHANGED)
+U2W v8.31 SHA256: d730f913530c77dee01481f94f0b19b7ce3f1e4c983fec1c151caaa341a12c40
+Adapter reflash required: NO
+
+VALIDATION
+----------
+pytest: 394 / 394 PASS
+Swift frontend parse: 185 / 185 Swift source/test files PASS
+Focused v24.16 one-drive diagnostic regression: 7 tests PASS
+
+PRODUCTION SOURCE DELTA VS v90.35.3.24.15
+------------------------------------------
+Modified:
+- ios/HUDController/App/AppState.swift
+- ios/HUDController/MapMode/U2WMainVideoClient.swift
+- ios/HUDController/MapMode/U2WHUDFrameRelayClient.swift
+- ios/HUDController/UI/NavigationHUDPreviewCard.swift
+
+Added:
+- ios/HUDController/MapMode/LiveMapDiagnosticRecorder.swift
+
+No U2W firmware/source change is part of this release.
+
+ONE-DRIVE EVIDENCE CONTRACT
+---------------------------
+- Exact v8.31 TCP/15332 raw bytes copied BEFORE Annex-B parsing.
+- First 8 MiB startup capture.
+- Rolling 4 MiB raw pre-event history.
+- Up to six ~4 MiB pre + ~4 MiB post event windows.
+- Final 4 MiB raw tail.
+- Automatic triggers: first frame, decoder recovery/error/output stall, TCP EOF/read
+  failure, raw-source stall, decoded-frame recovery.
+- Periodic timeline heartbeats cross-reference raw byte offset, transport phase,
+  H.264 sanitizer counters, decoder state, frame count/age and relay state.
+- First/recovery/final decoded-map JPEGs and last confirmed physical-HUD JPEG.
+- Existing low-frequency passive v8.27.2 source/topology observer auto-ensured when
+  Route Guidance reaches the adapter. It does not start MainVideo or signal/restart
+  AppleCarPlay.
+- Parked one-tap export adds HUD_app_session.log, iphone_state.txt, adapter status
+  snapshots, and u2wvideo-diag-bundle.cgi output when available.
+- ZIP includes evidence-drop/incomplete-window reporting rather than silently
+  omitting an over-limit capture.
+
+SAFETY / PRODUCTION INVARIANTS RETAINED
+---------------------------------------
+- v8.11 AppleCarPlay exporter unchanged.
+- v8.8 Route Guidance path unchanged and independent from MainVideo.
+- v8.31 tiny raw relay unchanged: no adapter parser/cache/reference-chain spool.
+- MainVideo still starts only for explicit app-only Live Preview or Map Mode.
+- Map Mode still waits for a fresh decoded frame before physical mode 6.
+- Video failure still fails closed to stock Navigation.
+- No AppleCarPlay kill/signal/restart path added.
+- Ambient-light behavior unchanged.
+- OBD behavior unchanged except historical version marker alignment in its report.
+
+TEST PROCEDURE
+--------------
+1. Install v90.35.3.24.16; leave U2W v8.31 installed.
+2. Start CarPlay + Google Maps navigation normally.
+3. BEFORE DRIVING, tap Start Live Preview (app only) and leave it running for the
+   entire drive. This keeps raw TCP + decoder evidence alive even if physical Map
+   Mode fails closed.
+4. Enable physical Map Mode if desired and drive normally. Do not run extra manual
+   diagnostics while driving.
+5. After parking, keep the adapter powered/connected and tap Collect Live Map
+   Diagnostic ZIP (parked) once.
+6. Share that single ZIP. Separate HUD logs/CGIs/dumps should not be needed unless
+   the ZIP explicitly reports an unavailable adapter endpoint.

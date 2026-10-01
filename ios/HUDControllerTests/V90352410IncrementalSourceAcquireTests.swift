@@ -19,7 +19,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
 
     func testV2411OBDArchiveCollectionHasNoGPSGate() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.15"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.16"))
         XCTAssertTrue(app.contains("no GPS gate; v24.10 length/framing reconstruction retained"))
         XCTAssertFalse(app.contains("guard speedEngine.currentSpeedMph <= 1 else"))
     }
@@ -39,6 +39,6 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
         XCTAssertTrue(diagnostic.contains("u2wvideo-diag-start.cgi"))
         XCTAssertTrue(diagnostic.contains("u2wvideo-diag-bundle.cgi"))
         XCTAssertTrue(ui.contains("Collect passive codec diagnostic bundle"))
-        XCTAssertTrue(ui.contains("optional legacy forensics from the v8.27.2 validation stage"))
+        XCTAssertTrue(ui.contains("passive v8.27.2 source/topology observer"))
     }
 }

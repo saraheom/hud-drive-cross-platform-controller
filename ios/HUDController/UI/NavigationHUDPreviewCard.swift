@@ -463,6 +463,25 @@ struct NavigationHUDPreviewCard: View {
                     LabeledContent("VideoToolbox decoder", value: state.mainVideo.decoderSummary)
 
                     Divider()
+                    Text("One-drive live-map forensic bundle")
+                        .font(.subheadline.weight(.semibold))
+                    LabeledContent("Recorder", value: state.liveMapDiagnosticStatus)
+                    Button(state.liveMapDiagnosticCollecting ? "Collecting Live Map Diagnostic ZIP…" : "Collect Live Map Diagnostic ZIP (parked)") {
+                        state.collectLiveMapDiagnosticBundle()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(accent)
+                    .disabled(state.liveMapDiagnosticCollecting)
+                    if let url = state.liveMapDiagnosticBundleURL {
+                        ShareLink(item: url) {
+                            Label("Share Live Map Diagnostic ZIP", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    Text("During the drive, v24.16 automatically keeps bounded exact raw H.264 startup/fault/recovery windows plus decoded-frame evidence on the iPhone and ensures the existing low-frequency passive source/topology observer is running. After parking, tap once: the app adds the normal HUD log, final decoder/HUD state, U2W status snapshots, and the passive adapter bundle when available. Large adapter downloads run only after you tap Collect.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
                     Text("Optional MainVideo diagnostics")
                         .font(.subheadline.weight(.semibold))
                     LabeledContent("Passive probe", value: state.mainVideoDiagnostic.status)
@@ -487,7 +506,7 @@ struct NavigationHUDPreviewCard: View {
                             Label("Share passive codec diagnostic bundle", systemImage: "square.and.arrow.up")
                         }
                     }
-                    Text("These controls are optional legacy forensics from the v8.27.2 validation stage. v90.35.3.24.15 does not auto-start any MainVideo or passive probe during ordinary Navigation Mode. U2W v8.31 starts its tiny raw relay only for an explicit Map Mode attempt; the iPhone owns H.264 parsing. Use the passive bundle only if a later field failure needs deeper capture; it never hooks, signals, or restarts AppleCarPlay.")
+                    Text("These controls expose the passive v8.27.2 source/topology observer used by the v24.16 one-drive forensic build. The observer is ensured when Route Guidance reaches the adapter, but it remains read-only and never starts MainVideo, hooks/signals/restarts AppleCarPlay, or changes Navigation. U2W v8.31 still starts its tiny raw video relay only for explicit Live Preview/Map Mode; the large passive bundle is downloaded only after parking.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -609,7 +628,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.15 pairs with U2W v8.31 Navigation-Priority Raw Relay. The exact working v8.11 AppleCarPlay exporter and v8.8 Route Guidance path remain untouched. In ordinary Navigation Mode the v8.31 video relay is not running unless the user explicitly starts app-only Live Preview. Live Preview never changes the physical HUD mode. Explicit Map Mode reuses or starts the same tiny raw-byte relay with a 32 KiB buffer and no adapter H.264 parser/cache/reference-chain spool; all parsing and VideoToolbox work runs on the iPhone. Map Mode does not switch the HUD into mode 6 until a real live CarPlay frame is decoded, and a video failure returns to stock Navigation and stops the relay. v8.31 never kills/signals/restarts AppleCarPlay.")
+                    Text("v90.35.3.24.16 pairs with unchanged U2W v8.31 Navigation-Priority Raw Relay. The exact working v8.11 AppleCarPlay exporter and v8.8 Route Guidance path remain untouched. In ordinary Navigation Mode the v8.31 video relay is not running unless the user explicitly starts app-only Live Preview. Live Preview never changes the physical HUD mode. Explicit Map Mode reuses or starts the same tiny raw-byte relay with a 32 KiB buffer and no adapter H.264 parser/cache/reference-chain spool; all parsing and VideoToolbox work runs on the iPhone. Map Mode does not switch the HUD into mode 6 until a real live CarPlay frame is decoded, and a video failure returns to stock Navigation and stops the relay. v8.31 never kills/signals/restarts AppleCarPlay.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

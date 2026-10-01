@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.15 MainVideo client for U2W v8.31. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.16 MainVideo client for U2W v8.31. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.31 is intentionally dumb: it exposes raw bytes from the frozen v8.11 mirror
 /// through a tiny one-client TCP relay with no adapter-side H.264 parser, reference-chain
@@ -76,6 +76,7 @@ final class U2WMainVideoClient {
     }
 
     private let logger: LogManager
+    private let diagnosticRecorder: LiveMapDiagnosticRecorder
     private var worker: U2WMainVideoTCPWorker?
     private var workerGeneration = 0
     private var running = false
@@ -110,7 +111,10 @@ final class U2WMainVideoClient {
     private let sourceReconnectCooldown: TimeInterval = 15.0
     private let relayEnsureCooldown: TimeInterval = 5.0
 
-    init(logger: LogManager) { self.logger = logger }
+    init(logger: LogManager, diagnosticRecorder: LiveMapDiagnosticRecorder) {
+        self.logger = logger
+        self.diagnosticRecorder = diagnosticRecorder
+    }
 
     func start(reason: String) {
         if running {
@@ -154,6 +158,7 @@ final class U2WMainVideoClient {
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
         logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.31-navigation-priority-raw-tcp-15332 base=v8.27.2/v8.11 explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 softwareDecoder=1")
+        diagnosticRecorder.record("mainvideo", "start", fields: ["reason": reason, "generation": workerGeneration + 1])
         startNetworkPathLogging()
         startFreshnessWatchdog()
         beginRelayBootstrapLoop(reason: reason)
@@ -335,11 +340,15 @@ final class U2WMainVideoClient {
         lastReceivedBytesAt = nil
 
         let worker = U2WMainVideoTCPWorker(host: "192.168.50.2", port: 15332)
+        worker.onRawBytes = { [weak self] data in
+            self?.diagnosticRecorder.ingestRawH264(data)
+        }
         worker.onPhase = { [weak self] phase in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
                 self.transportPhase = phase
                 self.logger.log("MAINVIDEO STATE", "phase=\(phase) generation=\(generation)")
+                self.diagnosticRecorder.record("transport_phase", phase, fields: ["generation": generation])
             }
         }
         worker.onStatus = { [weak self] message, isConnected in
@@ -351,6 +360,7 @@ final class U2WMainVideoClient {
                 if isConnected, !wasConnected || self.connectedAt == nil { self.connectedAt = Date() }
                 if !isConnected { self.connectedAt = nil }
                 self.logger.log("U2W VIDEO", message)
+                self.diagnosticRecorder.record("transport_status", message, fields: ["connected": isConnected, "generation": generation])
             }
         }
         worker.onBytes = { [weak self] count in
@@ -375,6 +385,9 @@ final class U2WMainVideoClient {
         worker.onDecoderState = { [weak self] summary in
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
+                if self.decoderSummary != summary {
+                    self.diagnosticRecorder.record("decoder_state", summary, fields: ["generation": generation])
+                }
                 self.decoderSummary = summary
             }
         }
@@ -388,6 +401,8 @@ final class U2WMainVideoClient {
                 // DECODER_RECOVERY; a rejected recent anchor becomes
                 // WAITING_FRESH_IDR without reconnecting the healthy TCP stream.
                 self.logger.log("U2W VIDEO RECOVERY", reason)
+                self.diagnosticRecorder.record("decoder", "recovery_requested", fields: ["reason": reason, "generation": generation])
+                self.diagnosticRecorder.triggerEvidenceWindow("decoder_recovery", detail: reason)
             }
         }
         worker.onFrame = { [weak self] image in
@@ -398,6 +413,15 @@ final class U2WMainVideoClient {
                 self.latestFrame = image
                 self.lastDecodedFrameAt = now
                 self.lastFrameAgeSeconds = 0
+                if self.frameCount == 0 {
+                    self.diagnosticRecorder.captureImage(image, label: "decoded_first_frame")
+                    self.diagnosticRecorder.triggerEvidenceWindow("first_decoded_frame", detail: "first VideoToolbox output")
+                } else if let previousFrameAt, now.timeIntervalSince(previousFrameAt) >= 2.5 {
+                    let gap = now.timeIntervalSince(previousFrameAt)
+                    self.diagnosticRecorder.captureImage(image, label: "decoded_recovery_frame_\(Int(now.timeIntervalSince1970))")
+                    self.diagnosticRecorder.record("frame", "recovered_after_gap", fields: ["gap_seconds": gap, "next_frame": self.frameCount + 1])
+                    self.diagnosticRecorder.triggerEvidenceWindow("frame_recovered", detail: String(format: "decoded output resumed after %.1fs gap", gap))
+                }
                 self.lastDecoderSoftFlushAt = nil
                 self.frameCount += 1
                 self.transportPhase = "LIVE"
@@ -418,6 +442,12 @@ final class U2WMainVideoClient {
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
                 self.logger.log("U2W VIDEO DEC", message)
+                self.diagnosticRecorder.record("decoder_detail", message, fields: ["generation": generation])
+                if message.contains("raw TCP read failed") || message.contains("raw TCP EOF") {
+                    self.diagnosticRecorder.triggerEvidenceWindow("tcp_terminal", detail: message)
+                } else if message.contains("codecBadDataErr") || message.contains("-12903") {
+                    self.diagnosticRecorder.triggerEvidenceWindow("decoder_error", detail: message)
+                }
             }
         }
         self.worker = worker
@@ -455,6 +485,17 @@ final class U2WMainVideoClient {
                     let frameAge = self.lastFrameAgeSeconds.map { String(format: "%.1fs", $0) } ?? "none"
                     let byteAge = self.lastReceivedBytesAt.map { String(format: "%.1fs", now.timeIntervalSince($0)) } ?? "none"
                     self.logger.log("MAINVIDEO PREFLIGHT", "phase=\(self.transportPhase) ready=\(self.preflightReady ? 1 : 0) tcp=\(self.connected ? 1 : 0) bytes=\(self.receivedBytes) byteAge=\(byteAge) frames=\(self.frameCount) frameAge=\(frameAge) filter={\(self.sanitizerSummary)} decoder={\(self.decoderSummary)} relay={\(self.adapterCacheSummary)}")
+                    self.diagnosticRecorder.record("heartbeat", "mainvideo", fields: [
+                        "phase": self.transportPhase,
+                        "connected": self.connected,
+                        "received_bytes": self.receivedBytes,
+                        "byte_age": byteAge,
+                        "frames": self.frameCount,
+                        "frame_age": frameAge,
+                        "filter": self.sanitizerSummary,
+                        "decoder": self.decoderSummary,
+                        "relay": self.adapterCacheSummary
+                    ])
                 }
 
                 let relayHealthInterval: TimeInterval = (self.adapterRelayVersion.contains("v8.30") || self.adapterRelayVersion.contains("v8.27") || self.adapterRelayVersion.contains("v8.28")) ? 60.0 : 15.0
@@ -548,6 +589,8 @@ final class U2WMainVideoClient {
                             "U2W VIDEO WATCH",
                             "NALs fresh byteAge=\(String(format: "%.1f", byteAge))s frameAge=\(String(format: "%.1f", frameAge))s; decoder reference chain PRESERVED, atomic rebuild armed only at future validated IDR filter={\(self.sanitizerSummary)}"
                         )
+                        self.diagnosticRecorder.record("watchdog", "decoder_output_stall", fields: ["byte_age": byteAge, "frame_age": frameAge, "filter": self.sanitizerSummary, "decoder": self.decoderSummary])
+                        self.diagnosticRecorder.triggerEvidenceWindow("decoder_output_stall", detail: String(format: "fresh bytes, no decoded frame %.1fs", frameAge))
                         self.worker?.recoverDecoderAtNextIDR(
                             reason: "fresh H.264 but no decoded frame for \(String(format: "%.1f", frameAge))s"
                         )
@@ -562,6 +605,8 @@ final class U2WMainVideoClient {
                     self.transportPhase = "FAILED_SAFE"
                     self.status = "Live map source stalled — Navigation remains active"
                     self.logger.log("U2W VIDEO WATCH", "v8.31 raw source silent byteAge=\(String(format: "%.1f", byteAge))s; FAIL CLOSED, no relay ensure/reconnect")
+                    self.diagnosticRecorder.record("watchdog", "raw_source_stall", fields: ["byte_age": byteAge, "received_bytes": self.receivedBytes])
+                    self.diagnosticRecorder.triggerEvidenceWindow("raw_source_stall", detail: String(format: "raw TCP source silent %.1fs", byteAge))
                     continue
                 }
                 let mayReconnect = self.lastSourceReconnectAt.map { now.timeIntervalSince($0) >= self.sourceReconnectCooldown } ?? true
@@ -735,6 +780,7 @@ private final class U2WMainVideoTCPWorker {
     var onStatus: ((String, Bool) -> Void)?
     var onPhase: ((String) -> Void)?
     var onBytes: ((Int) -> Void)?
+    var onRawBytes: ((Data) -> Void)?
     var onFrame: ((UIImage) -> Void)?
     var onDiagnostic: ((String) -> Void)?
     var onSanitizerStats: ((H264MainVideoSanitizerStats) -> Void)?
@@ -1061,6 +1107,7 @@ private final class U2WMainVideoTCPWorker {
             guard let self, let connection, self.running, self.connection === connection, self.connectionGeneration == generation else { return }
             if let data, !data.isEmpty {
                 self.onBytes?(data.count)
+                self.onRawBytes?(data)
                 for nal in self.annexBParser.append(data) { self.processNAL(nal, generation: generation) }
                 self.emitSanitizerStats()
             }

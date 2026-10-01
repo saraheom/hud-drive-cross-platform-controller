@@ -28,6 +28,7 @@ final class U2WHUDFrameRelayClient {
     private(set) var droppedFrameCount = 0
     private(set) var reconnectCount = 0
     private(set) var lastFrameBytes = 0
+    private(set) var lastSuccessfulJPEG: Data?
     private(set) var actualFPS: Double = 0
     private(set) var recentKilobytesPerSecond: Double = 0
     private var recentSendSamples: [SendSample] = []
@@ -143,6 +144,7 @@ final class U2WHUDFrameRelayClient {
                 }
                 self.sentFrameCount += 1
                 self.lastFrameBytes = jpeg.count
+                self.lastSuccessfulJPEG = jpeg
                 self.recordSuccessfulSend(bytes: jpeg.count)
                 if self.sentFrameCount == 1 || self.sentFrameCount % 50 == 0 {
                     self.logger.log(

@@ -17,6 +17,7 @@ final class AppState {
     let settings = HudSettings()
     let mapModeSettings = HudMapModeSettings()
     let mapModeCastServer = HudMapModeCastServer()
+    let liveMapDiagnostics: LiveMapDiagnosticRecorder
     let mainVideo: U2WMainVideoClient
     let mainVideoDiagnostic: U2WMainVideoDiagnosticClient
     let hudU2WFrameRelay: U2WHUDFrameRelayClient
@@ -55,6 +56,9 @@ final class AppState {
     private var hudU2WDisplayRecoveryCount = 0
     private(set) var hudU2WLiveRelayActive = false
     private(set) var mainVideoPreviewActive = false
+    private(set) var liveMapDiagnosticStatus = "One-drive recorder armed"
+    private(set) var liveMapDiagnosticBundleURL: URL?
+    private(set) var liveMapDiagnosticCollecting = false
     private var hudU2WMapModeAttemptGeneration: UInt64 = 0
 
     // v90.35.3.11 read-only/temporary topology experiment: while the proven
@@ -188,7 +192,9 @@ final class AppState {
     init() {
         let logger = LogManager()
         self.logger = logger
-        let mainVideo = U2WMainVideoClient(logger: logger)
+        let liveMapDiagnostics = LiveMapDiagnosticRecorder()
+        self.liveMapDiagnostics = liveMapDiagnostics
+        let mainVideo = U2WMainVideoClient(logger: logger, diagnosticRecorder: liveMapDiagnostics)
         self.mainVideo = mainVideo
         let mainVideoDiagnostic = U2WMainVideoDiagnosticClient(logger: logger)
         self.mainVideoDiagnostic = mainVideoDiagnostic
@@ -210,11 +216,14 @@ final class AppState {
         self.navigation = navigation
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
-        routeGuidance.onAdapterReachable = { [weak logger] in
-            // v90.35.3.24.15 navigation-priority boundary: ordinary Route Guidance
-            // NEVER starts MainVideo. Navigation Mode therefore has no dependency on
-            // the experimental live-map relay.
+        routeGuidance.onAdapterReachable = { [weak logger, weak mainVideoDiagnostic, weak liveMapDiagnostics] in
+            // v90.35.3.24.16 keeps the navigation-priority boundary: ordinary
+            // Route Guidance NEVER starts MainVideo. The low-frequency passive
+            // v8.27.2 source/topology observer is diagnostic-only and does not
+            // hook, signal, or restart AppleCarPlay.
             logger?.log("NAV PRIORITY", "Route Guidance endpoint reachable; MainVideo intentionally idle unless Map Mode is explicitly enabled")
+            liveMapDiagnostics?.record("adapter", "route_guidance_reachable_passive_probe_ensure")
+            mainVideoDiagnostic?.ensureStarted(reason: "v24.16 one-drive live-map diagnostic")
         }
         let nowPlaying = CarPlayNowPlayingClient(logger: logger)
         self.nowPlaying = nowPlaying
@@ -801,6 +810,132 @@ final class AppState {
     /// relay + iPhone parser/decoder. It does NOT start the U2W HUD JPEG relay,
     /// change HUD Wi-Fi state, or send KivicCast mode 6. Navigation Mode therefore
     /// remains authoritative on the physical HUD while the preview is running.
+    /// v90.35.3.24.16: one parked tap collects the synchronized iPhone-side
+    /// MainVideo evidence plus best-effort adapter snapshots. Large adapter
+    /// downloads are deferred until collection; only the existing low-frequency
+    /// passive source/topology observer may run during the diagnostic drive.
+    func collectLiveMapDiagnosticBundle() {
+        guard !liveMapDiagnosticCollecting else { return }
+        liveMapDiagnosticCollecting = true
+        liveMapDiagnosticStatus = "Collecting parked live-map evidence…"
+        liveMapDiagnosticBundleURL = nil
+
+        if let image = mainVideo.latestFrame {
+            liveMapDiagnostics.captureImage(image, label: "decoded_final_preview")
+        }
+        if let jpeg = hudU2WFrameRelay.lastSuccessfulJPEG {
+            liveMapDiagnostics.captureJPEG(jpeg, label: "hud_last_confirmed_jpeg")
+        }
+        liveMapDiagnostics.record("export", "user_requested", fields: [
+            "map_mode_active": mapModeActive,
+            "preview_active": mainVideoPreviewActive,
+            "video_phase": mainVideo.transportPhase,
+            "video_frames": mainVideo.frameCount,
+            "raw_bytes": mainVideo.receivedBytes
+        ])
+        liveMapDiagnostics.triggerEvidenceWindow("collection_time", detail: "parked one-tap collection checkpoint")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.liveMapDiagnosticCollecting = false }
+            var evidence: [(name: String, data: Data)] = []
+            let snapshots: [(String, String, TimeInterval)] = [
+                ("u2wvideo-relay-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi", 5),
+                ("u2wvideo-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-status.cgi", 5),
+                ("u2whud-status.cgi", "http://192.168.50.2/cgi-bin/u2whud-status.cgi", 5),
+                ("u2wrgd-live.cgi", "http://192.168.50.2/cgi-bin/u2wrgd-live.cgi", 5),
+                ("u2wvideo-diag-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-diag-status.cgi", 6)
+            ]
+            for (name, rawURL, timeout) in snapshots {
+                if let data = await self.fetchLiveMapDiagnosticEvidence(rawURL, timeout: timeout) {
+                    evidence.append((name, data))
+                }
+            }
+
+            // v8.31 is based on the v8.27.2 diagnostic image. If its passive
+            // bundle endpoint is present, include it automatically after parking.
+            // Failure is non-fatal because the iPhone recorder already contains
+            // exact raw TCP startup/fault/tail evidence.
+            if let bundle = await self.fetchLiveMapDiagnosticEvidence(
+                "http://192.168.50.2/cgi-bin/u2wvideo-diag-bundle.cgi",
+                timeout: 90
+            ), bundle.count > 32 {
+                evidence.append(("U2W_MainVideo_Passive_Diagnostic.tar.gz", bundle))
+            }
+
+            let stateText = """
+            HUD Controller v90.35.3.24.16 — final live-map state
+            timestamp=\(ISO8601DateFormatter().string(from: Date()))
+            paired_u2w=v8.31 Navigation-Priority Raw MainVideo (unchanged)
+            map_mode_active=\(self.mapModeActive)
+            app_preview_active=\(self.mainVideoPreviewActive)
+            mainvideo_phase=\(self.mainVideo.transportPhase)
+            mainvideo_status=\(self.mainVideo.status)
+            mainvideo_connected=\(self.mainVideo.connected)
+            mainvideo_frames=\(self.mainVideo.frameCount)
+            mainvideo_source=\(self.mainVideo.sourceSize)
+            mainvideo_received_bytes=\(self.mainVideo.receivedBytes)
+            mainvideo_last_frame_age=\(self.mainVideo.lastFrameAgeSeconds.map { String(format: "%.3f", $0) } ?? "none")
+            mainvideo_filter=\(self.mainVideo.sanitizerSummary)
+            mainvideo_decoder=\(self.mainVideo.decoderSummary)
+            mainvideo_relay=\(self.mainVideo.adapterCacheSummary)
+            iphone_network=\(self.mainVideo.networkPathSummary)
+            hud_sta_status=\(self.hudU2WSTAStatus)
+            hud_sta_ip=\(self.hudU2WSTAAddress.isEmpty ? "none" : self.hudU2WSTAAddress)
+            hud_sta_reason=\(self.hudU2WSTAReason.isEmpty ? "none" : self.hudU2WSTAReason)
+            frame_ingress_status=\(self.hudU2WFrameRelay.status)
+            hud_frames_sent=\(self.hudU2WFrameRelay.sentFrameCount)
+            hud_frames_dropped=\(self.hudU2WFrameRelay.droppedFrameCount)
+            hud_ingress_reconnects=\(self.hudU2WFrameRelay.reconnectCount)
+            hud_actual_fps=\(String(format: "%.3f", self.hudU2WFrameRelay.actualFPS))
+            hud_recent_kbps=\(String(format: "%.3f", self.hudU2WFrameRelay.recentKilobytesPerSecond))
+            adapter_snapshot_files=\(evidence.count)
+            """
+
+            do {
+                let url = try self.liveMapDiagnostics.exportBundle(
+                    hudLogURL: self.logger.currentFileURL,
+                    summary: stateText,
+                    externalEvidence: evidence
+                )
+                self.liveMapDiagnosticBundleURL = url
+                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+                let bundleBytes = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+                self.liveMapDiagnosticStatus = "Ready • \(ByteCountFormatter.string(fromByteCount: bundleBytes, countStyle: .file))"
+                self.logger.log("LIVE MAP DIAG", "One-drive diagnostic ZIP ready: \(url.lastPathComponent) adapterFiles=\(evidence.count)")
+            } catch {
+                self.liveMapDiagnosticStatus = "Collection failed: \(error.localizedDescription)"
+                self.logger.log("LIVE MAP DIAG", "Diagnostic ZIP export failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func fetchLiveMapDiagnosticEvidence(_ rawURL: String, timeout: TimeInterval) async -> Data? {
+        guard let url = URL(string: rawURL) else { return nil }
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.timeoutInterval = timeout
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout + 5
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        do {
+            let (data, response) = try await session.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            guard (200...299).contains(code), !data.isEmpty else {
+                liveMapDiagnostics.record("adapter_snapshot", "http_non_success", fields: ["url": rawURL, "http": code, "bytes": data.count])
+                return nil
+            }
+            liveMapDiagnostics.record("adapter_snapshot", "captured", fields: ["url": rawURL, "http": code, "bytes": data.count])
+            return data
+        } catch {
+            liveMapDiagnostics.record("adapter_snapshot", "failed", fields: ["url": rawURL, "error": error.localizedDescription])
+            return nil
+        }
+    }
+
     func startMainVideoPreview() {
         guard !firmwareMaintenanceActive else {
             logger.log("MAINVIDEO PREVIEW", "Start blocked during HUD firmware maintenance")
@@ -1798,7 +1933,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.15",
+                "appVersion=v90.35.3.24.16",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
