@@ -14,9 +14,10 @@ final class V90352417ReferenceContinuityTests: XCTestCase {
     }
 
     /// These are compact real 800×480 H.264 headers from the field diagnostic.
-    /// The test changes only frame_num in a P-slice header; it contains no image
-    /// assertions and exists solely to exercise reference-chain continuity.
-    func testMissingReferencePictureIsQuarantinedUntilIDR() {
+    /// v24.20 records a single reference frame_num jump as telemetry but keeps the
+    /// validated frame flowing. Repeated VideoToolbox codecBadDataErr remains the
+    /// authoritative signal for hard decoder recovery.
+    func testSingleReferencePictureJumpIsTelemetryAndFrameStillFlows() {
         let sanitizer = H264MainVideoSanitizer()
         let sps = hexData("2764001fac131450320f69b80868303682211960")
         let pps = hexData("28ee3cb0")
@@ -31,12 +32,15 @@ final class V90352417ReferenceContinuityTests: XCTestCase {
         XCTAssertEqual(sanitizer.process(idr)?.kind, .idr)
         XCTAssertEqual(sanitizer.process(pFrame1)?.kind, .slice)
 
-        XCTAssertNil(sanitizer.process(pFrame3))
+        // v24.20 deliberately forwards this validated frame while recording the
+        // continuity warning; it must not manufacture a WAITING_FRESH_IDR outage.
+        XCTAssertEqual(sanitizer.process(pFrame3)?.kind, .slice)
         XCTAssertEqual(sanitizer.stats.frameNumDiscontinuities, 1)
-        XCTAssertTrue(sanitizer.stats.waitingForReferenceIDR)
+        XCTAssertFalse(sanitizer.stats.waitingForReferenceIDR)
         let reason = sanitizer.takeContinuityBreakReason()
         XCTAssertTrue(reason?.contains("expected=2 actual=3") == true)
 
+        // A real IDR still remains a valid explicit chain reset.
         XCTAssertEqual(sanitizer.process(idr)?.kind, .idr)
         XCTAssertFalse(sanitizer.stats.waitingForReferenceIDR)
         XCTAssertEqual(sanitizer.process(pFrame1)?.kind, .slice)
