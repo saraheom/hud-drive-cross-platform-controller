@@ -45,17 +45,17 @@ def test_ios_v827_keeps_tcp_during_expected_idr_wait_and_understands_heartbeats(
     assert 'Data("U2WH2645".utf8)' in VIDEO
     assert 'if length == 0' in VIDEO
     assert 'live-IDR relay transport heartbeat' in VIDEO
-    assert 'live-IDR recovery (v8.27/v8.28/v8.29); TCP PRESERVED' in VIDEO
+    assert 'relay-aware live-IDR wait (v8.27/v8.28/v8.29/v8.30); TCP PRESERVED' in VIDEO
     assert 'waiting for next live IDR' in VIDEO
-    assert 'self.adapterRelayVersion.contains("v8.27") || self.adapterRelayVersion.contains("v8.28")' in VIDEO
+    assert 'relayVersion.contains("v8.32") || relayVersion.contains("v8.31")' in VIDEO
     assert 'source-silence reconnect SUPPRESSED until real TCP failure/EOF or manual request' in VIDEO
 
 
 def test_physical_hud_viewer_health_fails_safe_without_restarting_mainvideo():
     assert 'hudU2WDisplayHealthTask' in APP
     assert 'hudU2WCurrentSessionWasReady' in APP
-    assert 'hudU2WConsecutiveUnhealthySTAStatus >= 2' in APP
-    assert 'HUD STA status silent >12s after live session' in APP
+    assert 'KEEPING physical mode 6 + JPEG relay active' in APP
+    assert 'Map Mode active • live map recovering (fallback canvas)' in APP
     assert 'Physical Map Mode fail-safe → stock dashboard' in APP
     assert 'MainVideo + iPhone JPEG relay intentionally kept alive' in APP
     assert 'viewer recovery #' in APP
@@ -87,5 +87,5 @@ def test_obd_archive_collection_remains_manual_and_no_longer_trusts_stale_gps():
     assert 'no GPS gate' in APP
     assert 'Collecting/reconstructing HUD diagnostic ZIP' in APP
     assert 'Collect/reconstruct HUD OBD ZIP (parked)' in UI
-    assert 'v90.35.3.24.13 pairs with U2W v8.30' in UI
-    assert '10 fps remains the recommended validation cadence' in UI
+    assert 'v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay' in UI
+    assert 'HUD map FPS probe' in UI and 'supportedHUDFrameRates' in (ROOT/'ios/HUDController/Models/HudMapModeSettings.swift').read_text()

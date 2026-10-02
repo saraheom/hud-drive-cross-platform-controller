@@ -10,14 +10,14 @@ UI = (ROOT / 'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 def test_mainvideo_uses_continuous_dedicated_tcp():
     transport = APP.split('bluetooth.onTransportReady =', 1)[1].split('bluetooth.onHUDSessionReset =', 1)[0]
-    assert 'mainVideo.start(reason: "HUD BLE transport ready — reassert continuous predecode")' in transport
-    assert 'mainVideo.start(reason: "live U2W Map Mode relay")' in APP
-    assert 'keep continuous predecode alive' in APP
+    assert 'mainVideo.start(' not in transport
+    assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
+    assert 'do NOT start MainVideo at app launch' in APP
     assert 'U2W H.264 relay' in UI
 
 
 def test_dedicated_tcp_filter_runs_on_iphone():
-    assert 'v8.24/v8.25/v8.26/v8.27/v8.28/v8.29-tcp-15332' in VIDEO
+    assert 'architecture=v8.33-lossless-mirror-v831-raw-tcp-15332' in VIDEO
     assert 'U2WMainVideoTCPWorker' in VIDEO
     assert 'U2WH2642' in VIDEO and 'U2WH2643' in VIDEO
     assert 'port: 15332' in VIDEO

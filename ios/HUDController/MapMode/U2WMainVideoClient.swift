@@ -6,13 +6,14 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.19 MainVideo client for U2W v8.32. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.20 MainVideo client for U2W v8.33 Lossless Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
-/// U2W v8.32 preserves the v8.31 process-safety boundary and adds only a hard-capped validated recovery checkpoint from the proven v8.11 mirror
-/// through a tiny one-client TCP relay with no adapter-side H.264 parser, reference-chain
-/// cache, GOP replay, or boot-time process. The iPhone owns Annex-B splitting, semantic
-/// filtering, SPS/PPS/IDR tracking and VideoToolbox. If a live decoder anchor cannot be
-/// established promptly, Map Mode fails closed and stock Navigation remains active.
+/// U2W v8.33 fixes the passive v8.11 mirror itself: file rotation preserves the complete
+/// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
+/// and vectored hooks mirror only the bytes the real call actually wrote. The TCP/15332
+/// transport is the exact v8.31 32-KiB raw relay: no adapter parser/cache/GOP replay, no
+/// source reacquisition, no autostart, and no AppleCarPlay/Route Guidance process control.
+/// The iPhone continues to own Annex-B parsing, strict semantic validation and VideoToolbox.
 @MainActor
 @Observable
 final class U2WMainVideoClient {
@@ -124,7 +125,7 @@ final class U2WMainVideoClient {
             return
         }
         running = true
-        status = "Preparing navigation-priority U2W MainVideo relay…"
+        status = "Preparing lossless-mirror U2W MainVideo relay…"
         transportPhase = "WAITING_RELAY"
         latestFrame = nil
         frameCount = 0
@@ -157,7 +158,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.32-safe-bounded-checkpoint-tcp-15332 base=v8.31-safety/v8.27.2-validator/v8.11 explicitOnDemandVideoOnly=1 checkpointCap=1572864 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.33-lossless-mirror-v831-raw-tcp-15332 base=v8.11-lossless-atomic-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
         diagnosticRecorder.record("mainvideo", "start", fields: ["reason": reason, "generation": workerGeneration + 1])
         startNetworkPathLogging()
         startFreshnessWatchdog()
@@ -175,18 +176,18 @@ final class U2WMainVideoClient {
                 let ready = await self.ensureAdapterRelay(reason: "bootstrap #\(attempt) / \(reason)")
                 guard self.running, !Task.isCancelled else { return }
                 if ready {
-                    self.logger.log("MAINVIDEO PREFLIGHT", "v8.32 safe-checkpoint relay confirmed RUNNING before TCP open attempt=\(attempt)")
+                    self.logger.log("MAINVIDEO PREFLIGHT", "v8.33 lossless-mirror raw relay confirmed RUNNING before TCP open attempt=\(attempt)")
                     self.startWorker(reason: "relay confirmed / \(reason)")
                     return
                 }
                 self.status = "Waiting for explicit Map Mode recovery relay…"
-                self.logger.log("MAINVIDEO PREFLIGHT", "safe-checkpoint relay not ready attempt=\(attempt)/3; Navigation path remains independent")
+                self.logger.log("MAINVIDEO PREFLIGHT", "lossless-mirror raw relay not ready attempt=\(attempt)/3; Navigation path remains independent")
                 if attempt < 3 { try? await Task.sleep(for: .seconds(1)) }
             }
             if self.running, self.worker == nil {
                 self.transportPhase = "FAILED_SAFE"
                 self.status = "Live map unavailable — Navigation remains active"
-                self.logger.log("MAINVIDEO PREFLIGHT", "FAIL CLOSED: safe-checkpoint relay unavailable after 3 attempts; no further adapter retries")
+                self.logger.log("MAINVIDEO PREFLIGHT", "FAIL CLOSED: lossless-mirror raw relay unavailable after 3 attempts; no further adapter retries")
             }
         }
     }
@@ -264,7 +265,17 @@ final class U2WMainVideoClient {
             let recentOverflows = fields["recent_anchor_invalidations"] ?? fields["recent_anchor_overflows"] ?? "?"
             let liveIDRBoots = fields["live_idr_bootstraps"] ?? fields["client_live_bootstraps"] ?? "?"
             let lastBootstrapMode = fields["last_bootstrap_mode"] ?? "?"
-            if relayVersion.contains("v8.32") {
+            if relayVersion.contains("v8.33") {
+                let rawBuffer = fields["raw_buffer_bytes"] ?? "32768"
+                let mirrorVersion = fields["mirror_version"] ?? "?"
+                let mirrorGeneration = fields["mirror_generation"] ?? "?"
+                let rotations = fields["mirror_rotation_success"] ?? "?"
+                let fallbacks = fields["mirror_rotation_fallback_append"] ?? "?"
+                let preservedPrefix = fields["mirror_prefix_preserved_bytes"] ?? "?"
+                let partialRetries = fields["mirror_partial_write_retries"] ?? "?"
+                let writeFailures = fields["mirror_write_failures"] ?? "?"
+                adapterCacheSummary = "\(process) • exact v8.31 raw relay \(rawBuffer)B • mirror \(mirrorVersion) gen \(mirrorGeneration) rotations \(rotations) fallbackAppend \(fallbacks) preservedPrefix \(preservedPrefix)B partialRetry \(partialRetries) writeFail \(writeFailures) • adapterParser NO cache NO • Navigation independent"
+            } else if relayVersion.contains("v8.32") {
                 let checkpointValid = fields["checkpoint_valid"] ?? "?"
                 let checkpointBytes = fields["checkpoint_bytes"] ?? "?"
                 let checkpointNals = fields["checkpoint_nals"] ?? "?"
@@ -329,7 +340,7 @@ final class U2WMainVideoClient {
             } else {
                 adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             }
-            let supportedRelay = relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
+            let supportedRelay = relayVersion.contains("v8.33") || relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
             let ready = (200...299).contains(code) && process == "RUNNING" && marker == "YES" && supportedRelay
             adapterRelayConfirmedRunning = ready
             logger.log("U2W H264 RELAY", "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) \(adapterCacheSummary)")
@@ -1088,8 +1099,8 @@ private final class U2WMainVideoTCPWorker {
                 self.boundedCheckpointRecovery = false
                 self.annexBParser.reset()
                 self.onPhase?("WAITING_LIVE_IDR")
-                self.onStatus?("U2W v8.31 raw relay connected • iPhone parsing live mirror", true)
-                self.onDiagnostic?("TCP relay handshake U2WH2648 accepted; adapter parser/cache=NONE; raw Annex-B parsing owned by iPhone")
+                self.onStatus?("U2W raw relay connected • iPhone parsing lossless mirror", true)
+                self.onDiagnostic?("TCP relay handshake U2WH2648 accepted; v8.33 package uses exact v8.31 raw relay; adapter parser/cache=NONE; raw Annex-B parsing owned by iPhone; mirror rotation is lossless/atomic")
                 self.receiveRawBytes(connection, generation: generation)
                 return
             } else if text == "U2WH2647" {
@@ -1162,13 +1173,13 @@ private final class U2WMainVideoTCPWorker {
                 self.emitSanitizerStats()
             }
             if let error {
-                self.onDiagnostic?("v8.31 raw TCP read failed generation=\(generation) error=\(error.localizedDescription); FAIL CLOSED, no reconnect loop")
+                self.onDiagnostic?("raw TCP read failed generation=\(generation) error=\(error.localizedDescription); FAIL CLOSED, no reconnect loop")
                 self.onPhase?("FAILED_SAFE")
                 self.onStatus?("Live map transport failed — Navigation remains active", false)
                 return
             }
             if complete {
-                self.onDiagnostic?("v8.31 raw TCP EOF generation=\(generation); FAIL CLOSED, no reconnect loop")
+                self.onDiagnostic?("raw TCP EOF generation=\(generation); FAIL CLOSED, no reconnect loop")
                 self.onPhase?("FAILED_SAFE")
                 self.onStatus?("Live map transport ended — Navigation remains active", false)
                 return
@@ -1180,34 +1191,14 @@ private final class U2WMainVideoTCPWorker {
     private func processNAL(_ nal: Data, generation: Int) {
         let accepted = sanitizer.process(nal)
 
-        // v24.17: the field recorder proved the raw v8.11 mirror can cross a
-        // rolling-source boundary with a missing reference picture while TCP and
-        // AppleCarPlay remain healthy.  The sanitizer already parses frame_num,
-        // so consume its continuity signal *before* another dependent slice can
-        // poison VideoToolbox. Preserve validated SPS/PPS, invalidate the broken
-        // reference state, and quarantine P-slices until the next validated IDR.
-        if let continuityBreak = sanitizer.takeContinuityBreakReason() {
-            onDiagnostic?("REFERENCE CHAIN BREAK detected generation=\(generation): \(continuityBreak)")
-            if boundedCheckpointRecovery, !recentAnchorRecoveryUsed {
-                decoder.hardRecoverAwaitingFreshCodecEpoch(reason: continuityBreak)
-                sanitizer.reset(clearParameterSets: true)
-                recentAnchorRecoveryUsed = true
-                waitingForFreshLiveIDRAfterRejectedAnchor = false
-                onDecoderRecovery?(continuityBreak)
-                emitDecoderState()
-                onPhase?("DECODER_RECOVERY")
-                onStatus?("Reference discontinuity • reacquiring v8.32 safe checkpoint", true)
-                onDiagnostic?("v8.32 continuity recovery: closing only TCP/15332 and reconnecting ONCE; AppleCarPlay/v8.11 exporter remain untouched")
-                closeCurrentConnection()
-                scheduleReconnect(reason: "v8.32 reference-chain checkpoint recovery", delay: 0.25)
-                return
-            }
-            decoder.hardRecoverAwaitingIDR(reason: continuityBreak)
-            waitingForFreshLiveIDRAfterRejectedAnchor = true
-            onDecoderRecovery?(continuityBreak)
-            emitDecoderState()
-            onPhase?("WAITING_FRESH_IDR")
-            onStatus?("Reference discontinuity detected • waiting for clean live IDR", true)
+        // v24.20: a single frame_num jump is diagnostic evidence, not a hard
+        // recovery trigger. With the v8.33 lossless mirror, normal operation should
+        // be byte-continuous; if a jump is ever observed, keep feeding the validated
+        // frame and let repeated VideoToolbox codecBadDataErr (-8969) prove whether
+        // the decode epoch is actually unusable. This avoids manufacturing a long
+        // WAITING_FRESH_IDR outage from one continuity observation.
+        if let continuityWarning = sanitizer.takeContinuityBreakReason() {
+            onDiagnostic?("REFERENCE CONTINUITY WARNING generation=\(generation): \(continuityWarning); frame forwarded, decoder remains authoritative")
         }
 
         if let accepted {

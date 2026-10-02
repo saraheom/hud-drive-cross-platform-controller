@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.24.20 + U2W v8.33 — lossless MainVideo mirror + exact v8.31 raw relay
+
+This paired release fixes the byte-loss defect isolated in the exact v8.11 passive MainVideo mirror. At a 12 MiB mirror rotation, the old shim could discard continuation bytes that preceded the first SPS inside the successful AppleCarPlay write, leaving OEM CarPlay healthy while corrupting the copied H.264 reference chain. U2W v8.33 preserves the **entire** successful write across an atomic inode swap, retries partial mirror writes, and mirrors only the byte count actually written by vectored calls.
+
+The TCP/15332 transport is the exact field-proven **v8.31 32-KiB raw relay**: no adapter H.264 parser, checkpoint/GOP cache, source reacquisition, autostart, or AppleCarPlay/ARMiPhoneIAP2 process control. The iPhone keeps v24.19's fallback-first physical Map Mode and strict false-IDR filtering, but a single `frame_num` jump is now telemetry rather than an automatic decoder teardown; repeated VideoToolbox `-8969` remains the hard-recovery trigger.
+
+**This release requires the paired U2W v8.33 image and a normal updater reboot.** See `V90_35_3_24_20_RELEASE.md`, `V90_35_3_24_20_BUILD_VERIFY.txt`, and `u2w/v8.33_LosslessMirrorRawRelay/README.md`.
+
+---
+
 # HUD Controller v90.35.3.24.19 + U2W v8.32 — safe bounded checkpoint + robust physical Map Mode
 
 This paired release is based on the October 1 one-drive MainVideo capture and the September 21 v8.24 sustained-success comparison. It keeps the v8.31 process-safety boundary while adding only a hard-capped 1.5 MiB current-generation recovery checkpoint on U2W. The relay remains on-demand, never source-reacquires or controls AppleCarPlay/ARMiPhoneIAP2, never scans archived generations, and leaves Route Guidance/Now Playing untouched.

@@ -38,7 +38,7 @@ def test_v831_mainvideo_is_explicit_map_mode_only_and_navigation_independent():
     assert "HUD BLE transport ready — early predecode" not in APP
     assert "Route Guidance endpoint reachable — keep early predecode warm" not in APP
     assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
-    assert "architecture=v8.31-navigation-priority-raw-tcp-15332" in VIDEO
+    assert "architecture=v8.33-lossless-mirror-v831-raw-tcp-15332" in VIDEO
     assert 'Data("U2WH2648".utf8)' in VIDEO
     assert "adapter parser/cache=NONE" in VIDEO
 
@@ -57,8 +57,8 @@ def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
     assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")' in APP
     assert 'passive v8.27.2 source/topology observer' in UI
     assert 'never starts MainVideo' in UI
-    assert "v90.35.3.24.18 pairs with unchanged U2W v8.31" in UI
-    assert "never kills/signals/restarts AppleCarPlay" in UI
+    assert "v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay" in UI
+    assert "no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control" in UI
 
 
 def test_physical_seq1428_stall_fixture_matches_regression_gate():

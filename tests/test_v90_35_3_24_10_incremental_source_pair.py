@@ -8,12 +8,12 @@ OLD = (ROOT / 'V90_35_3_24_10_RELEASE.md').read_text()
 
 def test_v2410_history_is_preserved_but_current_release_is_passive_diagnostic():
     assert 'U2W v8.29' in OLD
-    assert 'v8.31-navigation-priority-raw-tcp-15332' in VIDEO
+    assert 'v8.33-lossless-mirror-v831-raw-tcp-15332' in VIDEO
     assert 'self.latestFrame = image' in VIDEO
     assert 'self.transportPhase = "LIVE"' in VIDEO
 
 def test_v2411_obd_manual_collection_still_has_no_gps_gate():
-    assert 'appVersion=v90.35.3.24.18' in APP
+    assert 'appVersion=v90.35.3.24.20' in APP
     assert 'no GPS gate; v24.10 length/framing reconstruction retained' in APP
     assert 'guard speedEngine.currentSpeedMph <= 1 else' not in APP
 

@@ -281,14 +281,14 @@ final class H264MainVideoSanitizer {
                        previousModulus == modulus {
                         let expected = (previous + 1) % modulus
                         if info.frameNum != expected {
+                            // v24.20: treat a single frame_num jump as telemetry, not
+                            // proof that the decode epoch is unusable. The field traces
+                            // showed that hard-quarantining here can manufacture a
+                            // minutes-long outage. The decoder's repeated codecBadDataErr
+                            // path remains the authoritative hard-recovery trigger.
                             stats.frameNumDiscontinuities += 1
-                            awaitingReferenceIDR = true
-                            stats.waitingForReferenceIDR = true
-                            continuationFrame = nil
                             pendingContinuityBreakReason =
                                 "reference frame_num discontinuity previous=\(previous) expected=\(expected) actual=\(info.frameNum) modulus=\(modulus) pps=\(info.ppsID)"
-                            reject()
-                            return nil
                         }
                     }
 

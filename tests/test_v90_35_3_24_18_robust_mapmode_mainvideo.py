@@ -36,14 +36,14 @@ def test_mode6_handoff_requires_an_actual_accepted_jpeg_not_mainvideo():
 
 
 def test_codec_bad_data_recovery_preserves_validated_parameter_sets_and_tcp():
-    assert 'sanitizer.quarantineReferenceChainUntilIDR()' in VIDEO
-    assert 'decoder.hardRecoverAwaitingIDR(reason: reason)' in VIDEO
-    assert 'validated SPS/PPS PRESERVED; TCP PRESERVED' in VIDEO
-    assert 'sanitizer.reset(clearParameterSets: true)' not in VIDEO
+    assert 'decoder.hardRecoverAwaitingFreshCodecEpoch(reason: reason)' in VIDEO
+    assert 'sanitizer.reset(clearParameterSets: true)' in VIDEO
+    assert "reconnecting TCP ONCE for the adapter's validated current-generation checkpoint" in VIDEO
+    assert 'checkpoint already attempted in this recovery episode; no reconnect loop' in VIDEO
     assert 'func quarantineReferenceChainUntilIDR()' in SAN
 
 
 def test_combined_release_keeps_u2w_v831_unchanged():
-    assert 'v90.35.3.24.18 pairs with unchanged U2W v8.31' in UI
-    assert 'never kills/signals/restarts AppleCarPlay' in UI
-    assert 'appVersion=v90.35.3.24.18' in APP
+    assert 'v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay' in UI
+    assert 'no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control' in UI
+    assert 'appVersion=v90.35.3.24.20' in APP

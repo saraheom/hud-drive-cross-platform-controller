@@ -8,22 +8,20 @@ APP = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
 UI = (ROOT / "ios/HUDController/UI/NavigationHUDPreviewCard.swift").read_text()
 
 
-def test_reference_frame_num_is_now_an_enforced_decoder_safety_boundary():
+def test_reference_frame_num_is_telemetry_while_decoder_owns_hard_recovery():
     assert "frameNumDiscontinuities" in SAN
-    assert "awaitingReferenceIDR" in SAN
     assert "let expected = (previous + 1) % modulus" in SAN
     assert "reference frame_num discontinuity previous=" in SAN
     assert "pendingContinuityBreakReason" in SAN
-    assert "Never feed dependent P-slices" in SAN
+    assert "treat a single frame_num jump as telemetry" in SAN
+    assert "decoder's repeated codecBadDataErr" in SAN
     assert "takeContinuityBreakReason" in SAN
 
 
-def test_transport_worker_invalidates_reference_chain_before_more_p_slices_reach_vt():
-    assert 'REFERENCE CHAIN BREAK detected on raw TCP generation=' in VIDEO
-    assert 'decoder.hardRecoverAwaitingIDR(reason: continuityBreak)' in VIDEO
-    assert 'Reference discontinuity detected • waiting for clean live IDR' in VIDEO
-    assert 'waitingForFreshLiveIDRAfterRejectedAnchor = true' in VIDEO
-
+def test_transport_worker_treats_single_reference_jump_as_telemetry():
+    assert 'REFERENCE CONTINUITY WARNING generation=' in VIDEO
+    assert 'frame forwarded, decoder remains authoritative' in VIDEO
+    assert 'path remains the authoritative hard-recovery trigger' in SAN
 
 def test_codec_bad_data_burst_escalates_after_three_not_thousands():
     assert 'consecutiveDecodeErrors >= 3' in VIDEO
@@ -45,6 +43,6 @@ def test_background_transition_does_not_deliberately_kill_live_map_anymore():
 def test_release_remains_navigation_safe_and_u2w_v831_is_unchanged():
     assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
     assert 'mainVideo.start(reason: "app-only live preview")' in APP
-    assert 'v90.35.3.24.18 pairs with unchanged U2W v8.31' in UI
-    assert 'never kills/signals/restarts AppleCarPlay' in UI
-    assert 'appVersion=v90.35.3.24.18' in APP
+    assert 'v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay' in UI
+    assert 'no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control' in UI
+    assert 'appVersion=v90.35.3.24.20' in APP

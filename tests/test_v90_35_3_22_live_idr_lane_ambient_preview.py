@@ -26,7 +26,7 @@ def test_v823_waits_for_fresh_live_idr_without_history_burst():
 
 def test_tcp_is_not_opened_until_relay_is_confirmed_and_waiting_recovers():
     assert 'relay confirmed RUNNING before TCP open' in VIDEO
-    assert 'TCP intentionally NOT opened' in VIDEO
+    assert 'lossless-mirror raw relay not ready attempt=' in VIDEO and 'Navigation path remains independent' in VIDEO
     assert 'TCP WAITING deadline expired' in VIDEO
     assert '4s retry deadline armed' in VIDEO
     assert 'recentAnchorRecoveryUsed' in VIDEO and 'WAITING_FRESH_IDR' in VIDEO

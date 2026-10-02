@@ -9,9 +9,9 @@ UI = (ROOT / 'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 
 def test_v2416_version_and_unchanged_v831_pair():
-    assert 'appVersion=v90.35.3.24.18' in APP
-    assert 'v90.35.3.24.18 pairs with unchanged U2W v8.31' in UI
-    assert 'v8.31-navigation-priority-raw' in CLIENT
+    assert 'appVersion=v90.35.3.24.20' in APP
+    assert 'v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay' in UI
+    assert 'v8.33-lossless-mirror-v831-raw-tcp-15332' in CLIENT
 
 
 def test_exact_raw_tcp_bytes_are_captured_before_annexb_parser():

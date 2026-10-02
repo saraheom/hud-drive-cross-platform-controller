@@ -506,7 +506,7 @@ struct NavigationHUDPreviewCard: View {
                             Label("Share passive codec diagnostic bundle", systemImage: "square.and.arrow.up")
                         }
                     }
-                    Text("These controls expose the passive v8.27.2 source/topology observer used by the v24.18 one-drive forensic build. The observer is ensured when Route Guidance reaches the adapter, but it remains read-only and never starts MainVideo, hooks/signals/restarts AppleCarPlay, or changes Navigation. U2W v8.32 starts its on-demand safe-checkpoint video relay only for explicit Live Preview/Map Mode; the large passive bundle is downloaded only after parking.")
+                    Text("These controls expose the passive v8.27.2 source/topology observer used by the v24.18 one-drive forensic build. The observer is ensured when Route Guidance reaches the adapter, but it remains read-only and never starts MainVideo, hooks/signals/restarts AppleCarPlay, or changes Navigation. U2W v8.33 starts its on-demand exact-v8.31 raw video relay only for explicit Live Preview/Map Mode; the large passive bundle is downloaded only after parking.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -628,7 +628,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.19 pairs with U2W v8.32 Safe Bounded Checkpoint. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.32 keeps the v8.31 safety boundary—no autostart, source selector, AppleCarPlay/ARMiPhoneIAP2 control, Route Guidance change, or historical-generation scan—while adding strict H.264 validation plus a hard-capped current-generation recovery checkpoint. The iPhone rejects false type-5 IDRs and performs at most one TCP/15332 checkpoint re-bootstrap per recovery episode.")
+                    Text("v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.33 fixes the proven v8.11 mirror-copy defect at the 12 MiB generation boundary: it preserves the complete successful AppleCarPlay write with an atomic inode swap, retries partial mirror writes, and mirrors only bytes actually written by writev/sendmsg. The TCP/15332 path is the exact v8.31 32 KiB raw relay—no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control, Route Guidance change, or Now Playing change.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

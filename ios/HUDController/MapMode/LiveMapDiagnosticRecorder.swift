@@ -1,10 +1,10 @@
 import Foundation
 import UIKit
 
-/// v90.35.3.24.19 one-drive MainVideo evidence recorder.
+/// v90.35.3.24.20 one-drive MainVideo evidence recorder.
 ///
 /// This recorder is intentionally iPhone-side and passive. It never signals or
-/// restarts AppleCarPlay, never changes the v8.31 relay architecture, and never
+/// restarts AppleCarPlay, never changes AppleCarPlay/Route Guidance behavior, and never
 /// enables Map Mode. The TCP worker feeds it the exact raw bytes already being
 /// delivered to the production Annex-B parser. Storage is bounded so a normal
 /// commute can preserve startup + failure/recovery evidence without recording an
@@ -250,9 +250,9 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             try? timelineHandle?.synchronize()
 
             let manifest = """
-            Live Map Diagnostic Bundle — HUD Controller v90.35.3.24.19
+            Live Map Diagnostic Bundle — HUD Controller v90.35.3.24.20
             ==========================================================
-            Paired adapter: U2W v8.31 Navigation-Priority Raw MainVideo (UNCHANGED)
+            Paired adapter: U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay
 
             Purpose
             -------
@@ -294,7 +294,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             try? timelineHandle?.synchronize()
 
             let parent = sessionDirectory.deletingLastPathComponent()
-            let zipURL = parent.appendingPathComponent("LiveMap_Diagnostic_v90.35.3.24.19_\(Self.timestamp()).zip")
+            let zipURL = parent.appendingPathComponent("LiveMap_Diagnostic_v90.35.3.24.20_\(Self.timestamp()).zip")
             try? fileManager.removeItem(at: zipURL)
             let writer = try LiveMapStoredZipWriter(url: zipURL)
             let files = try fileManager.subpathsOfDirectory(atPath: sessionDirectory.path)

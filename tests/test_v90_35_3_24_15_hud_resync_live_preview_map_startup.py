@@ -77,5 +77,5 @@ def test_map_mode_stop_preserves_only_explicit_preview():
 
 
 def test_current_version_and_pairing_marker():
-    assert 'appVersion=v90.35.3.24.18' in APP
-    assert 'v90.35.3.24.18 pairs with unchanged U2W v8.31' in UI
+    assert 'appVersion=v90.35.3.24.20' in APP
+    assert 'v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay' in UI

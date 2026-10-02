@@ -24,7 +24,7 @@ def test_v824_recent_idr_closes_client_after_keyframe_race_without_big_gop_burst
 
 
 def test_ios_uses_v824_and_bounded_exact_framing_with_software_decoder_preference():
-    assert 'v8.24/v8.25/v8.26/v8.27/v8.28/v8.29-tcp-15332' in VIDEO
+    assert 'architecture=v8.33-lossless-mirror-v831-raw-tcp-15332' in VIDEO
     assert 'validated/recent/live IDR bootstrap enabled' in VIDEO
     assert 'receiveExactly' in VIDEO
     assert 'maximumNALBytes = 512 * 1024' in VIDEO
@@ -43,12 +43,10 @@ def test_decoder_recovery_reconnects_to_recent_anchor_instead_of_dead_session_lo
 
 
 def test_mainvideo_warms_before_hud_ble_and_survives_hud_ble_transport_loss():
-    assert 'app launch — early U2W car-session predecode' in APP
-    disconnect = APP.split('bluetooth.onTransportDisconnected =', 1)[1]
-    preserve_index = disconnect.index('HUD BLE disconnected — preserve U2W car-session predecode')
-    callback_prefix = disconnect[:preserve_index + 128]
-    assert 'HUD BLE disconnected — preserve U2W car-session predecode' in callback_prefix
-    assert 'mainVideo.stop' not in callback_prefix
+    assert 'do NOT start MainVideo at app launch' in APP
+    transport = APP.split('bluetooth.onTransportReady =', 1)[1].split('bluetooth.onHUDSessionReset =', 1)[0]
+    assert 'mainVideo.start(' not in transport
+    assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
 
 
 def test_center_only_day_guard_is_one_second_and_dashboard_does_not_gate_day():

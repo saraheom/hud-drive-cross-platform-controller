@@ -1,0 +1,66 @@
+HUD Controller v90.35.3.24.20 + U2W v8.33 — build verification
+================================================================
+
+PAIRING
+App: HUD Controller v90.35.3.24.20
+U2W: v8.33 Lossless Mirror + exact v8.31 Raw Relay
+U2W install image SHA256: 9ee23ce14b49ccab5bf87f7c5136ca55360c0c675c99721c172c75800749eab7
+U2W rollback image SHA256: 285696bc2816a59c160b534cb35eb4e68f22312eb3b1276ae1cc8af9d9b74b1f
+
+ROOT-CAUSE FIX
+- v8.33 mirror is derived from the exact v8.11 passive mirror source.
+- real AppleCarPlay write/send/writev/sendmsg completes first and its return value is unchanged.
+- rolling mirror rotation preserves the complete successful AppleCarPlay write using an atomic next-inode rename.
+- failed atomic rotation falls back to appending the complete buffer to the old generation; byte preservation outranks the nominal 12 MiB cap.
+- regular mirror writes use write-all semantics.
+- writev/sendmsg mirror only the number of bytes the real call actually returned.
+- source selection remains the v8.11 first-SPS outbound-fd rule.
+
+U2W RUNTIME SAFETY
+- lossless shim SHA256: 3b8ae1f18c3f7b0c1efc81a993dcaa41facba8d5a24d63ca4177c6a8a58dc805
+- exact v8.11 rollback shim SHA256: f2ac899e4a03fad537a306a66664ce2c29d9e549e35c46883cbf6aed34a99d1f
+- exact v8.31 raw relay SHA256: 1c19377dbc9bdc4256dc109053824704a966448ffa9ae8d3472cf76c895e4a90
+- exact v8.31 relay raw buffer: 32768 bytes
+- adapter semantic H.264 parser/cache: NONE
+- relay autostart: NO
+- AppleCarPlay/ARMiPhoneIAP2 kill/signal/restart: NONE
+- source/FD reacquisition: NONE
+- Route Guidance/Now Playing changes: NONE
+- HUD JPEG relay changes: NONE
+- shell syntax: PASS
+- legacy U2W package encrypt/decrypt/tar round trip: PASS
+
+APP RUNTIME CHANGES FROM v24.19
+Only these production Swift files differ:
+- ios/HUDController/App/AppState.swift
+- ios/HUDController/MapMode/H264MainVideoSanitizer.swift
+- ios/HUDController/MapMode/LiveMapDiagnosticRecorder.swift
+- ios/HUDController/MapMode/U2WMainVideoClient.swift
+- ios/HUDController/UI/NavigationHUDPreviewCard.swift
+
+Behavioral delta:
+- recognize/report v8.33 mirror counters and exact-v8.31 raw relay pairing;
+- keep v24.19 fallback-first physical Map Mode unchanged;
+- keep strict false type-5 IDR validation;
+- single frame_num discontinuity becomes telemetry and the accepted frame is forwarded;
+- repeated VideoToolbox codecBadDataErr (-8969) remains the authoritative hard-recovery path.
+
+UNCHANGED CRITICAL PRODUCTION FILES
+HudBluetoothManager.swift SHA256:
+e7b133b63548ec70de10e22f8241fe7d11f6d5b7dfebc77ee93adc30337c42a2
+HudMapModeCanvas.swift SHA256:
+92bade118e575b2291c4f7c524e479ec9362c4369695dfd9f5e98bc905b2f45c
+AmbientLightMonitor.swift SHA256:
+1f816614d42a49a0b0fd49b23c11819533ebd8e3372fca2065c979c83c484ef9
+AmbientLightModels.swift SHA256:
+89de3b76e71e5e8d8e274c44503024670ab876ef26ac42dea8b9ad8e6268d1fd
+AmbientLightingView.swift SHA256:
+0395b7553b20f290bc683ad6bfb9c464cf1c9514bcf242281c12cb25aec43769
+U2WHUDFrameRelayClient.swift SHA256:
+91b4281725ac7a5597bebf77fc0c386d95c209259db6f2fd9aeb4dcee989f030
+
+REGRESSION VALIDATION
+- pytest: 492 passed, 1 intentionally skipped
+- Swift syntax parse: 209/209 PASS
+- dedicated v24.20 tests cover atomic full-buffer rotation, fallback append, write-all, real-return-byte vectored mirroring, exact v8.31 relay hash, and absence of source reacquisition/large cache/autostart/process control.
+- historical v8.32 handshake support retained for rollback compatibility.
