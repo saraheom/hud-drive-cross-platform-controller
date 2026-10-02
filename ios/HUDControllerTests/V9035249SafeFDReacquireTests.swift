@@ -12,7 +12,7 @@ final class V9035249SafeFDReacquireTests: XCTestCase {
         XCTAssertTrue(video.contains("Data(\"U2WH2646\".utf8)"))
         XCTAssertTrue(video.contains("preflightRequiredContinuity: TimeInterval = 300.0"))
         XCTAssertTrue(video.contains("LIVE • 5m continuity verified"))
-        XCTAssertTrue(video.contains("v8.31-navigation-priority-raw-tcp-15332"))
+        XCTAssertTrue(video.contains("v8.32-safe-bounded-checkpoint-tcp-15332"))
     }
 
     func testCodecBadDataResetsDecoderButPreservesValidatedParameterSetsUntilIDR() throws {

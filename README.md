@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.24.19 + U2W v8.32 — safe bounded checkpoint + robust physical Map Mode
+
+This paired release is based on the October 1 one-drive MainVideo capture and the September 21 v8.24 sustained-success comparison. It keeps the v8.31 process-safety boundary while adding only a hard-capped 1.5 MiB current-generation recovery checkpoint on U2W. The relay remains on-demand, never source-reacquires or controls AppleCarPlay/ARMiPhoneIAP2, never scans archived generations, and leaves Route Guidance/Now Playing untouched.
+
+On iPhone, false type-5 IDR candidates are rejected unless their slice is intra-coded with `frame_num == 0`. A v8.32 reference/decoder recovery discards the poisoned codec epoch and performs at most one TCP/15332 reconnect to request the validated checkpoint; it never enters an unbounded reconnect loop. Physical HUD Map Mode is independent of MainVideo health: once TCP/15331 and mode 6 are established, a live-video outage keeps the fallback canvas on the HUD and swaps back to live imagery automatically after recovery.
+
+**This release requires the paired U2W v8.32 image.** A safe rollback image restores the exact v8.31 relay. See `V90_35_3_24_19_RELEASE.md`, `V90_35_3_24_19_BUILD_VERIFY.txt`, and `u2w/v8.32_SafeBoundedCheckpoint/README.md`.
+
+---
+
 # HUD Controller v90.35.3.24.18 — robust physical Map Mode + next-IDR MainVideo recovery
 
 This app-only release keeps U2W v8.31 unchanged and combines two fixes isolated by the 2026-10-01 field drive. Physical Map Mode is restored to the proven fallback-first contract: iPhone→U2W TCP/15331 must accept a JPEG, then HUD mode 6/STA starts whether or not MainVideo is currently decoded. The center map uses live MainVideo only while its frame is fresh; otherwise the existing schematic map remains visible without exiting Map Mode. TCP/15331 now has bounded `.preparing`/`.waiting` recovery. MainVideo `codecBadDataErr (-8969)` now invalidates the poisoned VideoToolbox/reference chain while preserving validated SPS/PPS and the healthy v8.31 TCP stream, then resumes on the next validated IDR.

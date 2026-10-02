@@ -6,9 +6,9 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.18 MainVideo client for U2W v8.31. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.19 MainVideo client for U2W v8.32. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
-/// U2W v8.31 is intentionally dumb: it exposes raw bytes from the frozen v8.11 mirror
+/// U2W v8.32 preserves the v8.31 process-safety boundary and adds only a hard-capped validated recovery checkpoint from the proven v8.11 mirror
 /// through a tiny one-client TCP relay with no adapter-side H.264 parser, reference-chain
 /// cache, GOP replay, or boot-time process. The iPhone owns Annex-B splitting, semantic
 /// filtering, SPS/PPS/IDR tracking and VideoToolbox. If a live decoder anchor cannot be
@@ -157,7 +157,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.31-navigation-priority-raw-tcp-15332 base=v8.27.2/v8.11 explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.32-safe-bounded-checkpoint-tcp-15332 base=v8.31-safety/v8.27.2-validator/v8.11 explicitOnDemandVideoOnly=1 checkpointCap=1572864 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
         diagnosticRecorder.record("mainvideo", "start", fields: ["reason": reason, "generation": workerGeneration + 1])
         startNetworkPathLogging()
         startFreshnessWatchdog()
@@ -175,18 +175,18 @@ final class U2WMainVideoClient {
                 let ready = await self.ensureAdapterRelay(reason: "bootstrap #\(attempt) / \(reason)")
                 guard self.running, !Task.isCancelled else { return }
                 if ready {
-                    self.logger.log("MAINVIDEO PREFLIGHT", "v8.31 raw relay confirmed RUNNING before TCP open attempt=\(attempt)")
+                    self.logger.log("MAINVIDEO PREFLIGHT", "v8.32 safe-checkpoint relay confirmed RUNNING before TCP open attempt=\(attempt)")
                     self.startWorker(reason: "relay confirmed / \(reason)")
                     return
                 }
-                self.status = "Waiting for explicit Map Mode raw relay…"
-                self.logger.log("MAINVIDEO PREFLIGHT", "raw relay not ready attempt=\(attempt)/3; Navigation path remains independent")
+                self.status = "Waiting for explicit Map Mode recovery relay…"
+                self.logger.log("MAINVIDEO PREFLIGHT", "safe-checkpoint relay not ready attempt=\(attempt)/3; Navigation path remains independent")
                 if attempt < 3 { try? await Task.sleep(for: .seconds(1)) }
             }
             if self.running, self.worker == nil {
                 self.transportPhase = "FAILED_SAFE"
                 self.status = "Live map unavailable — Navigation remains active"
-                self.logger.log("MAINVIDEO PREFLIGHT", "FAIL CLOSED: raw relay unavailable after 3 attempts; no further adapter retries")
+                self.logger.log("MAINVIDEO PREFLIGHT", "FAIL CLOSED: safe-checkpoint relay unavailable after 3 attempts; no further adapter retries")
             }
         }
     }
@@ -264,7 +264,18 @@ final class U2WMainVideoClient {
             let recentOverflows = fields["recent_anchor_invalidations"] ?? fields["recent_anchor_overflows"] ?? "?"
             let liveIDRBoots = fields["live_idr_bootstraps"] ?? fields["client_live_bootstraps"] ?? "?"
             let lastBootstrapMode = fields["last_bootstrap_mode"] ?? "?"
-            if relayVersion.contains("v8.31") {
+            if relayVersion.contains("v8.32") {
+                let checkpointValid = fields["checkpoint_valid"] ?? "?"
+                let checkpointBytes = fields["checkpoint_bytes"] ?? "?"
+                let checkpointNals = fields["checkpoint_nals"] ?? "?"
+                let checkpointCap = fields["checkpoint_cap_bytes"] ?? "1572864"
+                let checkpointReplays = fields["checkpoint_replays"] ?? "?"
+                let checkpointInvalidations = fields["checkpoint_invalidations"] ?? "?"
+                let frameBreaks = fields["frame_num_discontinuities"] ?? "?"
+                let falseIDR = fields["false_idr_rejects"] ?? "?"
+                let scanComplete = fields["startup_scan_complete"] ?? "?"
+                adapterCacheSummary = "\(process) • \(clientState) • safeCheckpoint \(checkpointValid) \(checkpointBytes)B/\(checkpointNals)NAL cap \(checkpointCap) replay \(checkpointReplays) invalid \(checkpointInvalidations) • frameBreaks \(frameBreaks) falseIDR \(falseIDR) • scanComplete \(scanComplete) • SPS \(haveSPS) PPS \(havePPS) IDR \(idr) • src \(sourceBytes)B gen \(generationChanges) • AppleCarPlay untouched"
+            } else if relayVersion.contains("v8.31") {
                 let rawBuffer = fields["raw_buffer_bytes"] ?? "?"
                 let parser = fields["adapter_h264_parser"] ?? "?"
                 let cache = fields["adapter_video_cache"] ?? "?"
@@ -318,7 +329,7 @@ final class U2WMainVideoClient {
             } else {
                 adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             }
-            let supportedRelay = relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
+            let supportedRelay = relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
             let ready = (200...299).contains(code) && process == "RUNNING" && marker == "YES" && supportedRelay
             adapterRelayConfirmedRunning = ready
             logger.log("U2W H264 RELAY", "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) \(adapterCacheSummary)")
@@ -629,7 +640,7 @@ final class U2WMainVideoClient {
         preflightPassLogged = false
         logger.log(
             "U2W VIDEO LIFECYCLE",
-            "App entered background; v24.18 preserves active MainVideo/Map Mode instead of intentionally tearing down the healthy raw relay. Background location/BLE scheduling remains authoritative; foreground recovery handles any actual suspension gap."
+            "App entered background; v24.19 preserves active MainVideo/Map Mode instead of intentionally tearing down the healthy raw relay. Background location/BLE scheduling remains authoritative; foreground recovery handles any actual suspension gap."
         )
     }
 
@@ -663,7 +674,7 @@ final class U2WMainVideoClient {
         lastNetworkHeartbeatAt = nil
         stopNetworkPathLogging(reason: reason)
         status = "U2W main video idle"
-        logger.log("U2W VIDEO", "Stop reason=\(reason); dedicated TCP client closed; requesting standalone raw relay exit")
+        logger.log("U2W VIDEO", "Stop reason=\(reason); dedicated TCP client closed; requesting standalone MainVideo relay exit")
         Task { @MainActor [weak self] in await self?.stopAdapterRelay(reason: reason) }
     }
 
@@ -808,6 +819,7 @@ private final class U2WMainVideoTCPWorker {
     private var liveIDROnlyRecovery = false
     private var relayHeartbeatCount = 0
     private var rawNavigationPriorityMode = false
+    private var boundedCheckpointRecovery = false
     // All deployed dedicated relays use the same [u32BE length][NAL] framing.
     // v8.26 adds U2WH2644; v8.27 adds U2WH2645; v8.28 adds U2WH2646 for source-epoch-fenced fd reacquisition while keeping
     // v8.24/v8.25 compatibility so an app update cannot strand an older adapter.
@@ -819,6 +831,7 @@ private final class U2WMainVideoTCPWorker {
         Data("U2WH2646".utf8),
         Data("U2WH2647".utf8),
         Data("U2WH2648".utf8),
+        Data("U2WH2649".utf8),
     ]
     private let magicLength = 8
     private let maximumNALBytes = 512 * 1024
@@ -853,7 +866,8 @@ private final class U2WMainVideoTCPWorker {
         relayHeartbeatCount = 0
         sanitizer.reset()
         annexBParser.reset()
-        rawNavigationPriorityMode = true
+        rawNavigationPriorityMode = false
+        boundedCheckpointRecovery = false
         decoder.reset()
         openConnection()
     }
@@ -870,6 +884,7 @@ private final class U2WMainVideoTCPWorker {
         sanitizer.reset()
         annexBParser.reset()
         rawNavigationPriorityMode = false
+        boundedCheckpointRecovery = false
         decoder.reset()
         onPhase?("IDLE")
     }
@@ -910,6 +925,27 @@ private final class U2WMainVideoTCPWorker {
 
     private func performBoundedDecoderRecovery(reason: String, origin: String) {
         let sourceEpochCorruption = reason.contains("codecBadDataErr (-8969)")
+        if boundedCheckpointRecovery {
+            decoder.hardRecoverAwaitingFreshCodecEpoch(reason: reason)
+            sanitizer.reset(clearParameterSets: true)
+            onDecoderRecovery?(reason)
+            emitDecoderState()
+            if !recentAnchorRecoveryUsed {
+                recentAnchorRecoveryUsed = true
+                waitingForFreshLiveIDRAfterRejectedAnchor = false
+                onPhase?("DECODER_RECOVERY")
+                onStatus?("Decoder reset • reacquiring validated v8.32 checkpoint", true)
+                onDiagnostic?("\(origin): v8.32 bounded recovery; discarded poisoned decoder epoch and reconnecting TCP ONCE for the adapter's validated current-generation checkpoint")
+                closeCurrentConnection()
+                scheduleReconnect(reason: "v8.32 safe-checkpoint recovery", delay: 0.25)
+            } else {
+                waitingForFreshLiveIDRAfterRejectedAnchor = true
+                onPhase?("WAITING_FRESH_IDR")
+                onStatus?("Recovery checkpoint did not decode • waiting for a newer genuine IDR", true)
+                onDiagnostic?("\(origin): v8.32 checkpoint already attempted in this recovery episode; no reconnect loop, waiting for adapter to form a newer safe checkpoint")
+            }
+            return
+        }
         if sourceEpochCorruption, liveIDROnlyRecovery {
             // 2026-10-01 field evidence is stronger than the earlier fresh-epoch
             // hypothesis: the same TCP/raw source stayed healthy and VideoToolbox
@@ -1035,13 +1071,21 @@ private final class U2WMainVideoTCPWorker {
             guard let self else { return }
             let text = String(data: data, encoding: .ascii) ?? data.map { String(format: "%02X", $0) }.joined()
             guard self.acceptedMagics.contains(data) else {
-                self.onDiagnostic?("Invalid TCP relay magic={\(text)} expected={U2WH2642...U2WH2648}; reconnecting")
+                self.onDiagnostic?("Invalid TCP relay magic={\(text)} expected={U2WH2642...U2WH2649}; reconnecting")
                 self.scheduleReconnect(reason: "invalid relay magic", delay: 1.0)
                 return
             }
-            if text == "U2WH2648" {
+            if text == "U2WH2649" {
+                self.rawNavigationPriorityMode = false
+                self.liveIDROnlyRecovery = false
+                self.boundedCheckpointRecovery = true
+                self.onPhase?("WAITING_LIVE_IDR")
+                self.onStatus?("U2W v8.32 connected • synchronizing safe bounded checkpoint", true)
+                self.onDiagnostic?("TCP relay handshake U2WH2649 accepted; strict validator + 1.5 MiB current-generation checkpoint; no historical scan/source reacquire/AppleCarPlay control")
+            } else if text == "U2WH2648" {
                 self.rawNavigationPriorityMode = true
                 self.liveIDROnlyRecovery = true
+                self.boundedCheckpointRecovery = false
                 self.annexBParser.reset()
                 self.onPhase?("WAITING_LIVE_IDR")
                 self.onStatus?("U2W v8.31 raw relay connected • iPhone parsing live mirror", true)
@@ -1049,21 +1093,25 @@ private final class U2WMainVideoTCPWorker {
                 self.receiveRawBytes(connection, generation: generation)
                 return
             } else if text == "U2WH2647" {
+                self.boundedCheckpointRecovery = false
                 self.liveIDROnlyRecovery = true
                 self.onPhase?("WAITING_LIVE_IDR")
                 self.onStatus?("U2W v8.30 connected • synchronizing validated reference chain", true)
                 self.onDiagnostic?("TCP relay handshake U2WH2647 accepted; stateful 800×480 parser + bounded complete startup reference-chain spool; zero-length transport heartbeats enabled")
             } else if text == "U2WH2646" {
+                self.boundedCheckpointRecovery = false
                 self.liveIDROnlyRecovery = true
                 self.onPhase?("WAITING_LIVE_IDR")
                 self.onStatus?("U2W v8.28 connected • waiting for clean source epoch", true)
                 self.onDiagnostic?("TCP relay handshake U2WH2646 accepted; safe fd-reacquire/source-epoch relay; zero-length transport heartbeats enabled")
             } else if text == "U2WH2645" {
+                self.boundedCheckpointRecovery = false
                 self.liveIDROnlyRecovery = true
                 self.onPhase?("WAITING_LIVE_IDR")
                 self.onStatus?("U2W relay connected • waiting for next validated live IDR", true)
                 self.onDiagnostic?("TCP relay handshake U2WH2645 accepted; lightweight live-edge/next-IDR relay with zero-length transport heartbeats")
             } else {
+                self.boundedCheckpointRecovery = false
                 self.liveIDROnlyRecovery = false
                 self.onPhase?("WAITING_LIVE_IDR")
                 self.onStatus?("U2W relay connected • waiting for cached/validated/live IDR bootstrap", true)
@@ -1139,7 +1187,21 @@ private final class U2WMainVideoTCPWorker {
         // poison VideoToolbox. Preserve validated SPS/PPS, invalidate the broken
         // reference state, and quarantine P-slices until the next validated IDR.
         if let continuityBreak = sanitizer.takeContinuityBreakReason() {
-            onDiagnostic?("REFERENCE CHAIN BREAK detected on raw TCP generation=\(generation): \(continuityBreak)")
+            onDiagnostic?("REFERENCE CHAIN BREAK detected generation=\(generation): \(continuityBreak)")
+            if boundedCheckpointRecovery, !recentAnchorRecoveryUsed {
+                decoder.hardRecoverAwaitingFreshCodecEpoch(reason: continuityBreak)
+                sanitizer.reset(clearParameterSets: true)
+                recentAnchorRecoveryUsed = true
+                waitingForFreshLiveIDRAfterRejectedAnchor = false
+                onDecoderRecovery?(continuityBreak)
+                emitDecoderState()
+                onPhase?("DECODER_RECOVERY")
+                onStatus?("Reference discontinuity • reacquiring v8.32 safe checkpoint", true)
+                onDiagnostic?("v8.32 continuity recovery: closing only TCP/15332 and reconnecting ONCE; AppleCarPlay/v8.11 exporter remain untouched")
+                closeCurrentConnection()
+                scheduleReconnect(reason: "v8.32 reference-chain checkpoint recovery", delay: 0.25)
+                return
+            }
             decoder.hardRecoverAwaitingIDR(reason: continuityBreak)
             waitingForFreshLiveIDRAfterRejectedAnchor = true
             onDecoderRecovery?(continuityBreak)

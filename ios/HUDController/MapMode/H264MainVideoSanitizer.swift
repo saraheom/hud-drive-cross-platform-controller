@@ -58,6 +58,7 @@ final class H264MainVideoSanitizer {
 
     private struct SliceInfo {
         let firstMacroblock: UInt32
+        let sliceType: UInt32
         let ppsID: UInt32
         let frameNum: UInt32
         let nalType: UInt8
@@ -228,6 +229,18 @@ final class H264MainVideoSanitizer {
             guard let info = parseSlice(nal) else {
                 reject()
                 return nil
+            }
+
+            if type == 5 {
+                // Oct-1 field capture exposed false Annex-B/type-5 candidates whose
+                // slice header was actually P-coded (slice_type=0, frame_num=4095).
+                // Every slice of an IDR picture must belong to an intra-coded fresh
+                // reference epoch; the first slice then establishes the reset point.
+                let normalizedSliceType = info.sliceType >= 5 ? info.sliceType - 5 : info.sliceType
+                guard (normalizedSliceType == 2 || normalizedSliceType == 4), info.frameNum == 0 else {
+                    reject()
+                    return nil
+                }
             }
 
             let key = SliceFrameKey(
@@ -519,6 +532,7 @@ final class H264MainVideoSanitizer {
 
         return SliceInfo(
             firstMacroblock: firstMacroblock,
+            sliceType: sliceType,
             ppsID: ppsID,
             frameNum: frameNum,
             nalType: nalType,

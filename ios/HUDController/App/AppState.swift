@@ -217,7 +217,7 @@ final class AppState {
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
         routeGuidance.onAdapterReachable = { [weak logger, weak mainVideoDiagnostic, weak liveMapDiagnostics] in
-            // v90.35.3.24.18 keeps the navigation-priority boundary: ordinary
+            // v90.35.3.24.19 keeps the navigation-priority boundary: ordinary
             // Route Guidance NEVER starts MainVideo. The low-frequency passive
             // v8.27.2 source/topology observer is diagnostic-only and does not
             // hook, signal, or restart AppleCarPlay.
@@ -816,7 +816,7 @@ final class AppState {
     /// relay + iPhone parser/decoder. It does NOT start the U2W HUD JPEG relay,
     /// change HUD Wi-Fi state, or send KivicCast mode 6. Navigation Mode therefore
     /// remains authoritative on the physical HUD while the preview is running.
-    /// v90.35.3.24.18: one parked tap collects the synchronized iPhone-side
+    /// v90.35.3.24.19: one parked tap collects the synchronized iPhone-side
     /// MainVideo evidence plus best-effort adapter snapshots. Large adapter
     /// downloads are deferred until collection; only the existing low-frequency
     /// passive source/topology observer may run during the diagnostic drive.
@@ -870,7 +870,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.18 — final live-map state
+            HUD Controller v90.35.3.24.19 — final live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.31 Navigation-Priority Raw MainVideo (unchanged)
             map_mode_active=\(self.mapModeActive)
@@ -1049,7 +1049,7 @@ final class AppState {
 
             guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
 
-            // v90.35.3.24.18 restores the field-proven Map Mode contract: the
+            // v90.35.3.24.19 restores the field-proven Map Mode contract: the
             // physical HUD JPEG compositor is independent of MainVideo. Start the
             // raw MainVideo decoder opportunistically, but never require a live
             // CarPlay frame before entering Map Mode. If MainVideo is absent or is
@@ -1235,14 +1235,23 @@ final class AppState {
         hudU2WDisplayHealthTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.hudU2WDisplayHealthTask = nil }
+            var fallbackAnnounced = false
             while !Task.isCancelled, self.hudU2WLiveRelayActive {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
                 let age = self.mainVideo.lastFrameAgeSeconds ?? .infinity
-                if self.mainVideo.transportPhase == "FAILED_SAFE" || age > 5.0 {
-                    self.logger.log("NAV PRIORITY", "Active Map Mode lost fresh live video frameAge=\(age.isFinite ? String(format: "%.1f", age) : "none")s phase=\(self.mainVideo.transportPhase); restoring stock Navigation and stopping all experimental video work")
-                    self.stopHUDU2WSTAHomeProbe()
-                    return
+                let liveVideoStale = self.mainVideo.transportPhase == "FAILED_SAFE" || age > 5.0
+                if liveVideoStale, !fallbackAnnounced {
+                    fallbackAnnounced = true
+                    self.hudU2WSTAStatus = "Map Mode active • live map recovering (fallback canvas)"
+                    self.logger.log(
+                        "MAP MODE HEALTH",
+                        "MainVideo unavailable frameAge=\(age.isFinite ? String(format: "%.1f", age) : "none")s phase=\(self.mainVideo.transportPhase); KEEPING physical mode 6 + JPEG relay active and rendering fallback until live video recovers"
+                    )
+                } else if !liveVideoStale, fallbackAnnounced {
+                    fallbackAnnounced = false
+                    self.hudU2WSTAStatus = "Map Mode active • live map restored"
+                    self.logger.log("MAP MODE HEALTH", "MainVideo recovered; physical mode 6 remained active and compositor returned to live map without a HUD mode restart")
                 }
             }
         }
@@ -1933,7 +1942,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.18",
+                "appVersion=v90.35.3.24.19",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

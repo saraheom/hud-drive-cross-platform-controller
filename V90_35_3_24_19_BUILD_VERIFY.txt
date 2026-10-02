@@ -1,0 +1,36 @@
+HUD Controller v90.35.3.24.19 + U2W v8.32 — verification
+=======================================================
+Pair: U2W v8.32 Safe Bounded Checkpoint MainVideo
+
+App / repository validation:
+- Full pytest/source-contract suite: 485 PASS, 1 intentionally skipped
+- Swift frontend syntax parse: 208 / 208 Swift files PASS
+- git diff --check: PASS
+- legacy CI source-contract expectations aligned to the v24.19/v8.32 architecture
+- strict false-IDR guard present: type-5 slice must be intra-coded and frame_num == 0
+- v8.32 recovery is one-shot per recovery episode; no reconnect loop
+- physical Map Mode stale-MainVideo teardown removed from the display-health monitor
+- TCP/15331 first-JPEG prerequisite + bounded Network.framework connection watchdog retained
+
+Firmware validation:
+- relay reproducibly compiles byte-identically with clang --target=arm-linux-gnueabi,
+  -nostdlib -static -Os -Wall -Wextra -Werror
+- ARM EABI5 static relay: PASS
+- relay SHA256: 2d8f67a581272c5af484204e93efd331ce4178cd70771ec4e7ff1b1002aa3ca0
+- relay BSS: 2,426,196 bytes
+- checkpoint hard cap: 1,572,864 bytes (1.5 MiB)
+- exact v8.11 selector hash gate: PASS
+- exact v8.31 relay hash gate: PASS
+- source-selector/fd reacquisition: ABSENT
+- AppleCarPlay/ARMiPhoneIAP2 process control: ABSENT
+- historical-generation scan/reseed loop: ABSENT
+- boot/autostart hook: ABSENT
+- Route Guidance / Now Playing payload: ABSENT
+- deterministic image encrypt/decrypt/tar round-trip: PASS
+
+Firmware SHA256: 916abf0f7e257f2aa2ac6f52a2398e46404c2f2f666bde344a2bab0b4d037e05
+Rollback SHA256: 66a95c8b7d0a114304bee727b30ba5f1d90e5e85095641443639d10ffcfb9d8e
+
+Field validation is still required. These checks establish package integrity and enforce the
+post-Sept-21 safety architecture; they cannot prove the undocumented CarPlay stream will never
+produce a new field failure before an in-car run.

@@ -506,7 +506,7 @@ struct NavigationHUDPreviewCard: View {
                             Label("Share passive codec diagnostic bundle", systemImage: "square.and.arrow.up")
                         }
                     }
-                    Text("These controls expose the passive v8.27.2 source/topology observer used by the v24.18 one-drive forensic build. The observer is ensured when Route Guidance reaches the adapter, but it remains read-only and never starts MainVideo, hooks/signals/restarts AppleCarPlay, or changes Navigation. U2W v8.31 still starts its tiny raw video relay only for explicit Live Preview/Map Mode; the large passive bundle is downloaded only after parking.")
+                    Text("These controls expose the passive v8.27.2 source/topology observer used by the v24.18 one-drive forensic build. The observer is ensured when Route Guidance reaches the adapter, but it remains read-only and never starts MainVideo, hooks/signals/restarts AppleCarPlay, or changes Navigation. U2W v8.32 starts its on-demand safe-checkpoint video relay only for explicit Live Preview/Map Mode; the large passive bundle is downloaded only after parking.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -628,7 +628,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.18 pairs with unchanged U2W v8.31. Physical Map Mode is fallback-first again: TCP/15331 must deliver a JPEG, then the proven mode-6/STA join sequence runs even if MainVideo is still starting or recovering. A stale/missing MainVideo frame automatically falls back to the schematic map without tearing down Map Mode. For live video, repeated codecBadDataErr (-8969) now resets only VideoToolbox/reference continuity, preserves validated SPS/PPS and healthy TCP/15332, and resumes at the next validated IDR. U2W v8.31 and Route Guidance remain unchanged; the app never kills/signals/restarts AppleCarPlay.")
+                    Text("v90.35.3.24.19 pairs with U2W v8.32 Safe Bounded Checkpoint. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.32 keeps the v8.31 safety boundary—no autostart, source selector, AppleCarPlay/ARMiPhoneIAP2 control, Route Guidance change, or historical-generation scan—while adding strict H.264 validation plus a hard-capped current-generation recovery checkpoint. The iPhone rejects false type-5 IDRs and performs at most one TCP/15332 checkpoint re-bootstrap per recovery episode.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
