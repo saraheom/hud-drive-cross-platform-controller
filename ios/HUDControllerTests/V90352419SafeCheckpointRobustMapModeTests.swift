@@ -14,7 +14,7 @@ final class V90352419SafeCheckpointRobustMapModeTests: XCTestCase {
         XCTAssertTrue(video.contains("v8.32 safe-checkpoint recovery"))
         XCTAssertTrue(video.contains("checkpoint already attempted in this recovery episode; no reconnect loop"))
         XCTAssertTrue(video.contains("TCP relay handshake U2WH2649 accepted"))
-        XCTAssertTrue(video.contains("v8.34 package uses exact v8.31 raw relay"))
+        XCTAssertTrue(video.contains("v8.35 package keeps exact v8.31 raw relay + unchanged v8.34 hard-bounded mirror"))
         XCTAssertTrue(video.contains("mirror rotation is lossless/atomic"))
     }
 

@@ -1,3 +1,15 @@
+# HUD Controller v90.35.3.24.22 + U2W v8.35 — lifecycle-aware MainVideo recovery + Direct ELM327 coexistence probe
+
+This paired release keeps the field-validated **v8.34 hard-bounded lossless MainVideo mirror** and exact **v8.31 32-KiB raw relay** byte-identical. U2W v8.35 is intentionally incremental: it adds only a rate-limited native `RequestKeyFrame` helper/CGI and status telemetry. The request framing is the Carlinkit `0x0C` zero-payload keyframe command; the exact local Unix-datagram route on this 2021.03.06.1343 adapter remains a field-validation item. There is no AppleCarPlay/ARMiPhoneIAP2 restart or signal, no MainVideo TCP reconnect, and no source-FD reacquisition.
+
+On iPhone, VideoToolbox is no longer assumed to survive an `inactive/background` transition. The raw TCP/H.264 source is preserved, but the decoder session is retired during lifecycle instability and recreated only after a stable foreground interval. `kVTInvalidSessionErr (-12903)` follows the same bounded recovery path: preserve transport, rebuild from validated parameter sets, wait for a fresh IDR, and request at most one bounded adapter keyframe subject to cooldown.
+
+The Vehicle page also adds a **Direct ELM327 feasibility** block. It scans BLE, lets the user select a candidate (selection auto-connects), discovers GATT services/characteristics, and tests concurrent ownership without first disconnecting the HUD. The only diagnostic OBD write is an explicit one-shot `01 0D` speed request; no `ATZ`, `ATSP0`, reset, or protocol-selection command is sent. All ELM scan/connect/GATT/TX/RX/coexistence evidence is written into the existing HUD/Live Map diagnostics. Production Map Mode speed remains GPS until a valid direct `41 0D XX` response is proven.
+
+**This release requires the incremental U2W v8.35 image on top of v8.34.** The v8.35 installer verifies the exact active v8.34 mirror and exact v8.31 raw relay before installing only the keyframe helper/CGI/status layer. See `V90_35_3_24_22_RELEASE.md`, `V90_35_3_24_22_BUILD_VERIFY.txt`, and `u2w/v8.35_BoundedKeyFrame_v834Mirror/README.md`.
+
+---
+
 # HUD Controller v90.35.3.24.21 + U2W v8.34 — hard-bounded MainVideo + automatic OBD flight recorder
 
 This paired release follows the successful part of the October 2 v8.33 drive (natural MainVideo startup and >5-minute clean decode) and fixes the resource failure that followed. U2W v8.34 rotates its passive MainVideo mirror at an **8 MiB hard write-boundary cap independent of SPS/IDR cadence**, retains the exact v8.31 32-KiB raw relay, and fails closed for MainVideo only if a bounded next generation cannot be created. It adds `/tmp`/rotation/resource-guard/FD-lifecycle telemetry without AppleCarPlay or ARMiPhoneIAP2 process control.

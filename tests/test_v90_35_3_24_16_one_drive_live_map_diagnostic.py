@@ -9,8 +9,8 @@ UI = (ROOT / 'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 
 def test_v2416_version_and_unchanged_v831_pair():
-    assert 'appVersion=v90.35.3.24.21' in APP
-    assert 'v90.35.3.24.21 pairs with U2W v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
+    assert 'appVersion=v90.35.3.24.22' in APP
+    assert 'v90.35.3.24.22 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
     assert 'v8.34-hard-bounded-mirror-v831-raw-tcp-15332' in CLIENT
 
 

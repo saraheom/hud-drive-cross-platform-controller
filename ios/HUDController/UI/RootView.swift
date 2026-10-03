@@ -70,15 +70,15 @@ struct RootView: View {
                 state.mainVideo.applicationDidBecomeActive()
                 consumePendingShortcut()
                 state.nowPlaying.refreshNow()
+            case .inactive:
+                // v24.22 field evidence: preserving a VideoToolbox session through
+                // an iOS lifecycle transition can end in kVTInvalidSessionErr
+                // (-12903). Preserve the raw TCP source, but retire/gate only the
+                // decoder until the scene is stably active again.
+                state.mainVideo.applicationWillResignActive()
             case .background:
-                // v24.18: do not intentionally destroy a healthy live-map session
-                // just because SwiftUI moves to the background. The app already
-                // owns background location/BLE work during a drive. If iOS truly
-                // suspends networking/VideoToolbox, the existing source/output
-                // watchdogs recover when execution resumes; proactively stopping
-                // guaranteed that no later clean codec epoch could ever recover.
                 if state.hudU2WLiveRelayActive || state.mainVideoPreviewActive {
-                    state.logger.log("NAV PRIORITY", "App backgrounded with live MainVideo active; preserving decoder/TCP/HUD cast session")
+                    state.logger.log("NAV PRIORITY", "App backgrounded with live MainVideo active; preserving TCP/HUD cast source while VideoToolbox is lifecycle-paused")
                 }
                 state.mainVideo.applicationDidEnterBackground()
             default:

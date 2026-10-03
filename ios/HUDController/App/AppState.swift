@@ -21,6 +21,7 @@ final class AppState {
     let mainVideo: U2WMainVideoClient
     let mainVideoDiagnostic: U2WMainVideoDiagnosticClient
     let hudU2WFrameRelay: U2WHUDFrameRelayClient
+    let directELM: DirectELM327Manager
     private var mapModeFrameTask: Task<Void, Never>?
     private var mapModeOBDOverlayTask: Task<Void, Never>?
     private var mapModeFrozenSnapshot: HudMapModeSnapshot?
@@ -203,6 +204,8 @@ final class AppState {
         self.mainVideoDiagnostic = mainVideoDiagnostic
         let hudU2WFrameRelay = U2WHUDFrameRelayClient(logger: logger)
         self.hudU2WFrameRelay = hudU2WFrameRelay
+        let directELM = DirectELM327Manager(logger: logger, diagnostics: liveMapDiagnostics)
+        self.directELM = directELM
         let maintenance = HudMaintenanceManager(logger: logger)
         self.maintenance = maintenance
         let bluetooth = HudBluetoothManager(logger: logger)
@@ -237,6 +240,8 @@ final class AppState {
         }
         let speedEngine = OriginalSpeedLimitEngine(bluetooth: bluetooth, logger: logger)
         self.speedEngine = speedEngine
+        directELM.hudOBDConnectedProvider = { [weak bluetooth] in bluetooth?.hudOBDConnectionConfirmed ?? false }
+        directELM.gpsSpeedMphProvider = { [weak speedEngine] in speedEngine?.currentSpeedMph ?? 0 }
         navigation.onNavigationModeChanged = { [weak speedEngine] active in
             // The stock HUD can instantiate a fresh gauge renderer when the
             // active dashboard mode changes. Re-send the original HUDWAY
@@ -873,7 +878,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.21 — final live-map state
+            HUD Controller v90.35.3.24.22 — final live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.33 Lossless Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -1945,7 +1950,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.21",
+                "appVersion=v90.35.3.24.22",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

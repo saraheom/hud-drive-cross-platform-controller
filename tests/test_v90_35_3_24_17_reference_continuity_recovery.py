@@ -35,7 +35,7 @@ def test_codec_bad_data_burst_escalates_after_three_not_thousands():
 
 def test_background_transition_does_not_deliberately_kill_live_map_anymore():
     background = ROOTVIEW.split("case .background:", 1)[1].split("default:", 1)[0]
-    assert 'preserving decoder/TCP/HUD cast session' in background
+    assert 'preserving TCP/HUD cast source while VideoToolbox is lifecycle-paused' in background
     assert 'state.stopHUDU2WSTAHomeProbe()' not in background
     assert 'state.stopMainVideoPreview(reason: "app background")' not in background
 
@@ -43,6 +43,6 @@ def test_background_transition_does_not_deliberately_kill_live_map_anymore():
 def test_release_remains_navigation_safe_and_u2w_v831_is_unchanged():
     assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
     assert 'mainVideo.start(reason: "app-only live preview")' in APP
-    assert 'v90.35.3.24.21 pairs with U2W v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
+    assert 'v90.35.3.24.22 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
     assert 'no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control' in UI
-    assert 'appVersion=v90.35.3.24.21' in APP
+    assert 'appVersion=v90.35.3.24.22' in APP

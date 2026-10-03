@@ -6,9 +6,9 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.21 MainVideo client for U2W v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.22 MainVideo client for U2W v8.35 bounded keyframe request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
-/// U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
+/// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
 /// and vectored hooks mirror only the bytes the real call actually wrote. The TCP/15332
 /// transport is the exact v8.31 32-KiB raw relay: no adapter parser/cache/GOP replay, no
@@ -96,6 +96,14 @@ final class U2WMainVideoClient {
     private var preflightPassLogged = false
     private var decoderRecoveryPending = false
     private var backgroundedAt: Date?
+    private var lifecycleActive = true
+    private var lifecycleGeneration: UInt64 = 0
+    private var lifecycleRecoveryTask: Task<Void, Never>?
+    private var keyframeRequestTask: Task<Void, Never>?
+    private var lastKeyframeRequestAt: Date?
+    private var keyframeRequestCount = 0
+    private var keyframeRequestLastResult = "Not requested"
+    private var startupKeyframeScheduledWorkerGeneration = -1
     private var networkMonitors: [String: NWPathMonitor] = [:]
     private var networkSignatures: [String: String] = [:]
     private var networkStatuses: [String: String] = [:]
@@ -103,6 +111,7 @@ final class U2WMainVideoClient {
     private let relayStartEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-start.cgi")!
     private let relayStatusEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi")!
     private let relayStopEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-stop.cgi")!
+    private let keyframeRequestEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-request-keyframe.cgi")!
 
     private let decoderStaleFrameInterval: TimeInterval = 3.0
     private let startupDecoderGraceFrameCount = 10
@@ -111,6 +120,9 @@ final class U2WMainVideoClient {
     private let initialIDRWaitDiagnosticInterval: TimeInterval = 20.0
     private let sourceReconnectCooldown: TimeInterval = 15.0
     private let relayEnsureCooldown: TimeInterval = 5.0
+    private let keyframeRequestCooldown: TimeInterval = 10.0
+    private let startupKeyframeDelay: TimeInterval = 1.5
+    private let stableForegroundDelay: TimeInterval = 0.6
 
     init(logger: LogManager, diagnosticRecorder: LiveMapDiagnosticRecorder) {
         self.logger = logger
@@ -142,6 +154,14 @@ final class U2WMainVideoClient {
         preflightPassLogged = false
         decoderRecoveryPending = false
         backgroundedAt = nil
+        lifecycleActive = true
+        lifecycleGeneration &+= 1
+        lifecycleRecoveryTask?.cancel(); lifecycleRecoveryTask = nil
+        keyframeRequestTask?.cancel(); keyframeRequestTask = nil
+        lastKeyframeRequestAt = nil
+        keyframeRequestCount = 0
+        keyframeRequestLastResult = "Not requested"
+        startupKeyframeScheduledWorkerGeneration = -1
         lastSourceReconnectAt = nil
         lastRelayEnsureAt = nil
         adapterRelayConfirmedRunning = false
@@ -158,7 +178,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.35-bounded-keyframe-v834-hardmirror-v831-raw-tcp-15332 base architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
         diagnosticRecorder.record("mainvideo", "start", fields: ["reason": reason, "generation": workerGeneration + 1])
         startNetworkPathLogging()
         startFreshnessWatchdog()
@@ -375,6 +395,14 @@ final class U2WMainVideoClient {
                 self.transportPhase = phase
                 self.logger.log("MAINVIDEO STATE", "phase=\(phase) generation=\(generation)")
                 self.diagnosticRecorder.record("transport_phase", phase, fields: ["generation": generation])
+                if phase == "WAITING_LIVE_IDR", self.startupKeyframeScheduledWorkerGeneration != generation {
+                    self.startupKeyframeScheduledWorkerGeneration = generation
+                    self.scheduleBoundedKeyframeRequest(
+                        reason: "startup has no validated IDR",
+                        delay: self.startupKeyframeDelay,
+                        requiredPhases: ["WAITING_LIVE_IDR", "WAITING_FRESH_IDR"]
+                    )
+                }
             }
         }
         worker.onStatus = { [weak self] message, isConnected in
@@ -429,6 +457,16 @@ final class U2WMainVideoClient {
                 self.logger.log("U2W VIDEO RECOVERY", reason)
                 self.diagnosticRecorder.record("decoder", "recovery_requested", fields: ["reason": reason, "generation": generation])
                 self.diagnosticRecorder.triggerEvidenceWindow("decoder_recovery", detail: reason)
+            }
+        }
+        worker.onKeyframeRequestNeeded = { [weak self] reason in
+            Task { @MainActor [weak self] in
+                guard let self, self.running, self.workerGeneration == generation else { return }
+                self.scheduleBoundedKeyframeRequest(
+                    reason: reason,
+                    delay: self.stableForegroundDelay,
+                    requiredPhases: ["WAITING_LIVE_IDR", "WAITING_FRESH_IDR", "DECODER_RECOVERY"]
+                )
             }
         }
         worker.onFrame = { [weak self] image in
@@ -648,15 +686,33 @@ final class U2WMainVideoClient {
         }
     }
 
+    func applicationWillResignActive() {
+        pauseDecoderForLifecycle(reason: "scene inactive")
+    }
+
     func applicationDidEnterBackground() {
         guard running else { return }
-        backgroundedAt = Date()
+        backgroundedAt = backgroundedAt ?? Date()
+        pauseDecoderForLifecycle(reason: "scene background")
+    }
+
+    private func pauseDecoderForLifecycle(reason: String) {
+        guard running else { return }
+        lifecycleRecoveryTask?.cancel(); lifecycleRecoveryTask = nil
+        keyframeRequestTask?.cancel(); keyframeRequestTask = nil
+        lifecycleGeneration &+= 1
+        let wasActive = lifecycleActive
+        lifecycleActive = false
         preflightStableSince = nil
         preflightPassLogged = false
+        if wasActive {
+            worker?.suspendDecoderForLifecycle(reason: reason)
+        }
         logger.log(
             "U2W VIDEO LIFECYCLE",
-            "App entered background; v24.19 preserves active MainVideo/Map Mode instead of intentionally tearing down the healthy raw relay. Background location/BLE scheduling remains authoritative; foreground recovery handles any actual suspension gap."
+            "Lifecycle pause reason=\(reason); raw TCP/source PRESERVED, VideoToolbox session intentionally invalidated, VCL decode paused until stable foreground. generation=\(lifecycleGeneration)"
         )
+        diagnosticRecorder.record("lifecycle", "decoder_paused", fields: ["reason": reason, "generation": lifecycleGeneration])
     }
 
     func applicationDidBecomeActive() {
@@ -664,12 +720,69 @@ final class U2WMainVideoClient {
         let now = Date()
         let backgroundDuration = backgroundedAt.map { now.timeIntervalSince($0) }
         backgroundedAt = nil
-
-        let frameAge = lastDecodedFrameAt.map { now.timeIntervalSince($0) } ?? .infinity
+        lifecycleGeneration &+= 1
+        let generation = lifecycleGeneration
+        lifecycleActive = true
+        lifecycleRecoveryTask?.cancel()
         logger.log(
             "U2W VIDEO LIFECYCLE",
-            "App active; decoder preserved across lifecycle transition backgroundDuration=\(backgroundDuration.map { String(format: "%.1f", $0) } ?? "none") frameAge=\(frameAge.isFinite ? String(format: "%.1f", frameAge) : "none"). Software decode preference + stale-output watchdog own recovery."
+            "Scene active candidate generation=\(generation); waiting \(String(format: "%.1f", stableForegroundDelay))s for stable foreground before rebuilding VideoToolbox. backgroundDuration=\(backgroundDuration.map { String(format: "%.1f", $0) } ?? "none")"
         )
+        diagnosticRecorder.record("lifecycle", "active_candidate", fields: ["generation": generation, "background_seconds": backgroundDuration ?? -1])
+        lifecycleRecoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(Int(self.stableForegroundDelay * 1000)))
+            guard !Task.isCancelled, self.running, self.lifecycleActive, self.lifecycleGeneration == generation else { return }
+            self.worker?.resumeDecoderAfterLifecycle(reason: "stable foreground generation \(generation)")
+            self.logger.log("U2W VIDEO LIFECYCLE", "Stable foreground confirmed generation=\(generation); decoder rebuilt awaiting IDR; TCP remained continuous")
+            self.diagnosticRecorder.record("lifecycle", "stable_active_resume", fields: ["generation": generation])
+        }
+    }
+
+    private func scheduleBoundedKeyframeRequest(reason: String, delay: TimeInterval, requiredPhases: Set<String>) {
+        keyframeRequestTask?.cancel()
+        let generation = lifecycleGeneration
+        keyframeRequestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            if delay > 0 { try? await Task.sleep(for: .milliseconds(Int(delay * 1000))) }
+            guard !Task.isCancelled,
+                  self.running,
+                  self.lifecycleActive,
+                  self.lifecycleGeneration == generation,
+                  requiredPhases.contains(self.transportPhase) else { return }
+            await self.requestBoundedKeyframe(reason: reason)
+        }
+    }
+
+    private func requestBoundedKeyframe(reason: String) async {
+        guard running, lifecycleActive else { return }
+        let now = Date()
+        if let lastKeyframeRequestAt, now.timeIntervalSince(lastKeyframeRequestAt) < keyframeRequestCooldown {
+            let remaining = keyframeRequestCooldown - now.timeIntervalSince(lastKeyframeRequestAt)
+            logger.log("U2W KEYFRAME", "SUPPRESSED cooldown reason=\(reason) remaining=\(String(format: "%.1f", remaining))s")
+            diagnosticRecorder.record("keyframe", "suppressed_cooldown", fields: ["reason": reason, "remaining_seconds": remaining])
+            return
+        }
+        lastKeyframeRequestAt = now
+        keyframeRequestCount += 1
+        let requestNumber = keyframeRequestCount
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 2
+        configuration.timeoutIntervalForResource = 3
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        do {
+            let (data, response) = try await session.data(from: keyframeRequestEndpoint)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            keyframeRequestLastResult = "HTTP \(code) • \(body.replacingOccurrences(of: "\n", with: " | "))"
+            logger.log("U2W KEYFRAME", "bounded request #\(requestNumber) reason=\(reason) HTTP=\(code) body={\(body.replacingOccurrences(of: "\n", with: " | "))}; no process restart/reconnect")
+            diagnosticRecorder.record("keyframe", "request", fields: ["number": requestNumber, "reason": reason, "http": code, "body": body])
+        } catch {
+            keyframeRequestLastResult = "Failed • \(error.localizedDescription)"
+            logger.log("U2W KEYFRAME", "bounded request #\(requestNumber) FAILED reason=\(reason) error=\(error.localizedDescription); no retry loop")
+            diagnosticRecorder.record("keyframe", "request_failed", fields: ["number": requestNumber, "reason": reason, "error": error.localizedDescription])
+        }
     }
 
     func stop(reason: String) {
@@ -677,6 +790,8 @@ final class U2WMainVideoClient {
         running = false
         freshnessTask?.cancel(); freshnessTask = nil
         bootstrapTask?.cancel(); bootstrapTask = nil
+        lifecycleRecoveryTask?.cancel(); lifecycleRecoveryTask = nil
+        keyframeRequestTask?.cancel(); keyframeRequestTask = nil
         worker?.stop(); worker = nil
         workerGeneration &+= 1
         connected = false
@@ -812,6 +927,7 @@ private final class U2WMainVideoTCPWorker {
     var onSanitizerStats: ((H264MainVideoSanitizerStats) -> Void)?
     var onDecoderState: ((String) -> Void)?
     var onDecoderRecovery: ((String) -> Void)?
+    var onKeyframeRequestNeeded: ((String) -> Void)?
 
     private let sanitizer = H264MainVideoSanitizer()
     private let annexBParser = AnnexBH264Parser()
@@ -835,6 +951,7 @@ private final class U2WMainVideoTCPWorker {
     private var relayHeartbeatCount = 0
     private var rawNavigationPriorityMode = false
     private var boundedCheckpointRecovery = false
+    private var lifecyclePaused = false
     // All deployed dedicated relays use the same [u32BE length][NAL] framing.
     // v8.26 adds U2WH2644; v8.27 adds U2WH2645; v8.28 adds U2WH2646 for source-epoch-fenced fd reacquisition while keeping
     // v8.24/v8.25 compatibility so an app update cannot strand an older adapter.
@@ -883,6 +1000,7 @@ private final class U2WMainVideoTCPWorker {
         annexBParser.reset()
         rawNavigationPriorityMode = false
         boundedCheckpointRecovery = false
+        lifecyclePaused = false
         decoder.reset()
         openConnection()
     }
@@ -900,8 +1018,40 @@ private final class U2WMainVideoTCPWorker {
         annexBParser.reset()
         rawNavigationPriorityMode = false
         boundedCheckpointRecovery = false
+        lifecyclePaused = false
         decoder.reset()
         onPhase?("IDLE")
+    }
+
+    func suspendDecoderForLifecycle(reason: String) {
+        queue.async { [weak self] in
+            guard let self, self.running else { return }
+            guard !self.lifecyclePaused else { return }
+            self.lifecyclePaused = true
+            self.waitingForFreshLiveIDRAfterRejectedAnchor = true
+            self.decoder.suspendForLifecycle(reason: reason)
+            self.emitDecoderState()
+            self.onPhase?("LIFECYCLE_PAUSED")
+            self.onStatus?("App lifecycle transition • raw MainVideo preserved, decoder paused", true)
+            self.onDiagnostic?("LIFECYCLE PAUSE reason=\(reason); TCP + Annex-B stream PRESERVED; VideoToolbox invalidated intentionally; VCL decode gated until stable foreground")
+        }
+    }
+
+    func resumeDecoderAfterLifecycle(reason: String) {
+        queue.async { [weak self] in
+            guard let self, self.running else { return }
+            guard self.lifecyclePaused else { return }
+            self.lifecyclePaused = false
+            self.sanitizer.quarantineReferenceChainUntilIDR()
+            self.decoder.hardRecoverAwaitingIDR(reason: reason)
+            self.waitingForFreshLiveIDRAfterRejectedAnchor = true
+            self.onDecoderRecovery?("lifecycle resume: \(reason)")
+            self.emitDecoderState()
+            self.onPhase?("WAITING_FRESH_IDR")
+            self.onStatus?("Foreground stable • waiting for fresh live IDR", true)
+            self.onDiagnostic?("LIFECYCLE RESUME reason=\(reason); rebuilt VideoToolbox from last validated SPS/PPS when available; TCP PRESERVED")
+            self.onKeyframeRequestNeeded?("lifecycle resume needs fresh IDR")
+        }
     }
 
     func reconnectAtLiveEdge(reason: String) {
@@ -940,6 +1090,28 @@ private final class U2WMainVideoTCPWorker {
 
     private func performBoundedDecoderRecovery(reason: String, origin: String) {
         let sourceEpochCorruption = reason.contains("codecBadDataErr (-8969)")
+        let invalidVideoToolboxSession = reason.contains("kVTInvalidSessionErr (-12903)")
+        if invalidVideoToolboxSession, liveIDROnlyRecovery {
+            if lifecyclePaused {
+                decoder.suspendForLifecycle(reason: reason)
+                onDecoderRecovery?(reason)
+                emitDecoderState()
+                onPhase?("LIFECYCLE_PAUSED")
+                onStatus?("VideoToolbox invalid during lifecycle transition • waiting for stable foreground", true)
+                onDiagnostic?("\(origin): kVTInvalidSessionErr (-12903) while lifecycle-paused; TCP PRESERVED; decoder recreation deferred until stable foreground")
+                return
+            }
+            sanitizer.quarantineReferenceChainUntilIDR()
+            decoder.hardRecoverAwaitingIDR(reason: reason)
+            waitingForFreshLiveIDRAfterRejectedAnchor = true
+            onDecoderRecovery?(reason)
+            emitDecoderState()
+            onPhase?("WAITING_FRESH_IDR")
+            onStatus?("VideoToolbox session replaced • requesting one fresh IDR", true)
+            onDiagnostic?("\(origin): kVTInvalidSessionErr (-12903); rebuilt decoder from last validated SPS/PPS when available; TCP PRESERVED; one bounded native keyframe request armed")
+            onKeyframeRequestNeeded?("VideoToolbox invalid session -12903")
+            return
+        }
         if boundedCheckpointRecovery {
             decoder.hardRecoverAwaitingFreshCodecEpoch(reason: reason)
             sanitizer.reset(clearParameterSets: true)
@@ -1104,7 +1276,7 @@ private final class U2WMainVideoTCPWorker {
                 self.annexBParser.reset()
                 self.onPhase?("WAITING_LIVE_IDR")
                 self.onStatus?("U2W raw relay connected • iPhone parsing lossless mirror", true)
-                self.onDiagnostic?("TCP relay handshake U2WH2648 accepted; v8.34 package uses exact v8.31 raw relay; adapter parser/cache=NONE; raw Annex-B parsing owned by iPhone; mirror rotation is lossless/atomic")
+                self.onDiagnostic?("TCP relay handshake U2WH2648 accepted; v8.35 package keeps exact v8.31 raw relay + unchanged v8.34 hard-bounded mirror; adapter parser/cache=NONE; raw Annex-B parsing owned by iPhone; mirror rotation is lossless/atomic")
                 self.receiveRawBytes(connection, generation: generation)
                 return
             } else if text == "U2WH2647" {
@@ -1206,6 +1378,12 @@ private final class U2WMainVideoTCPWorker {
         }
 
         if let accepted {
+            if lifecyclePaused {
+                if accepted.kind == .sps || accepted.kind == .pps {
+                    onDiagnostic?("Lifecycle-paused filter accepted \(accepted.kind); decoder feed intentionally gated")
+                }
+                return
+            }
             if accepted.kind == .idr, waitingForFreshLiveIDRAfterRejectedAnchor {
                 waitingForFreshLiveIDRAfterRejectedAnchor = false
                 onPhase?("DECODER_BOOTSTRAP")
@@ -1459,6 +1637,28 @@ private final class H264VideoToolboxDecoder {
         publishLock.lock()
         lastPublishedUptime = 0
         publishLock.unlock()
+    }
+
+    /// iOS can invalidate VideoToolbox sessions across scene/background transitions.
+    /// Preserve the last validated SPS/PPS but intentionally retire the VT session;
+    /// the worker keeps TCP/Annex-B flowing and requests a fresh IDR only after the
+    /// app has returned to a stable foreground state.
+    func suspendForLifecycle(reason: String) {
+        discardPendingAccessUnit()
+        if let decompressionSession {
+            VTDecompressionSessionInvalidate(decompressionSession)
+        }
+        decompressionSession = nil
+        formatDescription = nil
+        pendingSPS = nil
+        pendingPPS = nil
+        needsIDR = true
+        rebuildAtNextIDR = false
+        consecutiveDecodeErrors = 0
+        recoveryRequestPending = false
+        lastDecodeStatus = noErr
+        lastOutputCallbackStatus = noErr
+        onDiagnostic?("Decoder lifecycle suspend reason=\(reason); active SPS/PPS preserved, VT session invalidated")
     }
 
     /// A v8.17 transport reconnect can begin at an arbitrary raw position. Keep

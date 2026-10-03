@@ -9,6 +9,61 @@ struct VehicleView: View {
                 VStack(spacing: 18) {
                     ConnectionCard(state: state)
 
+                    section("DIRECT ELM327 FEASIBILITY") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Diagnostic only • Production Map Mode speed remains GPS")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            HStack {
+                                Button(state.directELM.scanning ? "Scanning…" : "Scan BLE") { state.directELM.scan() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(state.directELM.scanning)
+                                if state.directELM.scanning {
+                                    Button("Stop") { state.directELM.stopScan() }
+                                        .buttonStyle(.bordered)
+                                }
+                            }
+
+                            if !state.directELM.devices.isEmpty {
+                                Picker("ELM / OBD device", selection: Binding(
+                                    get: { state.directELM.selectedDeviceID },
+                                    set: { state.directELM.selectAndConnect($0) }
+                                )) {
+                                    Text("Select device").tag(UUID?.none)
+                                    ForEach(state.directELM.devices) { device in
+                                        Text("\(device.name) • \(device.rssi) dBm")
+                                            .tag(Optional(device.id))
+                                    }
+                                }
+                            }
+
+                            HStack {
+                                Button("Connect selected") { state.directELM.connectSelected() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(state.directELM.selectedDeviceID == nil || state.directELM.connecting)
+                                Button("Disconnect") { state.directELM.disconnect() }
+                                    .buttonStyle(.bordered)
+                                    .disabled(state.directELM.connectedName == nil)
+                            }
+
+                            LabeledContent("Bluetooth", value: state.directELM.bluetoothState)
+                            LabeledContent("Direct OBD", value: state.directELM.status)
+                            LabeledContent("Connected", value: state.directELM.connectedName ?? "—")
+                            LabeledContent("GATT", value: state.directELM.gattSummary)
+                            LabeledContent("TX", value: state.directELM.txSummary)
+                            LabeledContent("RX", value: state.directELM.rxSummary)
+                            LabeledContent("Last RX", value: state.directELM.lastRX)
+
+                            Button("Send one 01 0D speed probe") { state.directELM.runOneShotVehicleSpeedProbe() }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!state.directELM.gattReady)
+                            LabeledContent("Speed probe", value: state.directELM.speedProbeSummary)
+
+                            HudDescription("v90.35.3.24.22 tests multiple OBD ownership first. Scan/connect does not disconnect the HUD from its stock ELM327 session. The only diagnostic write is one explicit 01 0D vehicle-speed request; no ATZ, ATSP0, reset, or protocol-selection command is sent. ELM scan/connect/GATT/TX/RX and the HUD OBD state before/after are written into the normal HUD log and Live Map diagnostic timeline. If simultaneous ownership is not supported, a later build can add the Map Mode-only ownership handoff we discussed.")
+                        }
+                    }
+
                     section("OBD-II THROUGH HUD") {
                         VStack(alignment: .leading, spacing: 12) {
                             Toggle("Auto-connect OBD after HUD connects", isOn: Binding(
