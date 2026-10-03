@@ -1,0 +1,45 @@
+HUD Controller v90.35.3.24.21 + U2W v8.34 — build verification
+================================================================
+
+APP VALIDATION
+- Python regression/source-contract suite: 498 passed, 1 skipped
+- Swift parser: 210/210 .swift files PASS
+- Production pairing string: v90.35.3.24.21 + U2W v8.34
+- MainVideo transport: U2WH2648 / exact v8.31 raw relay
+- Physical Map Mode remains fallback-first and independent of MainVideo health
+- Production displayed speed remains GPS
+
+OBD FLIGHT RECORDER
+- starts automatically from the existing HUD OBD connection event
+- captures every HUD BLE notification before parser/de-duplication
+- captures OBD-labeled app->HUD TX packets
+- captures GPS reference samples and OBD/HUD connection-state timeline
+- file-backed drive capture; no large in-memory raw-drive buffer
+- survives transient HUD BLE disconnect without replacing the drive session
+- no second OBD connection
+- new workflow sends no repeated hidden-item stimulus
+- parked bundle performs separate best-effort LOG_CATEGORY_OBD transfer with 45 s bound
+- stock log-transfer artifacts are segregated from the trustworthy live capture
+- final one-click ZIP contains drive_raw_ble.bin, CSV traces, README, HUD_app_session.log, and stock transfer artifacts when available
+
+U2W v8.34
+Install image SHA256: dbb865445ea59f613e8d85179bf29e4e226ad342fbbd8993b967e17737aab34f
+Rollback image SHA256: 3873d686a8c76f04eddf230cc8c899de17f21fbe2b327afc3e6b1532aab84164
+Active shim SHA256: 1a85de02952d8c1852aa06fc2fd6e273de29a2fc6bcf8fe908a268bec35fc042
+Exact raw relay SHA256: 1c19377dbc9bdc4256dc109053824704a966448ffa9ae8d3472cf76c895e4a90
+- active shim BSS: 108 bytes
+- hard mirror generation cap: 8 MiB
+- SPS/IDR-independent write-boundary rotation
+- resource guard fails closed for MainVideo mirror only
+- exact v8.31 32-KiB raw relay retained
+- adapter video parser/cache/reference chain: none
+- autostart: no
+- AppleCarPlay/ARMiPhoneIAP2 process control: none
+- Route Guidance / Now Playing / HUD JPEG relay changes: none
+
+FIRMWARE VALIDATION
+- shell syntax: PASS
+- legacy AES wrapper encrypt/decrypt round trip: PASS
+- install/rollback tar member validation: PASS
+- exact v8.31 relay hash: PASS
+- write-boundary continuity/hard-cap model: PASS, 1000 deterministic trials

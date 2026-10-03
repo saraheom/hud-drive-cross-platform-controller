@@ -6,9 +6,9 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.20 MainVideo client for U2W v8.33 Lossless Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.21 MainVideo client for U2W v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
-/// U2W v8.33 fixes the passive v8.11 mirror itself: file rotation preserves the complete
+/// U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
 /// and vectored hooks mirror only the bytes the real call actually wrote. The TCP/15332
 /// transport is the exact v8.31 32-KiB raw relay: no adapter parser/cache/GOP replay, no
@@ -158,7 +158,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.33-lossless-mirror-v831-raw-tcp-15332 base=v8.11-lossless-atomic-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
         diagnosticRecorder.record("mainvideo", "start", fields: ["reason": reason, "generation": workerGeneration + 1])
         startNetworkPathLogging()
         startFreshnessWatchdog()
@@ -176,7 +176,7 @@ final class U2WMainVideoClient {
                 let ready = await self.ensureAdapterRelay(reason: "bootstrap #\(attempt) / \(reason)")
                 guard self.running, !Task.isCancelled else { return }
                 if ready {
-                    self.logger.log("MAINVIDEO PREFLIGHT", "v8.33 lossless-mirror raw relay confirmed RUNNING before TCP open attempt=\(attempt)")
+                    self.logger.log("MAINVIDEO PREFLIGHT", "v8.34 hard-bounded-mirror raw relay confirmed RUNNING before TCP open attempt=\(attempt)")
                     self.startWorker(reason: "relay confirmed / \(reason)")
                     return
                 }
@@ -265,16 +265,20 @@ final class U2WMainVideoClient {
             let recentOverflows = fields["recent_anchor_invalidations"] ?? fields["recent_anchor_overflows"] ?? "?"
             let liveIDRBoots = fields["live_idr_bootstraps"] ?? fields["client_live_bootstraps"] ?? "?"
             let lastBootstrapMode = fields["last_bootstrap_mode"] ?? "?"
-            if relayVersion.contains("v8.33") {
+            if relayVersion.contains("v8.34") || relayVersion.contains("v8.33") {
                 let rawBuffer = fields["raw_buffer_bytes"] ?? "32768"
                 let mirrorVersion = fields["mirror_version"] ?? "?"
                 let mirrorGeneration = fields["mirror_generation"] ?? "?"
                 let rotations = fields["mirror_rotation_success"] ?? "?"
+                let hardRotations = fields["mirror_hard_cap_rotations"] ?? "?"
+                let resourceGuards = fields["mirror_resource_guard_trips"] ?? "?"
                 let fallbacks = fields["mirror_rotation_fallback_append"] ?? "?"
-                let preservedPrefix = fields["mirror_prefix_preserved_bytes"] ?? "?"
                 let partialRetries = fields["mirror_partial_write_retries"] ?? "?"
                 let writeFailures = fields["mirror_write_failures"] ?? "?"
-                adapterCacheSummary = "\(process) • exact v8.31 raw relay \(rawBuffer)B • mirror \(mirrorVersion) gen \(mirrorGeneration) rotations \(rotations) fallbackAppend \(fallbacks) preservedPrefix \(preservedPrefix)B partialRetry \(partialRetries) writeFail \(writeFailures) • adapterParser NO cache NO • Navigation independent"
+                let tmpFree = fields["tmpfs_free_kb"] ?? "?"
+                let unlatches = fields["mirror_source_unlatches"] ?? "?"
+                let relatches = fields["mirror_source_relatches"] ?? "?"
+                adapterCacheSummary = "\(process) • exact v8.31 raw relay \(rawBuffer)B • mirror \(mirrorVersion) gen \(mirrorGeneration) hardRot \(hardRotations)/\(rotations) guard \(resourceGuards) fallbackAppend \(fallbacks) tmpFree \(tmpFree)KB fd \(unlatches)/\(relatches) partialRetry \(partialRetries) writeFail \(writeFailures) • adapterParser NO cache NO • Navigation independent"
             } else if relayVersion.contains("v8.32") {
                 let checkpointValid = fields["checkpoint_valid"] ?? "?"
                 let checkpointBytes = fields["checkpoint_bytes"] ?? "?"
@@ -340,7 +344,7 @@ final class U2WMainVideoClient {
             } else {
                 adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             }
-            let supportedRelay = relayVersion.contains("v8.33") || relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
+            let supportedRelay = relayVersion.contains("v8.34") || relayVersion.contains("v8.33") || relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
             let ready = (200...299).contains(code) && process == "RUNNING" && marker == "YES" && supportedRelay
             adapterRelayConfirmedRunning = ready
             logger.log("U2W H264 RELAY", "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) \(adapterCacheSummary)")
@@ -1100,7 +1104,7 @@ private final class U2WMainVideoTCPWorker {
                 self.annexBParser.reset()
                 self.onPhase?("WAITING_LIVE_IDR")
                 self.onStatus?("U2W raw relay connected • iPhone parsing lossless mirror", true)
-                self.onDiagnostic?("TCP relay handshake U2WH2648 accepted; v8.33 package uses exact v8.31 raw relay; adapter parser/cache=NONE; raw Annex-B parsing owned by iPhone; mirror rotation is lossless/atomic")
+                self.onDiagnostic?("TCP relay handshake U2WH2648 accepted; v8.34 package uses exact v8.31 raw relay; adapter parser/cache=NONE; raw Annex-B parsing owned by iPhone; mirror rotation is lossless/atomic")
                 self.receiveRawBytes(connection, generation: generation)
                 return
             } else if text == "U2WH2647" {
@@ -1192,7 +1196,7 @@ private final class U2WMainVideoTCPWorker {
         let accepted = sanitizer.process(nal)
 
         // v24.20: a single frame_num jump is diagnostic evidence, not a hard
-        // recovery trigger. With the v8.33 lossless mirror, normal operation should
+        // recovery trigger. With the v8.34 hard-bounded lossless mirror, normal operation should
         // be byte-continuous; if a jump is ever observed, keep feeding the validated
         // frame and let repeated VideoToolbox codecBadDataErr (-8969) prove whether
         // the decode epoch is actually unusable. This avoids manufacturing a long

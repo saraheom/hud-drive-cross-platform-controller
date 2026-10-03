@@ -1,3 +1,13 @@
+# HUD Controller v90.35.3.24.21 + U2W v8.34 — hard-bounded MainVideo + automatic OBD flight recorder
+
+This paired release follows the successful part of the October 2 v8.33 drive (natural MainVideo startup and >5-minute clean decode) and fixes the resource failure that followed. U2W v8.34 rotates its passive MainVideo mirror at an **8 MiB hard write-boundary cap independent of SPS/IDR cadence**, retains the exact v8.31 32-KiB raw relay, and fails closed for MainVideo only if a bounded next generation cannot be created. It adds `/tmp`/rotation/resource-guard/FD-lifecycle telemetry without AppleCarPlay or ARMiPhoneIAP2 process control.
+
+v24.21 also replaces the manual 90-second OBD investigation workflow with an **automatic file-backed whole-drive flight recorder**. Once the HUD reports its existing OBD connection, the app passively records every HUD BLE notification before parsing, OBD-related TX, GPS speed reference, and connection-state events. After parking, **Collect OBD Drive Diagnostic ZIP (parked)** performs a separate bounded stock-log attempt and packages one shareable ZIP. Production displayed speed remains GPS until a real OBD speed channel is validated.
+
+**This release requires the paired U2W v8.34 image and a normal updater reboot.** See `V90_35_3_24_21_RELEASE.md`, `V90_35_3_24_21_BUILD_VERIFY.txt`, and `u2w/v8.34_HardBoundedMirrorRawRelay/README.md`.
+
+---
+
 # HUD Controller v90.35.3.24.20 + U2W v8.33 — lossless MainVideo mirror + exact v8.31 raw relay
 
 This paired release fixes the byte-loss defect isolated in the exact v8.11 passive MainVideo mirror. At a 12 MiB mirror rotation, the old shim could discard continuation bytes that preceded the first SPS inside the successful AppleCarPlay write, leaving OEM CarPlay healthy while corrupting the copied H.264 reference chain. U2W v8.33 preserves the **entire** successful write across an atomic inode swap, retries partial mirror writes, and mirrors only the byte count actually written by vectored calls.

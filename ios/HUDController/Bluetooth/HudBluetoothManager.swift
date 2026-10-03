@@ -94,6 +94,26 @@ final class HudBluetoothManager: NSObject {
     private let obdDiagnosticWireFrameLimitBytes = 128 * 1024
     private let obdDiagnosticRawCaptureLimitBytes = 8 * 1024 * 1024
 
+    // v90.35.3.24.21: passive whole-drive OBD flight recorder. This starts
+    // automatically when the HUD reports its existing OBD connection. It never
+    // opens a second OBD link and never sends a diagnostic stimulus. Every HUD BLE
+    // notification is preserved before parsing, OBD-related app TX is recorded, and
+    // simultaneous GPS speed is sampled for offline packet-family correlation.
+    private(set) var obdDriveRecorderActive = false
+    private(set) var obdDriveRecorderStatus = "Armed — starts automatically with HUD OBD"
+    private(set) var obdDriveDiagnosticBundleURL: URL?
+    private var obdDriveSessionDirectory: URL?
+    private var obdDriveRawRXHandle: FileHandle?
+    private var obdDriveRXCSVHandle: FileHandle?
+    private var obdDriveTXCSVHandle: FileHandle?
+    private var obdDriveGPSCSVHandle: FileHandle?
+    private var obdDriveEventsHandle: FileHandle?
+    private var obdDriveStartedAt: Date?
+    private var obdDriveRXCount = 0
+    private var obdDriveOBDTXCount = 0
+    private var obdDriveGPSCount = 0
+    private var obdDriveLastGPSAt = Date.distantPast
+
     // Short forced logging window around the stock OBD_DRIVING_VELOCITY probe.
     // During this window every HUD RX body is logged with simultaneous GPS speed,
     // rather than applying the normal passive-trace rate limiting.
@@ -364,6 +384,7 @@ final class HudBluetoothManager: NSObject {
     }
 
     func enqueue(_ packet: Data, label: String) {
+        if label.localizedCaseInsensitiveContains("OBD") { recordOBDDriveTX(packet, label: label) }
         guard state == .connected else {
             logger.log("ERROR", "Cannot send \(label): not connected")
             return
@@ -425,6 +446,172 @@ final class HudBluetoothManager: NSObject {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+
+    private func obdDriveWrite(_ handle: FileHandle?, _ text: String) {
+        guard let handle, let data = text.data(using: .utf8) else { return }
+        try? handle.write(contentsOf: data)
+    }
+
+    private func obdDriveTimestamp() -> String {
+        ISO8601DateFormatter().string(from: Date())
+    }
+
+    private func obdDriveCSV(_ value: String) -> String {
+        "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    }
+
+    private func startOBDDriveFlightRecorder(reason: String) {
+        guard !obdDriveRecorderActive else {
+            recordOBDDriveEvent("start_ignored", detail: reason)
+            return
+        }
+        let fm = FileManager.default
+        let base = (fm.urls(for: .documentDirectory, in: .userDomainMask).first ?? fm.temporaryDirectory)
+            .appendingPathComponent("OBD Drive Diagnostics", isDirectory: true)
+        try? fm.createDirectory(at: base, withIntermediateDirectories: true)
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let dir = base.appendingPathComponent("OBD_Drive_v90.35.3.24.21_\(f.string(from: Date()))", isDirectory: true)
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            func open(_ name: String, header: String? = nil) throws -> FileHandle {
+                let url = dir.appendingPathComponent(name)
+                fm.createFile(atPath: url.path, contents: header?.data(using: .utf8))
+                let h = try FileHandle(forWritingTo: url)
+                try h.seekToEnd()
+                return h
+            }
+            obdDriveRawRXHandle = try open("drive_raw_ble.bin")
+            obdDriveRXCSVHandle = try open("drive_rx_notifications.csv", header: "iso8601,uptime,gps_mph,obd_connected,bytes,hex\n")
+            obdDriveTXCSVHandle = try open("drive_obd_tx.csv", header: "iso8601,uptime,label,bytes,hex\n")
+            obdDriveGPSCSVHandle = try open("gps_reference.csv", header: "iso8601,uptime,mph,kmh,obd_connected\n")
+            obdDriveEventsHandle = try open("obd_state_timeline.csv", header: "iso8601,uptime,event,detail\n")
+            obdDriveSessionDirectory = dir
+            obdDriveStartedAt = Date()
+            obdDriveRXCount = 0; obdDriveOBDTXCount = 0; obdDriveGPSCount = 0
+            obdDriveLastGPSAt = Date.distantPast
+            obdDriveDiagnosticBundleURL = nil
+            obdDriveRecorderActive = true
+            obdDriveRecorderStatus = "Recording whole drive • passive BLE + GPS"
+            recordOBDDriveEvent("recorder_started", detail: reason)
+            logger.log("OBD FLIGHT", "BEGIN passive whole-drive recorder dir=\(dir.lastPathComponent) reason=\(reason)")
+        } catch {
+            obdDriveRecorderStatus = "Recorder start failed: \(error.localizedDescription)"
+            logger.log("OBD FLIGHT", "START FAILED \(error.localizedDescription)")
+        }
+    }
+
+    private func recordOBDDriveEvent(_ event: String, detail: String) {
+        guard obdDriveRecorderActive else { return }
+        obdDriveWrite(obdDriveEventsHandle, "\(obdDriveTimestamp()),\(ProcessInfo.processInfo.systemUptime),\(obdDriveCSV(event)),\(obdDriveCSV(detail))\n")
+    }
+
+    private func recordOBDDriveRX(_ data: Data) {
+        guard obdDriveRecorderActive, !data.isEmpty else { return }
+        obdDriveRXCount += 1
+        let uptime = ProcessInfo.processInfo.systemUptime
+        // Binary record: little-endian UInt64 uptime microseconds + UInt32 length + raw notification.
+        var us = UInt64((uptime * 1_000_000).rounded()).littleEndian
+        var length = UInt32(data.count).littleEndian
+        var record = Data(bytes: &us, count: MemoryLayout<UInt64>.size)
+        record.append(Data(bytes: &length, count: MemoryLayout<UInt32>.size))
+        record.append(data)
+        try? obdDriveRawRXHandle?.write(contentsOf: record)
+        let line = "\(obdDriveTimestamp()),\(uptime),\(obdTraceReferenceSpeedMph),\(obdTraceConnected ? 1 : 0),\(data.count),\(obdDriveCSV(HudProtocol.hex(data)))\n"
+        obdDriveWrite(obdDriveRXCSVHandle, line)
+    }
+
+    private func recordOBDDriveTX(_ data: Data, label: String) {
+        guard obdDriveRecorderActive, !data.isEmpty else { return }
+        obdDriveOBDTXCount += 1
+        obdDriveWrite(obdDriveTXCSVHandle, "\(obdDriveTimestamp()),\(ProcessInfo.processInfo.systemUptime),\(obdDriveCSV(label)),\(data.count),\(obdDriveCSV(HudProtocol.hex(data)))\n")
+    }
+
+    private func recordOBDDriveGPS(force: Bool = false) {
+        guard obdDriveRecorderActive else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(obdDriveLastGPSAt) >= 0.20 else { return }
+        obdDriveLastGPSAt = now
+        obdDriveGPSCount += 1
+        let kmh = Int((Double(obdTraceReferenceSpeedMph) * 1.609344).rounded())
+        obdDriveWrite(obdDriveGPSCSVHandle, "\(obdDriveTimestamp()),\(ProcessInfo.processInfo.systemUptime),\(obdTraceReferenceSpeedMph),\(kmh),\(obdTraceConnected ? 1 : 0)\n")
+    }
+
+    @discardableResult
+    func stopOBDDriveFlightRecorder(reason: String) -> URL? {
+        guard obdDriveRecorderActive else { return obdDriveSessionDirectory }
+        recordOBDDriveEvent("recorder_stopped", detail: reason)
+        for h in [obdDriveRawRXHandle, obdDriveRXCSVHandle, obdDriveTXCSVHandle, obdDriveGPSCSVHandle, obdDriveEventsHandle] {
+            try? h?.synchronize(); try? h?.close()
+        }
+        obdDriveRawRXHandle=nil; obdDriveRXCSVHandle=nil; obdDriveTXCSVHandle=nil; obdDriveGPSCSVHandle=nil; obdDriveEventsHandle=nil
+        obdDriveRecorderActive = false
+        obdDriveRecorderStatus = "Drive capture complete • ready to bundle"
+        logger.log("OBD FLIGHT", "END reason=\(reason) rx=\(obdDriveRXCount) obdTX=\(obdDriveOBDTXCount) gps=\(obdDriveGPSCount)")
+        return obdDriveSessionDirectory
+    }
+
+    func buildOBDDriveDiagnosticBundle(stockArchiveURL: URL?, stockRawURL: URL?) -> URL? {
+        guard let dir = stopOBDDriveFlightRecorder(reason: "parked diagnostic collection") else {
+            obdDriveRecorderStatus = "No drive capture available"
+            return nil
+        }
+        let fm = FileManager.default
+        let stockDir = dir.appendingPathComponent("stock_hud_log_transfer", isDirectory: true)
+        try? fm.createDirectory(at: stockDir, withIntermediateDirectories: true)
+        if let stockArchiveURL, fm.fileExists(atPath: stockArchiveURL.path) {
+            try? fm.copyItem(at: stockArchiveURL, to: stockDir.appendingPathComponent(stockArchiveURL.lastPathComponent))
+        }
+        if let stockRawURL, fm.fileExists(atPath: stockRawURL.path) {
+            try? fm.copyItem(at: stockRawURL, to: stockDir.appendingPathComponent("stock_hud_log_transfer_raw.bin"))
+        }
+        if let log = logger.currentFileURL, fm.fileExists(atPath: log.path) {
+            try? fm.copyItem(at: log, to: dir.appendingPathComponent("HUD_app_session.log"))
+        }
+        let duration = Date().timeIntervalSince(obdDriveStartedAt ?? Date())
+        let readme = """
+        HUD OBD Drive Diagnostic — v90.35.3.24.21
+        ==========================================
+        Passive whole-drive recorder; production displayed speed remains GPS.
+        No second OBD BLE connection and no repeated hidden-item stimulus are used.
+
+        drive_raw_ble.bin format:
+        [UInt64 little-endian monotonic uptime microseconds][UInt32 little-endian notification length][raw BLE notification bytes]
+
+        Files:
+        - drive_rx_notifications.csv: every HUD BLE notification before parser/de-duplication, with simultaneous GPS speed.
+        - drive_obd_tx.csv: app->HUD packets whose label is OBD-related.
+        - gps_reference.csv: GPS speed reference samples.
+        - obd_state_timeline.csv: recorder/OBD lifecycle events.
+        - HUD_app_session.log: normal app log.
+        - stock_hud_log_transfer/: best-effort parked stock diagnostic response, kept separate because this HUD may return LOG_CATEGORY_CRUSH when LOG_CATEGORY_OBD is requested.
+
+        duration_seconds=\(String(format: "%.1f", duration))
+        rx_notifications=\(obdDriveRXCount)
+        obd_tx_packets=\(obdDriveOBDTXCount)
+        gps_samples=\(obdDriveGPSCount)
+        supported_pids=\(obdTraceConnected ? "connected" : "not-confirmed-at-export")
+        """
+        try? Data(readme.utf8).write(to: dir.appendingPathComponent("README_OBD_DIAGNOSTIC.txt"), options: .atomic)
+        do {
+            let out = dir.deletingLastPathComponent().appendingPathComponent("HUD_OBD_DriveDiagnostic_v90.35.3.24.21_\(Int(Date().timeIntervalSince1970)).zip")
+            try? fm.removeItem(at: out)
+            let writer = try LiveMapStoredZipWriter(url: out)
+            for relative in try fm.subpathsOfDirectory(atPath: dir.path).sorted() {
+                let u = dir.appendingPathComponent(relative); var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: u.path, isDirectory: &isDir), !isDir.boolValue else { continue }
+                try writer.add(name: relative, fileURL: u)
+            }
+            try writer.finish()
+            obdDriveDiagnosticBundleURL = out
+            obdDriveRecorderStatus = "OBD drive diagnostic ZIP ready"
+            logger.log("OBD FLIGHT", "ZIP READY \(out.lastPathComponent)")
+            return out
+        } catch {
+            obdDriveRecorderStatus = "ZIP failed: \(error.localizedDescription)"
+            logger.log("OBD FLIGHT", "ZIP FAILED \(error.localizedDescription)")
+            return nil
+        }
+    }
 
     func requestOBDDiagnosticLogs(maxLastFilesCount: Int32 = 2) {
         guard state == .connected else {
@@ -1118,6 +1305,7 @@ final class HudBluetoothManager: NSObject {
 
     func updateOBDTraceReferenceSpeed(gpsMph: Int) {
         obdTraceReferenceSpeedMph = max(0, gpsMph)
+        recordOBDDriveGPS()
         if obdDeepSpeedProbeActive {
             let now = Date().timeIntervalSinceReferenceDate
             let point = OBDDeepGPSPoint(time: now, mph: obdTraceReferenceSpeedMph)
@@ -1315,6 +1503,11 @@ final class HudBluetoothManager: NSObject {
         index += length
         let connected = body[index] != 0
         obdTraceConnected = connected
+        if connected {
+            startOBDDriveFlightRecorder(reason: "HUD OBD connected supported=\(supported)")
+        }
+        recordOBDDriveEvent("obd_connection", detail: "connected=\(connected ? 1 : 0) supported=\(supported)")
+        recordOBDDriveGPS(force: true)
 
         logger.log("OBD EVENT", "connected=\(connected), supported=\(supported)")
         onOBDConnectionEvent?(connected, supported)
@@ -1445,6 +1638,7 @@ extension HudBluetoothManager: CBCentralManagerDelegate {
                 }
             }
             self.endOBDSpeedProbeForensics(reason: "HUD BLE disconnected")
+            if self.obdDriveRecorderActive { self.recordOBDDriveEvent("hud_ble_disconnected", detail: reason); self.obdDriveRecorderStatus = "Recording whole drive • HUD BLE temporarily disconnected" }
             self.logger.log("BLE", "Disconnected: \(reason)")
             self.onTransportDisconnected?()
 
@@ -1521,6 +1715,7 @@ extension HudBluetoothManager: CBPeripheralDelegate {
         Task { @MainActor in
             guard let data = characteristic.value else { return }
             self.lastRX = HudProtocol.hex(data)
+            self.recordOBDDriveRX(data)
             // Preserve every diagnostic notification in the bounded binary capture
             // before any de-duplication. Exact immediate continuation duplicates are
             // intentionally omitted from both the frame parser and verbose RX CHUNK

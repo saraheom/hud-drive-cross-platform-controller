@@ -44,6 +44,6 @@ def test_codec_bad_data_recovery_preserves_validated_parameter_sets_and_tcp():
 
 
 def test_combined_release_keeps_u2w_v831_unchanged():
-    assert 'v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay' in UI
+    assert 'v90.35.3.24.21 pairs with U2W v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
     assert 'no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control' in UI
-    assert 'appVersion=v90.35.3.24.20' in APP
+    assert 'appVersion=v90.35.3.24.21' in APP

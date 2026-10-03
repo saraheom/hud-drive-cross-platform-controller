@@ -17,7 +17,7 @@ def test_mainvideo_uses_continuous_dedicated_tcp():
 
 
 def test_dedicated_tcp_filter_runs_on_iphone():
-    assert 'architecture=v8.33-lossless-mirror-v831-raw-tcp-15332' in VIDEO
+    assert 'architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332' in VIDEO
     assert 'U2WMainVideoTCPWorker' in VIDEO
     assert 'U2WH2642' in VIDEO and 'U2WH2643' in VIDEO
     assert 'port: 15332' in VIDEO

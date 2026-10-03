@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-/// v90.35.3.24.20 one-drive MainVideo evidence recorder.
+/// v90.35.3.24.21 one-drive MainVideo evidence recorder.
 ///
 /// This recorder is intentionally iPhone-side and passive. It never signals or
 /// restarts AppleCarPlay, never changes AppleCarPlay/Route Guidance behavior, and never
@@ -250,9 +250,9 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             try? timelineHandle?.synchronize()
 
             let manifest = """
-            Live Map Diagnostic Bundle — HUD Controller v90.35.3.24.20
+            Live Map Diagnostic Bundle — HUD Controller v90.35.3.24.21
             ==========================================================
-            Paired adapter: U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay
+            Paired adapter: U2W v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
 
             Purpose
             -------
@@ -294,7 +294,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             try? timelineHandle?.synchronize()
 
             let parent = sessionDirectory.deletingLastPathComponent()
-            let zipURL = parent.appendingPathComponent("LiveMap_Diagnostic_v90.35.3.24.20_\(Self.timestamp()).zip")
+            let zipURL = parent.appendingPathComponent("LiveMap_Diagnostic_v90.35.3.24.21_\(Self.timestamp()).zip")
             try? fileManager.removeItem(at: zipURL)
             let writer = try LiveMapStoredZipWriter(url: zipURL)
             let files = try fileManager.subpathsOfDirectory(atPath: sessionDirectory.path)
@@ -350,7 +350,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
     }
 }
 
-private final class LiveMapStoredZipWriter {
+final class LiveMapStoredZipWriter {
     private struct Entry {
         let name: Data
         let crc32: UInt32

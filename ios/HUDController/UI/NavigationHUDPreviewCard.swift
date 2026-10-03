@@ -569,38 +569,18 @@ struct NavigationHUDPreviewCard: View {
                         .foregroundStyle(.secondary)
 
                     Divider()
-                    Button(state.hudOBDInternalProbeV4Active ? "Stop HUD-internal OBD probe v4" : "Run 90 s HUD-internal OBD probe v4") {
-                        if state.hudOBDInternalProbeV4Active {
-                            state.stopHUDOBDInternalSpeedProbeV4(reason: "Map Mode UI stop")
-                        } else {
-                            state.startHUDOBDInternalSpeedProbeV4()
-                        }
+                    LabeledContent("OBD drive recorder", value: state.bluetooth.obdDriveRecorderStatus)
+                    Button(state.hudOBDDriveBundleCollecting ? "Collecting OBD diagnostic…" : "Collect OBD Drive Diagnostic ZIP (parked)") {
+                        state.collectOBDDriveDiagnosticBundle()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive || state.hudOBDDeepProbeV3Active)
-                    LabeledContent("OBD HUD-internal probe", value: state.hudOBDInternalProbeV4Status)
-                    Button("Collect/reconstruct HUD OBD ZIP (parked)") {
-                        state.collectHUDOBDInternalProbeV4Logs()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(state.hudOBDInternalProbeV4Active || state.bluetooth.state != .connected || state.bluetooth.obdDiagnosticTransferActive)
-                    LabeledContent("HUD OBD log transfer", value: state.bluetooth.obdDiagnosticStatus)
-                    if let reportURL = state.hudOBDInternalProbeV4ReportURL {
-                        ShareLink(item: reportURL) {
-                            Label("Share OBD internal probe v4 manifest", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    if let url = state.bluetooth.obdDiagnosticLogURL {
+                    .disabled(state.hudOBDDriveBundleCollecting || state.bluetooth.state != .connected || state.bluetooth.obdDiagnosticTransferActive)
+                    if let url = state.bluetooth.obdDriveDiagnosticBundleURL {
                         ShareLink(item: url) {
-                            Label("Share HUD OBD diagnostic ZIP", systemImage: "square.and.arrow.up")
+                            Label("Share OBD Drive Diagnostic ZIP", systemImage: "square.and.arrow.up")
                         }
                     }
-                    if let url = state.bluetooth.obdDiagnosticRawCaptureURL {
-                        ShareLink(item: url) {
-                            Label("Share raw HUD BLE diagnostic capture", systemImage: "waveform.badge.magnifyingglass")
-                        }
-                    }
-                    Text("v4 moves below the phone-facing packet layer. Start the 90 s road phase while parked, then drive normally; it timestamps GPS range and repeatedly stimulates the HUD's hidden stock OBD_DRIVING_VELOCITY path without opening a second OBD connection. After the road phase, park and tap Collect HUD OBD logs so the stock LOG_CATEGORY_OBD archive can be inspected for 010D/410D, ELM/AT traffic, internal speed values, or HUD OBD-service traces.")
+                    Text("v24.21 starts a passive OBD flight recorder automatically whenever the HUD confirms its existing OBD connection. It preserves every HUD BLE notification before parsing, OBD-related app→HUD packets, simultaneous GPS reference speed, and OBD lifecycle events for the whole drive. It sends no repeated hidden-item stimulus and does not open a second OBD connection. After parking, one collection tap stops the drive capture, makes a best-effort stock LOG_CATEGORY_OBD request as a separate artifact, and bundles everything for offline correlation. Production displayed speed remains GPS until a true OBD speed channel is validated.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -628,7 +608,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.33 fixes the proven v8.11 mirror-copy defect at the 12 MiB generation boundary: it preserves the complete successful AppleCarPlay write with an atomic inode swap, retries partial mirror writes, and mirrors only bytes actually written by writev/sendmsg. The TCP/15332 path is the exact v8.31 32 KiB raw relay—no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control, Route Guidance change, or Now Playing change.")
+                    Text("v90.35.3.24.21 pairs with U2W v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.34 keeps the v8.33 lossless write semantics but removes the SPS-dependent growth hazard: it rotates atomically at an ordinary successful AppleCarPlay write boundary near 8 MiB, regardless of SPS/IDR cadence, and passively unlatches the source only if that exact selected fd closes. The TCP/15332 path is the exact v8.31 32 KiB raw relay—no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control, Route Guidance change, or Now Playing change.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

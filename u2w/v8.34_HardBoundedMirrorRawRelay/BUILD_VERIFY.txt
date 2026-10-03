@@ -1,0 +1,66 @@
+U2W v8.34 Hard-Bounded Mirror + Exact v8.31 Raw Relay — build verification
+============================================================================
+
+INSTALL IMAGE
+U2W_Update_v8.34_HardBoundedMirror_RawRelay.img
+SHA256: dbb865445ea59f613e8d85179bf29e4e226ad342fbbd8993b967e17737aab34f
+Payload: tmp/once.sh, tmp/libu2w_mainvideo_live.so, tmp/u2w_mainvideo_relay,
+         tmp/u2wvideo-relay-start.cgi, tmp/u2wvideo-relay-stop.cgi,
+         tmp/u2wvideo-relay-status.cgi
+
+ROLLBACK IMAGE
+U2W_Update_v8.34_SAFE_ROLLBACK_v8.33.img
+SHA256: 3873d686a8c76f04eddf230cc8c899de17f21fbe2b327afc3e6b1532aab84164
+
+v8.34 HARD-BOUNDED MIRROR SHIM
+SHA1:   b982322ee65fd45405ab40f98512dbd76450976b
+SHA256: 1a85de02952d8c1852aa06fc2fd6e273de29a2fc6bcf8fe908a268bec35fc042
+Format: ELF32 little-endian ARM EABI5 shared object
+BSS: 0x6c bytes (108 bytes)
+Source lineage: exact v8.11 passive mirror -> v8.33 write-completeness fix -> v8.34 hard-bound/resource guard
+Hard generation cap: 8,388,608 bytes
+Rotation trigger: successful AppleCarPlay write boundary; SPS/IDR independent
+Rotation replacement: temporary inode + atomic rename
+Mirror write policy: write-all
+Vectored call policy: mirror only actual real-call return bytes
+Resource failure policy: FAIL_CLOSED_MAINVIDEO_ONLY; never grow old generation without bound
+Source lifecycle: first genuine SPS-bearing fd; exact selected-fd close unlatches; later genuine SPS may relatch
+AppleCarPlay payload path: REAL WRITE FIRST; payload unmodified
+
+EXACT v8.33 ROLLBACK SHIM
+SHA1: 67ec2d1d69a50096c0b14e26048fd7b2a00bde08
+
+EXACT v8.31 RAW RELAY USED BY v8.34
+SHA1:   b3964792342f9bc5ad22eaeb70eaf84ec04562f6
+SHA256: 1c19377dbc9bdc4256dc109053824704a966448ffa9ae8d3472cf76c895e4a90
+Raw buffer: 32768 bytes
+Adapter semantic H.264 parser: NONE
+Adapter video/GOP/reference cache: NONE
+Autostart: NO
+Wire handshake: U2WH2648
+
+SAFETY GATES
+- software_version == 2021.03.06.1343
+- product_type == U2W
+- proven v8.11 / v8.27.2 / v8.15.1 markers required
+- active mirror must hash to exact v8.11, v8.33, or v8.34 expected shim
+- active relay must hash to exact v8.32 or exact v8.31 raw relay
+- installer stops only the standalone custom relay after executable-path verification
+- rollback requires the exact active v8.34 shim and exact v8.33 rollback shim / v8.31 relay payload hashes
+- rollback also stops only the executable-path-verified standalone relay
+- no AppleCarPlay/ARMiPhoneIAP2 kill/signal/restart action
+- no source-selector mutation or aggressive FD reacquisition
+- no v8.25 large GOP scan
+- no v8.30 stateful reference-chain buffer
+- no boot/autostart MainVideo relay
+- Route Guidance / Now Playing / HUD JPEG relay unchanged
+
+PACKAGE / SOURCE VALIDATION
+- active + rollback shell syntax: PASS
+- legacy U2W AES wrapper encrypt/decrypt round trip: PASS
+- install tar payload member verification: PASS
+- rollback tar payload member verification: PASS
+- exact v8.31 relay hash verification: PASS
+- 8 MiB write-boundary continuity/bound model: PASS, 1000 deterministic trials
+- Swift source parse (paired app): PASS, 210/210 files
+- Python regression/source-contract suite (paired repo): PASS, 498 passed / 1 skipped

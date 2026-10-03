@@ -1,0 +1,4 @@
+/mnt/data/work_v2421/HUD_v90.35.3.24.21_iOS26_HUD_GitHub_Repo_v834_HardBoundedMirror_OBDFlightRecorder/u2w/v8.34_HardBoundedMirrorRawRelay/source/libu2w_mainvideo_hardbounded.c:195:8: warning: declaration of built-in function 'fwrite' requires inclusion of the header <stdio.h> [-Wbuiltin-requires-header]
+  195 | size_t fwrite(const void*p,size_t s,size_t n,void*st){size_t r;ensure_real();r=real_fwrite_fn?real_fwrite_fn(p,s,n,st):0;/* Main stream was physically observed on fd-backed writes; do not guess a FILE* fd. */return r;}
+      |        ^
+1 warning generated.

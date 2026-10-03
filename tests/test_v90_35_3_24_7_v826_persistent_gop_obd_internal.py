@@ -67,11 +67,11 @@ def test_obd_v4_targets_hud_internal_logs_without_second_obd_connection():
     assert 'requestOBDDiagnosticLogs(maxLastFilesCount: 5)' in APP
     assert 'LOG_CATEGORY_OBD' in APP
     assert 'no second OBD connection' in APP
-    assert 'Run 90 s HUD-internal OBD probe v4' in UI
-    assert 'Collect/reconstruct HUD OBD ZIP (parked)' in UI
-    assert 'Share HUD OBD diagnostic ZIP' in UI
+    assert 'Collect OBD Drive Diagnostic ZIP (parked)' in UI
+    assert 'passive OBD flight recorder automatically' in UI
+    assert 'Share OBD Drive Diagnostic ZIP' in UI
 
 
 def test_ui_documents_v247_v826_pair_and_10fps_validation():
-    assert 'v90.35.3.24.20 pairs with U2W v8.33 Lossless Mirror + exact v8.31 Raw Relay' in UI
+    assert 'v90.35.3.24.21 pairs with U2W v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
     assert 'HUD map FPS probe' in UI and 'supportedHUDFrameRates' in (ROOT/'ios/HUDController/Models/HudMapModeSettings.swift').read_text()

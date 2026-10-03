@@ -1,28 +1,32 @@
 import XCTest
 
-final class V90352420LosslessMirrorRawRelayTests: XCTestCase {
+final class V90352421HardBoundedMirrorOBDFlightTests: XCTestCase {
     private func source(_ relativePath: String) throws -> String {
         let here = URL(fileURLWithPath: #filePath)
         let root = here.deletingLastPathComponent().deletingLastPathComponent()
         return try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
-    func testV2420PairsWithLosslessMirrorAndExactV831RawRelay() throws {
+    func testV2421PairsWithV834HardBoundedMirror() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         let app = try source("HUDController/App/AppState.swift")
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
-
         XCTAssertTrue(video.contains("v8.34-hard-bounded-mirror-v831-raw-tcp-15332"))
         XCTAssertTrue(video.contains("U2WH2648"))
-        XCTAssertTrue(video.contains("exact v8.31 raw relay"))
-        XCTAssertTrue(video.contains("lossless/atomic"))
         XCTAssertTrue(app.contains("appVersion=v90.35.3.24.21"))
         XCTAssertTrue(ui.contains("v90.35.3.24.21 pairs with U2W v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
     }
 
-    func testPhysicalMapModeStillKeepsFallbackDuringMainVideoOutage() throws {
+    func testWholeDriveOBDRecorderIsPassiveAndAutomatic() throws {
+        let bluetooth = try source("HUDController/Bluetooth/HudBluetoothManager.swift")
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("KEEPING physical mode 6 + JPEG relay active"))
-        XCTAssertTrue(app.contains("physical Map Mode no longer depends on MainVideo readiness"))
+        let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
+        XCTAssertTrue(bluetooth.contains("Armed — starts automatically with HUD OBD"))
+        XCTAssertTrue(bluetooth.contains("recordOBDDriveRX(data)"))
+        XCTAssertTrue(bluetooth.contains("drive_raw_ble.bin"))
+        XCTAssertTrue(bluetooth.contains("gps_reference.csv"))
+        XCTAssertTrue(app.contains("collectOBDDriveDiagnosticBundle()"))
+        XCTAssertTrue(ui.contains("Collect OBD Drive Diagnostic ZIP (parked)"))
+        XCTAssertTrue(ui.contains("sends no repeated hidden-item stimulus"))
     }
 }

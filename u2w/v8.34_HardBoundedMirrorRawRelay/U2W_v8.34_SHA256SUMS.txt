@@ -1,0 +1,2 @@
+dbb865445ea59f613e8d85179bf29e4e226ad342fbbd8993b967e17737aab34f  U2W_Update_v8.34_HardBoundedMirror_RawRelay.img
+3873d686a8c76f04eddf230cc8c899de17f21fbe2b327afc3e6b1532aab84164  U2W_Update_v8.34_SAFE_ROLLBACK_v8.33.img
