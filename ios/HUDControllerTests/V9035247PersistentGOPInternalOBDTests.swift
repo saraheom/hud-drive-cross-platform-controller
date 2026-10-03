@@ -41,13 +41,17 @@ final class V9035247PersistentGOPInternalOBDTests: XCTestCase {
         XCTAssertTrue(relay.contains("#define CATCHUP_CAP (48*1024*1024)"))
     }
 
-    func testOBDV4UsesHudInternalDiagnosticArchiveAfterRoadPhase() throws {
+    func testOBDV421UsesPassiveWholeDriveRecorderAndParkedBundle() throws {
         let app = try source("ios/HUDController/App/AppState.swift")
+        let bluetooth = try source("ios/HUDController/Bluetooth/HudBluetoothManager.swift")
         let ui = try source("ios/HUDController/UI/NavigationHUDPreviewCard.swift")
-        XCTAssertTrue(app.contains("startHUDOBDInternalSpeedProbeV4"))
+        XCTAssertTrue(app.contains("collectOBDDriveDiagnosticBundle"))
         XCTAssertTrue(app.contains("requestOBDDiagnosticLogs(maxLastFilesCount: 5)"))
-        XCTAssertTrue(app.contains("no second OBD connection"))
-        XCTAssertTrue(ui.contains("Run 90 s HUD-internal OBD probe v4"))
-        XCTAssertTrue(ui.contains("Collect/reconstruct HUD OBD ZIP (parked)"))
+        XCTAssertTrue(bluetooth.contains("startOBDDriveFlightRecorder(reason:"))
+        XCTAssertTrue(bluetooth.contains("recordOBDDriveRX(data)"))
+        XCTAssertTrue(bluetooth.contains("recordOBDDriveGPS"))
+        XCTAssertTrue(ui.contains("Collect OBD Drive Diagnostic ZIP (parked)"))
+        XCTAssertTrue(ui.contains("does not open a second OBD connection"))
+        XCTAssertFalse(ui.contains("Run 90 s HUD-internal OBD probe v4"))
     }
 }

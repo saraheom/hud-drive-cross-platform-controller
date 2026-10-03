@@ -7,14 +7,14 @@ final class V90352419SafeCheckpointRobustMapModeTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testV832LegacyHandshakeRemainsRecognizedWithoutOwningV833Runtime() throws {
+    func testV832LegacyHandshakeRemainsRecognizedWithoutOwningV834Runtime() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("Data(\"U2WH2649\".utf8)"))
         XCTAssertTrue(video.contains("boundedCheckpointRecovery = true"))
         XCTAssertTrue(video.contains("v8.32 safe-checkpoint recovery"))
         XCTAssertTrue(video.contains("checkpoint already attempted in this recovery episode; no reconnect loop"))
         XCTAssertTrue(video.contains("TCP relay handshake U2WH2649 accepted"))
-        XCTAssertTrue(video.contains("v8.33 package uses exact v8.31 raw relay"))
+        XCTAssertTrue(video.contains("v8.34 package uses exact v8.31 raw relay"))
         XCTAssertTrue(video.contains("mirror rotation is lossless/atomic"))
     }
 
