@@ -64,6 +64,15 @@ struct HudMapModeCanvas: View {
                             .font(.system(size: 48, weight: .bold, design: .rounded))
                             .minimumScaleFactor(0.55)
                             .lineLimit(1)
+                            .foregroundStyle(speedNumberColor)
+                            .padding(.horizontal, speedWarningActive && settings.speedWarningBackgroundEnabled ? 6 : 0)
+                            .padding(.vertical, speedWarningActive && settings.speedWarningBackgroundEnabled ? 1 : 0)
+                            .background {
+                                if speedWarningActive && settings.speedWarningBackgroundEnabled {
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(speedWarningBackgroundColor.opacity(settings.speedWarningBackgroundOpacity))
+                                }
+                            }
                         Text("MPH")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.white.opacity(0.60))
@@ -96,6 +105,29 @@ struct HudMapModeCanvas: View {
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
+    }
+
+    private var speedWarningActive: Bool {
+        settings.speedWarningEnabled &&
+        snapshot.speedLimitMph > 0 &&
+        snapshot.speedMph > snapshot.speedLimitMph
+    }
+
+    private var speedNumberColor: Color {
+        guard speedWarningActive && settings.speedWarningNumberColorEnabled else { return .white }
+        return Color(
+            red: settings.speedWarningNumberRed,
+            green: settings.speedWarningNumberGreen,
+            blue: settings.speedWarningNumberBlue
+        )
+    }
+
+    private var speedWarningBackgroundColor: Color {
+        Color(
+            red: settings.speedWarningBackgroundRed,
+            green: settings.speedWarningBackgroundGreen,
+            blue: settings.speedWarningBackgroundBlue
+        )
     }
 
     private var usSpeedLimitSign: some View {

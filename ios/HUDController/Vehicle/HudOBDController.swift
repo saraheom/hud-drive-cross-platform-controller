@@ -49,6 +49,7 @@ final class HudOBDController {
     private var autoConnectAttempt = 0
     private var autoConnectGeneration = 0
     private var lastPositiveConnectionEvent = Date.distantPast
+    private(set) var directELMOwnershipSuspended = false
 
     var deviceName: String {
         didSet { UserDefaults.standard.set(deviceName, forKey: "HUD.OBD.deviceName") }
@@ -60,7 +61,7 @@ final class HudOBDController {
                 "OBD OWNERSHIP",
                 "HUD auto-connect=\(autoConnect ? "ON" : "OFF") connected=\(connected ? 1 : 0) device=\(deviceName)"
             )
-            if autoConnect {
+            if autoConnect && !directELMOwnershipSuspended {
                 startAutoConnectLoop(reason: "Auto-connect enabled")
                 startHealthLoop()
             } else {
@@ -157,7 +158,7 @@ final class HudOBDController {
                 self.autoConnectTask = nil
                 self.autoConnectAttempt = 0
                 self.startHealthLoop()
-            } else if self.autoConnect {
+            } else if self.autoConnect && !self.directELMOwnershipSuspended {
                 self.startAutoConnectLoop(reason: "HUD reported OBD disconnected")
             }
             self.onConnectionChanged?(connected)
@@ -225,6 +226,33 @@ final class HudOBDController {
     }
 
 
+    /// Temporarily gives the single-client ELM327 to the iPhone while Map Mode is active.
+    /// This does not rewrite the user's persisted Auto-connect preference; it only
+    /// suspends the HUD retry/health loops and sends the stock disconnect command.
+    func suspendForDirectELMOwnership(reason: String) {
+        directELMOwnershipSuspended = true
+        autoConnectGeneration += 1
+        autoConnectTask?.cancel(); autoConnectTask = nil
+        healthTask?.cancel(); healthTask = nil
+        autoConnectAttempt = 0
+        logger.log("OBD OWNERSHIP", "HUD ownership SUSPEND for direct ELM reason=\(reason) autoConnectPref=\(autoConnect ? 1 : 0)")
+        disconnect()
+    }
+
+    /// Returns OBD ownership to the HUD after the iPhone has released the BLE peripheral.
+    /// One connect is sent immediately; the normal retry/health policy resumes only if
+    /// the user's existing Auto-connect preference is enabled.
+    func resumeAfterDirectELMOwnership(reason: String) {
+        directELMOwnershipSuspended = false
+        logger.log("OBD OWNERSHIP", "HUD ownership RESUME after direct ELM reason=\(reason) autoConnectPref=\(autoConnect ? 1 : 0)")
+        connect(force: true)
+        if autoConnect {
+            startAutoConnectLoop(reason: "direct ELM ownership returned / \(reason)")
+            startHealthLoop()
+        }
+    }
+
+
     func applyWidgetSelection() {
         applyFreerideWidgets()
         applyNavigationWidgets()
@@ -282,7 +310,7 @@ final class HudOBDController {
         onConnectionChanged?(false)
         logger.log("OBD SESSION", "\(reason); cleared stale OBD connection state")
 
-        if autoConnect {
+        if autoConnect && !directELMOwnershipSuspended {
             startAutoConnectLoop(reason: reason)
             startHealthLoop()
         }
@@ -308,7 +336,7 @@ final class HudOBDController {
     }
 
     private func startAutoConnectLoop(reason: String) {
-        guard autoConnect else { return }
+        guard autoConnect, !directELMOwnershipSuspended else { return }
         guard autoConnectTask == nil else { return }
 
         autoConnectGeneration += 1
@@ -322,7 +350,7 @@ final class HudOBDController {
 
             while !Task.isCancelled &&
                     generation == self.autoConnectGeneration &&
-                    self.autoConnect && !self.connected {
+                    self.autoConnect && !self.directELMOwnershipSuspended && !self.connected {
                 guard self.bluetooth.state == .connected else {
                     try? await Task.sleep(for: .seconds(2))
                     continue
@@ -365,12 +393,12 @@ final class HudOBDController {
 
 
     private func startHealthLoop() {
-        guard autoConnect, healthTask == nil else { return }
+        guard autoConnect, !directELMOwnershipSuspended, healthTask == nil else { return }
 
         healthTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            while !Task.isCancelled && self.autoConnect {
+            while !Task.isCancelled && self.autoConnect && !self.directELMOwnershipSuspended {
                 try? await Task.sleep(for: .seconds(10))
                 guard !Task.isCancelled else { break }
 

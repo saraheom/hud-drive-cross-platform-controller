@@ -2,14 +2,14 @@ import Foundation
 import CoreBluetooth
 import Observation
 
-/// v90.35.3.24.23 diagnostic-only direct ELM327 feasibility probe.
+/// v90.35.3.24.24 direct ELM327 manager.
 ///
-/// This manager deliberately does not take OBD ownership away from the HUD. The
-/// first field test asks a narrower question: can the iPhone establish a second
-/// BLE/GATT connection to the user's existing ELM327 while the HUD keeps its
-/// stock OBD session? No ELM reset or protocol-selection command is ever sent.
-/// The only OBD command exposed by this diagnostic is one explicit `01 0D\r`
-/// vehicle-speed request initiated by the user while parked/testing.
+/// The October 5 field test proved the user's OBDII adapter is effectively
+/// single-client: it becomes visible to iOS immediately after the HUD releases
+/// ownership and returns valid SAE J1979 `41 0D XX` vehicle-speed responses.
+/// This manager therefore supports both the original manual diagnostic surface
+/// and production Map Mode ownership/polling. It never sends ATZ, ATSP, protocol
+/// selection, reset, or any command other than `01 0D\r`.
 @MainActor
 @Observable
 final class DirectELM327Manager: NSObject {
@@ -34,6 +34,12 @@ final class DirectELM327Manager: NSObject {
     private(set) var scanning = false
     private(set) var connecting = false
     private(set) var gattReady = false
+    private(set) var mapModeOwnershipRequested = false
+    private(set) var productionPolling = false
+    private(set) var currentSpeedMph: Int?
+    private(set) var currentSpeedKmh: Int?
+    private(set) var lastSpeedAt: Date?
+    private(set) var ownershipStatus = "HUD owns OBD"
 
     var hudOBDConnectedProvider: (() -> Bool)?
     var gpsSpeedMphProvider: (() -> Int)?
@@ -47,19 +53,52 @@ final class DirectELM327Manager: NSObject {
     private var rxCharacteristics: [CBCharacteristic] = []
     private var scanStopTask: Task<Void, Never>?
     private var speedProbeTimeoutTask: Task<Void, Never>?
+    private var pollingTask: Task<Void, Never>?
+    private var ownershipConnectTask: Task<Void, Never>?
     private var speedProbeActive = false
     private var speedProbeBuffer = ""
+    private var streamBuffer = ""
     private var hudOBDBeforeConnect: Bool?
     private var hudOBDBeforeProbe: Bool?
+    private var lastProductionSpeedLogAt = Date.distantPast
+    private var lastLoggedProductionSpeed: Int?
+    private var autoConnectDiscoveredOBD = false
+
+    private let savedPeripheralKey = "HUD.DirectELM.savedPeripheralUUID"
+    private let savedNameKey = "HUD.DirectELM.savedPeripheralName"
 
     init(logger: LogManager, diagnostics: LiveMapDiagnosticRecorder) {
         self.logger = logger
         self.diagnostics = diagnostics
+        if let raw = UserDefaults.standard.string(forKey: savedPeripheralKey), let uuid = UUID(uuidString: raw) {
+            self.selectedDeviceID = uuid
+        }
         super.init()
         central = CBCentralManager(delegate: self, queue: nil)
     }
 
+    var hasFreshProductionSpeed: Bool {
+        guard let lastSpeedAt else { return false }
+        return productionPolling && Date().timeIntervalSince(lastSpeedAt) <= 1.5
+    }
+
+    func freshSpeedMph(maxAge: TimeInterval = 1.5) -> Int? {
+        guard let currentSpeedMph, let lastSpeedAt,
+              Date().timeIntervalSince(lastSpeedAt) <= maxAge else { return nil }
+        return currentSpeedMph
+    }
+
+    var speedSourceSummary: String {
+        if let mph = freshSpeedMph() { return "OBD • \(mph) mph" }
+        if mapModeOwnershipRequested { return productionPolling ? "OBD stale • GPS fallback" : "OBD connecting • GPS fallback" }
+        return "HUD/stock ownership"
+    }
+
     func scan() {
+        beginScan(duration: 10, productionAutoConnect: false)
+    }
+
+    private func beginScan(duration: TimeInterval, productionAutoConnect: Bool) {
         guard central.state == .poweredOn else {
             status = "Bluetooth unavailable"
             emit("ELM SCAN", "scan rejected centralState=\(central.state.rawValue)", event: "scan_rejected")
@@ -68,16 +107,26 @@ final class DirectELM327Manager: NSObject {
         scanStopTask?.cancel()
         devices.removeAll()
         peripherals.removeAll()
-        selectedDeviceID = nil
+        if !productionAutoConnect { selectedDeviceID = nil }
+        autoConnectDiscoveredOBD = productionAutoConnect
         scanning = true
-        status = "Scanning for BLE OBD/ELM327 devices…"
+        status = productionAutoConnect ? "Looking for saved OBDII…" : "Scanning for BLE OBD/ELM327 devices…"
         let hudOBD = hudOBDConnectedProvider?() ?? false
-        emit("ELM SCAN", "BEGIN passive discovery hudOBDConnected=\(hudOBD ? 1 : 0); no connection/no OBD commands", event: "scan_begin", fields: ["hud_obd_connected": hudOBD])
+        emit(
+            "ELM SCAN",
+            "BEGIN discovery hudOBDConnected=\(hudOBD ? 1 : 0) production=\(productionAutoConnect ? 1 : 0); no AT/reset commands",
+            event: "scan_begin",
+            fields: ["hud_obd_connected": hudOBD, "production": productionAutoConnect]
+        )
         central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
         scanStopTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(10))
+            try? await Task.sleep(for: .milliseconds(Int64(duration * 1000)))
             guard let self, !Task.isCancelled else { return }
-            self.stopScan(reason: "10s bounded scan complete")
+            self.stopScan(reason: "bounded scan complete")
+            if productionAutoConnect && self.mapModeOwnershipRequested && self.connectedPeripheral == nil {
+                self.ownershipStatus = "OBD not found • GPS fallback"
+                self.emit("OBD OWNERSHIP", "Map Mode direct OBD scan ended without connection; GPS fallback remains active", event: "map_obd_scan_miss")
+            }
         }
     }
 
@@ -102,6 +151,10 @@ final class DirectELM327Manager: NSObject {
             status = "Select a device first"
             return
         }
+        connect(peripheral, production: mapModeOwnershipRequested)
+    }
+
+    private func connect(_ peripheral: CBPeripheral, production: Bool) {
         stopScan(reason: "connect requested")
         if let existing = connectedPeripheral, existing.identifier != peripheral.identifier {
             central.cancelPeripheralConnection(existing)
@@ -111,17 +164,20 @@ final class DirectELM327Manager: NSObject {
         gattReady = false
         txCharacteristic = nil
         rxCharacteristics.removeAll()
-        status = "Connecting to \(peripheral.name ?? id.uuidString)…"
+        status = "Connecting to \(peripheral.name ?? peripheral.identifier.uuidString)…"
         emit(
             "ELM CONN",
-            "BEGIN device=\(peripheral.name ?? id.uuidString) id=\(id) hudOBDBefore=\((hudOBDBeforeConnect ?? false) ? 1 : 0) coexistenceTest=1",
+            "BEGIN device=\(peripheral.name ?? peripheral.identifier.uuidString) id=\(peripheral.identifier) hudOBDBefore=\((hudOBDBeforeConnect ?? false) ? 1 : 0) production=\(production ? 1 : 0)",
             event: "connect_begin",
-            fields: ["device": peripheral.name ?? id.uuidString, "id": id.uuidString, "hud_obd_before": hudOBDBeforeConnect ?? false]
+            fields: ["device": peripheral.name ?? peripheral.identifier.uuidString, "id": peripheral.identifier.uuidString, "hud_obd_before": hudOBDBeforeConnect ?? false, "production": production]
         )
         central.connect(peripheral, options: nil)
     }
 
     func disconnect() {
+        stopPolling(reason: "manual disconnect")
+        mapModeOwnershipRequested = false
+        ownershipConnectTask?.cancel(); ownershipConnectTask = nil
         speedProbeTimeoutTask?.cancel(); speedProbeTimeoutTask = nil
         speedProbeActive = false
         guard let peripheral = connectedPeripheral else {
@@ -133,8 +189,59 @@ final class DirectELM327Manager: NSObject {
         central.cancelPeripheralConnection(peripheral)
     }
 
-    /// Sends one standard OBD-II Mode 01 PID 0D request. No AT reset or protocol
-    /// command is sent. Production Map Mode speed remains GPS in this release.
+    /// Called after AppState has told the HUD to release its single-client ELM link.
+    /// Uses the remembered peripheral when available, otherwise performs a bounded
+    /// scan and automatically connects to the first OBD/ELM candidate.
+    func claimForMapMode() {
+        mapModeOwnershipRequested = true
+        ownershipStatus = "iPhone claiming OBD…"
+        currentSpeedMph = nil
+        currentSpeedKmh = nil
+        lastSpeedAt = nil
+        emit("OBD OWNERSHIP", "iPhone Map Mode ownership requested hudOBD=\((hudOBDConnectedProvider?() ?? false) ? 1 : 0)", event: "map_obd_claim")
+
+        if connectedPeripheral != nil {
+            if gattReady { startPollingIfReady() }
+            return
+        }
+        guard central.state == .poweredOn else {
+            ownershipStatus = "Bluetooth unavailable • GPS fallback"
+            return
+        }
+
+        if let raw = UserDefaults.standard.string(forKey: savedPeripheralKey), let uuid = UUID(uuidString: raw) {
+            let recovered = central.retrievePeripherals(withIdentifiers: [uuid])
+            if let peripheral = recovered.first {
+                peripherals[uuid] = peripheral
+                selectedDeviceID = uuid
+                ownershipStatus = "Connecting saved \(peripheral.name ?? "OBDII")…"
+                connect(peripheral, production: true)
+                return
+            }
+        }
+        beginScan(duration: 8, productionAutoConnect: true)
+    }
+
+    /// Releases the BLE link before the HUD resumes its normal OBD ownership.
+    func releaseMapModeOwnership() {
+        mapModeOwnershipRequested = false
+        ownershipStatus = "Returning OBD to HUD…"
+        autoConnectDiscoveredOBD = false
+        stopPolling(reason: "Map Mode ended")
+        currentSpeedMph = nil
+        currentSpeedKmh = nil
+        lastSpeedAt = nil
+        ownershipConnectTask?.cancel(); ownershipConnectTask = nil
+        stopScan(reason: "Map Mode ended")
+        if let peripheral = connectedPeripheral {
+            emit("OBD OWNERSHIP", "iPhone releasing OBD peripheral=\(peripheral.name ?? peripheral.identifier.uuidString)", event: "map_obd_release")
+            central.cancelPeripheralConnection(peripheral)
+        } else {
+            ownershipStatus = "HUD may reclaim OBD"
+        }
+    }
+
+    /// Manual parked probe retained for diagnostics. It sends exactly one `01 0D`.
     func runOneShotVehicleSpeedProbe() {
         guard let peripheral = connectedPeripheral, let txCharacteristic else {
             speedProbeSummary = "Not ready • connect and discover writable GATT first"
@@ -144,31 +251,17 @@ final class DirectELM327Manager: NSObject {
             speedProbeSummary = "Probe already in progress"
             return
         }
-        let command = "010D\r"
-        guard let bytes = command.data(using: .ascii) else { return }
-        let writeType: CBCharacteristicWriteType
-        if txCharacteristic.properties.contains(.writeWithoutResponse) {
-            writeType = .withoutResponse
-        } else if txCharacteristic.properties.contains(.write) {
-            writeType = .withResponse
-        } else {
-            speedProbeSummary = "Selected TX characteristic is not writable"
-            return
-        }
-
         speedProbeActive = true
         speedProbeBuffer = ""
         hudOBDBeforeProbe = hudOBDConnectedProvider?() ?? false
         let gps = gpsSpeedMphProvider?() ?? 0
         speedProbeSummary = "Sent 01 0D • waiting for 41 0D XX"
-        emit(
-            "ELM TX",
-            "ASCII=010D\\r hex=30 31 30 44 0D writeType=\(writeType == .withoutResponse ? "withoutResponse" : "withResponse") hudOBDBefore=\((hudOBDBeforeProbe ?? false) ? 1 : 0) gps=\(gps)mph; NO ATZ/ATSP command",
-            event: "speed_probe_tx",
-            fields: ["command": "010D\\r", "hud_obd_before": hudOBDBeforeProbe ?? false, "gps_mph": gps]
-        )
-        peripheral.writeValue(bytes, for: txCharacteristic, type: writeType)
-
+        emit("ELM TX", "ASCII=010D\\r oneShot=1 hudOBDBefore=\((hudOBDBeforeProbe ?? false) ? 1 : 0) gps=\(gps)mph; NO ATZ/ATSP command", event: "speed_probe_tx", fields: ["command": "010D\\r", "hud_obd_before": hudOBDBeforeProbe ?? false, "gps_mph": gps])
+        guard sendVehicleSpeedRequest(peripheral: peripheral, characteristic: txCharacteristic) else {
+            speedProbeActive = false
+            speedProbeSummary = "Selected TX characteristic is not writable"
+            return
+        }
         speedProbeTimeoutTask?.cancel()
         speedProbeTimeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(3))
@@ -176,51 +269,97 @@ final class DirectELM327Manager: NSObject {
             self.speedProbeActive = false
             let hudAfter = self.hudOBDConnectedProvider?() ?? false
             self.speedProbeSummary = "Timed out • no validated 41 0D response"
-            self.emit(
-                "ELM SPEED",
-                "TIMEOUT raw={\(self.speedProbeBuffer)} hudOBDBefore=\((self.hudOBDBeforeProbe ?? false) ? 1 : 0) hudOBDAfter=\(hudAfter ? 1 : 0)",
-                event: "speed_probe_timeout",
-                fields: ["raw": self.speedProbeBuffer, "hud_obd_before": self.hudOBDBeforeProbe ?? false, "hud_obd_after": hudAfter]
-            )
+            self.emit("ELM SPEED", "TIMEOUT raw={\(self.speedProbeBuffer)} hudOBDBefore=\((self.hudOBDBeforeProbe ?? false) ? 1 : 0) hudOBDAfter=\(hudAfter ? 1 : 0)", event: "speed_probe_timeout", fields: ["raw": self.speedProbeBuffer, "hud_obd_before": self.hudOBDBeforeProbe ?? false, "hud_obd_after": hudAfter])
         }
     }
 
+    private func sendVehicleSpeedRequest(peripheral: CBPeripheral, characteristic: CBCharacteristic) -> Bool {
+        guard let bytes = "010D\r".data(using: .ascii) else { return false }
+        let writeType: CBCharacteristicWriteType
+        if characteristic.properties.contains(.writeWithoutResponse) {
+            writeType = .withoutResponse
+        } else if characteristic.properties.contains(.write) {
+            writeType = .withResponse
+        } else {
+            return false
+        }
+        peripheral.writeValue(bytes, for: characteristic, type: writeType)
+        return true
+    }
+
+    private func startPollingIfReady() {
+        guard mapModeOwnershipRequested, gattReady,
+              let peripheral = connectedPeripheral, let txCharacteristic else { return }
+        guard pollingTask == nil else { return }
+        productionPolling = true
+        ownershipStatus = "iPhone owns OBD • polling speed"
+        emit("OBD OWNERSHIP", "Map Mode direct OBD polling START rate=5Hz command=010D only", event: "map_obd_poll_start")
+        pollingTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.mapModeOwnershipRequested,
+                  self.connectedPeripheral?.identifier == peripheral.identifier {
+                if !self.sendVehicleSpeedRequest(peripheral: peripheral, characteristic: txCharacteristic) {
+                    self.ownershipStatus = "OBD write unavailable • GPS fallback"
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            self.productionPolling = false
+            self.pollingTask = nil
+        }
+    }
+
+    private func stopPolling(reason: String) {
+        pollingTask?.cancel(); pollingTask = nil
+        if productionPolling {
+            emit("OBD OWNERSHIP", "Map Mode direct OBD polling STOP reason=\(reason)", event: "map_obd_poll_stop", fields: ["reason": reason])
+        }
+        productionPolling = false
+    }
+
     private func considerSpeedResponse(_ text: String) {
-        guard speedProbeActive else { return }
-        speedProbeBuffer += text
-        let normalized = speedProbeBuffer
+        streamBuffer += text
+        if streamBuffer.count > 512 { streamBuffer = String(streamBuffer.suffix(256)) }
+        if speedProbeActive { speedProbeBuffer += text }
+
+        let normalized = streamBuffer
             .uppercased()
             .replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\n", with: "")
             .replacingOccurrences(of: ">", with: "")
-        guard let range = normalized.range(of: "410D") else { return }
+        guard let range = normalized.range(of: "410D", options: .backwards) else { return }
         let suffix = normalized[range.upperBound...]
         guard suffix.count >= 2 else { return }
         let hex = String(suffix.prefix(2))
         guard let kmh = Int(hex, radix: 16) else { return }
-
-        speedProbeActive = false
-        speedProbeTimeoutTask?.cancel(); speedProbeTimeoutTask = nil
         let mph = Int((Double(kmh) * 0.621371).rounded())
+        currentSpeedKmh = kmh
+        currentSpeedMph = mph
+        lastSpeedAt = Date()
+
         let gps = gpsSpeedMphProvider?() ?? 0
         let hudAfter = hudOBDConnectedProvider?() ?? false
-        let delta = mph - gps
-        speedProbeSummary = "Validated 41 0D \(hex) • \(kmh) km/h • \(mph) mph • GPS \(gps) mph"
-        emit(
-            "ELM SPEED",
-            "VALID response=41 0D \(hex) speed=\(kmh)kmh/\(mph)mph gps=\(gps)mph delta=\(delta) hudOBDBefore=\((hudOBDBeforeProbe ?? false) ? 1 : 0) hudOBDAfter=\(hudAfter ? 1 : 0)",
-            event: "speed_probe_valid",
-            fields: [
-                "response": "41 0D \(hex)",
-                "kmh": kmh,
-                "mph": mph,
-                "gps_mph": gps,
-                "delta_mph": delta,
-                "hud_obd_before": hudOBDBeforeProbe ?? false,
-                "hud_obd_after": hudAfter
-            ]
-        )
+        if speedProbeActive {
+            speedProbeActive = false
+            speedProbeTimeoutTask?.cancel(); speedProbeTimeoutTask = nil
+            let delta = mph - gps
+            speedProbeSummary = "Validated 41 0D \(hex) • \(kmh) km/h • \(mph) mph • GPS \(gps) mph"
+            emit("ELM SPEED", "VALID response=41 0D \(hex) speed=\(kmh)kmh/\(mph)mph gps=\(gps)mph delta=\(delta) hudOBDBefore=\((hudOBDBeforeProbe ?? false) ? 1 : 0) hudOBDAfter=\(hudAfter ? 1 : 0)", event: "speed_probe_valid", fields: ["response": "41 0D \(hex)", "kmh": kmh, "mph": mph, "gps_mph": gps, "delta_mph": delta, "hud_obd_before": hudOBDBeforeProbe ?? false, "hud_obd_after": hudAfter])
+        }
+
+        if productionPolling {
+            let now = Date()
+            if lastLoggedProductionSpeed != mph || now.timeIntervalSince(lastProductionSpeedLogAt) >= 1.0 {
+                lastLoggedProductionSpeed = mph
+                lastProductionSpeedLogAt = now
+                emit("MAP SPEED", "source=OBD value=\(mph)mph ecu=\(kmh)kmh gps=\(gps)mph hudOBD=\(hudAfter ? 1 : 0)", event: "production_speed", fields: ["mph": mph, "kmh": kmh, "gps_mph": gps, "hud_obd": hudAfter])
+            }
+        }
+
+        // Drop consumed text so a duplicate notification cannot keep matching an
+        // ancient response forever. Retain only a small tail for fragmented frames.
+        streamBuffer = String(streamBuffer.suffix(64))
     }
 
     private func chooseCharacteristics(for peripheral: CBPeripheral) {
@@ -228,31 +367,24 @@ final class DirectELM327Manager: NSObject {
         let writable = chars.filter { $0.properties.contains(.writeWithoutResponse) || $0.properties.contains(.write) }
         let notifying = chars.filter { $0.properties.contains(.notify) || $0.properties.contains(.indicate) }
 
-        // Generic ELM BLE clones commonly expose either a single bidirectional
-        // UART characteristic or separate TX/RX characteristics. Prefer a
-        // bidirectional characteristic, otherwise first writable + all notify.
-        txCharacteristic = writable.first(where: {
-            $0.properties.contains(.notify) || $0.properties.contains(.indicate)
-        }) ?? writable.first
+        // The tested adapter exposes service FFF0 / characteristic FFF1. Keep the
+        // generic selection fallback so other ELM BLE variants still work.
+        txCharacteristic = writable.first(where: { $0.uuid.uuidString.uppercased() == "FFF1" })
+            ?? writable.first(where: { $0.properties.contains(.notify) || $0.properties.contains(.indicate) })
+            ?? writable.first
         rxCharacteristics = notifying
-        if rxCharacteristics.isEmpty, let txCharacteristic,
-           txCharacteristic.properties.contains(.read) {
+        if rxCharacteristics.isEmpty, let txCharacteristic, txCharacteristic.properties.contains(.read) {
             rxCharacteristics = [txCharacteristic]
         }
-
         for characteristic in notifying where !characteristic.isNotifying {
             peripheral.setNotifyValue(true, for: characteristic)
         }
         gattReady = txCharacteristic != nil && !rxCharacteristics.isEmpty
         txSummary = txCharacteristic.map { Self.characteristicDescription($0) } ?? "No writable characteristic"
         rxSummary = rxCharacteristics.isEmpty ? "No notify/indicate/read characteristic" : rxCharacteristics.map(Self.characteristicDescription).joined(separator: " | ")
-        gattSummary = "services \(peripheral.services?.count ?? 0) • characteristics \(chars.count) • \(gattReady ? "probe-ready" : "incomplete")"
-        emit(
-            "ELM GATT",
-            "discovery complete \(gattSummary) TX={\(txSummary)} RX={\(rxSummary)}",
-            event: "gatt_ready",
-            fields: ["services": peripheral.services?.count ?? 0, "characteristics": chars.count, "ready": gattReady, "tx": txSummary, "rx": rxSummary]
-        )
+        gattSummary = "services \(peripheral.services?.count ?? 0) • characteristics \(chars.count) • \(gattReady ? "speed-ready" : "incomplete")"
+        emit("ELM GATT", "discovery complete \(gattSummary) TX={\(txSummary)} RX={\(rxSummary)}", event: "gatt_ready", fields: ["services": peripheral.services?.count ?? 0, "characteristics": chars.count, "ready": gattReady, "tx": txSummary, "rx": rxSummary])
+        if gattReady { startPollingIfReady() }
     }
 
     private static func characteristicDescription(_ c: CBCharacteristic) -> String {
@@ -278,7 +410,10 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
             self.emit("ELM SCAN", "central state=\(central.state.rawValue)", event: "central_state", fields: ["state": central.state.rawValue])
             if central.state != .poweredOn {
                 self.scanning = false
+                self.stopPolling(reason: "Bluetooth state \(central.state.rawValue)")
                 self.status = "Bluetooth unavailable • state \(central.state.rawValue)"
+            } else if self.mapModeOwnershipRequested && self.connectedPeripheral == nil {
+                self.claimForMapMode()
             }
         }
     }
@@ -292,27 +427,22 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
             let connectable = (advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber)?.boolValue ?? true
             self.peripherals[peripheral.identifier] = peripheral
             let device = Device(id: peripheral.identifier, name: name, rssi: RSSI.intValue, connectable: connectable, advertisedServices: services)
-            if let index = self.devices.firstIndex(where: { $0.id == device.id }) {
-                self.devices[index] = device
-            } else {
-                self.devices.append(device)
-            }
+            if let index = self.devices.firstIndex(where: { $0.id == device.id }) { self.devices[index] = device } else { self.devices.append(device) }
             self.devices.sort {
                 let lhsOBD = $0.name.localizedCaseInsensitiveContains("OBD") || $0.name.localizedCaseInsensitiveContains("ELM")
                 let rhsOBD = $1.name.localizedCaseInsensitiveContains("OBD") || $1.name.localizedCaseInsensitiveContains("ELM")
                 if lhsOBD != rhsOBD { return lhsOBD && !rhsOBD }
                 return $0.rssi > $1.rssi
             }
-            if self.selectedDeviceID == nil,
-               name.localizedCaseInsensitiveContains("OBD") || name.localizedCaseInsensitiveContains("ELM") {
+            let isOBD = name.localizedCaseInsensitiveContains("OBD") || name.localizedCaseInsensitiveContains("ELM") || services.contains(where: { $0.uppercased() == "FFF0" })
+            if self.selectedDeviceID == nil && isOBD { self.selectedDeviceID = peripheral.identifier }
+            self.emit("ELM SCAN", "FOUND name=\(name) id=\(peripheral.identifier) rssi=\(RSSI.intValue) connectable=\(connectable ? 1 : 0) services=[\(services.joined(separator: ","))] hudOBD=\((self.hudOBDConnectedProvider?() ?? false) ? 1 : 0)", event: "device_found", fields: ["name": name, "id": peripheral.identifier.uuidString, "rssi": RSSI.intValue, "connectable": connectable, "services": services])
+
+            if self.autoConnectDiscoveredOBD && self.mapModeOwnershipRequested && isOBD && connectable && self.connectedPeripheral == nil && !self.connecting {
                 self.selectedDeviceID = peripheral.identifier
+                self.autoConnectDiscoveredOBD = false
+                self.connect(peripheral, production: true)
             }
-            self.emit(
-                "ELM SCAN",
-                "FOUND name=\(name) id=\(peripheral.identifier) rssi=\(RSSI.intValue) connectable=\(connectable ? 1 : 0) services=[\(services.joined(separator: ","))] hudOBD=\((self.hudOBDConnectedProvider?() ?? false) ? 1 : 0)",
-                event: "device_found",
-                fields: ["name": name, "id": peripheral.identifier.uuidString, "rssi": RSSI.intValue, "connectable": connectable, "services": services]
-            )
         }
     }
 
@@ -323,20 +453,15 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
             self.connectedName = peripheral.name ?? peripheral.identifier.uuidString
             self.status = "Connected • discovering GATT"
             peripheral.delegate = self
-            let hudAfter = self.hudOBDConnectedProvider?() ?? false
-            self.emit(
-                "ELM CONN",
-                "CONNECTED device=\(self.connectedName ?? "?") hudOBDBefore=\((self.hudOBDBeforeConnect ?? false) ? 1 : 0) hudOBDAfter=\(hudAfter ? 1 : 0)",
-                event: "connected",
-                fields: ["device": self.connectedName ?? "?", "hud_obd_before": self.hudOBDBeforeConnect ?? false, "hud_obd_after": hudAfter]
-            )
-            peripheral.discoverServices(nil)
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(2))
-                guard let self, self.connectedPeripheral?.identifier == peripheral.identifier else { return }
-                let delayed = self.hudOBDConnectedProvider?() ?? false
-                self.emit("ELM CONN", "2s coexistence checkpoint hudOBD=\(delayed ? 1 : 0)", event: "coexistence_checkpoint", fields: ["hud_obd_connected": delayed])
+            if let name = self.connectedName,
+               name.localizedCaseInsensitiveContains("OBD") || name.localizedCaseInsensitiveContains("ELM") {
+                UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: self.savedPeripheralKey)
+                UserDefaults.standard.set(name, forKey: self.savedNameKey)
+                self.selectedDeviceID = peripheral.identifier
             }
+            let hudAfter = self.hudOBDConnectedProvider?() ?? false
+            self.emit("ELM CONN", "CONNECTED device=\(self.connectedName ?? "?") hudOBDBefore=\((self.hudOBDBeforeConnect ?? false) ? 1 : 0) hudOBDAfter=\(hudAfter ? 1 : 0) mapModeOwnership=\(self.mapModeOwnershipRequested ? 1 : 0)", event: "connected", fields: ["device": self.connectedName ?? "?", "hud_obd_before": self.hudOBDBeforeConnect ?? false, "hud_obd_after": hudAfter, "map_mode_ownership": self.mapModeOwnershipRequested])
+            peripheral.discoverServices(nil)
         }
     }
 
@@ -344,6 +469,10 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
         Task { @MainActor in
             self.connecting = false
             self.status = "Connection failed"
+            if self.mapModeOwnershipRequested {
+                self.ownershipStatus = "OBD connection failed • GPS fallback"
+                if !self.scanning { self.beginScan(duration: 6, productionAutoConnect: true) }
+            }
             self.emit("ELM CONN", "FAILED device=\(peripheral.name ?? peripheral.identifier.uuidString) error=\(error?.localizedDescription ?? "unknown") hudOBD=\((self.hudOBDConnectedProvider?() ?? false) ? 1 : 0)", event: "connect_failed", fields: ["error": error?.localizedDescription ?? "unknown"])
         }
     }
@@ -352,6 +481,7 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
         Task { @MainActor in
             self.speedProbeTimeoutTask?.cancel(); self.speedProbeTimeoutTask = nil
             self.speedProbeActive = false
+            self.stopPolling(reason: "BLE disconnected")
             self.connecting = false
             self.connectedPeripheral = nil
             self.connectedName = nil
@@ -360,7 +490,13 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
             self.gattReady = false
             self.gattSummary = "—"
             self.status = "Disconnected"
-            self.emit("ELM CONN", "DISCONNECTED device=\(peripheral.name ?? peripheral.identifier.uuidString) error=\(error?.localizedDescription ?? "none") hudOBD=\((self.hudOBDConnectedProvider?() ?? false) ? 1 : 0)", event: "disconnected", fields: ["error": error?.localizedDescription ?? "none"])
+            self.emit("ELM CONN", "DISCONNECTED device=\(peripheral.name ?? peripheral.identifier.uuidString) error=\(error?.localizedDescription ?? "none") hudOBD=\((self.hudOBDConnectedProvider?() ?? false) ? 1 : 0) mapModeOwnership=\(self.mapModeOwnershipRequested ? 1 : 0)", event: "disconnected", fields: ["error": error?.localizedDescription ?? "none"])
+            if self.mapModeOwnershipRequested {
+                self.ownershipStatus = "OBD disconnected • GPS fallback"
+                self.beginScan(duration: 6, productionAutoConnect: true)
+            } else {
+                self.ownershipStatus = "HUD may reclaim OBD"
+            }
         }
     }
 }
@@ -401,14 +537,22 @@ extension DirectELM327Manager: CBPeripheralDelegate {
             let ascii = String(data: data, encoding: .ascii) ?? ""
             let hex = data.map { String(format: "%02X", $0) }.joined(separator: " ")
             self.lastRX = ascii.isEmpty ? hex : ascii.replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\n", with: "\\n")
-            self.emit("ELM RX", "char=\(characteristic.uuid.uuidString) bytes=\(data.count) ascii={\(self.lastRX)} hex={\(hex)}", event: "rx", fields: ["characteristic": characteristic.uuid.uuidString, "bytes": data.count, "ascii": ascii, "hex": hex])
+            // Production polling can be 5 Hz. Keep raw RX in the structured diagnostic
+            // recorder but avoid flooding the human HUD log with every echo/fragment.
+            if !self.productionPolling || ascii.uppercased().contains("41 0D") {
+                self.emit("ELM RX", "char=\(characteristic.uuid.uuidString) bytes=\(data.count) ascii={\(self.lastRX)} hex={\(hex)}", event: "rx", fields: ["characteristic": characteristic.uuid.uuidString, "bytes": data.count, "ascii": ascii, "hex": hex])
+            } else {
+                self.diagnostics.record("elm327", "rx_poll_fragment", fields: ["characteristic": characteristic.uuid.uuidString, "bytes": data.count, "ascii": ascii, "hex": hex])
+            }
             if !ascii.isEmpty { self.considerSpeedResponse(ascii) }
         }
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         Task { @MainActor in
-            self.emit("ELM TX", "write callback char=\(characteristic.uuid.uuidString) error=\(error?.localizedDescription ?? "none")", event: "write_callback", fields: ["error": error?.localizedDescription ?? "none"])
+            if error != nil || !self.productionPolling {
+                self.emit("ELM TX", "write callback char=\(characteristic.uuid.uuidString) error=\(error?.localizedDescription ?? "none")", event: "write_callback", fields: ["error": error?.localizedDescription ?? "none"])
+            }
         }
     }
 }

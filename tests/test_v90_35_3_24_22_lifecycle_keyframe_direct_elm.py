@@ -71,13 +71,14 @@ def test_direct_elm_probe_tests_coexistence_before_any_ownership_handoff():
     assert 'final class DirectELM327Manager' in ELM
     assert 'scanForPeripherals(withServices: nil' in ELM
     assert 'hudOBDBeforeConnect' in ELM
-    assert 'coexistence_checkpoint' in ELM
+    assert 'mapModeOwnershipRequested' in ELM
+    assert 'Map Mode direct OBD polling START rate=5Hz command=010D only' in ELM
     assert 'selectAndConnect' in ELM
-    assert 'let command = "010D\\r"' in ELM
+    assert 'guard let bytes = "010D' in ELM
     assert '41 0D' in ELM
     assert '"ATZ\\r"' not in ELM
     assert '"ATSP0\\r"' not in ELM
-    assert 'Production Map Mode speed remains GPS' in VEHICLE
+    assert 'polls only standard 01 0D vehicle speed' in VEHICLE
     assert 'DIRECT ELM327 FEASIBILITY' in VEHICLE
     assert 'Send one 01 0D speed probe' in VEHICLE
     assert 'let directELM: DirectELM327Manager' in APP

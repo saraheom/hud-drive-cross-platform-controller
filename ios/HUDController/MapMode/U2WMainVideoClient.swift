@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.23 MainVideo client for U2W v8.35 bounded keyframe request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.24 MainVideo client for U2W v8.35 bounded keyframe request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -103,6 +103,9 @@ final class U2WMainVideoClient {
     private var lastKeyframeRequestAt: Date?
     private var keyframeRequestCount = 0
     private var keyframeRequestLastResult = "Not requested"
+    private var adapterSeamObserverActive = false
+    private var adapterSeamEventCount = 0
+    private var adapterSeamLatest = "none"
     private var startupKeyframeScheduledWorkerGeneration = -1
     private var networkMonitors: [String: NWPathMonitor] = [:]
     private var networkSignatures: [String: String] = [:]
@@ -259,6 +262,9 @@ final class U2WMainVideoClient {
             let legacyMarker = fields["marker"] ?? "?"
             let v835Marker = fields["v835_marker"] ?? "?"
             let v834MirrorMarker = fields["v834_mirror_marker"] ?? "?"
+            let v836Marker = fields["v836_marker"] ?? "?"
+            let seamCountText = fields["seam_event_count"] ?? "0"
+            let seamLatest = fields["seam_latest"] ?? "none"
             let packageVersion = fields["package_version"] ?? "?"
             let relayVersion = fields["relay_version"] ?? "?"
             let clientState = fields["client_state"] ?? "?"
@@ -271,6 +277,21 @@ final class U2WMainVideoClient {
             let generationChanges = fields["source_generation_changes"] ?? "?"
             adapterRelayVersion = relayVersion
             adapterRelayClientState = clientState
+            adapterSeamObserverActive = v836Marker == "YES"
+            if let seamCount = Int(seamCountText), seamCount != adapterSeamEventCount {
+                let previous = adapterSeamEventCount
+                adapterSeamEventCount = seamCount
+                adapterSeamLatest = seamLatest
+                logger.log("U2W VIDEO SEAM", "observer event count \(previous) → \(seamCount) latest={\(seamLatest)}")
+                diagnosticRecorder.record("generation_seam", "adapter_observer_update", fields: [
+                    "previous_count": previous,
+                    "count": seamCount,
+                    "latest": seamLatest,
+                    "relay_version": relayVersion
+                ])
+            } else if seamLatest != "none" {
+                adapterSeamLatest = seamLatest
+            }
             if let parsedSourceBytes = UInt64(sourceBytes) {
                 if adapterRelaySourceBytes != parsedSourceBytes {
                     adapterRelayLastSourceProgressAt = Date()
@@ -368,7 +389,7 @@ final class U2WMainVideoClient {
                 adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             }
             let supportedRelay = relayVersion.contains("v8.34") || relayVersion.contains("v8.33") || relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
-            // v90.35.3.24.23: v8.35 deliberately leaves the v8.34 relay binary
+            // v90.35.3.24.24: v8.35 deliberately leaves the v8.34 relay binary
             // untouched, but its wrapper status page renamed the legacy marker
             // field to v835_marker/v834_mirror_marker. v24.22 accidentally
             // required only marker=YES, so a healthy RUNNING relay was rejected
@@ -381,7 +402,7 @@ final class U2WMainVideoClient {
             adapterRelayConfirmedRunning = ready
             logger.log(
                 "U2W H264 RELAY",
-                "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) package=\(packageVersion) markers={legacy=\(legacyMarker),v835=\(v835Marker),v834=\(v834MirrorMarker)} \(adapterCacheSummary)"
+                "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) package=\(packageVersion) markers={legacy=\(legacyMarker),v835=\(v835Marker),v834=\(v834MirrorMarker),v836=\(v836Marker)} seam=\(seamCountText) \(adapterCacheSummary)"
             )
             return ready
         } catch {
@@ -771,6 +792,22 @@ final class U2WMainVideoClient {
 
     private func requestBoundedKeyframe(reason: String) async {
         guard running, lifecycleActive else { return }
+        // v90.35.3.24.24 / U2W v8.36: the Oct-5 field drive proved that the
+        // v8.35 helper used SOCK_DGRAM against stock Unix SOCK_STREAM listeners
+        // and always returned send_failed/route=none.  Keep the installed v8.35
+        // helper for rollback provenance, but do not keep injecting the known-wrong
+        // transport while the passive seam observer is active.  The exact stock
+        // ARMadb-driver stream handshake/framing is being recovered offline.
+        if adapterSeamObserverActive {
+            keyframeRequestLastResult = "Deferred • v8.36 passive observer; stock stream IPC not yet proven"
+            logger.log("U2W KEYFRAME", "DEFERRED reason=\(reason) v8.36 passive observer active; v8.35 SOCK_DGRAM route proven invalid; no IPC injection attempted")
+            diagnosticRecorder.record("keyframe", "deferred_unverified_stream_ipc", fields: [
+                "reason": reason,
+                "seam_event_count": adapterSeamEventCount,
+                "seam_latest": adapterSeamLatest
+            ])
+            return
+        }
         let now = Date()
         if let lastKeyframeRequestAt, now.timeIntervalSince(lastKeyframeRequestAt) < keyframeRequestCooldown {
             let remaining = keyframeRequestCooldown - now.timeIntervalSince(lastKeyframeRequestAt)

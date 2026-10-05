@@ -19,7 +19,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
 
     func testV2411OBDArchiveCollectionHasNoGPSGate() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.23"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.24"))
         XCTAssertTrue(app.contains("no GPS gate; v24.10 length/framing reconstruction retained"))
         XCTAssertFalse(app.contains("guard speedEngine.currentSpeedMph <= 1 else"))
     }

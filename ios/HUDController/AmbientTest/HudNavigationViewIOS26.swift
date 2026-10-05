@@ -74,6 +74,7 @@ struct HudNavigationView: View {
                     }
 
                     NavigationHUDPreviewCard(state: state)
+                    MapModeSpeedWarningCard(state: state)
                 }
                 .padding()
             }

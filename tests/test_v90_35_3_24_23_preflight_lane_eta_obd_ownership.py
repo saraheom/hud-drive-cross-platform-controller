@@ -48,7 +48,7 @@ def test_v2423_obd_manual_ownership_controls_are_explicit_and_logged():
     assert 'Connect via HUD' in VEHICLE
     assert 'Disconnect HUD OBD' in VEHICLE
     assert 'HUD owns OBD' in VEHICLE
-    assert 'turn Auto-connect OFF' in VEHICLE
+    assert 'Map Mode now owns OBD from the iPhone automatically' in VEHICLE
     assert 'OBD OWNERSHIP' in OBD
     assert 'HUD auto-connect=' in OBD
     assert 'manual HUD connect request' in OBD
@@ -56,5 +56,5 @@ def test_v2423_obd_manual_ownership_controls_are_explicit_and_logged():
 
 
 def test_v2423_current_release_strings_are_aligned():
-    assert 'appVersion=v90.35.3.24.23' in APP
-    assert 'v90.35.3.24.23 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
+    assert 'appVersion=v90.35.3.24.24' in APP
+    assert 'v90.35.3.24.24 pairs with U2W v8.36 Passive Seam Observer + unchanged v8.35 keyframe layer + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI

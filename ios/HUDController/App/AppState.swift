@@ -24,6 +24,8 @@ final class AppState {
     let directELM: DirectELM327Manager
     private var mapModeFrameTask: Task<Void, Never>?
     private var mapModeOBDOverlayTask: Task<Void, Never>?
+    private var mapModeDirectOBDOwnershipTask: Task<Void, Never>?
+    private(set) var mapModeDirectOBDOwnershipStatus = "HUD owns OBD"
     private var mapModeFrozenSnapshot: HudMapModeSnapshot?
     private var mapModeFrozenSourceImage: UIImage?
     private(set) var mapModeActive = false
@@ -855,6 +857,7 @@ final class AppState {
             var evidence: [(name: String, data: Data)] = []
             let snapshots: [(String, String, TimeInterval)] = [
                 ("u2wvideo-relay-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi", 5),
+                ("u2wvideo-seam-log.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-seam-log.cgi", 6),
                 ("u2wvideo-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-status.cgi", 5),
                 ("u2whud-status.cgi", "http://192.168.50.2/cgi-bin/u2whud-status.cgi", 5),
                 ("u2wrgd-live.cgi", "http://192.168.50.2/cgi-bin/u2wrgd-live.cgi", 5),
@@ -878,9 +881,9 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.23 — final live-map state
+            HUD Controller v90.35.3.24.24 — final live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
-            paired_u2w=v8.33 Lossless Mirror + exact v8.31 Raw Relay
+            paired_u2w=v8.36 Passive Seam Observer + v8.35 keyframe layer (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
             app_preview_active=\(self.mainVideoPreviewActive)
             mainvideo_phase=\(self.mainVideo.transportPhase)
@@ -903,6 +906,9 @@ final class AppState {
             hud_ingress_reconnects=\(self.hudU2WFrameRelay.reconnectCount)
             hud_actual_fps=\(String(format: "%.3f", self.hudU2WFrameRelay.actualFPS))
             hud_recent_kbps=\(String(format: "%.3f", self.hudU2WFrameRelay.recentKilobytesPerSecond))
+            map_speed_source=\(self.mapModeSpeedSourceSummary)
+            direct_elm_status=\(self.directELM.ownershipStatus)
+            direct_elm_speed=\(self.directELM.currentSpeedMph.map(String.init) ?? "none")
             adapter_snapshot_files=\(evidence.count)
             """
 
@@ -948,6 +954,51 @@ final class AppState {
             liveMapDiagnostics.record("adapter_snapshot", "failed", fields: ["url": rawURL, "error": error.localizedDescription])
             return nil
         }
+    }
+
+    // MARK: - v90.35.3.24.24 Map Mode direct OBD ownership
+
+    private func beginMapModeDirectOBDOwnership(reason: String) {
+        mapModeDirectOBDOwnershipTask?.cancel()
+        mapModeDirectOBDOwnershipStatus = "Releasing HUD OBD…"
+        logger.log("OBD OWNERSHIP", "Map Mode handoff BEGIN reason=\(reason)")
+        obd.suspendForDirectELMOwnership(reason: reason)
+        mapModeDirectOBDOwnershipTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            // The tested ELM stops advertising while the HUD owns it. Give the HUD
+            // stock disconnect command a short bounded window before scanning.
+            for _ in 0..<12 {
+                guard !Task.isCancelled else { return }
+                if !self.obd.connected { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard !Task.isCancelled else { return }
+            self.mapModeDirectOBDOwnershipStatus = "Connecting iPhone to OBDII…"
+            self.directELM.claimForMapMode()
+            self.logger.log("OBD OWNERSHIP", "Map Mode handoff HUD RELEASED; direct ELM claim started")
+        }
+    }
+
+    private func endMapModeDirectOBDOwnership(reason: String) {
+        mapModeDirectOBDOwnershipTask?.cancel()
+        mapModeDirectOBDOwnershipTask = nil
+        mapModeDirectOBDOwnershipStatus = "Returning OBD to HUD…"
+        logger.log("OBD OWNERSHIP", "Map Mode handoff END reason=\(reason); releasing direct ELM first")
+        directELM.releaseMapModeOwnership()
+        Task { @MainActor [weak self] in
+            // Give CoreBluetooth a bounded moment to release the single-client
+            // peripheral before the HUD resumes its normal connection command.
+            try? await Task.sleep(for: .milliseconds(650))
+            guard let self else { return }
+            self.obd.resumeAfterDirectELMOwnership(reason: reason)
+            self.mapModeDirectOBDOwnershipStatus = "HUD reclaiming OBD"
+        }
+    }
+
+    var mapModeSpeedSourceSummary: String {
+        if let mph = directELM.freshSpeedMph() { return "OBD • \(mph) mph" }
+        if hudU2WLiveRelayActive || mapModeActive { return "GPS fallback • \(speedEngine.currentSpeedMph) mph" }
+        return "HUD/stock speed"
     }
 
     func startMainVideoPreview() {
@@ -1033,6 +1084,7 @@ final class AppState {
         hudU2WLiveRelayActive = false
         hudU2WSTAStatus = "Starting U2W v8.15.1 live relay…"
         logger.log("HUD/U2W STA", "live relay start ssid=\(cleanSSID); iPhone remains on U2W AP")
+        beginMapModeDirectOBDOwnership(reason: "physical Map Mode start")
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
             guard let self, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
@@ -1106,6 +1158,7 @@ final class AppState {
                 self.hudU2WRelayFrameTask?.cancel()
                 self.hudU2WRelayFrameTask = nil
                 self.hudU2WFrameRelay.stop(reason: "Map Mode prewarm failed")
+                self.endMapModeDirectOBDOwnership(reason: "Map Mode prewarm failed")
                 if !self.mainVideoPreviewActive {
                     self.mainVideo.stop(reason: "Map Mode physical relay unavailable")
                 }
@@ -1616,7 +1669,7 @@ final class AppState {
                     if renderCount == 1 || renderCount % heartbeatEvery == 0 {
                         self.logger.log(
                             "MAP RENDER HEARTBEAT",
-                            "render=\(renderCount) targetFPS=\(targetFPS) actualFPS=\(String(format: "%.1f", self.hudU2WFrameRelay.actualFPS)) throughput=\(String(format: "%.1f", self.hudU2WFrameRelay.recentKilobytesPerSecond))KBps speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
+                            "render=\(renderCount) targetFPS=\(targetFPS) speedSource=\(self.directELM.freshSpeedMph() != nil ? "OBD" : "GPS") actualFPS=\(String(format: "%.1f", self.hudU2WFrameRelay.actualFPS)) throughput=\(String(format: "%.1f", self.hudU2WFrameRelay.recentKilobytesPerSecond))KBps speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
                         )
                     }
                 }
@@ -1950,7 +2003,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.23",
+                "appVersion=v90.35.3.24.24",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -2166,6 +2219,7 @@ final class AppState {
     func stopHUDU2WSTAHomeProbe() {
         hudU2WMapModeAttemptGeneration &+= 1
         resetMapModeManeuverWarning(reason: "live Map Mode relay stopped", clearTriggered: true)
+        endMapModeDirectOBDOwnership(reason: "physical Map Mode disabled")
         hudU2WSTAStatusTask?.cancel()
         hudU2WSTAStatusTask = nil
         hudU2WJoinRecoveryTask?.cancel()
@@ -2237,14 +2291,6 @@ final class AppState {
             bluetooth.enqueue(HudCommands.fullScreen(true), label: "HUD/U2W Map Mode exit → full screen ON")
             restoreDashboardOperatingMode(reason: "HUD/U2W live relay stopped")
 
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(2))
-                guard let self, self.bluetooth.state == .connected, !self.hudU2WLiveRelayActive else { return }
-                if !self.obd.connected {
-                    self.logger.log("OBD MAP PROBE", "Map Mode exit cleanup left OBD disconnected; requesting one reconnect")
-                    self.obd.connect(force: true)
-                }
-            }
         }
 
         Task { @MainActor [weak self] in
@@ -2922,7 +2968,7 @@ final class AppState {
                 "final clear after renderer recreation reason=\(reason) generation=\(generation)"
             )
 
-            // v90.35.3.24.23: the Winding Wy field case showed that the physical
+            // v90.35.3.24.24: the Winding Wy field case showed that the physical
             // HUD can occasionally keep the previous lane overlay even after the
             // maneuver changed, CarPlay reported showing=false, and the app had
             // already sent multiple empty-lane packets. Give the stock renderer
@@ -2991,6 +3037,7 @@ final class AppState {
         routeGuidance.stop(reason: "Map Mode frozen-route Wi-Fi handoff")
         nowPlaying.stop(reason: "Map Mode HUD Wi-Fi handoff")
         resetMapModeManeuverWarning(reason: "legacy Map Mode started", clearTriggered: true)
+        beginMapModeDirectOBDOwnership(reason: "legacy Map Mode start")
         mapModeActive = true
         mapModeStatus = "Starting Map Mode cast server…"
         mapModeLastNetworkEvent = "Starting"
@@ -3039,6 +3086,7 @@ final class AppState {
         mapModeOBDOverlayTask = nil
         mapModeCastServer.stop()
         mapModeActive = false
+        endMapModeDirectOBDOwnership(reason: "legacy Map Mode disabled / \(reason)")
         mapModeFrozenSnapshot = nil
         mapModeFrozenSourceImage = nil
 
@@ -3149,7 +3197,8 @@ final class AppState {
         useFrozenRouteWhenUnavailable: Bool,
         allowDesignFallback: Bool
     ) -> HudMapModeSnapshot {
-        let speed = speedEngine.currentSpeedMph
+        let gpsSpeed = speedEngine.currentSpeedMph
+        let speed = directELM.freshSpeedMph() ?? gpsSpeed
         let limit = speedEngine.currentSpeedLimitMph
         let liveRoute = routeGuidance.selectedSource != "—"
 

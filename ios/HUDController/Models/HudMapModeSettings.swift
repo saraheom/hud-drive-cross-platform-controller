@@ -365,6 +365,20 @@ final class HudMapModeSettings {
         didSet { defaults.set(maneuverWarningIntervalSeconds, forKey: "HUD.MapMode.maneuverWarning.intervalSeconds") }
     }
 
+    // v90.35.3.24.24: compact Map Mode overspeed presentation controls. These
+    // are global behavior settings rather than visual-preset values so switching
+    // the layout designer cannot silently change the driver's warning policy.
+    var speedWarningEnabled: Bool { didSet { defaults.set(speedWarningEnabled, forKey: "HUD.MapMode.SpeedWarning.enabled") } }
+    var speedWarningNumberColorEnabled: Bool { didSet { defaults.set(speedWarningNumberColorEnabled, forKey: "HUD.MapMode.SpeedWarning.numberColorEnabled") } }
+    var speedWarningBackgroundEnabled: Bool { didSet { defaults.set(speedWarningBackgroundEnabled, forKey: "HUD.MapMode.SpeedWarning.backgroundEnabled") } }
+    var speedWarningNumberRed: Double { didSet { defaults.set(speedWarningNumberRed, forKey: "HUD.MapMode.SpeedWarning.number.red") } }
+    var speedWarningNumberGreen: Double { didSet { defaults.set(speedWarningNumberGreen, forKey: "HUD.MapMode.SpeedWarning.number.green") } }
+    var speedWarningNumberBlue: Double { didSet { defaults.set(speedWarningNumberBlue, forKey: "HUD.MapMode.SpeedWarning.number.blue") } }
+    var speedWarningBackgroundRed: Double { didSet { defaults.set(speedWarningBackgroundRed, forKey: "HUD.MapMode.SpeedWarning.background.red") } }
+    var speedWarningBackgroundGreen: Double { didSet { defaults.set(speedWarningBackgroundGreen, forKey: "HUD.MapMode.SpeedWarning.background.green") } }
+    var speedWarningBackgroundBlue: Double { didSet { defaults.set(speedWarningBackgroundBlue, forKey: "HUD.MapMode.SpeedWarning.background.blue") } }
+    var speedWarningBackgroundOpacity: Double { didSet { defaults.set(speedWarningBackgroundOpacity, forKey: "HUD.MapMode.SpeedWarning.background.opacity") } }
+
     // v90.35.3.13.3 designer values. They are intentionally *deltas* layered
     // on top of the user's existing calibration, so migration cannot move any
     // previously tuned component. All offsets are final 480×240 canvas pixels.
@@ -469,6 +483,17 @@ final class HudMapModeSettings {
         maneuverWarningThresholdFeet = min(2000, max(100, integer("HUD.MapMode.maneuverWarning.thresholdFeet", default: 500)))
         maneuverWarningBlinkCount = min(5, max(2, integer("HUD.MapMode.maneuverWarning.blinkCount", default: 3)))
         maneuverWarningIntervalSeconds = min(2.0, max(0.5, double("HUD.MapMode.maneuverWarning.intervalSeconds", default: 0.75)))
+
+        speedWarningEnabled = bool("HUD.MapMode.SpeedWarning.enabled", default: true)
+        speedWarningNumberColorEnabled = bool("HUD.MapMode.SpeedWarning.numberColorEnabled", default: false)
+        speedWarningBackgroundEnabled = bool("HUD.MapMode.SpeedWarning.backgroundEnabled", default: true)
+        speedWarningNumberRed = min(1, max(0, double("HUD.MapMode.SpeedWarning.number.red", default: 1.0)))
+        speedWarningNumberGreen = min(1, max(0, double("HUD.MapMode.SpeedWarning.number.green", default: 0.55)))
+        speedWarningNumberBlue = min(1, max(0, double("HUD.MapMode.SpeedWarning.number.blue", default: 0.0)))
+        speedWarningBackgroundRed = min(1, max(0, double("HUD.MapMode.SpeedWarning.background.red", default: 1.0)))
+        speedWarningBackgroundGreen = min(1, max(0, double("HUD.MapMode.SpeedWarning.background.green", default: 0.42)))
+        speedWarningBackgroundBlue = min(1, max(0, double("HUD.MapMode.SpeedWarning.background.blue", default: 0.0)))
+        speedWarningBackgroundOpacity = min(1, max(0.15, double("HUD.MapMode.SpeedWarning.background.opacity", default: 0.78)))
 
         speedScale = min(1.80, max(0.50, double("HUD.MapMode.Designer.speedScale", default: 1.0)))
         timeLeftScale = min(1.80, max(0.50, double("HUD.MapMode.Designer.timeLeftScale", default: 1.0)))

@@ -67,7 +67,7 @@ def test_parked_obd_bundle_keeps_stock_transfer_separate_and_times_out_safely():
     assert 'stock_hud_log_transfer' in BT
     assert 'stock_hud_log_transfer_raw.bin' in BT
     assert 'LOG_CATEGORY_CRUSH' in BT
-    assert 'HUD_OBD_DriveDiagnostic_v90.35.3.24.23_' in BT
+    assert 'HUD_OBD_DriveDiagnostic_v90.35.3.24.24_' in BT
 
 
 def test_obd_flight_recorder_survives_transient_hud_ble_disconnect():

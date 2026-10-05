@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import UIKit
 
 /// v90.35.3.11 road-test Map Mode + OBD/STA instrumentation control surface.
 ///
@@ -608,7 +609,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.23 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.34 keeps the v8.33 lossless write semantics but removes the SPS-dependent growth hazard: it rotates atomically at an ordinary successful AppleCarPlay write boundary near 8 MiB, regardless of SPS/IDR cadence, and passively unlatches the source only if that exact selected fd closes. The TCP/15332 path is the exact v8.31 32 KiB raw relay—no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control, Route Guidance change, or Now Playing change.")
+                    Text("v90.35.3.24.24 pairs with U2W v8.36 Passive Seam Observer + unchanged v8.35 keyframe layer + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.34 keeps the v8.33 lossless write semantics but removes the SPS-dependent growth hazard: it rotates atomically at an ordinary successful AppleCarPlay write boundary near 8 MiB, regardless of SPS/IDR cadence, and passively unlatches the source only if that exact selected fd closes. The TCP/15332 path is the exact v8.31 32 KiB raw relay—no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control, Route Guidance change, or Now Playing change.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -1386,5 +1387,104 @@ struct NavigationHUDPreviewCard: View {
             get: { state.mapModeSettings[keyPath: keyPath] },
             set: { state.mapModeSettings[keyPath: keyPath] = $0 }
         )
+    }
+}
+
+/// Compact, main-tab controls for the custom Map Mode overspeed treatment.
+/// Kept separate from the large Map Mode designer/diagnostic controls on purpose.
+struct MapModeSpeedWarningCard: View {
+    @Bindable var state: AppState
+
+    var body: some View {
+        HudCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: "speedometer")
+                        .foregroundStyle(HudTheme.accent)
+                    Text("Map Mode Speed Warning")
+                        .font(.headline)
+                    Spacer()
+                    Text(state.mapModeSpeedSourceSummary)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                Toggle("Enable overspeed warning", isOn: Binding(
+                    get: { state.mapModeSettings.speedWarningEnabled },
+                    set: { state.mapModeSettings.speedWarningEnabled = $0 }
+                ))
+
+                if state.mapModeSettings.speedWarningEnabled {
+                    Toggle("Change speed number color", isOn: Binding(
+                        get: { state.mapModeSettings.speedWarningNumberColorEnabled },
+                        set: { state.mapModeSettings.speedWarningNumberColorEnabled = $0 }
+                    ))
+                    if state.mapModeSettings.speedWarningNumberColorEnabled {
+                        ColorPicker("Number warning color", selection: numberColorBinding, supportsOpacity: false)
+                    }
+
+                    Toggle("Highlight speed background", isOn: Binding(
+                        get: { state.mapModeSettings.speedWarningBackgroundEnabled },
+                        set: { state.mapModeSettings.speedWarningBackgroundEnabled = $0 }
+                    ))
+                    if state.mapModeSettings.speedWarningBackgroundEnabled {
+                        ColorPicker("Background warning color", selection: backgroundColorBinding, supportsOpacity: false)
+                        HStack {
+                            Text("Background opacity")
+                            Slider(value: Binding(
+                                get: { state.mapModeSettings.speedWarningBackgroundOpacity },
+                                set: { state.mapModeSettings.speedWarningBackgroundOpacity = $0 }
+                            ), in: 0.15...1.0)
+                            Text("\(Int((state.mapModeSettings.speedWarningBackgroundOpacity * 100).rounded()))%")
+                                .font(.caption.monospacedDigit())
+                                .frame(width: 42, alignment: .trailing)
+                        }
+                    }
+                }
+
+                Text("Map Mode only • warning activates above the active posted speed limit • OBD speed is preferred with GPS fallback")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var numberColorBinding: Binding<Color> {
+        Binding(
+            get: {
+                Color(red: state.mapModeSettings.speedWarningNumberRed,
+                      green: state.mapModeSettings.speedWarningNumberGreen,
+                      blue: state.mapModeSettings.speedWarningNumberBlue)
+            },
+            set: { color in set(color: color, background: false) }
+        )
+    }
+
+    private var backgroundColorBinding: Binding<Color> {
+        Binding(
+            get: {
+                Color(red: state.mapModeSettings.speedWarningBackgroundRed,
+                      green: state.mapModeSettings.speedWarningBackgroundGreen,
+                      blue: state.mapModeSettings.speedWarningBackgroundBlue)
+            },
+            set: { color in set(color: color, background: true) }
+        )
+    }
+
+    private func set(color: Color, background: Bool) {
+        #if canImport(UIKit)
+        let uiColor = UIColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard uiColor.getRed(&r, green: &g, blue: &b, alpha: &a) else { return }
+        if background {
+            state.mapModeSettings.speedWarningBackgroundRed = Double(r)
+            state.mapModeSettings.speedWarningBackgroundGreen = Double(g)
+            state.mapModeSettings.speedWarningBackgroundBlue = Double(b)
+        } else {
+            state.mapModeSettings.speedWarningNumberRed = Double(r)
+            state.mapModeSettings.speedWarningNumberGreen = Double(g)
+            state.mapModeSettings.speedWarningNumberBlue = Double(b)
+        }
+        #endif
     }
 }

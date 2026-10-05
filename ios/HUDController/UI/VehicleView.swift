@@ -62,7 +62,7 @@ struct VehicleView: View {
                                 .disabled(!state.directELM.gattReady)
                             LabeledContent("Speed probe", value: state.directELM.speedProbeSummary)
 
-                            HudDescription("v90.35.3.24.23 still tests multiple OBD ownership first. Scan/connect does not automatically disconnect the HUD. If the ELM device is absent while HUD OBD is connected, use the OBD-II THROUGH HUD controls below: turn Auto-connect OFF, tap Disconnect HUD OBD, then scan again here. The one-shot diagnostic write remains only 01 0D; no ATZ, ATSP0, reset, or protocol-selection command is sent. All ownership, scan/connect/GATT/TX/RX events remain in the normal HUD log and Live Map diagnostic timeline.")
+                            HudDescription("v90.35.3.24.24 keeps the manual Direct ELM controls for diagnostics, but physical Map Mode now owns OBD from the iPhone automatically: the HUD OBD reconnect loop is suspended, the HUD releases OBDII, and the app retrieves/connects the remembered ELM peripheral and polls only standard 01 0D vehicle speed. Leaving Map Mode releases the ELM before restoring HUD ownership. No ATZ, ATSP0, reset, or protocol-selection command is sent.")
                         }
                     }
 
