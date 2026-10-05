@@ -48,6 +48,8 @@ struct VehicleView: View {
                             }
 
                             LabeledContent("Bluetooth", value: state.directELM.bluetoothState)
+                            LabeledContent("HUD OBD ownership", value: state.obd.connected ? "HUD connected" : "HUD released")
+                            LabeledContent("HUD auto-connect", value: state.obd.autoConnect ? "ON" : "OFF")
                             LabeledContent("Direct OBD", value: state.directELM.status)
                             LabeledContent("Connected", value: state.directELM.connectedName ?? "—")
                             LabeledContent("GATT", value: state.directELM.gattSummary)
@@ -60,7 +62,7 @@ struct VehicleView: View {
                                 .disabled(!state.directELM.gattReady)
                             LabeledContent("Speed probe", value: state.directELM.speedProbeSummary)
 
-                            HudDescription("v90.35.3.24.22 tests multiple OBD ownership first. Scan/connect does not disconnect the HUD from its stock ELM327 session. The only diagnostic write is one explicit 01 0D vehicle-speed request; no ATZ, ATSP0, reset, or protocol-selection command is sent. ELM scan/connect/GATT/TX/RX and the HUD OBD state before/after are written into the normal HUD log and Live Map diagnostic timeline. If simultaneous ownership is not supported, a later build can add the Map Mode-only ownership handoff we discussed.")
+                            HudDescription("v90.35.3.24.23 still tests multiple OBD ownership first. Scan/connect does not automatically disconnect the HUD. If the ELM device is absent while HUD OBD is connected, use the OBD-II THROUGH HUD controls below: turn Auto-connect OFF, tap Disconnect HUD OBD, then scan again here. The one-shot diagnostic write remains only 01 0D; no ATZ, ATSP0, reset, or protocol-selection command is sent. All ownership, scan/connect/GATT/TX/RX events remain in the normal HUD log and Live Map diagnostic timeline.")
                         }
                     }
 
@@ -81,18 +83,20 @@ struct VehicleView: View {
                             .textFieldStyle(.roundedBorder)
 
                             HStack {
-                                Button("Connect OBD") { state.obd.connect() }
+                                Button("Connect via HUD") { state.obd.connect() }
                                     .buttonStyle(.borderedProminent)
-                                Button("Disconnect") { state.obd.disconnect() }
+                                Button("Disconnect HUD OBD") { state.obd.disconnect() }
                                     .buttonStyle(.bordered)
                             }
 
+                            LabeledContent("HUD owns OBD", value: state.obd.connected ? "YES" : "NO")
                             LabeledContent("Status", value: state.obd.status)
                             LabeledContent(
                                 "Supported PIDs",
                                 value: state.obd.supportedPIDs.isEmpty ? "—" : state.obd.supportedPIDs
                             )
                             LabeledContent("Vehicle speed PID", value: state.obd.vehicleSpeedPIDSupportSummary)
+                            HudDescription("Single-client ELM test: first turn Auto-connect OBD after HUD connects OFF, then tap Disconnect HUD OBD. Once HUD owns OBD = NO, scan again in Direct ELM327 Feasibility. To restore stock behavior, disconnect Direct ELM first, tap Connect via HUD, then re-enable Auto-connect.")
 
                             Toggle("OBD speed protocol trace", isOn: Binding(
                                 get: { state.bluetooth.obdSpeedTraceEnabled },

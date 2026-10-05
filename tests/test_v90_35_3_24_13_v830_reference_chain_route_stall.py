@@ -57,7 +57,7 @@ def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
     assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")' in APP
     assert 'passive v8.27.2 source/topology observer' in UI
     assert 'never starts MainVideo' in UI
-    assert "v90.35.3.24.22 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay" in UI
+    assert "v90.35.3.24.23 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay" in UI
     assert "no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control" in UI
 
 

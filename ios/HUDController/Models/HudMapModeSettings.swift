@@ -317,6 +317,11 @@ final class HudMapModeSettings {
     var showDistance: Bool { didSet { persist(showDistance, key: "HUD.MapMode.showDistance") } }
     var showLaneGuidance: Bool { didSet { persist(showLaneGuidance, key: "HUD.MapMode.showLaneGuidance") } }
     var showETA: Bool { didSet { persist(showETA, key: "HUD.MapMode.showETA") } }
+    // Global display preference rather than a visual preset value: switching
+    // between Map Mode presets should not silently change 12-hour suffix style.
+    var showETAAMPM: Bool {
+        didSet { defaults.set(showETAAMPM, forKey: "HUD.MapMode.showETAAMPM") }
+    }
     var showTimeLeft: Bool { didSet { persist(showTimeLeft, key: "HUD.MapMode.showTimeLeft") } }
 
     var nativeOBDSpeedOverlayExperiment: Bool {
@@ -450,6 +455,7 @@ final class HudMapModeSettings {
         showDistance = bool("HUD.MapMode.showDistance", default: true)
         showLaneGuidance = bool("HUD.MapMode.showLaneGuidance", default: true)
         showETA = bool("HUD.MapMode.showETA", default: true)
+        showETAAMPM = bool("HUD.MapMode.showETAAMPM", default: true)
         showTimeLeft = bool("HUD.MapMode.showTimeLeft", default: true)
         nativeOBDSpeedOverlayExperiment = bool("HUD.MapMode.nativeOBDSpeedOverlayExperiment", default: false)
         hudFrameRate = Self.normalizedHUDFrameRate(integer("HUD.MapMode.hudFrameRate", default: 5))

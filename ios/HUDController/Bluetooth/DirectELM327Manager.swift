@@ -2,7 +2,7 @@ import Foundation
 import CoreBluetooth
 import Observation
 
-/// v90.35.3.24.22 diagnostic-only direct ELM327 feasibility probe.
+/// v90.35.3.24.23 diagnostic-only direct ELM327 feasibility probe.
 ///
 /// This manager deliberately does not take OBD ownership away from the HUD. The
 /// first field test asks a narrower question: can the iPhone establish a second

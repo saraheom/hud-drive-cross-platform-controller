@@ -269,7 +269,7 @@ struct HudMapModeCanvas: View {
             if settings.showETA || settings.showTimeLeft {
                 VStack(spacing: 0) {
                     if settings.showETA {
-                        Text("ETA \(nonempty(snapshot.etaText, fallback: "—"))")
+                        Text("ETA \(etaDisplayText(snapshot.etaText))")
                             .font(.system(
                                 size: CGFloat(9.5 * settings.etaScale),
                                 weight: .semibold,
@@ -308,6 +308,17 @@ struct HudMapModeCanvas: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 7)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func etaDisplayText(_ raw: String) -> String {
+        let value = nonempty(raw, fallback: "—")
+        guard !settings.showETAAMPM else { return value }
+        let parts = value.split(separator: " ", omittingEmptySubsequences: true)
+        guard let suffix = parts.last?.uppercased(), suffix == "AM" || suffix == "PM" else {
+            return value
+        }
+        let shortened = parts.dropLast().joined(separator: " ")
+        return shortened.isEmpty ? value : shortened
     }
 
     private var mergeManeuverKind: MergeManeuverGlyph.Kind? {

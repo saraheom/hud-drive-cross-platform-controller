@@ -1,0 +1,49 @@
+HUD Controller v90.35.3.24.23 + existing U2W v8.35 build verification
+
+Release type: APP ONLY — NO U2W REFLASH REQUIRED
+
+Source validation:
+- pytest: 510 passed, 1 skipped
+- Swift syntax parse: 213/213 PASS
+- New dedicated Python source-contract test:
+  tests/test_v90_35_3_24_23_preflight_lane_eta_obd_ownership.py
+- New dedicated Swift XCTest source:
+  ios/HUDControllerTests/V90352423PreflightLaneETAOBDOwnershipTests.swift
+
+MainVideo preflight regression guard:
+- accepts legacy marker=YES
+- accepts v835_marker=YES
+- accepts v834_mirror_marker=YES
+- still requires HTTP success + relay_process=RUNNING + supported relay version
+- existing bounded v8.35 RequestKeyFrame path retained
+
+Physical lane reset:
+- existing generation-guarded renderer recreation retained
+- final clear retained
+- additional 450 ms guarded settle clear added
+- new lane generation cancels stale clear
+
+ETA:
+- Show AM/PM in ETA persisted setting
+- default ON
+- formatting affects custom Map Mode rendering only
+
+OBD ownership:
+- explicit Connect via HUD / Disconnect HUD OBD UI
+- HUD owns OBD YES/NO state visible
+- HUD Auto-connect state visible in Direct ELM section
+- OBD OWNERSHIP logging for auto-connect and manual ownership transitions
+- Direct ELM remains diagnostic only
+- production Map Mode speed remains GPS
+
+Frozen U2W payload hashes (unchanged from v24.22):
+- v8.34 mirror shim SHA256:
+  1a85de02952d8c1852aa06fc2fd6e273de29a2fc6bcf8fe908a268bec35fc042
+- exact v8.31 raw relay SHA256:
+  1c19377dbc9bdc4256dc109053824704a966448ffa9ae8d3472cf76c895e4a90
+- v8.35 keyframe helper SHA256:
+  06194293467fa510294023cc04083d6dcc4c76ba192a2b01e0c32e29d1d2dba0
+
+Limitations:
+- Full xcodebuild/GitHub macOS CI cannot be executed in this Linux validation environment.
+- GitHub Actions remains the final Apple toolchain compile/test confirmation.

@@ -161,7 +161,7 @@ final class HudBluetoothManager: NSObject {
 
     private var obdTraceReferenceSpeedMph = 0
     private var obdTraceConnected = false
-    /// Read-only stock HUD OBD ownership signal for the v24.22 direct ELM coexistence probe.
+    /// Read-only stock HUD OBD ownership signal for the v24.23 direct ELM coexistence probe.
     var hudOBDConnectionConfirmed: Bool { obdTraceConnected }
     private var obdTraceLastHeartbeatAt = Date.distantPast
     private var obdTraceLastFrameSignatureByKey: [String: String] = [:]
@@ -472,7 +472,7 @@ final class HudBluetoothManager: NSObject {
             .appendingPathComponent("OBD Drive Diagnostics", isDirectory: true)
         try? fm.createDirectory(at: base, withIntermediateDirectories: true)
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let dir = base.appendingPathComponent("OBD_Drive_v90.35.3.24.22_\(f.string(from: Date()))", isDirectory: true)
+        let dir = base.appendingPathComponent("OBD_Drive_v90.35.3.24.23_\(f.string(from: Date()))", isDirectory: true)
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
             func open(_ name: String, header: String? = nil) throws -> FileHandle {
@@ -571,7 +571,7 @@ final class HudBluetoothManager: NSObject {
         }
         let duration = Date().timeIntervalSince(obdDriveStartedAt ?? Date())
         let readme = """
-        HUD OBD Drive Diagnostic — v90.35.3.24.22
+        HUD OBD Drive Diagnostic — v90.35.3.24.23
         ==========================================
         Passive whole-drive recorder; production displayed speed remains GPS.
         No second OBD BLE connection and no repeated hidden-item stimulus are used.
@@ -595,7 +595,7 @@ final class HudBluetoothManager: NSObject {
         """
         try? Data(readme.utf8).write(to: dir.appendingPathComponent("README_OBD_DIAGNOSTIC.txt"), options: .atomic)
         do {
-            let out = dir.deletingLastPathComponent().appendingPathComponent("HUD_OBD_DriveDiagnostic_v90.35.3.24.22_\(Int(Date().timeIntervalSince1970)).zip")
+            let out = dir.deletingLastPathComponent().appendingPathComponent("HUD_OBD_DriveDiagnostic_v90.35.3.24.23_\(Int(Date().timeIntervalSince1970)).zip")
             try? fm.removeItem(at: out)
             let writer = try LiveMapStoredZipWriter(url: out)
             for relative in try fm.subpathsOfDirectory(atPath: dir.path).sorted() {

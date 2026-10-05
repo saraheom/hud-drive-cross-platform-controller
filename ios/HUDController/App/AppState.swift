@@ -878,7 +878,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.22 — final live-map state
+            HUD Controller v90.35.3.24.23 — final live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.33 Lossless Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -1950,7 +1950,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.22",
+                "appVersion=v90.35.3.24.23",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -2920,6 +2920,29 @@ final class AppState {
             self.logger.log(
                 "HUD LANE RESET",
                 "final clear after renderer recreation reason=\(reason) generation=\(generation)"
+            )
+
+            // v90.35.3.24.23: the Winding Wy field case showed that the physical
+            // HUD can occasionally keep the previous lane overlay even after the
+            // maneuver changed, CarPlay reported showing=false, and the app had
+            // already sent multiple empty-lane packets. Give the stock renderer
+            // one additional settle window, then send a guarded empty-lane packet.
+            // A newly arrived lane event increments lanePresentationGeneration and
+            // cancels this clear before it can erase valid guidance.
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled,
+                  self.bluetooth.state == .connected,
+                  self.navigation.navigationActive,
+                  self.lanePresentationGeneration == generation,
+                  self.activeLaneGuidance.isEmpty else { return }
+
+            self.bluetooth.enqueue(
+                HudCommands.clearLaneGuidance(),
+                label: "Lane renderer reset → guarded settle clear"
+            )
+            self.logger.log(
+                "HUD LANE RESET",
+                "guarded settle clear after renderer recreation reason=\(reason) generation=\(generation)"
             )
             self.laneRendererResetTask = nil
         }

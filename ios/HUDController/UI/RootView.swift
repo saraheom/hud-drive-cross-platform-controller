@@ -71,7 +71,7 @@ struct RootView: View {
                 consumePendingShortcut()
                 state.nowPlaying.refreshNow()
             case .inactive:
-                // v24.22 field evidence: preserving a VideoToolbox session through
+                // v24.23 field evidence: preserving a VideoToolbox session through
                 // an iOS lifecycle transition can end in kVTInvalidSessionErr
                 // (-12903). Preserve the raw TCP source, but retire/gate only the
                 // decoder until the scene is stably active again.

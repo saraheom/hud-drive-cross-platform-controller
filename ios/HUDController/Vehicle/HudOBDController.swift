@@ -56,6 +56,10 @@ final class HudOBDController {
     var autoConnect: Bool {
         didSet {
             UserDefaults.standard.set(autoConnect, forKey: "HUD.OBD.autoConnect")
+            logger.log(
+                "OBD OWNERSHIP",
+                "HUD auto-connect=\(autoConnect ? "ON" : "OFF") connected=\(connected ? 1 : 0) device=\(deviceName)"
+            )
             if autoConnect {
                 startAutoConnectLoop(reason: "Auto-connect enabled")
                 startHealthLoop()
@@ -186,6 +190,10 @@ final class HudOBDController {
         let name = deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "OBDII" : deviceName
         deviceName = name
         status = "HUD is searching for \(name)…"
+        logger.log(
+            "OBD OWNERSHIP",
+            "manual HUD connect request device=\(name) force=\(force ? 1 : 0) autoConnect=\(autoConnect ? 1 : 0)"
+        )
         logger.log("OBD", "Request HUD-side OBD connection to \(name)")
         bluetooth.enqueue(
             HudCommands.obdConnection(enabled: true, deviceName: name),
@@ -208,6 +216,10 @@ final class HudOBDController {
         bluetooth.enqueue(
             HudCommands.obdConnection(enabled: false, deviceName: deviceName),
             label: "OBD disconnect"
+        )
+        logger.log(
+            "OBD OWNERSHIP",
+            "manual HUD disconnect request autoConnect=\(autoConnect ? 1 : 0); local state cleared immediately"
         )
         logger.log("OBD", "Local OBD state cleared immediately after disconnect request")
     }

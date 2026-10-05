@@ -87,5 +87,5 @@ def test_obd_archive_collection_remains_manual_and_no_longer_trusts_stale_gps():
     assert 'no GPS gate' in APP
     assert 'Collecting/reconstructing HUD diagnostic ZIP' in APP
     assert 'Collect OBD Drive Diagnostic ZIP (parked)' in UI
-    assert 'v90.35.3.24.22 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
+    assert 'v90.35.3.24.23 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
     assert 'HUD map FPS probe' in UI and 'supportedHUDFrameRates' in (ROOT/'ios/HUDController/Models/HudMapModeSettings.swift').read_text()

@@ -36,8 +36,8 @@ final class V90352422LifecycleKeyframeDirectELMTests: XCTestCase {
         let app = try source("HUDController/App/AppState.swift")
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.22"))
-        XCTAssertTrue(ui.contains("v90.35.3.24.22 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.23"))
+        XCTAssertTrue(ui.contains("v90.35.3.24.23 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
         XCTAssertTrue(video.contains("v8.35 package keeps exact v8.31 raw relay + unchanged v8.34 hard-bounded mirror"))
     }
 }

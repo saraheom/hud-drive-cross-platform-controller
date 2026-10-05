@@ -77,5 +77,5 @@ def test_map_mode_stop_preserves_only_explicit_preview():
 
 
 def test_current_version_and_pairing_marker():
-    assert 'appVersion=v90.35.3.24.22' in APP
-    assert 'v90.35.3.24.22 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
+    assert 'appVersion=v90.35.3.24.23' in APP
+    assert 'v90.35.3.24.23 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI

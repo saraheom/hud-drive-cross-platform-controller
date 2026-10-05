@@ -580,7 +580,7 @@ struct NavigationHUDPreviewCard: View {
                             Label("Share OBD Drive Diagnostic ZIP", systemImage: "square.and.arrow.up")
                         }
                     }
-                    Text("v24.22 adds a direct ELM327 multi-connection feasibility probe while the passive OBD flight recorder automatically starts, as before, whenever the HUD confirms its existing OBD connection. It preserves every HUD BLE notification before parsing, OBD-related app→HUD packets, simultaneous GPS reference speed, and OBD lifecycle events for the whole drive. It sends no repeated hidden-item stimulus and does not open a second OBD connection. After parking, one collection tap stops the drive capture, makes a best-effort stock LOG_CATEGORY_OBD request as a separate artifact, and bundles everything for offline correlation. Production displayed speed remains GPS until a true OBD speed channel is validated.")
+                    Text("v24.23 adds a direct ELM327 multi-connection feasibility probe while the passive OBD flight recorder automatically starts, as before, whenever the HUD confirms its existing OBD connection. It preserves every HUD BLE notification before parsing, OBD-related app→HUD packets, simultaneous GPS reference speed, and OBD lifecycle events for the whole drive. It sends no repeated hidden-item stimulus and does not open a second OBD connection. After parking, one collection tap stops the drive capture, makes a best-effort stock LOG_CATEGORY_OBD request as a separate artifact, and bundles everything for offline correlation. Production displayed speed remains GPS until a true OBD speed channel is validated.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -608,7 +608,7 @@ struct NavigationHUDPreviewCard: View {
                     .buttonStyle(.bordered)
                     .disabled(!state.hudU2WLiveRelayActive)
 
-                    Text("v90.35.3.24.22 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.34 keeps the v8.33 lossless write semantics but removes the SPS-dependent growth hazard: it rotates atomically at an ordinary successful AppleCarPlay write boundary near 8 MiB, regardless of SPS/IDR cadence, and passively unlatches the source only if that exact selected fd closes. The TCP/15332 path is the exact v8.31 32 KiB raw relay—no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control, Route Guidance change, or Now Playing change.")
+                    Text("v90.35.3.24.23 pairs with U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.34 keeps the v8.33 lossless write semantics but removes the SPS-dependent growth hazard: it rotates atomically at an ordinary successful AppleCarPlay write boundary near 8 MiB, regardless of SPS/IDR cadence, and passively unlatches the source only if that exact selected fd closes. The TCP/15332 path is the exact v8.31 32 KiB raw relay—no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control, Route Guidance change, or Now Playing change.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -1124,6 +1124,12 @@ struct NavigationHUDPreviewCard: View {
                 step: 0.05,
                 format: { String(format: "%.0f%%", $0 * 100) }
             )
+
+            Toggle("Show AM/PM in ETA", isOn: Binding(
+                get: { state.mapModeSettings.showETAAMPM },
+                set: { state.mapModeSettings.showETAAMPM = $0 }
+            ))
+            .font(.caption)
 
             Divider().opacity(0.35)
 
