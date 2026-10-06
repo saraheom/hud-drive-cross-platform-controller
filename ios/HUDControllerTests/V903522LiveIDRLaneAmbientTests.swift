@@ -29,7 +29,11 @@ final class V903522LiveIDRLaneAmbientTests: XCTestCase {
         XCTAssertTrue(video.contains("existing session preserved until future IDR"))
         XCTAssertTrue(video.contains("Fresh IDR arrived with rebuild armed; atomically rebuilding decoder now"))
         XCTAssertTrue(video.contains("decoderSummary"))
-        XCTAssertTrue(ui.contains("VideoToolbox decoder"))
+        // Decoder detail stays in the diagnostic ZIP; the visible card is intentionally compact.
+        XCTAssertTrue(ui.contains("state.mainVideo.transportPhase"))
+        XCTAssertTrue(ui.contains("Not active"))
+        XCTAssertTrue(ui.contains("Detailed MainVideo, decoder, adapter-seam, and OBD ownership telemetry remains in the diagnostic ZIP"))
+        XCTAssertFalse(ui.contains("VideoToolbox decoder"))
     }
 
     func testLaneHeadAndBodyLengthAreIndependent() throws {

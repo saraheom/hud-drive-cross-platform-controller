@@ -30,8 +30,9 @@ final class V90352461OBDDeepProbeTests: XCTestCase {
         XCTAssertTrue(app.contains("startHUDOBDDeepSpeedProbeV3"))
         XCTAssertTrue(app.contains("GPS Map Mode speed remains unchanged"))
         XCTAssertTrue(app.contains("for attempt in 1...30"))
-        XCTAssertTrue(ui.contains("Run 90 s OBD deep probe v3"))
-        XCTAssertTrue(ui.contains("Share OBD speed probe v3 report"))
+        // Deep-probe machinery is retained for diagnostics, but its buttons are retired from production UI.
+        XCTAssertFalse(ui.contains("Run 90 s OBD deep probe v3"))
+        XCTAssertFalse(ui.contains("Share OBD speed probe v3 report"))
     }
 
     func testRegressionFindsSyntheticKmhSpeedAndDirectPID410D() {

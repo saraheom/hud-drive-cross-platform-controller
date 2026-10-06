@@ -17,7 +17,9 @@ final class V90352420LosslessMirrorRawRelayTests: XCTestCase {
         XCTAssertTrue(video.contains("exact v8.31 raw relay"))
         XCTAssertTrue(video.contains("lossless/atomic"))
         XCTAssertTrue(app.contains("appVersion=v90.35.3.24.26"))
-        XCTAssertTrue(ui.contains("v90.35.3.24.26 pairs with U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
+        // Pairing metadata remains in diagnostics/AppState instead of a long visible UI banner.
+        XCTAssertTrue(app.contains("paired_u2w=v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
+        XCTAssertFalse(ui.contains("pairs with U2W v8.37"))
     }
 
     func testPhysicalMapModeStillKeepsFallbackDuringMainVideoOutage() throws {

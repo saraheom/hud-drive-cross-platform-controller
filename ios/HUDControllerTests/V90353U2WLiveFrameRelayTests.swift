@@ -30,13 +30,16 @@ final class V90353U2WLiveFrameRelayTests: XCTestCase {
         // v90.35.3.10 intentionally removed the old verbose relay heading and
         // folded the controls into the compact Map Mode card. Keep this test
         // aligned with the production UI while still verifying the relay
-        // diagnostics remain available behind the disclosure control.
+        // v24.26 removes the disclosure block entirely and keeps only production controls.
         XCTAssertTrue(ui.contains("CarPlay adapter Wi-Fi name"))
         XCTAssertTrue(ui.contains("Enable Map Mode"))
-        XCTAssertTrue(ui.contains("Status & diagnostics"))
-        XCTAssertTrue(ui.contains("Frame ingress"))
-        XCTAssertTrue(ui.contains("Frames sent"))
-        XCTAssertTrue(ui.contains("U2W v8.15.1"))
+        XCTAssertTrue(ui.contains("Map Mode FPS"))
+        XCTAssertTrue(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
+        XCTAssertTrue(ui.contains("state.mainVideo.transportPhase"))
+        XCTAssertTrue(ui.contains("Not active"))
+        XCTAssertFalse(ui.contains("Status & diagnostics"))
+        XCTAssertFalse(ui.contains("Frame ingress"))
+        XCTAssertFalse(ui.contains("Frames sent"))
         XCTAssertFalse(ui.contains("Live iPhone → U2W → HUD relay"))
     }
 }
