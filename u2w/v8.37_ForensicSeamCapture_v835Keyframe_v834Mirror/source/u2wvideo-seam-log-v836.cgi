@@ -1,0 +1,11 @@
+#!/bin/sh
+printf 'Content-Type: text/plain\r\nCache-Control: no-store\r\n\r\n'
+echo 'U2W v8.36 passive MainVideo generation seam evidence'
+echo 'mirror_changed=NO'
+echo 'raw_relay_changed=NO'
+echo 'observer_writes_h264=NO'
+echo 'observer_connects_keyframe_ipc=NO'
+echo '--- ipc topology ---'
+cat /tmp/u2w_keyframe_ipc_topology.txt 2>/dev/null || echo 'none'
+echo '--- seam log ---'
+cat /tmp/u2w_mainvideo_seams.log 2>/dev/null || echo 'none'

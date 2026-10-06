@@ -11,7 +11,7 @@ struct VehicleView: View {
 
                     section("DIRECT ELM327 FEASIBILITY") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Manual diagnostic controls • Map Mode uses fresh OBD speed • GPS fallback")
+                            Text("Diagnostic only • Production Map Mode speed remains GPS")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
@@ -62,7 +62,7 @@ struct VehicleView: View {
                                 .disabled(!state.directELM.gattReady)
                             LabeledContent("Speed probe", value: state.directELM.speedProbeSummary)
 
-                            HudDescription("v90.35.3.24.24 keeps the manual Direct ELM controls for diagnostics, but physical Map Mode now owns OBD from the iPhone automatically: the HUD OBD reconnect loop is suspended, the HUD releases OBDII, and the app retrieves/connects the remembered ELM peripheral and polls only standard 01 0D vehicle speed. Leaving Map Mode releases the ELM before restoring HUD ownership. No ATZ, ATSP0, reset, or protocol-selection command is sent.")
+                            HudDescription("v90.35.3.24.25 keeps the manual Direct ELM controls for diagnostics, but physical Map Mode now owns OBD from the iPhone automatically: the HUD OBD reconnect loop is suspended, the HUD releases OBDII, and the app retrieves/connects the remembered ELM peripheral and polls only standard 01 0D vehicle speed. Leaving Map Mode releases the ELM before restoring HUD ownership. No ATZ, ATSP0, reset, or protocol-selection command is sent.")
                         }
                     }
 

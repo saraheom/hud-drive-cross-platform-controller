@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.24 MainVideo client for U2W v8.35 bounded keyframe request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.25 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -181,7 +181,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.35-bounded-keyframe-v834-hardmirror-v831-raw-tcp-15332 base architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.37-forensic-sidecar-v835-helper-v834-hardmirror-v831-raw-tcp-15332 inherited=v8.35-bounded-keyframe-v834-hardmirror-v831-raw-tcp-15332 base architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
         diagnosticRecorder.record("mainvideo", "start", fields: ["reason": reason, "generation": workerGeneration + 1])
         startNetworkPathLogging()
         startFreshnessWatchdog()
@@ -263,7 +263,9 @@ final class U2WMainVideoClient {
             let v835Marker = fields["v835_marker"] ?? "?"
             let v834MirrorMarker = fields["v834_mirror_marker"] ?? "?"
             let v836Marker = fields["v836_marker"] ?? "?"
+            let v837Marker = fields["v837_marker"] ?? "?"
             let seamCountText = fields["seam_event_count"] ?? "0"
+            let completeSamplesText = fields["complete_boundary_samples"] ?? fields["seam_complete_samples"] ?? fields["complete_sample_count"] ?? "0"
             let seamLatest = fields["seam_latest"] ?? "none"
             let packageVersion = fields["package_version"] ?? "?"
             let relayVersion = fields["relay_version"] ?? "?"
@@ -277,7 +279,7 @@ final class U2WMainVideoClient {
             let generationChanges = fields["source_generation_changes"] ?? "?"
             adapterRelayVersion = relayVersion
             adapterRelayClientState = clientState
-            adapterSeamObserverActive = v836Marker == "YES"
+            adapterSeamObserverActive = v837Marker == "YES" || v836Marker == "YES"
             if let seamCount = Int(seamCountText), seamCount != adapterSeamEventCount {
                 let previous = adapterSeamEventCount
                 adapterSeamEventCount = seamCount
@@ -287,7 +289,9 @@ final class U2WMainVideoClient {
                     "previous_count": previous,
                     "count": seamCount,
                     "latest": seamLatest,
-                    "relay_version": relayVersion
+                    "relay_version": relayVersion,
+                    "v837_marker": v837Marker,
+                    "complete_boundary_samples": completeSamplesText
                 ])
             } else if seamLatest != "none" {
                 adapterSeamLatest = seamLatest
@@ -389,7 +393,7 @@ final class U2WMainVideoClient {
                 adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             }
             let supportedRelay = relayVersion.contains("v8.34") || relayVersion.contains("v8.33") || relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
-            // v90.35.3.24.24: v8.35 deliberately leaves the v8.34 relay binary
+            // v90.35.3.24.25: v8.35 deliberately leaves the v8.34 relay binary
             // untouched, but its wrapper status page renamed the legacy marker
             // field to v835_marker/v834_mirror_marker. v24.22 accidentally
             // required only marker=YES, so a healthy RUNNING relay was rejected
@@ -492,6 +496,7 @@ final class U2WMainVideoClient {
                 // WAITING_FRESH_IDR without reconnecting the healthy TCP stream.
                 self.logger.log("U2W VIDEO RECOVERY", reason)
                 self.diagnosticRecorder.record("decoder", "recovery_requested", fields: ["reason": reason, "generation": generation])
+                self.diagnosticRecorder.triggerFirstFailureEvidence("decoder_recovery", detail: reason)
                 self.diagnosticRecorder.triggerEvidenceWindow("decoder_recovery", detail: reason)
             }
         }
@@ -542,7 +547,36 @@ final class U2WMainVideoClient {
             Task { @MainActor [weak self] in
                 guard let self, self.running, self.workerGeneration == generation else { return }
                 self.logger.log("U2W VIDEO DEC", message)
-                self.diagnosticRecorder.record("decoder_detail", message, fields: ["generation": generation])
+                self.diagnosticRecorder.record("decoder_detail", message, fields: [
+                    "generation": generation,
+                    "received_bytes": self.receivedBytes,
+                    "frames": self.frameCount,
+                    "raw_nals": self.rawNALCount,
+                    "accepted_nals": self.acceptedNALCount,
+                    "rejected_nals": self.rejectedNALCount,
+                    "sps": self.acceptedSPSCount,
+                    "pps": self.acceptedPPSCount,
+                    "idr": self.acceptedIDRCount,
+                    "slices": self.acceptedSliceCount,
+                    "decoder": self.decoderSummary,
+                    "phase": self.transportPhase
+                ])
+                let isFirstFailureSignal = message.contains("REFERENCE CONTINUITY WARNING") ||
+                    message.contains("codecBadDataErr") || message.contains("-8969") ||
+                    message.contains("-12903") || message.contains("raw TCP read failed") ||
+                    message.contains("raw TCP EOF")
+                if isFirstFailureSignal {
+                    self.diagnosticRecorder.triggerFirstFailureEvidence("mainvideo_first_failure", detail: message)
+                    self.diagnosticRecorder.record("parser_decoder_fingerprint", "failure_signal", fields: [
+                        "message": message,
+                        "generation": generation,
+                        "received_bytes": self.receivedBytes,
+                        "frames": self.frameCount,
+                        "filter": self.sanitizerSummary,
+                        "decoder": self.decoderSummary,
+                        "relay": self.adapterCacheSummary
+                    ])
+                }
                 if message.contains("raw TCP read failed") || message.contains("raw TCP EOF") {
                     self.diagnosticRecorder.triggerEvidenceWindow("tcp_terminal", detail: message)
                 } else if message.contains("codecBadDataErr") || message.contains("-12903") {
@@ -792,15 +826,15 @@ final class U2WMainVideoClient {
 
     private func requestBoundedKeyframe(reason: String) async {
         guard running, lifecycleActive else { return }
-        // v90.35.3.24.24 / U2W v8.36: the Oct-5 field drive proved that the
+        // v90.35.3.24.25 / U2W v8.37: the Oct-5 field drive proved that the
         // v8.35 helper used SOCK_DGRAM against stock Unix SOCK_STREAM listeners
         // and always returned send_failed/route=none.  Keep the installed v8.35
         // helper for rollback provenance, but do not keep injecting the known-wrong
         // transport while the passive seam observer is active.  The exact stock
         // ARMadb-driver stream handshake/framing is being recovered offline.
         if adapterSeamObserverActive {
-            keyframeRequestLastResult = "Deferred • v8.36 passive observer; stock stream IPC not yet proven"
-            logger.log("U2W KEYFRAME", "DEFERRED reason=\(reason) v8.36 passive observer active; v8.35 SOCK_DGRAM route proven invalid; no IPC injection attempted")
+            keyframeRequestLastResult = "Deferred • v8.37 forensic observer; stock stream IPC not yet proven"
+            logger.log("U2W KEYFRAME", "DEFERRED reason=\(reason) v8.37/v8.36 passive observer active; v8.35 SOCK_DGRAM route proven invalid; no IPC injection attempted")
             diagnosticRecorder.record("keyframe", "deferred_unverified_stream_ipc", fields: [
                 "reason": reason,
                 "seam_event_count": adapterSeamEventCount,
@@ -1160,7 +1194,7 @@ private final class U2WMainVideoTCPWorker {
             emitDecoderState()
             onPhase?("WAITING_FRESH_IDR")
             onStatus?("VideoToolbox session replaced • requesting one fresh IDR", true)
-            onDiagnostic?("\(origin): kVTInvalidSessionErr (-12903); rebuilt decoder from last validated SPS/PPS when available; TCP PRESERVED; one bounded native keyframe request armed")
+            onDiagnostic?("\(origin): kVTInvalidSessionErr (-12903); rebuilt decoder from last validated SPS/PPS when available; TCP PRESERVED; one bounded native keyframe request armed through safety gate (deferred on v8.37/v8.36 passive observer)")
             onKeyframeRequestNeeded?("VideoToolbox invalid session -12903")
             return
         }

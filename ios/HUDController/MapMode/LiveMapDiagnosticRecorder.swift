@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-/// v90.35.3.24.24 one-drive MainVideo + ELM feasibility evidence recorder.
+/// v90.35.3.24.25 one-drive MainVideo + ELM forensic evidence recorder.
 ///
 /// This recorder is intentionally iPhone-side and passive. It never signals or
 /// restarts AppleCarPlay, never changes AppleCarPlay/Route Guidance behavior, and never
@@ -23,22 +23,41 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
     private let timelineURL: URL
     private let startupURL: URL
     private let imagesDirectory: URL
+    private let rollingDirectory: URL
     private var timelineHandle: FileHandle?
     private var startupHandle: FileHandle?
+    private var rollingHandle: FileHandle?
+    private var rollingURL: URL?
+    private var rollingSegmentBytes = 0
+    private var rollingSegmentSequence = 0
+    private var rollingSegments: [URL] = []
     private var startupBytes = 0
     private var totalRawBytes: UInt64 = 0
     private var prebufferChunks: [Data] = []
     private var prebufferBytes = 0
+    private var firstFailurePrebufferChunks: [Data] = []
+    private var firstFailurePrebufferBytes = 0
     private var activeWindows: [UUID: ActiveWindow] = [:]
     private var evidenceWindowCount = 0
     private var droppedWindowCount = 0
+    private var firstFailureWindow: ActiveWindow?
+    private var firstFailureTriggered = false
+    private var firstFailureCompleted = false
+    private var firstFailureLabel = "none"
     private var nextCheckpoint: UInt64 = 4 * 1024 * 1024
     private var capturedLabels: Set<String> = []
 
     private let startupLimit = 8 * 1024 * 1024
+    /// Historical normal evidence windows retain a 4 MiB pre-fault tail.
     private let prebufferLimit = 4 * 1024 * 1024
+    /// A separate larger tail is reserved solely for the first actual failure.
+    private let firstFailurePrebufferLimit = 8 * 1024 * 1024
+    private let normalEvidencePrebufferLimit = 4 * 1024 * 1024
     private let postbufferLimit = 4 * 1024 * 1024
+    private let firstFailurePostbufferLimit = 8 * 1024 * 1024
     private let maximumEvidenceWindows = 6
+    private let rollingSegmentLimit = 4 * 1024 * 1024
+    private let maximumRollingSegments = 4
 
     init() {
         let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -48,8 +67,10 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
         timelineURL = sessionDirectory.appendingPathComponent("timeline.jsonl")
         startupURL = sessionDirectory.appendingPathComponent("raw_startup_first_8MiB.h264")
         imagesDirectory = sessionDirectory.appendingPathComponent("images", isDirectory: true)
+        rollingDirectory = sessionDirectory.appendingPathComponent("rolling_raw", isDirectory: true)
 
         try? fileManager.createDirectory(at: imagesDirectory, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: rollingDirectory, withIntermediateDirectories: true)
         fileManager.createFile(atPath: timelineURL.path, contents: nil)
         fileManager.createFile(atPath: startupURL.path, contents: nil)
         timelineHandle = try? FileHandle(forWritingTo: timelineURL)
@@ -59,6 +80,10 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             "startup_limit_bytes": startupLimit,
             "prebuffer_bytes": prebufferLimit,
             "postbuffer_bytes": postbufferLimit,
+            "first_failure_prebuffer_bytes": firstFailurePrebufferLimit,
+            "first_failure_postbuffer_bytes": firstFailurePostbufferLimit,
+            "rolling_segment_bytes": rollingSegmentLimit,
+            "rolling_segment_count": maximumRollingSegments,
             "max_windows": maximumEvidenceWindows
         ])
     }
@@ -66,6 +91,8 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
     deinit {
         queue.sync {
             for (_, window) in activeWindows { try? window.handle.close() }
+            try? firstFailureWindow?.handle.close()
+            try? rollingHandle?.close()
             try? startupHandle?.close()
             try? timelineHandle?.close()
         }
@@ -83,6 +110,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             self.totalRawBytes &+= UInt64(data.count)
+            self.writeRollingRaw(data)
 
             if self.startupBytes < self.startupLimit {
                 let remaining = self.startupLimit - self.startupBytes
@@ -101,6 +129,19 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
                 } else {
                     self.prebufferChunks[0].removeFirst(excess)
                     self.prebufferBytes -= excess
+                }
+            }
+
+            self.firstFailurePrebufferChunks.append(data)
+            self.firstFailurePrebufferBytes += data.count
+            while self.firstFailurePrebufferBytes > self.firstFailurePrebufferLimit, !self.firstFailurePrebufferChunks.isEmpty {
+                let excess = self.firstFailurePrebufferBytes - self.firstFailurePrebufferLimit
+                if self.firstFailurePrebufferChunks[0].count <= excess {
+                    self.firstFailurePrebufferBytes -= self.firstFailurePrebufferChunks[0].count
+                    self.firstFailurePrebufferChunks.removeFirst()
+                } else {
+                    self.firstFailurePrebufferChunks[0].removeFirst(excess)
+                    self.firstFailurePrebufferBytes -= excess
                 }
             }
 
@@ -126,6 +167,27 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             }
             for id in completed { self.activeWindows.removeValue(forKey: id) }
 
+            if var first = self.firstFailureWindow {
+                let amount = min(first.postBytesRemaining, data.count)
+                if amount > 0 {
+                    try? first.handle.write(contentsOf: data.prefix(amount))
+                    first.postBytesRemaining -= amount
+                }
+                if first.postBytesRemaining <= 0 {
+                    try? first.handle.synchronize()
+                    try? first.handle.close()
+                    self.firstFailureCompleted = true
+                    self.firstFailureWindow = nil
+                    self.writeTimeline(
+                        category: "first_failure",
+                        message: "window_complete",
+                        fields: ["label": first.label, "file": first.url.lastPathComponent]
+                    )
+                } else {
+                    self.firstFailureWindow = first
+                }
+            }
+
             if self.totalRawBytes >= self.nextCheckpoint {
                 self.writeTimeline(
                     category: "raw",
@@ -133,11 +195,54 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
                     fields: [
                         "total_bytes": self.totalRawBytes,
                         "startup_bytes": self.startupBytes,
-                        "active_windows": self.activeWindows.count
+                        "active_windows": self.activeWindows.count,
+                        "rolling_segment": self.rollingURL?.lastPathComponent ?? "none",
+                        "rolling_segment_bytes": self.rollingSegmentBytes,
+                        "chunk_bytes": data.count,
+                        "chunk_fnv1a64": Self.fnv1a64(data),
+                        "chunk_head64": Self.hexSample(data.prefix(64)),
+                        "chunk_tail64": Self.hexSample(data.suffix(64))
                     ]
                 )
                 while self.nextCheckpoint <= self.totalRawBytes { self.nextCheckpoint &+= 4 * 1024 * 1024 }
             }
+        }
+    }
+
+    /// Reserved once-per-session capture for the *first actual failure signal*.
+    /// Unlike normal windows, this slot cannot be consumed by first-frame or
+    /// collection-time events. It is also written to disk immediately so a later
+    /// app/decoder failure cannot erase the evidence that preceded it.
+    func triggerFirstFailureEvidence(_ label: String, detail: String) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard !self.firstFailureTriggered else {
+                self.writeTimeline(category: "first_failure", message: "already_reserved", fields: ["existing_label": self.firstFailureLabel, "ignored_label": label])
+                return
+            }
+            self.firstFailureTriggered = true
+            self.firstFailureLabel = label
+            let safe = Self.safeFilename(label)
+            let url = self.sessionDirectory.appendingPathComponent("FIRST_FAILURE_\(safe)_pre8MiB_post8MiB.h264")
+            self.fileManager.createFile(atPath: url.path, contents: nil)
+            guard let handle = try? FileHandle(forWritingTo: url) else {
+                self.writeTimeline(category: "first_failure", message: "file_open_failed", fields: ["label": label, "detail": detail])
+                return
+            }
+            self.writeTail(self.firstFailurePrebufferChunks, maxBytes: self.firstFailurePrebufferLimit, to: handle)
+            self.firstFailureWindow = ActiveWindow(label: label, url: url, handle: handle, postBytesRemaining: self.firstFailurePostbufferLimit)
+            self.writeTimeline(
+                category: "first_failure",
+                message: "window_triggered",
+                fields: [
+                    "label": label,
+                    "detail": detail,
+                    "file": url.lastPathComponent,
+                    "raw_offset": self.totalRawBytes,
+                    "pre_bytes": min(self.firstFailurePrebufferBytes, self.firstFailurePrebufferLimit),
+                    "post_target_bytes": self.firstFailurePostbufferLimit
+                ]
+            )
         }
     }
 
@@ -164,7 +269,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
                 self.writeTimeline(category: "evidence_drop", message: "file_open_failed", fields: ["label": label])
                 return
             }
-            for chunk in self.prebufferChunks { try? handle.write(contentsOf: chunk) }
+            self.writeTail(self.prebufferChunks, maxBytes: self.normalEvidencePrebufferLimit, to: handle)
             let id = UUID()
             self.activeWindows[id] = ActiveWindow(
                 label: label,
@@ -180,7 +285,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
                     "detail": detail,
                     "file": url.lastPathComponent,
                     "raw_offset": self.totalRawBytes,
-                    "pre_bytes": self.prebufferBytes,
+                    "pre_bytes": min(self.prebufferBytes, self.normalEvidencePrebufferLimit),
                     "post_target_bytes": self.postbufferLimit
                 ]
             )
@@ -223,7 +328,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
                 let tailURL = sessionDirectory.appendingPathComponent("raw_tail_last_4MiB.h264")
                 fileManager.createFile(atPath: tailURL.path, contents: nil)
                 if let tailHandle = try? FileHandle(forWritingTo: tailURL) {
-                    for chunk in prebufferChunks { try? tailHandle.write(contentsOf: chunk) }
+                    writeTail(prebufferChunks, maxBytes: normalEvidencePrebufferLimit, to: tailHandle)
                     try? tailHandle.synchronize()
                     try? tailHandle.close()
                 }
@@ -246,13 +351,43 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             }
 
             for (_, window) in activeWindows { try? window.handle.synchronize() }
+            try? firstFailureWindow?.handle.synchronize()
+            try? rollingHandle?.synchronize()
             try? startupHandle?.synchronize()
             try? timelineHandle?.synchronize()
 
+            let externalNames = externalEvidence.map(\.name).sorted()
+            let completeness = """
+            Live Map Diagnostic Completeness — v90.35.3.24.25
+            ==================================================
+            startup_capture_bytes=\(startupBytes)
+            startup_capture_target_bytes=\(startupLimit)
+            rolling_segments_retained=\(rollingSegments.count)
+            rolling_segment_limit_bytes=\(rollingSegmentLimit)
+            total_raw_tcp_bytes=\(totalRawBytes)
+            first_failure_triggered=\(firstFailureTriggered ? "YES" : "NO")
+            first_failure_label=\(firstFailureLabel)
+            first_failure_complete=\(firstFailureCompleted ? "YES" : "NO")
+            first_failure_active=\(firstFailureWindow == nil ? "NO" : "YES")
+            normal_evidence_windows=\(evidenceWindowCount)
+            normal_evidence_windows_dropped=\(droppedWindowCount)
+            normal_evidence_windows_active=\(activeWindows.count)
+            adapter_files_count=\(externalEvidence.count)
+            adapter_files=\(externalNames.joined(separator: ","))
+
+            Interpretation:
+            - FIRST_FAILURE_* is a reserved 8 MiB pre/8 MiB post raw TCP window.
+            - rolling_raw/ retains the newest bounded raw TCP segments even if the
+              first failure happened long before parked collection.
+            - timeline.jsonl contains raw-offset fingerprints plus parser/decoder
+              state so the raw bytes can be aligned with VideoToolbox failures.
+            """
+            try Data(completeness.utf8).write(to: sessionDirectory.appendingPathComponent("COMPLETENESS_REPORT.txt"), options: .atomic)
+
             let manifest = """
-            Live Map Diagnostic Bundle — HUD Controller v90.35.3.24.24
+            Live Map Diagnostic Bundle — HUD Controller v90.35.3.24.25
             ==========================================================
-            Paired adapter: U2W v8.35 Bounded KeyFrame Request + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
+            Paired adapter: U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
 
             Purpose
             -------
@@ -268,12 +403,15 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             --------
             - timeline.jsonl: timestamped transport/parser/decoder/frame/fault events.
             - raw_startup_first_8MiB.h264: exact raw TCP bytes from startup.
+            - FIRST_FAILURE_*.h264: reserved 8 MiB pre/8 MiB post first-fault window.
+            - rolling_raw/: newest bounded raw TCP segments retained on disk.
             - event_*.h264: bounded ~4 MiB pre-fault + ~4 MiB post-fault windows.
             - raw_tail_last_4MiB.h264: final rolling raw context at collection time.
             - images/: first decoded frame, recovered frames, final preview/HUD JPEG when available.
             - HUD_app_session.log: normal production log for cross-correlation.
             - iphone_state.txt: final state/counters at collection.
             - adapter/: best-effort parked snapshots and passive diagnostic bundle if available.
+            - COMPLETENESS_REPORT.txt: explicit evidence-presence report.
 
             Recorder statistics
             -------------------
@@ -282,6 +420,9 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             evidence_windows=\(evidenceWindowCount)
             evidence_windows_dropped=\(droppedWindowCount)
             incomplete_active_windows=\(activeWindows.count)
+            first_failure_triggered=\(firstFailureTriggered)
+            first_failure_complete=\(firstFailureCompleted)
+            rolling_segments_retained=\(rollingSegments.count)
 
             Safety boundary
             ---------------
@@ -294,7 +435,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             try? timelineHandle?.synchronize()
 
             let parent = sessionDirectory.deletingLastPathComponent()
-            let zipURL = parent.appendingPathComponent("LiveMap_Diagnostic_v90.35.3.24.24_\(Self.timestamp()).zip")
+            let zipURL = parent.appendingPathComponent("LiveMap_Diagnostic_v90.35.3.24.25_\(Self.timestamp()).zip")
             try? fileManager.removeItem(at: zipURL)
             let writer = try LiveMapStoredZipWriter(url: zipURL)
             let files = try fileManager.subpathsOfDirectory(atPath: sessionDirectory.path)
@@ -309,6 +450,51 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             try writer.finish()
             writeTimeline(category: "export", message: "zip_ready", fields: ["file": zipURL.lastPathComponent])
             return zipURL
+        }
+    }
+
+    private func writeRollingRaw(_ data: Data) {
+        var offset = 0
+        while offset < data.count {
+            if rollingHandle == nil || rollingSegmentBytes >= rollingSegmentLimit {
+                try? rollingHandle?.synchronize()
+                try? rollingHandle?.close()
+                rollingSegmentSequence += 1
+                rollingSegmentBytes = 0
+                let start = totalRawBytes - UInt64(data.count - offset)
+                let url = rollingDirectory.appendingPathComponent(String(format: "raw_roll_%04d_offset_%012llu.h264", rollingSegmentSequence, start))
+                fileManager.createFile(atPath: url.path, contents: nil)
+                rollingHandle = try? FileHandle(forWritingTo: url)
+                rollingURL = url
+                rollingSegments.append(url)
+                while rollingSegments.count > maximumRollingSegments {
+                    let old = rollingSegments.removeFirst()
+                    try? fileManager.removeItem(at: old)
+                }
+                writeTimeline(category: "raw_roll", message: "segment_open", fields: ["file": url.lastPathComponent, "start_offset": start, "retained": rollingSegments.count])
+            }
+            guard let rollingHandle else { return }
+            let room = rollingSegmentLimit - rollingSegmentBytes
+            let amount = min(room, data.count - offset)
+            let range = offset..<(offset + amount)
+            try? rollingHandle.write(contentsOf: data.subdata(in: range))
+            rollingSegmentBytes += amount
+            offset += amount
+        }
+    }
+
+    private func writeTail(_ chunks: [Data], maxBytes: Int, to handle: FileHandle) {
+        var remaining = min(maxBytes, chunks.reduce(0) { $0 + $1.count })
+        guard remaining > 0 else { return }
+        var selected: [(Data, Int)] = []
+        for chunk in chunks.reversed() {
+            guard remaining > 0 else { break }
+            let amount = min(remaining, chunk.count)
+            selected.append((chunk, amount))
+            remaining -= amount
+        }
+        for (chunk, amount) in selected.reversed() {
+            try? handle.write(contentsOf: chunk.suffix(amount))
         }
     }
 
@@ -332,6 +518,19 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         return formatter.string(from: Date())
+    }
+
+    private static func hexSample<C: Collection>(_ bytes: C) -> String where C.Element == UInt8 {
+        bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func fnv1a64(_ data: Data) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return String(format: "%016llx", hash)
     }
 
     private static func safeFilename(_ value: String) -> String {

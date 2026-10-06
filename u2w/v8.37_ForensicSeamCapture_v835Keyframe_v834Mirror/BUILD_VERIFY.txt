@@ -1,0 +1,11 @@
+U2W v8.37 Forensic Seam Capture verification
+=============================================
+sh -n: PASS
+Offline boundary validator: PASS (71 seams)
+Corruption fingerprint test: PASS
+Retention stress: PASS (143 rotations, newest 128 retained)
+Install image SHA256: 9f88f3aef33231963d60954bd3f2a0baa5770523bbf3563627231bba75c75a1f
+Rollback image SHA256: 780e7f94f1193579a76de171e5cd08e831017417f303bd45e6f7bfbacbf6bb11
+Required v8.34 mirror SHA1: b982322ee65fd45405ab40f98512dbd76450976b
+Required exact v8.31 relay SHA1: b3964792342f9bc5ad22eaeb70eaf84ec04562f6
+Payload policy: sidecar diagnostics only; mirror/relay/helper unchanged.

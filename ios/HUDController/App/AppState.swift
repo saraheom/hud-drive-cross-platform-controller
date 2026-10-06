@@ -857,6 +857,7 @@ final class AppState {
             var evidence: [(name: String, data: Data)] = []
             let snapshots: [(String, String, TimeInterval)] = [
                 ("u2wvideo-relay-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi", 5),
+                ("u2wvideo-forensic-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-forensic-status.cgi", 6),
                 ("u2wvideo-seam-log.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-seam-log.cgi", 6),
                 ("u2wvideo-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-status.cgi", 5),
                 ("u2whud-status.cgi", "http://192.168.50.2/cgi-bin/u2whud-status.cgi", 5),
@@ -867,6 +868,17 @@ final class AppState {
                 if let data = await self.fetchLiveMapDiagnosticEvidence(rawURL, timeout: timeout) {
                     evidence.append((name, data))
                 }
+            }
+
+            // v8.37 preserves binary old-tail/new-head evidence across MainVideo
+            // generation seams without touching the relay or CarPlay processes.
+            // Fetch this parked-only bundle before the generic historical dump so
+            // the exact boundary samples are captured in the same iPhone ZIP.
+            if let forensic = await self.fetchLiveMapDiagnosticEvidence(
+                "http://192.168.50.2/cgi-bin/u2wvideo-forensic-bundle.cgi",
+                timeout: 45
+            ), forensic.count > 32 {
+                evidence.append(("U2W_v8.37_ForensicSeams.tar.gz", forensic))
             }
 
             // v8.31 is based on the v8.27.2 diagnostic image. If its passive
@@ -881,9 +893,9 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.24 — final live-map state
+            HUD Controller v90.35.3.24.25 — forensic live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
-            paired_u2w=v8.36 Passive Seam Observer + v8.35 keyframe layer (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
+            paired_u2w=v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
             app_preview_active=\(self.mainVideoPreviewActive)
             mainvideo_phase=\(self.mainVideo.transportPhase)
@@ -956,7 +968,7 @@ final class AppState {
         }
     }
 
-    // MARK: - v90.35.3.24.24 Map Mode direct OBD ownership
+    // MARK: - v90.35.3.24.25 Map Mode direct OBD ownership
 
     private func beginMapModeDirectOBDOwnership(reason: String) {
         mapModeDirectOBDOwnershipTask?.cancel()
@@ -981,17 +993,16 @@ final class AppState {
 
     private func endMapModeDirectOBDOwnership(reason: String) {
         mapModeDirectOBDOwnershipTask?.cancel()
-        mapModeDirectOBDOwnershipTask = nil
         mapModeDirectOBDOwnershipStatus = "Returning OBD to HUD…"
-        logger.log("OBD OWNERSHIP", "Map Mode handoff END reason=\(reason); releasing direct ELM first")
-        directELM.releaseMapModeOwnership()
-        Task { @MainActor [weak self] in
-            // Give CoreBluetooth a bounded moment to release the single-client
-            // peripheral before the HUD resumes its normal connection command.
-            try? await Task.sleep(for: .milliseconds(650))
+        logger.log("OBD OWNERSHIP", "Map Mode handoff END reason=\(reason); cancelling/confirming direct ELM release before HUD reconnect")
+        mapModeDirectOBDOwnershipTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            let confirmed = await self.directELM.releaseMapModeOwnershipAndWait(timeout: 2.5)
+            guard !Task.isCancelled else { return }
+            self.logger.log("OBD OWNERSHIP", "Map Mode handoff release barrier complete confirmed=\(confirmed ? 1 : 0); resuming HUD ownership reason=\(reason)")
             self.obd.resumeAfterDirectELMOwnership(reason: reason)
-            self.mapModeDirectOBDOwnershipStatus = "HUD reclaiming OBD"
+            self.mapModeDirectOBDOwnershipStatus = confirmed ? "HUD reclaiming OBD" : "HUD reclaiming OBD • late iPhone callbacks blocked"
+            self.mapModeDirectOBDOwnershipTask = nil
         }
     }
 
@@ -2003,7 +2014,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.24",
+                "appVersion=v90.35.3.24.25",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -2968,7 +2979,7 @@ final class AppState {
                 "final clear after renderer recreation reason=\(reason) generation=\(generation)"
             )
 
-            // v90.35.3.24.24: the Winding Wy field case showed that the physical
+            // v90.35.3.24.25: the Winding Wy field case showed that the physical
             // HUD can occasionally keep the previous lane overlay even after the
             // maneuver changed, CarPlay reported showing=false, and the app had
             // already sent multiple empty-lane packets. Give the stock renderer

@@ -56,5 +56,5 @@ def test_v2423_obd_manual_ownership_controls_are_explicit_and_logged():
 
 
 def test_v2423_current_release_strings_are_aligned():
-    assert 'appVersion=v90.35.3.24.24' in APP
-    assert 'v90.35.3.24.24 pairs with U2W v8.36 Passive Seam Observer + unchanged v8.35 keyframe layer + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
+    assert 'appVersion=v90.35.3.24.25' in APP
+    assert 'v90.35.3.24.25 pairs with U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI

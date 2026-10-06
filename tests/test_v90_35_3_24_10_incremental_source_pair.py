@@ -13,7 +13,7 @@ def test_v2410_history_is_preserved_but_current_release_is_passive_diagnostic():
     assert 'self.transportPhase = "LIVE"' in VIDEO
 
 def test_v2411_obd_manual_collection_still_has_no_gps_gate():
-    assert 'appVersion=v90.35.3.24.24' in APP
+    assert 'appVersion=v90.35.3.24.25' in APP
     assert 'no GPS gate; v24.10 length/framing reconstruction retained' in APP
     assert 'guard speedEngine.currentSpeedMph <= 1 else' not in APP
 

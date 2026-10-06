@@ -1,0 +1,18 @@
+HUD Controller v90.35.3.24.25 build verification
+================================================
+Python/source contracts: 519 passed, 1 skipped
+Swift syntax parse: 213/213 passed
+YAML parse: 10/10 passed
+U2W v8.37 sh -n: passed
+U2W v8.37 offline seam validator: PASS (71 seams + corruption detection + 143-rotation retention)
+U2W v8.37 image member/decrypt verification: passed during build_images.py
+v8.37 install image SHA256: 9f88f3aef33231963d60954bd3f2a0baa5770523bbf3563627231bba75c75a1f
+v8.37 rollback image SHA256: 780e7f94f1193579a76de171e5cd08e831017417f303bd45e6f7bfbacbf6bb11
+Frozen v8.34 mirror SHA1 required by installer: b982322ee65fd45405ab40f98512dbd76450976b
+Frozen exact v8.31 relay SHA1 required by installer: b3964792342f9bc5ad22eaeb70eaf84ec04562f6
+v8.37 mirror payload changed: NO
+v8.37 raw relay payload changed: NO
+v8.37 keyframe helper changed: NO
+v8.37 AppleCarPlay/ARMiPhoneIAP2 process control: NO
+
+Not available locally: full Xcode/macOS build + GitHub Actions XCTest environment.
