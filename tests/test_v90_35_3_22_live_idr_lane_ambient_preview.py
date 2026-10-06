@@ -32,9 +32,12 @@ def test_tcp_is_not_opened_until_relay_is_confirmed_and_waiting_recovers():
     assert 'recentAnchorRecoveryUsed' in VIDEO and 'WAITING_FRESH_IDR' in VIDEO
 
 
-def test_parked_preflight_and_diagnostic_chain_are_visible():
-    for token in ['MAINVIDEO PREFLIGHT', 'preflightSummary', 'Last map frame', 'Parked MainVideo preflight']:
-        assert token in VIDEO + UI
+def test_parked_preflight_remains_internal_while_ui_is_compact():
+    for token in ['MAINVIDEO PREFLIGHT', 'preflightSummary']:
+        assert token in VIDEO
+    assert 'Parked MainVideo preflight' not in UI
+    assert 'Last map frame' not in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
     assert 'LIVE • 5m continuity verified' in VIDEO
     assert 'source_generation_changes' in VIDEO
     assert 'pre_idr_slices_dropped' in VIDEO
@@ -87,4 +90,5 @@ def test_decoder_rebuild_is_deferred_until_a_future_idr_and_logged():
     error_block = VIDEO.split('if decodeStatus != noErr {', 1)[1].split('} else {', 1)[0]
     assert 'promoteValidParameterSetPairIfPossible()' not in error_block
     assert 'decoderSummary' in VIDEO
-    assert 'VideoToolbox decoder' in UI
+    assert 'VideoToolbox decoder' not in UI
+    assert 'decoderSummary' in VIDEO

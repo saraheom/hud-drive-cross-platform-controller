@@ -893,7 +893,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.25 — forensic live-map state
+            HUD Controller v90.35.3.24.26 — forensic live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -968,7 +968,7 @@ final class AppState {
         }
     }
 
-    // MARK: - v90.35.3.24.25 Map Mode direct OBD ownership
+    // MARK: - v90.35.3.24.26 Map Mode direct OBD ownership
 
     private func beginMapModeDirectOBDOwnership(reason: String) {
         mapModeDirectOBDOwnershipTask?.cancel()
@@ -2014,7 +2014,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.25",
+                "appVersion=v90.35.3.24.26",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -2979,7 +2979,7 @@ final class AppState {
                 "final clear after renderer recreation reason=\(reason) generation=\(generation)"
             )
 
-            // v90.35.3.24.25: the Winding Wy field case showed that the physical
+            // v90.35.3.24.26: the Winding Wy field case showed that the physical
             // HUD can occasionally keep the previous lane overlay even after the
             // maneuver changed, CarPlay reported showing=false, and the app had
             // already sent multiple empty-lane packets. Give the stock renderer

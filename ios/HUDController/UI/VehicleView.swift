@@ -9,60 +9,10 @@ struct VehicleView: View {
                 VStack(spacing: 18) {
                     ConnectionCard(state: state)
 
-                    section("DIRECT ELM327 FEASIBILITY") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Diagnostic only • Production Map Mode speed remains GPS")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            HStack {
-                                Button(state.directELM.scanning ? "Scanning…" : "Scan BLE") { state.directELM.scan() }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled(state.directELM.scanning)
-                                if state.directELM.scanning {
-                                    Button("Stop") { state.directELM.stopScan() }
-                                        .buttonStyle(.bordered)
-                                }
-                            }
-
-                            if !state.directELM.devices.isEmpty {
-                                Picker("ELM / OBD device", selection: Binding(
-                                    get: { state.directELM.selectedDeviceID },
-                                    set: { state.directELM.selectAndConnect($0) }
-                                )) {
-                                    Text("Select device").tag(UUID?.none)
-                                    ForEach(state.directELM.devices) { device in
-                                        Text("\(device.name) • \(device.rssi) dBm")
-                                            .tag(Optional(device.id))
-                                    }
-                                }
-                            }
-
-                            HStack {
-                                Button("Connect selected") { state.directELM.connectSelected() }
-                                    .buttonStyle(.borderedProminent)
-                                    .disabled(state.directELM.selectedDeviceID == nil || state.directELM.connecting)
-                                Button("Disconnect") { state.directELM.disconnect() }
-                                    .buttonStyle(.bordered)
-                                    .disabled(state.directELM.connectedName == nil)
-                            }
-
-                            LabeledContent("Bluetooth", value: state.directELM.bluetoothState)
-                            LabeledContent("HUD OBD ownership", value: state.obd.connected ? "HUD connected" : "HUD released")
-                            LabeledContent("HUD auto-connect", value: state.obd.autoConnect ? "ON" : "OFF")
-                            LabeledContent("Direct OBD", value: state.directELM.status)
-                            LabeledContent("Connected", value: state.directELM.connectedName ?? "—")
-                            LabeledContent("GATT", value: state.directELM.gattSummary)
-                            LabeledContent("TX", value: state.directELM.txSummary)
-                            LabeledContent("RX", value: state.directELM.rxSummary)
-                            LabeledContent("Last RX", value: state.directELM.lastRX)
-
-                            Button("Send one 01 0D speed probe") { state.directELM.runOneShotVehicleSpeedProbe() }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(!state.directELM.gattReady)
-                            LabeledContent("Speed probe", value: state.directELM.speedProbeSummary)
-
-                            HudDescription("v90.35.3.24.25 keeps the manual Direct ELM controls for diagnostics, but physical Map Mode now owns OBD from the iPhone automatically: the HUD OBD reconnect loop is suspended, the HUD releases OBDII, and the app retrieves/connects the remembered ELM peripheral and polls only standard 01 0D vehicle speed. Leaving Map Mode releases the ELM before restoring HUD ownership. No ATZ, ATSP0, reset, or protocol-selection command is sent.")
+                    section("MAP MODE OBD") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            LabeledContent("Connection", value: state.directELM.ownershipStatus)
+                            HudDescription("Map Mode now owns OBD from the iPhone automatically: it claims the remembered ELM327 and polls only standard 01 0D vehicle speed. Leaving Map Mode releases the iPhone connection before returning OBD ownership to the HUD. Detailed connection/probe telemetry is still recorded in diagnostics but is no longer shown here.")
                         }
                     }
 
@@ -96,7 +46,7 @@ struct VehicleView: View {
                                 value: state.obd.supportedPIDs.isEmpty ? "—" : state.obd.supportedPIDs
                             )
                             LabeledContent("Vehicle speed PID", value: state.obd.vehicleSpeedPIDSupportSummary)
-                            HudDescription("Single-client ELM test: first turn Auto-connect OBD after HUD connects OFF, then tap Disconnect HUD OBD. Once HUD owns OBD = NO, scan again in Direct ELM327 Feasibility. To restore stock behavior, disconnect Direct ELM first, tap Connect via HUD, then re-enable Auto-connect.")
+                            HudDescription("The HUD owns OBD in Free Ride/Navigation. Map Mode temporarily transfers the single-client ELM327 connection to the iPhone, then returns it automatically when Map Mode ends.")
 
                             Toggle("OBD speed protocol trace", isOn: Binding(
                                 get: { state.bluetooth.obdSpeedTraceEnabled },

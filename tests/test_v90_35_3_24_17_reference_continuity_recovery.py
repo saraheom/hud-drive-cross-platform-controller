@@ -43,6 +43,6 @@ def test_background_transition_does_not_deliberately_kill_live_map_anymore():
 def test_release_remains_navigation_safe_and_u2w_v831_is_unchanged():
     assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
     assert 'mainVideo.start(reason: "app-only live preview")' in APP
-    assert 'v90.35.3.24.25 pairs with U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
-    assert 'no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control' in UI
-    assert 'appVersion=v90.35.3.24.25' in APP
+    assert 'v90.35.3.24.26 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
+    assert 'no adapter parser/cache/GOP replay' in VIDEO
+    assert 'appVersion=v90.35.3.24.26' in APP

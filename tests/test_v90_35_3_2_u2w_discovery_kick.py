@@ -7,7 +7,7 @@ def test_post_connect_viewer_is_not_reprimed_after_sta_link_up():
     assert 'AUTO VIEWER RECOVERY mode4→mode6 only' in app
     assert 'hudU2WAutomaticViewerRecoveryCount == 0' in app
     assert 'field("hud_mjpeg_established") == "YES"' in app
-    assert 'Retry HUD display' in (ROOT/'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
+    assert 'Retry HUD display' not in (ROOT/'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 def test_stop_does_not_clear_sta_credentials():
     app=(ROOT/'ios/HUDController/App/AppState.swift').read_text()

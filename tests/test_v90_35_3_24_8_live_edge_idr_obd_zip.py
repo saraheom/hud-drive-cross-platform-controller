@@ -86,6 +86,7 @@ def test_obd_archive_collection_remains_manual_and_no_longer_trusts_stale_gps():
     assert 'guard speedEngine.currentSpeedMph <= 1 else' not in APP
     assert 'no GPS gate' in APP
     assert 'Collecting/reconstructing HUD diagnostic ZIP' in APP
-    assert 'Collect OBD Drive Diagnostic ZIP (parked)' in UI
-    assert 'v90.35.3.24.25 pairs with U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
-    assert 'HUD map FPS probe' in UI and 'supportedHUDFrameRates' in (ROOT/'ios/HUDController/Models/HudMapModeSettings.swift').read_text()
+    assert 'Collect OBD Drive Diagnostic ZIP (parked)' not in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'v90.35.3.24.26 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
+    assert 'Map Mode FPS' in UI and 'supportedHUDFrameRates' in (ROOT/'ios/HUDController/Models/HudMapModeSettings.swift').read_text()

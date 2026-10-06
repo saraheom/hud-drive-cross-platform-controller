@@ -1,0 +1,47 @@
+HUD Controller v90.35.3.24.26 build verification
+================================================
+
+Base
+----
+Base repository: v90.35.3.24.25 CI FIX 1 + U2W v8.37
+Release type: app-only corrective release
+Adapter update required: NO
+
+Functional changes
+------------------
+1. H264MainVideoSanitizer learns the accepted P-reference nal_ref_idc for each validated IDR epoch.
+2. A mismatched reference priority is rejected only when its frame_num is also off the expected next reference frame.
+3. Rejected foreign candidates do not advance reference-continuity state and never reach VideoToolbox.
+4. U2WMainVideoClient logs FOREIGN_REF_IDC_REJECT and records it in diagnostics without forcing hard recovery.
+5. Vehicle Direct ELM diagnostic UI is reduced to compact Map Mode OBD ownership/connection status.
+6. Map Mode large Status & diagnostics disclosure is removed; Stream status, FPS selector, and Collect Live Map Diagnostic ZIP are direct controls.
+7. Supported Map Mode FPS remains exactly 5, 8, 10, 12, 15.
+8. v24.25 OBD ownership-generation/release-barrier behavior is retained.
+
+Validation performed in this environment
+----------------------------------------
+Python/source regression suite: 524 passed, 1 skipped
+Swift syntax parse: 213/213 Swift files passed `swiftc -parse`
+YAML parse: 10/10 files passed
+U2W directory comparison against v24.25 CI FIX 1 base: byte-for-byte identical, 427 files
+U2W deterministic aggregate tree SHA-256 (path+content method):
+5c8de13c14d6aa7087aff2790d0be8a0b2c27326e2400c4350cc0c5bd4634a74
+
+Standalone Swift sanitizer harness compiled and executed successfully.
+Targeted sanitizer regression covers:
+- reference-priority mismatch + off-sequence frame => rejected before decoder
+- rejection preserves previous reference continuity so the real next frame is accepted
+- same-priority frame gap remains forwarded as telemetry
+- reference-priority change on the expected next frame remains legal
+
+Field evidence used for the guard
+---------------------------------
+Observed sequence: 3170 -> foreign 3999 -> 3171
+Foreign candidate: P-slice, nal_ref_idc=2
+Established surrounding reference priority: nal_ref_idc=1
+Foreign candidate SHA-1: 07063717b6f7ace70ac8fd3ab8a75d5333cfcf4a
+Immediate decoder result in v24.25: repeated VideoToolbox codecBadDataErr (-8969)
+
+Limit of local validation
+-------------------------
+This Linux environment cannot perform Apple's full Xcode/iOS link, signing, simulator, or XCTest execution. GitHub iOS CI remains the authoritative full compile/XCTest check. The complete Swift source tree was syntax-parsed locally and the repository's source-level regression suite is green.

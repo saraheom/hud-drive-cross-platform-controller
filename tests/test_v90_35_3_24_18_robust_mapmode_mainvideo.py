@@ -44,6 +44,6 @@ def test_codec_bad_data_recovery_preserves_validated_parameter_sets_and_tcp():
 
 
 def test_combined_release_keeps_u2w_v831_unchanged():
-    assert 'v90.35.3.24.25 pairs with U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
-    assert 'no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control' in UI
-    assert 'appVersion=v90.35.3.24.25' in APP
+    assert 'v90.35.3.24.26 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
+    assert 'no adapter parser/cache/GOP replay' in VIDEO
+    assert 'appVersion=v90.35.3.24.26' in APP

@@ -29,5 +29,6 @@ def test_v3_road_probe_keeps_map_mode_and_hidden_item10():
     assert 'for attempt in 1...30' in APP
     assert 'HudOBDItem.drivingVelocity.rawValue' in APP
     assert 'GPS Map Mode speed remains unchanged' in APP
-    assert 'Run 90 s OBD deep probe v3' in UI
-    assert 'Share OBD speed probe v3 report' in UI
+    assert 'Run 90 s OBD deep probe v3' not in UI
+    assert 'Share OBD speed probe v3 report' not in UI
+    assert 'obdDeepSpeedProbeReportURL' in BT

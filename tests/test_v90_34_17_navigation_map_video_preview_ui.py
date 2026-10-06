@@ -34,8 +34,8 @@ def test_map_mode_ui_reads_centralized_snapshot_and_live_mainvideo_source():
     source = PREVIEW.read_text()
     assert 'state.mapModePreviewSnapshot' in source
     assert 'state.mapModePreviewSourceImage' in source
-    assert 'state.mainVideo.status' in source
-    assert 'state.mainVideo.frameCount' in source
+    assert 'state.mainVideo.transportPhase' in source
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in source
 
 def test_release_notes_preserve_v903417_history():
     readme = README.read_text()

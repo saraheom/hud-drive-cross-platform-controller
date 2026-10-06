@@ -55,10 +55,11 @@ def test_minus8969_burst_uses_fresh_epoch_quarantine_instead_of_poisoned_wait():
 
 def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
     assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")' in APP
-    assert 'passive v8.27.2 source/topology observer' in UI
-    assert 'never starts MainVideo' in UI
-    assert "v90.35.3.24.25 pairs with U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay" in UI
-    assert "no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control" in UI
+    assert 'passive v8.27.2 source/topology observer' not in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'v90.35.3.24.26 MainVideo client for U2W v8.37 forensic seam capture' in VIDEO
+    assert 'no adapter parser/cache/GOP replay' in VIDEO
 
 
 def test_physical_seq1428_stall_fixture_matches_regression_gate():

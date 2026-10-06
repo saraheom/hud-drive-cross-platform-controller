@@ -16,13 +16,14 @@ struct H264MainVideoSanitizerStats: Equatable {
     var acceptedIDR = 0
     var acceptedSlices = 0
     var frameNumDiscontinuities = 0
+    var foreignReferenceRejects = 0
     var waitingForReferenceIDR = true
     var lastAcceptedAt: Date?
 
     var summary: String {
         "raw \(rawNALs) • valid \(acceptedNALs) • rejected \(rejectedNALs) • " +
         "SPS \(acceptedSPS) PPS \(acceptedPPS) IDR \(acceptedIDR) slices \(acceptedSlices) • " +
-        "frameBreaks \(frameNumDiscontinuities) waitIDR \(waitingForReferenceIDR ? 1 : 0)"
+        "frameBreaks \(frameNumDiscontinuities) foreignRefRejects \(foreignReferenceRejects) waitIDR \(waitingForReferenceIDR ? 1 : 0)"
     }
 }
 
@@ -131,8 +132,15 @@ final class H264MainVideoSanitizer {
     private var continuationFrame: SliceFrameKey?
     private var lastReferenceFrameNum: UInt32?
     private var lastReferenceFrameModulus: UInt32?
+    // Learned from the first accepted reference P-picture in each validated IDR
+    // epoch. A different nal_ref_idc by itself is legal H.264, so v24.26 only
+    // rejects it when it also arrives off the expected frame_num. This targets
+    // the Oct-6 field contaminant (3170 -> refIDC2/frame3999 -> 3171) without
+    // turning ordinary frame loss or a valid priority change into an outage.
+    private var expectedReferenceNALRefIDC: UInt8?
     private var awaitingReferenceIDR = true
     private var pendingContinuityBreakReason: String?
+    private var pendingForeignReferenceRejectReason: String?
     private(set) var stats = H264MainVideoSanitizerStats()
 
     init(expectedWidth: Int = 800, expectedHeight: Int = 480) {
@@ -145,8 +153,10 @@ final class H264MainVideoSanitizer {
         continuationFrame = nil
         lastReferenceFrameNum = nil
         lastReferenceFrameModulus = nil
+        expectedReferenceNALRefIDC = nil
         awaitingReferenceIDR = true
         pendingContinuityBreakReason = nil
+        pendingForeignReferenceRejectReason = nil
         stats.waitingForReferenceIDR = true
         if clearParameterSets {
             spsByID.removeAll(keepingCapacity: true)
@@ -183,6 +193,14 @@ final class H264MainVideoSanitizer {
         return pendingContinuityBreakReason
     }
 
+    /// One-shot notice for a foreign reference-priority candidate dropped before
+    /// VideoToolbox. Kept separate from the continuity warning because rejection
+    /// is protective and must not trigger the decoder hard-recovery path.
+    func takeForeignReferenceRejectReason() -> String? {
+        defer { pendingForeignReferenceRejectReason = nil }
+        return pendingForeignReferenceRejectReason
+    }
+
     func process(_ nal: Data) -> H264SanitizedNAL? {
         stats.rawNALs += 1
         guard let first = nal.first,
@@ -208,6 +226,7 @@ final class H264MainVideoSanitizer {
             continuationFrame = nil
             lastReferenceFrameNum = nil
             lastReferenceFrameModulus = nil
+            expectedReferenceNALRefIDC = nil
             awaitingReferenceIDR = true
             stats.waitingForReferenceIDR = true
             accept(kind: .sps)
@@ -257,6 +276,9 @@ final class H264MainVideoSanitizer {
                     continuationFrame = key
                     awaitingReferenceIDR = false
                     stats.waitingForReferenceIDR = false
+                    // A validated IDR starts a new codec/reference epoch. Learn the
+                    // ordinary P-picture reference priority again from this epoch.
+                    expectedReferenceNALRefIDC = nil
                     if let modulus = frameNumModulus(forPPS: info.ppsID) {
                         lastReferenceFrameNum = info.frameNum
                         lastReferenceFrameModulus = modulus
@@ -274,6 +296,31 @@ final class H264MainVideoSanitizer {
                     }
 
                     let nalRefIDC = (first >> 5) & 0x03
+                    let normalizedSliceType = info.sliceType >= 5 ? info.sliceType - 5 : info.sliceType
+                    if nalRefIDC != 0,
+                       normalizedSliceType == 0, // P-picture: the field stream's normal reference cadence
+                       let learnedRefIDC = expectedReferenceNALRefIDC,
+                       nalRefIDC != learnedRefIDC,
+                       let modulus = frameNumModulus(forPPS: info.ppsID),
+                       let previous = lastReferenceFrameNum,
+                       let previousModulus = lastReferenceFrameModulus,
+                       previousModulus == modulus {
+                        let expectedFrame = (previous + 1) % modulus
+                        if info.frameNum != expectedFrame {
+                            // Oct-6 field failure: the raw transport admitted one
+                            // syntactically valid but foreign reference P-picture
+                            // (refIDC 2, frame 3999) between normal refIDC-1 frames
+                            // 3170 and 3171. Dropping it here keeps VideoToolbox and
+                            // reference continuity completely untouched.
+                            stats.foreignReferenceRejects += 1
+                            pendingForeignReferenceRejectReason =
+                                "expected_ref_idc=\(learnedRefIDC) actual_ref_idc=\(nalRefIDC) previous=\(previous) expected_frame_num=\(expectedFrame) actual_frame_num=\(info.frameNum) modulus=\(modulus) pps=\(info.ppsID)"
+                            continuationFrame = nil
+                            reject()
+                            return nil
+                        }
+                    }
+
                     if nalRefIDC != 0,
                        let modulus = frameNumModulus(forPPS: info.ppsID),
                        let previous = lastReferenceFrameNum,
@@ -281,11 +328,11 @@ final class H264MainVideoSanitizer {
                        previousModulus == modulus {
                         let expected = (previous + 1) % modulus
                         if info.frameNum != expected {
-                            // v24.20: treat a single frame_num jump as telemetry, not
-                            // proof that the decode epoch is unusable. The field traces
-                            // showed that hard-quarantining here can manufacture a
-                            // minutes-long outage. The decoder's repeated codecBadDataErr
-                            // path remains the authoritative hard-recovery trigger.
+                            // v24.20: treat a single frame_num jump as telemetry when the learned
+                            // reference priority still matches. Real field captures include
+                            // harmless missing pictures, so the decoder's repeated codecBadDataErr
+                            // path remains the authoritative hard-recovery trigger; frame_num
+                            // discontinuity alone must not manufacture a WAITING_FRESH_IDR outage.
                             stats.frameNumDiscontinuities += 1
                             pendingContinuityBreakReason =
                                 "reference frame_num discontinuity previous=\(previous) expected=\(expected) actual=\(info.frameNum) modulus=\(modulus) pps=\(info.ppsID)"
@@ -294,6 +341,9 @@ final class H264MainVideoSanitizer {
 
                     continuationFrame = key
                     if nalRefIDC != 0, let modulus = frameNumModulus(forPPS: info.ppsID) {
+                        if normalizedSliceType == 0, expectedReferenceNALRefIDC == nil {
+                            expectedReferenceNALRefIDC = nalRefIDC
+                        }
                         lastReferenceFrameNum = info.frameNum
                         lastReferenceFrameModulus = modulus
                     }

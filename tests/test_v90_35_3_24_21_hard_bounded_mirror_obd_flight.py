@@ -57,8 +57,9 @@ def test_obd_flight_recorder_is_automatic_passive_and_file_backed():
     assert 'gps_reference.csv' in BT
     assert 'obd_state_timeline.csv' in BT
     assert 'for attempt in 1...18' in APP  # legacy v4 retained for compatibility only
-    assert 'Collect OBD Drive Diagnostic ZIP (parked)' in UI
-    assert 'Production displayed speed remains GPS' in UI
+    assert 'Collect OBD Drive Diagnostic ZIP (parked)' not in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
 
 
 def test_parked_obd_bundle_keeps_stock_transfer_separate_and_times_out_safely():
@@ -67,7 +68,7 @@ def test_parked_obd_bundle_keeps_stock_transfer_separate_and_times_out_safely():
     assert 'stock_hud_log_transfer' in BT
     assert 'stock_hud_log_transfer_raw.bin' in BT
     assert 'LOG_CATEGORY_CRUSH' in BT
-    assert 'HUD_OBD_DriveDiagnostic_v90.35.3.24.25_' in BT
+    assert 'HUD_OBD_DriveDiagnostic_v90.35.3.24.26_' in BT
 
 
 def test_obd_flight_recorder_survives_transient_hud_ble_disconnect():

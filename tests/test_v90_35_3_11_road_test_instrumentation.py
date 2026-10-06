@@ -45,8 +45,8 @@ def test_mode6_to_mode4_sta_persistence_probe_keeps_relay_alive():
     assert 'restoreHUDMode6AfterSTAPersistenceTest' in APP
     assert 'STA persistence test → IOS_HUD_MODE(4) only' in APP
     assert 'mode6-only restore (no credentials)' in APP
-    assert 'Test mode 6 → 4 STA persistence' in UI
-    assert 'Return Map Mode — mode 6 only' in UI
+    assert 'Test mode 6 → 4 STA persistence' not in UI
+    assert 'Return Map Mode — mode 6 only' not in UI
     # Test path must not clear STA credentials or stop U2W.
     block = APP[APP.index('func runHUDMode4STAPersistenceTest'):APP.index('func restoreHUDMode6AfterSTAPersistenceTest')]
     assert 'wifiSTAMode(ssid: "",' not in block

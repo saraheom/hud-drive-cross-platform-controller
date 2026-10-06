@@ -13,7 +13,7 @@ def test_mainvideo_uses_continuous_dedicated_tcp():
     assert 'mainVideo.start(' not in transport
     assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
     assert 'do NOT start MainVideo at app launch' in APP
-    assert 'U2W H.264 relay' in UI
+    assert 'LabeledContent(\n                "Stream"' in UI
 
 
 def test_dedicated_tcp_filter_runs_on_iphone():

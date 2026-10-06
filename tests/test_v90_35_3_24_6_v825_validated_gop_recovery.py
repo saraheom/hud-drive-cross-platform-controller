@@ -56,8 +56,8 @@ def test_ios_accepts_v824_or_v825_and_surfaces_v825_diagnostics():
 
 
 def test_ui_keeps_10fps_validation_guidance_and_documents_v826_successor():
-    assert 'pairs with U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay' in UI
-    assert 'HUD map FPS probe' in UI and 'supportedHUDFrameRates' in (ROOT/'ios/HUDController/Models/HudMapModeSettings.swift').read_text()
+    assert 'U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
+    assert 'Map Mode FPS' in UI and 'supportedHUDFrameRates' in (ROOT/'ios/HUDController/Models/HudMapModeSettings.swift').read_text()
 
 
 def test_ambient_has_no_new_246_door_reassert_feature():

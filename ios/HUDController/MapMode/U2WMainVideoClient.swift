@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.25 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.26 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -30,6 +30,7 @@ final class U2WMainVideoClient {
     private(set) var acceptedPPSCount = 0
     private(set) var acceptedIDRCount = 0
     private(set) var acceptedSliceCount = 0
+    private(set) var foreignReferenceRejectCount = 0
     private(set) var networkPathSummary = "Not monitoring — video idle"
     // Kept under the old property name so existing diagnostic UI bindings remain
     // source-compatible. In v8.24 it describes the dedicated recent-IDR TCP relay.
@@ -73,7 +74,8 @@ final class U2WMainVideoClient {
 
     var sanitizerSummary: String {
         "raw \(rawNALCount) • valid \(acceptedNALCount) • rejected \(rejectedNALCount) • " +
-        "SPS \(acceptedSPSCount) PPS \(acceptedPPSCount) IDR \(acceptedIDRCount) slices \(acceptedSliceCount)"
+        "SPS \(acceptedSPSCount) PPS \(acceptedPPSCount) IDR \(acceptedIDRCount) slices \(acceptedSliceCount) • " +
+        "foreignRefRejects \(foreignReferenceRejectCount)"
     }
 
     private let logger: LogManager
@@ -393,7 +395,7 @@ final class U2WMainVideoClient {
                 adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             }
             let supportedRelay = relayVersion.contains("v8.34") || relayVersion.contains("v8.33") || relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
-            // v90.35.3.24.25: v8.35 deliberately leaves the v8.34 relay binary
+            // v90.35.3.24.26: v8.35 deliberately leaves the v8.34 relay binary
             // untouched, but its wrapper status page renamed the legacy marker
             // field to v835_marker/v834_mirror_marker. v24.22 accidentally
             // required only marker=YES, so a healthy RUNNING relay was rejected
@@ -474,6 +476,7 @@ final class U2WMainVideoClient {
                 self.acceptedPPSCount = stats.acceptedPPS
                 self.acceptedIDRCount = stats.acceptedIDR
                 self.acceptedSliceCount = stats.acceptedSlices
+                self.foreignReferenceRejectCount = stats.foreignReferenceRejects
             }
         }
         worker.onDecoderState = { [weak self] summary in
@@ -561,6 +564,17 @@ final class U2WMainVideoClient {
                     "decoder": self.decoderSummary,
                     "phase": self.transportPhase
                 ])
+                if message.contains("FOREIGN_REF_IDC_REJECT") {
+                    self.diagnosticRecorder.record("parser_decoder_fingerprint", "foreign_reference_rejected", fields: [
+                        "message": message,
+                        "generation": generation,
+                        "received_bytes": self.receivedBytes,
+                        "frames": self.frameCount,
+                        "filter": self.sanitizerSummary,
+                        "decoder": self.decoderSummary,
+                        "relay": self.adapterCacheSummary
+                    ])
+                }
                 let isFirstFailureSignal = message.contains("REFERENCE CONTINUITY WARNING") ||
                     message.contains("codecBadDataErr") || message.contains("-8969") ||
                     message.contains("-12903") || message.contains("raw TCP read failed") ||
@@ -826,7 +840,7 @@ final class U2WMainVideoClient {
 
     private func requestBoundedKeyframe(reason: String) async {
         guard running, lifecycleActive else { return }
-        // v90.35.3.24.25 / U2W v8.37: the Oct-5 field drive proved that the
+        // v90.35.3.24.26 / U2W v8.37: the Oct-5 field drive proved that the
         // v8.35 helper used SOCK_DGRAM against stock Unix SOCK_STREAM listeners
         // and always returned send_failed/route=none.  Keep the installed v8.35
         // helper for rollback provenance, but do not keep injecting the known-wrong
@@ -1452,6 +1466,16 @@ private final class U2WMainVideoTCPWorker {
 
     private func processNAL(_ nal: Data, generation: Int) {
         let accepted = sanitizer.process(nal)
+
+        // v24.26: a reference-priority mismatch combined with an off-sequence
+        // frame_num is the exact Oct-6 poison signature. The sanitizer drops it
+        // before VideoToolbox and before reference continuity is updated.
+        if let foreignReject = sanitizer.takeForeignReferenceRejectReason() {
+            onDiagnostic?(
+                "FOREIGN_REF_IDC_REJECT generation=\(generation) \(foreignReject); " +
+                "candidate dropped before VideoToolbox; reference continuity preserved"
+            )
+        }
 
         // v24.20: a single frame_num jump is diagnostic evidence, not a hard
         // recovery trigger. With the v8.34 hard-bounded lossless mirror, normal operation should

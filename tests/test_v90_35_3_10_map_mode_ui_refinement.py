@@ -41,11 +41,13 @@ def test_map_mode_ui_is_compact_and_legacy_mode5_block_removed():
     assert 'Button("Disable Map Mode"' in UI
     assert 'CarPlay adapter Wi-Fi name' in UI
     assert 'CarPlay adapter Wi-Fi password' in UI
-    assert 'Status & diagnostics' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'Map Mode FPS' in UI
+    assert 'Status & diagnostics' not in UI
     assert 'Map Mode image customization' in UI
     assert 'Legacy mode-5 physical HUD test' not in UI
     assert 'Enable Map Mode on HUD' not in UI
-    assert '@State private var showRelayDiagnostics = false' in UI
+    assert '@State private var showRelayDiagnostics = false' not in UI
     assert '@State private var showMapCustomization = false' in UI
 
 

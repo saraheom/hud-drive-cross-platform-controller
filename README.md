@@ -1,10 +1,12 @@
-# HUD Controller v90.35.3.24.25 + U2W v8.37 — forensic MainVideo continuity + OBD release barrier
+# HUD Controller v90.35.3.24.26 + existing U2W v8.37 — foreign-reference guard + compact production UI
 
-This paired release follows the October 5 v24.24/v8.36 drive. The field log captured a real H.264 reference discontinuity immediately before VideoToolbox `-8969` failures while raw TCP bytes continued arriving. v8.37 therefore adds only passive binary old-tail/new-head seam evidence around mirror generation changes; it does not modify the frozen v8.34 mirror, exact v8.31 raw relay, or CarPlay processes. v24.25 reserves an 8 MiB pre/8 MiB post first-failure capture, keeps bounded rolling raw TCP evidence, and automatically adds the parked v8.37 forensic bundle.
+This is an **app-only corrective release** based on the October 6 v24.25/v8.37 drive. The captured MainVideo failure was no longer ambiguous: a healthy P-frame sequence `3170 → 3171` was interrupted by a foreign-looking reference P-slice at `frame_num=3999` with `nal_ref_idc=2`, while the established codec epoch used `nal_ref_idc=1`. VideoToolbox immediately returned repeated `codecBadDataErr (-8969)` and reset even though TCP and the adapter mirror continued delivering bytes.
 
-The same build fixes the independent single-client ELM race observed when leaving Map Mode: in-flight iPhone OBD connects are generation-tagged, stale late callbacks are rejected before GATT discovery, and HUD OBD reclaim waits on a bounded CoreBluetooth release barrier. See `V90_35_3_24_25_RELEASE.md` and `V90_35_3_24_25_BUILD_VERIFY.txt`.
+v24.26 therefore adds a narrow sanitizer guard before VideoToolbox. After a codec epoch learns the normal reference priority from accepted reference P-pictures, a candidate is dropped only when **both** its `nal_ref_idc` disagrees with the learned epoch **and** its `frame_num` is not the expected next reference frame. The rejected candidate does not advance reference-continuity state. Same-priority frame gaps remain telemetry, and a priority change on the expected next frame remains legal. Rejections are logged as `FOREIGN_REF_IDC_REJECT` for field verification.
 
-**Flash U2W v8.37 over v8.36, then use app v90.35.3.24.25.**
+The everyday UI is also simplified without removing the underlying forensic capture. Vehicle now shows one compact Map Mode OBD ownership/connection status instead of the Direct ELM probe panel. Map Mode exposes a small stream status, the existing **5 / 8 / 10 / 12 / 15 fps** selector, and **Collect Live Map Diagnostic ZIP (parked)** directly; the large expandable diagnostics block is removed. The successful v24.25 OBD ownership-generation/release-barrier logic is unchanged.
+
+**Keep the already-installed U2W v8.37 image. No adapter reflash is required for v24.26.** The v8.37 adapter tree, v8.34 mirror, exact v8.31 raw relay, and passive forensic sidecar are byte-for-byte unchanged. See `V90_35_3_24_26_RELEASE.md` and `V90_35_3_24_26_BUILD_VERIFY.txt`.
 
 ---
 

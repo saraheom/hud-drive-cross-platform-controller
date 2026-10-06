@@ -79,8 +79,9 @@ def test_direct_elm_probe_tests_coexistence_before_any_ownership_handoff():
     assert '"ATZ\\r"' not in ELM
     assert '"ATSP0\\r"' not in ELM
     assert 'polls only standard 01 0D vehicle speed' in VEHICLE
-    assert 'DIRECT ELM327 FEASIBILITY' in VEHICLE
-    assert 'Send one 01 0D speed probe' in VEHICLE
+    assert 'section("MAP MODE OBD")' in VEHICLE
+    assert 'state.directELM.ownershipStatus' in VEHICLE
+    assert 'Send one 01 0D speed probe' not in VEHICLE
     assert 'let directELM: DirectELM327Manager' in APP
     assert 'hudOBDConnectionConfirmed' in BT
 

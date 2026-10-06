@@ -13,7 +13,7 @@ def test_v2410_history_is_preserved_but_current_release_is_passive_diagnostic():
     assert 'self.transportPhase = "LIVE"' in VIDEO
 
 def test_v2411_obd_manual_collection_still_has_no_gps_gate():
-    assert 'appVersion=v90.35.3.24.25' in APP
+    assert 'appVersion=v90.35.3.24.26' in APP
     assert 'no GPS gate; v24.10 length/framing reconstruction retained' in APP
     assert 'guard speedEngine.currentSpeedMph <= 1 else' not in APP
 
@@ -26,5 +26,6 @@ def test_v2414_navigation_priority_keeps_mainvideo_off_outside_map_mode():
 def test_v2413_passive_codec_probe_is_optional_and_shareable():
     assert 'u2wvideo-diag-start.cgi' in DIAG
     assert 'u2wvideo-diag-bundle.cgi' in DIAG
-    assert 'Collect passive codec diagnostic bundle' in UI
-    assert 'passive v8.27.2 source/topology observer' in UI
+    assert 'Collect passive codec diagnostic bundle' not in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'u2wvideo-diag-start.cgi' in DIAG and 'u2wvideo-diag-bundle.cgi' in DIAG

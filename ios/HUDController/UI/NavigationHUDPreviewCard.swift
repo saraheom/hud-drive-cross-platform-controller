@@ -11,8 +11,6 @@ struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
     @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = "NISSAN68"
     @AppStorage("HUD.U2WHomeProbe.password") private var u2wPassword = ""
-    @State private var showRelayDiagnostics = false
-    @State private var showSTAPersistenceTest = false
     @State private var showMapCustomization = false
     @State private var selectedDesignerComponent: HudMapDesignerComponent = .map
     @State private var designerDragOrigin = CGSize.zero
@@ -432,224 +430,53 @@ struct NavigationHUDPreviewCard: View {
                 )
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: state.mainVideo.preflightReady ? "checkmark.circle.fill" : "clock.arrow.circlepath")
-                    .foregroundStyle(state.mainVideo.preflightReady ? Color.green : Color.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Parked MainVideo preflight")
+            LabeledContent(
+                "Stream",
+                value: (state.mainVideoPreviewActive || state.hudU2WLiveRelayActive)
+                    ? state.mainVideo.transportPhase
+                    : "Not active"
+            )
+            .font(.caption)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Map Mode FPS")
                         .font(.caption.weight(.semibold))
-                    Text(state.mainVideo.preflightSummary)
-                        .font(.caption2)
+                    Spacer()
+                    Text("\(state.mapModeSettings.hudFrameRate) fps")
+                        .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
+                }
+                Picker(
+                    "Map Mode FPS",
+                    selection: Binding(
+                        get: { state.mapModeSettings.hudFrameRate },
+                        set: { state.mapModeSettings.hudFrameRate = HudMapModeSettings.normalizedHUDFrameRate($0) }
+                    )
+                ) {
+                    ForEach(HudMapModeSettings.supportedHUDFrameRates, id: \.self) { fps in
+                        Text("\(fps)").tag(fps)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Button(state.liveMapDiagnosticCollecting ? "Collecting Live Map Diagnostic ZIP…" : "Collect Live Map Diagnostic ZIP (parked)") {
+                state.collectLiveMapDiagnosticBundle()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(accent)
+            .disabled(state.liveMapDiagnosticCollecting)
+
+            if let url = state.liveMapDiagnosticBundleURL {
+                ShareLink(item: url) {
+                    Label("Share Live Map Diagnostic ZIP", systemImage: "square.and.arrow.up")
                 }
             }
 
-            Text("For the next validation, remain parked until this reads ‘LIVE • frames advancing’ and the Video frames counter continues increasing. If it does not, collect the log/status files without beginning a test drive.")
+            Text("Detailed MainVideo, decoder, adapter-seam, and OBD ownership telemetry remains in the diagnostic ZIP but is hidden from the everyday Map Mode controls. Frame-rate choices remain capped at the proven 15 fps maximum.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-
-            DisclosureGroup(isExpanded: $showRelayDiagnostics) {
-                VStack(alignment: .leading, spacing: 7) {
-                    LabeledContent("HUD STA status", value: state.hudU2WSTAStatus)
-                    LabeledContent("HUD STA IP", value: state.hudU2WSTAAddress.isEmpty ? "Not reported by HUD" : state.hudU2WSTAAddress)
-                    LabeledContent("MainVideo preflight", value: state.mainVideo.preflightSummary)
-                    LabeledContent("MainVideo phase", value: state.mainVideo.transportPhase)
-                    LabeledContent("MainVideo", value: state.mainVideo.status)
-                    LabeledContent("U2W H.264 relay", value: state.mainVideo.adapterCacheSummary)
-                    LabeledContent("iPhone network", value: state.mainVideo.networkPathSummary)
-                    LabeledContent("Video frames", value: "\(state.mainVideo.frameCount) • \(state.mainVideo.sourceSize)")
-                    LabeledContent("Last map frame", value: state.mainVideo.lastFrameAgeSeconds.map { String(format: "%.1f s ago", $0) } ?? "—")
-                    LabeledContent("H.264 received", value: ByteCountFormatter.string(fromByteCount: state.mainVideo.receivedBytes, countStyle: .file))
-                    LabeledContent("iPhone H.264 filter", value: state.mainVideo.sanitizerSummary)
-                    LabeledContent("VideoToolbox decoder", value: state.mainVideo.decoderSummary)
-
-                    Divider()
-                    Text("One-drive live-map forensic bundle")
-                        .font(.subheadline.weight(.semibold))
-                    LabeledContent("Recorder", value: state.liveMapDiagnosticStatus)
-                    Button(state.liveMapDiagnosticCollecting ? "Collecting Live Map Diagnostic ZIP…" : "Collect Live Map Diagnostic ZIP (parked)") {
-                        state.collectLiveMapDiagnosticBundle()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(accent)
-                    .disabled(state.liveMapDiagnosticCollecting)
-                    if let url = state.liveMapDiagnosticBundleURL {
-                        ShareLink(item: url) {
-                            Label("Share Live Map Diagnostic ZIP", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    Text("During the drive, v24.18 automatically keeps bounded exact raw H.264 startup/fault/recovery windows plus decoded-frame evidence on the iPhone and ensures the existing low-frequency passive source/topology observer is running. After parking, tap once: the app adds the normal HUD log, final decoder/HUD state, U2W status snapshots, and the passive adapter bundle when available. Large adapter downloads run only after you tap Collect.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-                    Text("Optional MainVideo diagnostics")
-                        .font(.subheadline.weight(.semibold))
-                    LabeledContent("Passive probe", value: state.mainVideoDiagnostic.status)
-                    HStack(spacing: 8) {
-                        Button("Refresh status") {
-                            state.mainVideoDiagnostic.refreshStatus()
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("Restart passive probe") {
-                            state.mainVideoDiagnostic.restartProbe()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    Button(state.mainVideoDiagnostic.collecting ? "Collecting codec diagnostic…" : "Collect passive codec diagnostic bundle") {
-                        state.mainVideoDiagnostic.collectBundle()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(state.mainVideoDiagnostic.collecting)
-                    if let url = state.mainVideoDiagnostic.bundleURL {
-                        ShareLink(item: url) {
-                            Label("Share passive codec diagnostic bundle", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    Text("These controls expose the passive v8.27.2 source/topology observer used by the v24.18 one-drive forensic build. The observer is ensured when Route Guidance reaches the adapter, but it remains read-only and never starts MainVideo, hooks/signals/restarts AppleCarPlay, or changes Navigation. U2W v8.33 starts its on-demand exact-v8.31 raw video relay only for explicit Live Preview/Map Mode; the large passive bundle is downloaded only after parking.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-                    LabeledContent("Frame ingress", value: state.hudU2WFrameRelay.status)
-                    LabeledContent("Frames sent", value: "\(state.hudU2WFrameRelay.sentFrameCount)")
-                    LabeledContent(
-                        "HUD cadence",
-                        value: "\(state.mapModeSettings.hudFrameRate) fps target • \(String(format: "%.1f", state.hudU2WFrameRelay.actualFPS)) actual"
-                    )
-                    LabeledContent(
-                        "JPEG throughput",
-                        value: String(format: "%.1f KB/s", state.hudU2WFrameRelay.recentKilobytesPerSecond)
-                    )
-                    Picker(
-                        "HUD map FPS probe",
-                        selection: Binding(
-                            get: { state.mapModeSettings.hudFrameRate },
-                            set: { state.mapModeSettings.hudFrameRate = HudMapModeSettings.normalizedHUDFrameRate($0) }
-                        )
-                    ) {
-                        ForEach(HudMapModeSettings.supportedHUDFrameRates, id: \.self) { fps in
-                            Text("\(fps)").tag(fps)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    LabeledContent("OBD vehicle-speed capability", value: state.obd.vehicleSpeedPIDSupportSummary)
-                    Toggle(
-                        "45 s OBD speed probe v2",
-                        isOn: Binding(
-                            get: { state.hudU2WNativeOBDProbeEnabled },
-                            set: { state.setHUDU2WNativeOBDSpeedProbeEnabled($0) }
-                        )
-                    )
-                    .disabled(state.hudOBDDeepProbeV3Active || state.hudOBDInternalProbeV4Active)
-                    LabeledContent("OBD speed probe", value: state.hudU2WNativeOBDProbeStatus)
-                    Text("The v2 probe leaves the custom GPS speed and full-screen Map Mode untouched. It refreshes the hidden stock OBD_DRIVING_VELOCITY item and scores HUD→iPhone numeric fields against GPS for 45 seconds. It does not yet replace GPS speed.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-                    Button(state.hudOBDDeepProbeV3Active ? "Stop OBD deep probe v3" : "Run 90 s OBD deep probe v3") {
-                        if state.hudOBDDeepProbeV3Active {
-                            state.stopHUDOBDDeepSpeedProbeV3(reason: "Map Mode UI stop")
-                        } else {
-                            state.startHUDOBDDeepSpeedProbeV3()
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!state.hudU2WLiveRelayActive || state.hudU2WNativeOBDProbeActive || state.hudOBDInternalProbeV4Active)
-                    LabeledContent("OBD deep probe", value: state.hudOBDDeepProbeV3Status)
-                    if let reportURL = state.bluetooth.obdDeepSpeedProbeReportURL {
-                        ShareLink(item: reportURL) {
-                            Label("Share OBD speed probe v3 report", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    Text("v3 is the deeper road probe: it records HUD→iPhone RX in memory while Map Mode runs, searches binary/ASCII PID 41 0D, and tests changing u8/u16/u32/BCD fields against GPS using scale/offset regression and ±2 s lag. It does not open a second OBD connection or send raw ELM/PID commands. The normal HUD log contains OBD DEEP SUMMARY/CANDIDATE lines; the optional report preserves the bounded raw sample set for offline analysis.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-                    LabeledContent("OBD drive recorder", value: state.bluetooth.obdDriveRecorderStatus)
-                    Button(state.hudOBDDriveBundleCollecting ? "Collecting OBD diagnostic…" : "Collect OBD Drive Diagnostic ZIP (parked)") {
-                        state.collectOBDDriveDiagnosticBundle()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(state.hudOBDDriveBundleCollecting || state.bluetooth.state != .connected || state.bluetooth.obdDiagnosticTransferActive)
-                    if let url = state.bluetooth.obdDriveDiagnosticBundleURL {
-                        ShareLink(item: url) {
-                            Label("Share OBD Drive Diagnostic ZIP", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    Text("v24.23 adds a direct ELM327 multi-connection feasibility probe while the passive OBD flight recorder automatically starts, as before, whenever the HUD confirms its existing OBD connection. It preserves every HUD BLE notification before parsing, OBD-related app→HUD packets, simultaneous GPS reference speed, and OBD lifecycle events for the whole drive. It sends no repeated hidden-item stimulus and does not open a second OBD connection. After parking, one collection tap stops the drive capture, makes a best-effort stock LOG_CATEGORY_OBD request as a separate artifact, and bundles everything for offline correlation. Production displayed speed remains GPS until a true OBD speed channel is validated.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    LabeledContent("Last JPEG", value: state.hudU2WFrameRelay.lastFrameBytes == 0 ? "—" : "\(state.hudU2WFrameRelay.lastFrameBytes) bytes")
-                    if !state.hudU2WSTAReason.isEmpty {
-                        LabeledContent("Reason", value: state.hudU2WSTAReason)
-                    }
-
-                    HStack(spacing: 8) {
-                        Button("Request status") {
-                            state.requestHUDU2WSTAStatus()
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button("Retry HUD display") {
-                            state.retryHUDU2WKivicDisplay()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(!state.hudU2WLiveRelayActive)
-                    }
-
-                    Button("Reconnect U2W video") {
-                        state.mainVideo.reconnect(reason: "Map Mode UI")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!state.hudU2WLiveRelayActive)
-
-                    Text("v90.35.3.24.25 pairs with U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay. Physical Map Mode stays in mode 6 on the fallback canvas whenever MainVideo is unavailable and returns to live video without restarting HUD mode. U2W v8.34 keeps the v8.33 lossless write semantics but removes the SPS-dependent growth hazard: it rotates atomically at an ordinary successful AppleCarPlay write boundary near 8 MiB, regardless of SPS/IDR cadence, and passively unlatches the source only if that exact selected fd closes. The TCP/15332 path is the exact v8.31 32 KiB raw relay—no adapter H.264 parser/cache, source reacquisition, autostart, AppleCarPlay/ARMiPhoneIAP2 process control, Route Guidance change, or Now Playing change.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    DisclosureGroup(isExpanded: $showSTAPersistenceTest) {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text(state.hudSTAPersistenceTestStatus)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-
-                            Button("Test mode 6 → 4 STA persistence") {
-                                state.runHUDMode4STAPersistenceTest()
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(!state.hudU2WLiveRelayActive || state.hudSTAPersistenceTestActive)
-
-                            Button("Return Map Mode — mode 6 only") {
-                                state.restoreHUDMode6AfterSTAPersistenceTest()
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(!state.hudU2WLiveRelayActive)
-
-                            Text("Experimental road-test only. The first button leaves U2W/frame ingress running, sends HUD mode 4, then requests stock STA status at several checkpoints without clearing credentials. The second sends only mode 6—no SSID/password—to test whether an existing association can resume Map Mode immediately.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.top, 5)
-                    } label: {
-                        Label("Mode 6 → 4 Wi-Fi association test", systemImage: "wifi.router")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .tint(accent)
-                }
-                .font(.caption)
-                .padding(.top, 6)
-            } label: {
-                Label("Status & diagnostics", systemImage: "waveform.path.ecg")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .tint(accent)
         }
         .padding(10)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))

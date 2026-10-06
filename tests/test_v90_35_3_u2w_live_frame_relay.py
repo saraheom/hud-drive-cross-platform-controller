@@ -11,6 +11,7 @@ def test_v90353_live_relay_sources():
     assert '15331' in relay
     assert 'UInt32(jpeg.count).bigEndian' in relay
     assert 'CarPlay adapter Wi-Fi name' in ui
-    assert 'Status & diagnostics' in ui
+    assert 'Status & diagnostics' not in ui
+    assert 'Collect Live Map Diagnostic ZIP (parked)' in ui
     assert 'Button("Enable Map Mode")' in ui
-    assert 'Frames sent' in ui
+    assert 'Map Mode FPS' in ui
