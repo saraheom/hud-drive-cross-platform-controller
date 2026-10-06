@@ -55,10 +55,10 @@ def test_all_standard_hud_descriptions_default_collapsed():
 
 
 def test_app_prewarms_live_frame_before_mode6():
-    prewarm = APP.index('Preparing first HUD frame…')
-    mode6 = APP.index('IOS_KIVICCAST_STA_MODE(6) [single start]')
+    prewarm = APP.index('Preparing first HUD Map Mode frame…')
+    mode6 = APP.index('HudCommands.kivicMode(6)', prewarm)
     assert prewarm < mode6
-    assert 'relay prewarm complete newFrame=' in APP
+    assert 'fallback-first prewarm complete' in APP
     assert 'sentFrameCount > prewarmStartCount' in APP
 
 

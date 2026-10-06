@@ -1,0 +1,11 @@
+U2W v8.27 Lightweight Live-Edge IDR Relay — verification target
+
+Target: U2W software_version 2021.03.06.1343
+Base capture: v8.11 MainVideo exporter (unchanged)
+HUD JPEG relay: v8.15.1 (unchanged by firmware)
+TCP port: 15332
+Wire: U2WH2645 + [u32BE length][NAL], length 0 = transport heartbeat
+Recovery: next validated live IDR only
+Historical scan/cache: none
+Slow-client send timeout: 1 second
+Safe rollback: v8.23 live-IDR relay

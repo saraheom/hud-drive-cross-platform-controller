@@ -1,0 +1,23 @@
+v90.35.3.24.18.1 CI alignment verification
+
+Diagnosis from GitHub Actions logs_99880186059.zip:
+- Xcode build completed.
+- XCTest executed 348 tests, 3 skipped.
+- Workflow failed on 7 assertions across 6 legacy source-contract test methods.
+- The failing assertions encoded superseded v24.14/v24.17 behavior.
+- No production runtime compile error was present.
+
+CI alignment changes:
+- Updated six legacy XCTest methods to v24.18 fallback-first Map Mode/MainVideo recovery contracts.
+- Production ios/HUDController runtime tree is byte-identical to v24.18.
+- No U2W firmware changes.
+
+Local verification:
+- pytest: 404 passed
+- Swift parse: 207/207 ios Swift files
+- git diff --check: PASS
+- Production HUDController tree byte-identical to v24.18: PASS (61 files)
+
+Expected GitHub iOS CI effect:
+- The seven stale assertions are aligned to the same v24.18 contracts already covered by V90352418RobustMapModeMainVideoTests.
+- Runtime behavior is unchanged from v24.18.

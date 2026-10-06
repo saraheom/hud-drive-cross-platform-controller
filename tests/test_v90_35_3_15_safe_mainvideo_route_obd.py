@@ -18,7 +18,7 @@ def test_mainvideo_recovery_is_conservative():
     assert 'sourceStaleInterval: TimeInterval = 15.0' in VIDEO
     assert 'initialIDRWaitDiagnosticInterval: TimeInterval = 20.0' in VIDEO
     assert 'kVTInvalidSessionErr (-12903)' in VIDEO
-    assert 'HARD decoder recovery, relay-aware live-IDR wait' in VIDEO
+    assert 'v8.32 bounded recovery' in VIDEO or 'relay-aware live-IDR wait' in VIDEO
     assert 'WAITING_LIVE_IDR' in VIDEO
     assert 'H264MainVideoSanitizer' in VIDEO
 

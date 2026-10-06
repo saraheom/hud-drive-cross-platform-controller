@@ -1,0 +1,4 @@
+/mnt/data/build_v2420/HUD_v90.35.3.24.20_iOS26_HUD_GitHub_Repo_v833_LosslessMirror_RawRelay/u2w/v8.33_LosslessMirrorRawRelay/source/libu2w_mainvideo_lossless.c:180:8: warning: declaration of built-in function 'fwrite' requires inclusion of the header <stdio.h> [-Wbuiltin-requires-header]
+  180 | size_t fwrite(const void*p,size_t s,size_t n,void*st){size_t r;ensure_real();r=real_fwrite_fn?real_fwrite_fn(p,s,n,st):0;/* Main stream was physically observed on fd-backed writes; do not guess a FILE* fd. */return r;}
+      |        ^
+1 warning generated.

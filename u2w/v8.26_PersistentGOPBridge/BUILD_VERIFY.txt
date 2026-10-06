@@ -1,0 +1,34 @@
+U2W v8.26 Persistent Validated-GOP Bridge — build/verification record
+
+Target: Carlinkit U2W software_version 2021.03.06.1343
+Base capture: v8.11 MainVideo exporter (unchanged)
+HUD JPEG relay: v8.15.1 (unchanged)
+TCP relay port: 15332
+Wire: U2WH2644 + [u32BE length][NAL]
+Recovery cache: /tmp/u2w_mainvideo_validated_gop.cache
+Cache cap: 50331648 bytes
+Rollback target: bundled v8.25 validated-GOP relay
+
+Architecture checks:
+- rolling-file generation change preserves validator, client and GOP cache
+- cache is written and replayed by the same native relay process
+- cache is length-framed, not a second Annex-B file consumed by Boa
+- cache is not marked replay-ready until the validated IDR frame has completed
+- actual SPS/PPS change invalidates the recovery cache
+- cache overflow falls back to waiting for a fresh validated IDR
+
+Binary checks:
+- ARM EABI5, 32-bit little-endian
+- statically linked
+- no dynamic section
+- clang -Wall -Wextra -Werror: PASS
+
+Firmware scope checks:
+- AppleCarPlay/v8.11 capture is not replaced or restarted
+- Route Guidance is unchanged
+- Now Playing is unchanged
+- HUD cast relay v8.15.1 is unchanged
+- install image is guarded to exact product/version and required base markers
+- uninstall image restores v8.25 relay files only
+
+Road validation remains required. v8.26 targets the observed 126-scan/125-miss and 100-client-replacement failure mode; it does not claim to eliminate unrelated CarPlay, Wi-Fi or HUD-viewer faults before field testing.

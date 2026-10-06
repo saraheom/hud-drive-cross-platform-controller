@@ -1,0 +1,25 @@
+U2W v8.32 Safe Bounded Checkpoint — build verification
+=====================================================
+Firmware SHA256: 916abf0f7e257f2aa2ac6f52a2398e46404c2f2f666bde344a2bab0b4d037e05
+Rollback SHA256: 66a95c8b7d0a114304bee727b30ba5f1d90e5e85095641443639d10ffcfb9d8e
+Relay SHA256: 2d8f67a581272c5af484204e93efd331ce4178cd70771ec4e7ff1b1002aa3ca0
+Relay SHA1:   b07824e46aee104157135af91ec7edb467c7afee
+ELF: ELF 32-bit LSB executable, ARM, EABI5 version 1 (SYSV), statically linked, not stripped
+BSS: 2,426,196 bytes
+Checkpoint hard cap: 1,572,864 bytes
+Wire: U2WH2649 + [u32BE length][validated NAL]
+TCP port: 15332
+
+Safety assertions:
+- exact v8.11 selector hash gate: PASS
+- exact v8.31 current-relay hash gate: PASS
+- AppleCarPlay/ARMiPhoneIAP2 process control in installer: ABSENT
+- source-selector/fd reacquisition: ABSENT
+- historical-generation scan: ABSENT
+- current-mirror startup forward scan: ONE, on-demand only
+- boot/autostart hook: ABSENT
+- Route Guidance / Now Playing payload: ABSENT
+- checkpoint memory growth: hard-capped static BSS
+- shell syntax: PASS
+- ARM compile with -Wall -Wextra -Werror: PASS
+- deterministic image encrypt/decrypt/tar round-trip: PASS

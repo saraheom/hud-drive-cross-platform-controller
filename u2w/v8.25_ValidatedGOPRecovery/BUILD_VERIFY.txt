@@ -1,0 +1,26 @@
+U2W v8.25 Validated GOP Recovery — build/verification record
+
+Target: old Carlinkit U2W, software_version 2021.03.06.1343
+Base capture: v8.11 MainVideo exporter (unchanged)
+HUD JPEG relay: v8.15.1 (unchanged)
+TCP relay port: 15332
+Wire: U2WH2643 + [u32BE length][NAL]
+Bootstrap: newest validated 800x480 file GOP, otherwise next validated live IDR
+Catch-up cap: 50331648 bytes
+
+Relay binary:
+- ARM EABI5, 32-bit little-endian
+- statically linked
+- no dynamic section
+- compiled with -Wall -Wextra -Werror
+
+Firmware payload validation:
+- AES-128-CBC wrapper round-trip decrypt checked
+- install tar members checked
+- uninstall tar members checked
+- SHA256 values are recorded in U2W_v8.25_SHA256SUMS.txt
+
+Safety scope:
+- install script does not replace AppleCarPlay
+- does not alter Route Guidance or Now Playing exporters
+- does not replace HUD cast relay v8.15.1

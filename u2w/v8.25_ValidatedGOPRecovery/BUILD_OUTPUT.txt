@@ -1,0 +1,24 @@
+U2W v8.25 final build output
+
+Relay binary SHA256:
+05d1ce2c52b150e7c2e13056d41de7c2a5badcc28485c3ffe26baffeccb8073f  source/u2w_mainvideo_relay
+
+Firmware SHA256:
+d5cacb2db2efdbeac71b9cf42a200ca0262094f4e7f1f11217973c643b692042  U2W_Update_v8.25_ValidatedGOPRecovery.img
+fb5e4985f3b1444cd0d002990db43c60dfee7c95af9622674662966cfeea868e  U2W_Update_v8.25_ValidatedGOPRecovery_UNINSTALL.img
+
+Static compile checks:
+- ARM EABI5 32-bit little-endian
+- statically linked
+- no dynamic section
+- -Wall -Wextra -Werror: PASS
+
+Offline validation against previously captured full v8.11 rolling file:
+- source bytes: 37,201,056
+- validator selected SPS offset 0, PPS offset 24, validated IDR offset 32
+- validated single-GOP output: 36,660,827 bytes
+- accepted NAL/frame units: 5,168
+- rejected false/malformed Annex-B candidates: 517
+- ffprobe: 800x480, 5,168 decoded frames, 0 error lines
+
+The capture demonstrated why an 8 MiB bootstrap cap would be insufficient. Final v8.25 uses a 48 MiB single-GOP safety cap, streams from disk rather than allocating a matching RAM cache, and paces each validated frame by 4 ms during catch-up.

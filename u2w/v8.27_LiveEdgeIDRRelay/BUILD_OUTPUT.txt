@@ -1,0 +1,9 @@
+U2W v8.27 final build output
+U2W_Update_v8.27_LiveEdgeIDRRelay.img 8716 bytes  SHA256=1f075cfea42a4ca3a2192b3d57554a68dc08229740c94c2ade397ac768a7aa56
+U2W_Update_v8.27_LiveEdgeIDRRelay_SAFE_ROLLBACK_v8.23.img 6341 bytes  SHA256=4eaef7761ee108f8923fc3316a8c08fcc436ab533eb0ea0eacf1cb2cd86519ba
+u2w_mainvideo_relay 12760 bytes  SHA256=92f82832fada3af7822dc1534262973f4c8e96b2ba40ad4721695424b313ca69
+install_members=['tmp/once.sh','tmp/u2w_mainvideo_relay','tmp/u2wvideo-relay-start.cgi','tmp/u2wvideo-relay-status.cgi']
+ARM=ELF32 EABI5 static no-PT_INTERP
+clang=-Wall -Wextra -Werror PASS
+shell_syntax=PASS
+firmware_roundtrip=PASS

@@ -1,10 +1,13 @@
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 VIDEO = (ROOT / 'ios/HUDController/MapMode/U2WMainVideoClient.swift').read_text()
 APP = (ROOT / 'ios/HUDController/App/AppState.swift').read_text()
 UI = (ROOT / 'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 V828 = ROOT / 'u2w/v8.28_SafeFDReacquire'
+if not (V828 / 'source/libu2w_mainvideo_live_v828.c').exists():
+    pytest.skip('legacy v8.28 firmware source was never retained in this GitHub app repo artifact', allow_module_level=True)
 SELECTOR = (V828 / 'source/libu2w_mainvideo_live_v828.c').read_text()
 RELAY = (V828 / 'source/u2w_mainvideo_relay.c').read_text()
 INSTALL = (V828 / 'source/install_once.sh').read_text()

@@ -1,0 +1,2 @@
+1f075cfea42a4ca3a2192b3d57554a68dc08229740c94c2ade397ac768a7aa56  U2W_Update_v8.27_LiveEdgeIDRRelay.img
+4eaef7761ee108f8923fc3316a8c08fcc436ab533eb0ea0eacf1cb2cd86519ba  U2W_Update_v8.27_LiveEdgeIDRRelay_SAFE_ROLLBACK_v8.23.img
