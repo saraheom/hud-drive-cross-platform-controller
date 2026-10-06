@@ -11,7 +11,7 @@ struct VehicleView: View {
 
                     section("DIRECT ELM327 FEASIBILITY") {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Diagnostic only • Production Map Mode speed remains GPS")
+                            Text("Manual diagnostic controls • Map Mode uses fresh OBD speed • GPS fallback")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
