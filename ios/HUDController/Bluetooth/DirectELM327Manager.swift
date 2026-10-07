@@ -2,7 +2,7 @@ import Foundation
 import CoreBluetooth
 import Observation
 
-/// v90.35.3.24.26 direct ELM327 manager.
+/// v90.35.3.24.27 direct ELM327 manager.
 ///
 /// The October 5 field test proved the user's OBDII adapter is effectively
 /// single-client: it becomes visible to iOS immediately after the HUD releases

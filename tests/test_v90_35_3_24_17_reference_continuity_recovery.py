@@ -25,9 +25,10 @@ def test_transport_worker_treats_single_reference_jump_as_telemetry():
 
 def test_codec_bad_data_burst_escalates_after_three_not_thousands():
     assert 'consecutiveDecodeErrors >= 3' in VIDEO
-    assert 'requestHardRecovery(reason: "\\(consecutiveDecodeErrors) consecutive codecBadDataErr (-8969) submissions")' in VIDEO
+    assert "CODEC_BAD_DATA_GRACE_ARMED" in VIDEO
+    assert "codecBadDataGraceAccessUnitBudget = 24" in VIDEO
+    assert 'requestHardRecovery(reason: "sustained codecBadDataErr (-8969) after bounded grace")' in VIDEO
     assert 'outputCallbackErrors >= 3' in VIDEO
-    assert 'requestHardRecovery(reason: "\\(outputCallbackErrors) codecBadDataErr (-8969) output callback failures")' in VIDEO
     assert 'sanitizer.quarantineReferenceChainUntilIDR()' in VIDEO
     assert 'decoder.hardRecoverAwaitingIDR(reason: reason)' in VIDEO
     assert 'TCP PRESERVED' in VIDEO
@@ -43,6 +44,6 @@ def test_background_transition_does_not_deliberately_kill_live_map_anymore():
 def test_release_remains_navigation_safe_and_u2w_v831_is_unchanged():
     assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
     assert 'mainVideo.start(reason: "app-only live preview")' in APP
-    assert 'v90.35.3.24.26 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
+    assert 'v90.35.3.24.27 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
     assert 'no adapter parser/cache/GOP replay' in VIDEO
-    assert 'appVersion=v90.35.3.24.26' in APP
+    assert 'appVersion=v90.35.3.24.27' in APP

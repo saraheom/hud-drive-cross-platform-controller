@@ -133,7 +133,7 @@ final class H264MainVideoSanitizer {
     private var lastReferenceFrameNum: UInt32?
     private var lastReferenceFrameModulus: UInt32?
     // Learned from the first accepted reference P-picture in each validated IDR
-    // epoch. A different nal_ref_idc by itself is legal H.264, so v24.26 only
+    // epoch. A different nal_ref_idc by itself is legal H.264, so v24.27 only
     // rejects it when it also arrives off the expected frame_num. This targets
     // the Oct-6 field contaminant (3170 -> refIDC2/frame3999 -> 3171) without
     // turning ordinary frame loss or a valid priority change into an outage.

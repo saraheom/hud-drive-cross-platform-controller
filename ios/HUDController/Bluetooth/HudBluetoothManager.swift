@@ -472,7 +472,7 @@ final class HudBluetoothManager: NSObject {
             .appendingPathComponent("OBD Drive Diagnostics", isDirectory: true)
         try? fm.createDirectory(at: base, withIntermediateDirectories: true)
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let dir = base.appendingPathComponent("OBD_Drive_v90.35.3.24.26_\(f.string(from: Date()))", isDirectory: true)
+        let dir = base.appendingPathComponent("OBD_Drive_v90.35.3.24.27_\(f.string(from: Date()))", isDirectory: true)
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
             func open(_ name: String, header: String? = nil) throws -> FileHandle {
@@ -571,7 +571,7 @@ final class HudBluetoothManager: NSObject {
         }
         let duration = Date().timeIntervalSince(obdDriveStartedAt ?? Date())
         let readme = """
-        HUD OBD Drive Diagnostic — v90.35.3.24.26
+        HUD OBD Drive Diagnostic — v90.35.3.24.27
         ==========================================
         Passive whole-drive recorder; it does not initiate an additional OBD BLE connection.
         In Map Mode, Direct ELM may separately own the single-client adapter and displayed speed uses fresh OBD speed with GPS fallback; outside Map Mode ownership is released back to the HUD. No repeated hidden-item stimulus is used.
@@ -595,7 +595,7 @@ final class HudBluetoothManager: NSObject {
         """
         try? Data(readme.utf8).write(to: dir.appendingPathComponent("README_OBD_DIAGNOSTIC.txt"), options: .atomic)
         do {
-            let out = dir.deletingLastPathComponent().appendingPathComponent("HUD_OBD_DriveDiagnostic_v90.35.3.24.26_\(Int(Date().timeIntervalSince1970)).zip")
+            let out = dir.deletingLastPathComponent().appendingPathComponent("HUD_OBD_DriveDiagnostic_v90.35.3.24.27_\(Int(Date().timeIntervalSince1970)).zip")
             try? fm.removeItem(at: out)
             let writer = try LiveMapStoredZipWriter(url: out)
             for relative in try fm.subpathsOfDirectory(atPath: dir.path).sorted() {

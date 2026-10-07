@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.26 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.27 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -395,7 +395,7 @@ final class U2WMainVideoClient {
                 adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             }
             let supportedRelay = relayVersion.contains("v8.34") || relayVersion.contains("v8.33") || relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
-            // v90.35.3.24.26: v8.35 deliberately leaves the v8.34 relay binary
+            // v90.35.3.24.27: v8.35 deliberately leaves the v8.34 relay binary
             // untouched, but its wrapper status page renamed the legacy marker
             // field to v835_marker/v834_mirror_marker. v24.22 accidentally
             // required only marker=YES, so a healthy RUNNING relay was rejected
@@ -575,9 +575,12 @@ final class U2WMainVideoClient {
                         "relay": self.adapterCacheSummary
                     ])
                 }
-                let isFirstFailureSignal = message.contains("REFERENCE CONTINUITY WARNING") ||
-                    message.contains("codecBadDataErr") || message.contains("-8969") ||
-                    message.contains("-12903") || message.contains("raw TCP read failed") ||
+                // v24.27: reserve the large first-failure raw window for stream
+                // corruption / codec bad-data / transport failure. A known iOS
+                // lifecycle -12903 invalid-session event gets a normal evidence
+                // window but must not consume the once-per-drive corruption slot.
+                let isFirstFailureSignal = message.contains("codecBadDataErr") ||
+                    message.contains("-8969") || message.contains("raw TCP read failed") ||
                     message.contains("raw TCP EOF")
                 if isFirstFailureSignal {
                     self.diagnosticRecorder.triggerFirstFailureEvidence("mainvideo_first_failure", detail: message)
@@ -840,7 +843,7 @@ final class U2WMainVideoClient {
 
     private func requestBoundedKeyframe(reason: String) async {
         guard running, lifecycleActive else { return }
-        // v90.35.3.24.26 / U2W v8.37: the Oct-5 field drive proved that the
+        // v90.35.3.24.27 / U2W v8.37: the Oct-5 field drive proved that the
         // v8.35 helper used SOCK_DGRAM against stock Unix SOCK_STREAM listeners
         // and always returned send_failed/route=none.  Keep the installed v8.35
         // helper for rollback provenance, but do not keep injecting the known-wrong
@@ -1467,7 +1470,7 @@ private final class U2WMainVideoTCPWorker {
     private func processNAL(_ nal: Data, generation: Int) {
         let accepted = sanitizer.process(nal)
 
-        // v24.26: a reference-priority mismatch combined with an off-sequence
+        // v24.27: a reference-priority mismatch combined with an off-sequence
         // frame_num is the exact Oct-6 poison signature. The sanitizer drops it
         // before VideoToolbox and before reference continuity is updated.
         if let foreignReject = sanitizer.takeForeignReferenceRejectReason() {
@@ -1716,6 +1719,18 @@ private final class H264VideoToolboxDecoder {
     private var hardRecoveryCount = 0
     private var recoveryRequestPending = false
 
+    // v24.27: do not destroy a potentially recoverable reference chain after the
+    // first codecBadDataErr burst. The Oct-7 drive proved raw TCP stayed healthy
+    // while three output callback errors immediately forced WAITING_FRESH_IDR.
+    // Preserve the session for a short, bounded grace window; a real image output
+    // cancels the recovery, a naturally arriving IDR can atomically rebuild, and
+    // only a sustained failure escalates to the existing hard-recovery path.
+    private var codecBadDataGraceStartAU: Int?
+    private var codecBadDataGraceStartedAt: TimeInterval?
+    private var codecBadDataGraceEvents = 0
+    private let codecBadDataGraceAccessUnitBudget = 24
+    private let codecBadDataGraceTimeBudget: TimeInterval = 2.0
+
     private let publishLock = NSLock()
     private var lastPublishedUptime: TimeInterval = 0
     private let minimumPublishInterval: TimeInterval = 1.0 / 15.0
@@ -1744,6 +1759,8 @@ private final class H264VideoToolboxDecoder {
         lastOutputCallbackStatus = noErr
         hardRecoveryCount = 0
         recoveryRequestPending = false
+        codecBadDataGraceEvents = 0
+        clearCodecBadDataGrace()
         publishLock.lock()
         lastPublishedUptime = 0
         publishLock.unlock()
@@ -1766,6 +1783,7 @@ private final class H264VideoToolboxDecoder {
         rebuildAtNextIDR = false
         consecutiveDecodeErrors = 0
         recoveryRequestPending = false
+        clearCodecBadDataGrace()
         lastDecodeStatus = noErr
         lastOutputCallbackStatus = noErr
         onDiagnostic?("Decoder lifecycle suspend reason=\(reason); active SPS/PPS preserved, VT session invalidated")
@@ -1789,11 +1807,54 @@ private final class H264VideoToolboxDecoder {
         imageConversionErrors = 0
         lastOutputCallbackStatus = noErr
         recoveryRequestPending = false
+        clearCodecBadDataGrace()
     }
 
     var stateSummary: String {
         let session = decompressionSession == nil ? "none" : "ready"
-        return "session=\(session) • needsIDR=\(needsIDR ? 1 : 0) • rebuildOnIDR=\(rebuildAtNextIDR ? 1 : 0) • recoveryPending=\(recoveryRequestPending ? 1 : 0) • recoveries=\(hardRecoveryCount) • AU=\(submittedAccessUnits) • errors=\(totalDecodeErrors)/\(consecutiveDecodeErrors) • outputs=\(outputCallbackFrames) • outputErr=\(outputCallbackErrors) • imageErr=\(imageConversionErrors) • lastStatus=\(lastDecodeStatus) • outputStatus=\(lastOutputCallbackStatus)"
+        return "session=\(session) • needsIDR=\(needsIDR ? 1 : 0) • rebuildOnIDR=\(rebuildAtNextIDR ? 1 : 0) • badDataGrace=\(codecBadDataGraceStartAU == nil ? 0 : 1) • recoveryPending=\(recoveryRequestPending ? 1 : 0) • recoveries=\(hardRecoveryCount) • AU=\(submittedAccessUnits) • errors=\(totalDecodeErrors)/\(consecutiveDecodeErrors) • outputs=\(outputCallbackFrames) • outputErr=\(outputCallbackErrors) • imageErr=\(imageConversionErrors) • lastStatus=\(lastDecodeStatus) • outputStatus=\(lastOutputCallbackStatus)"
+    }
+
+    private func armCodecBadDataGrace(origin: String) {
+        guard decompressionSession != nil, activeSPS != nil, activePPS != nil else {
+            requestHardRecovery(reason: "codecBadDataErr (-8969) without established decoder/parameter sets")
+            return
+        }
+        if codecBadDataGraceStartAU == nil {
+            codecBadDataGraceStartAU = submittedAccessUnits
+            codecBadDataGraceStartedAt = ProcessInfo.processInfo.systemUptime
+            codecBadDataGraceEvents += 1
+            rebuildAtNextIDR = true
+            onDiagnostic?(
+                "CODEC_BAD_DATA_GRACE_ARMED event=\(codecBadDataGraceEvents) origin=\(origin) startAU=\(submittedAccessUnits) budgetAU=\(codecBadDataGraceAccessUnitBudget) budgetSeconds=\(String(format: "%.1f", codecBadDataGraceTimeBudget)); decoder/reference chain PRESERVED; future IDR rebuild armed"
+            )
+        }
+    }
+
+    private func clearCodecBadDataGrace() {
+        codecBadDataGraceStartAU = nil
+        codecBadDataGraceStartedAt = nil
+    }
+
+    private func codecBadDataGraceExpired() -> Bool {
+        guard let startAU = codecBadDataGraceStartAU,
+              let startedAt = codecBadDataGraceStartedAt else { return false }
+        let accessUnits = max(0, submittedAccessUnits - startAU)
+        let seconds = ProcessInfo.processInfo.systemUptime - startedAt
+        return accessUnits >= codecBadDataGraceAccessUnitBudget || seconds >= codecBadDataGraceTimeBudget
+    }
+
+    private func escalateCodecBadDataGraceIfNeeded(origin: String) -> Bool {
+        guard codecBadDataGraceStartAU != nil, codecBadDataGraceExpired() else { return false }
+        let startAU = codecBadDataGraceStartAU ?? submittedAccessUnits
+        let age = codecBadDataGraceStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
+        let fed = max(0, submittedAccessUnits - startAU)
+        onDiagnostic?(
+            "CODEC_BAD_DATA_GRACE_EXHAUSTED origin=\(origin) fedAU=\(fed) age=\(String(format: "%.2f", age))s; escalating to hard recovery while TCP remains preserved"
+        )
+        clearCodecBadDataGrace()
+        requestHardRecovery(reason: "sustained codecBadDataErr (-8969) after bounded grace")
+        return true
     }
 
     func discardPendingAccessUnit() {
@@ -2035,6 +2096,11 @@ private final class H264VideoToolboxDecoder {
         // queue. Do not keep feeding the session while that reset is pending.
         if recoveryRequestPending { return }
 
+        // v24.27 staged recovery: keep feeding a short run of validated access
+        // units after codecBadDataErr so VideoToolbox can conceal/transiently
+        // recover. Escalate only when that bounded grace budget is exhausted.
+        if escalateCodecBadDataGraceIfNeeded(origin: "pre-submit") { return }
+
         // If a background/lifecycle transition caused decoder creation to fail,
         // retry creation from the last validated parameter-set pair when a clean
         // IDR is actually in hand.
@@ -2141,11 +2207,8 @@ private final class H264VideoToolboxDecoder {
                     "VideoToolbox codecBadDataErr status=\(decodeStatus) au=\(submittedAccessUnits) consecutive=\(consecutiveDecodeErrors); dropping this AU"
                 )
                 if consecutiveDecodeErrors >= 3 {
-                    // The 2026-10-01 drive showed that merely arming an IDR swap can
-                    // leave the session poisoned for thousands of access units.
-                    // Escalate bounded -8969 bursts to the worker's fresh-epoch
-                    // quarantine path while preserving the healthy TCP connection.
-                    requestHardRecovery(reason: "\(consecutiveDecodeErrors) consecutive codecBadDataErr (-8969) submissions")
+                    armCodecBadDataGrace(origin: "decode-submit count=\(consecutiveDecodeErrors)")
+                    _ = escalateCodecBadDataGraceIfNeeded(origin: "decode-submit")
                 }
                 return
             }
@@ -2196,12 +2259,8 @@ private final class H264VideoToolboxDecoder {
             }
             if status == Self.codecBadDataStatus {
                 if outputCallbackErrors >= 3 {
-                    // Output-callback -8969 was the dominant field failure: raw
-                    // bytes remained live while 4,111 callbacks failed.  Do not
-                    // keep feeding that poisoned epoch. The worker recognizes the
-                    // codecBadDataErr reason and performs the existing fresh
-                    // SPS/PPS/IDR quarantine without reconnecting TCP.
-                    requestHardRecovery(reason: "\(outputCallbackErrors) codecBadDataErr (-8969) output callback failures")
+                    armCodecBadDataGrace(origin: "output-callback count=\(outputCallbackErrors)")
+                    _ = escalateCodecBadDataGraceIfNeeded(origin: "output-callback")
                 }
             } else if status == Self.invalidSessionStatus {
                 requestHardRecovery(reason: "kVTInvalidSessionErr (-12903) from VideoToolbox output callback")
@@ -2213,6 +2272,11 @@ private final class H264VideoToolboxDecoder {
 
         if outputCallbackErrors > 0 {
             onDiagnostic?("VideoToolbox output callback recovered after \(outputCallbackErrors) failure(s)")
+        }
+        if let startAU = codecBadDataGraceStartAU {
+            let fed = max(0, submittedAccessUnits - startAU)
+            onDiagnostic?("CODEC_BAD_DATA_GRACE_RECOVERED fedAU=\(fed); successful image output preserved the existing reference chain")
+            clearCodecBadDataGrace()
         }
         outputCallbackErrors = 0
         if rebuildAtNextIDR {
@@ -2263,6 +2327,7 @@ private final class H264VideoToolboxDecoder {
         lastDecodeStatus = noErr
         lastOutputCallbackStatus = noErr
         recoveryRequestPending = false
+        clearCodecBadDataGrace()
         hardRecoveryCount += 1
         onDiagnostic?(
             "Decoder fresh-epoch recovery #\(hardRecoveryCount) complete reason=\(reason); discarded prior SPS/PPS and waiting for fresh codec epoch"
@@ -2286,6 +2351,7 @@ private final class H264VideoToolboxDecoder {
         lastDecodeStatus = noErr
         lastOutputCallbackStatus = noErr
         recoveryRequestPending = false
+        clearCodecBadDataGrace()
         hardRecoveryCount += 1
 
         if activeSPS != nil, activePPS != nil {

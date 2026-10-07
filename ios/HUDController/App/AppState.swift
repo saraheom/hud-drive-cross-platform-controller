@@ -54,6 +54,7 @@ final class AppState {
     private var hudU2WDisplayHealthTask: Task<Void, Never>?
     private var hudU2WDisplayRecoveryTask: Task<Void, Never>?
     private var hudU2WCurrentSessionWasReady = false
+    private var hudU2WReadySessionID = "—"
     private var hudU2WConsecutiveUnhealthySTAStatus = 0
     private var hudU2WLastSTAStatusAt = Date.distantPast
     private var hudU2WDisplayRecoveryCount = 0
@@ -893,7 +894,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.26 — forensic live-map state
+            HUD Controller v90.35.3.24.27 — forensic live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -968,7 +969,7 @@ final class AppState {
         }
     }
 
-    // MARK: - v90.35.3.24.26 Map Mode direct OBD ownership
+    // MARK: - v90.35.3.24.27 Map Mode direct OBD ownership
 
     private func beginMapModeDirectOBDOwnership(reason: String) {
         mapModeDirectOBDOwnershipTask?.cancel()
@@ -1086,6 +1087,7 @@ final class AppState {
         hudU2WDisplayRecoveryTask?.cancel()
         hudU2WDisplayRecoveryTask = nil
         hudU2WCurrentSessionWasReady = false
+        hudU2WReadySessionID = "—"
         hudU2WConsecutiveUnhealthySTAStatus = 0
         hudU2WLastSTAStatusAt = .distantPast
         hudU2WDisplayRecoveryCount = 0
@@ -1308,9 +1310,39 @@ final class AppState {
             guard let self else { return }
             defer { self.hudU2WDisplayHealthTask = nil }
             var fallbackAnnounced = false
+            var consecutiveViewerFailures = 0
             while !Task.isCancelled, self.hudU2WLiveRelayActive {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
+
+                // v24.27: readiness is no longer a permanent latch. The Oct-7
+                // drive showed session_client_seen/session_live_frame_sent could
+                // remain true after KivicCast had already closed the MJPEG socket.
+                // Poll the current relay session and require a presently established
+                // HUD socket. Two consecutive misses bound transient CGI/netstat
+                // races without allowing a dead viewer to remain falsely READY.
+                let relay = await self.u2wHUDRelayStatus()
+                let sameSession = self.hudU2WReadySessionID == "—" || relay.sessionID == self.hudU2WReadySessionID
+                let viewerHealthy = sameSession && relay.currentSessionReady
+                if viewerHealthy {
+                    consecutiveViewerFailures = 0
+                } else {
+                    consecutiveViewerFailures += 1
+                    self.logger.log(
+                        "MAP MODE HEALTH",
+                        "HUD viewer unhealthy check=\(consecutiveViewerFailures)/2 expectedSession=\(self.hudU2WReadySessionID) observedSession=\(relay.sessionID) established=\(relay.established ? 1 : 0) client=\(relay.clientSeen ? 1 : 0) liveFrame=\(relay.liveFrameSent ? 1 : 0)"
+                    )
+                    if consecutiveViewerFailures >= 2 {
+                        self.hudU2WCurrentSessionWasReady = false
+                        self.hudU2WReadySessionID = "—"
+                        self.hudU2WSTAStatus = "HUD map viewer disconnected — rebuilding once…"
+                        self.scheduleHUDU2WDisplayHealthRecovery(
+                            reason: "current HUD MJPEG viewer no longer established/session-ready"
+                        )
+                        return
+                    }
+                }
+
                 let age = self.mainVideo.lastFrameAgeSeconds ?? .infinity
                 let liveVideoStale = self.mainVideo.transportPhase == "FAILED_SAFE" || age > 5.0
                 if liveVideoStale, !fallbackAnnounced {
@@ -1368,6 +1400,7 @@ final class AppState {
             guard self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else { return }
 
             self.hudU2WCurrentSessionWasReady = false
+            self.hudU2WReadySessionID = "—"
             self.hudU2WConsecutiveUnhealthySTAStatus = 0
             self.hudU2WSTAConnected = false
             self.hudU2WKivicKickTask?.cancel()
@@ -1511,7 +1544,11 @@ final class AppState {
         /// v8.15.1 session fields present, success requires the *current* relay
         /// session to have accepted a HUD client and sent at least one live frame.
         var currentSessionReady: Bool {
-            sessionScoped ? (clientSeen && liveFrameSent) : established
+            // v24.27: clientSeen/liveFrameSent are session-history latches. They
+            // can remain YES after the physical HUD MJPEG socket has already
+            // closed. Require the socket to be established *now* as well as the
+            // current-session proof before declaring/retaining readiness.
+            sessionScoped ? (established && clientSeen && liveFrameSent) : established
         }
     }
 
@@ -1548,6 +1585,7 @@ final class AppState {
                     if relay.currentSessionReady {
                         self.hudU2WSTAStatus = "Connected — current HUD stream active"
                         self.hudU2WCurrentSessionWasReady = true
+                        self.hudU2WReadySessionID = relay.sessionID
                         self.hudU2WConsecutiveUnhealthySTAStatus = 0
                         self.hudU2WLastSTAStatusAt = Date()
                         self.startHUDU2WDisplayHealthMonitor()
@@ -2014,7 +2052,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.26",
+                "appVersion=v90.35.3.24.27",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -2240,6 +2278,7 @@ final class AppState {
         hudU2WDisplayRecoveryTask?.cancel()
         hudU2WDisplayRecoveryTask = nil
         hudU2WCurrentSessionWasReady = false
+        hudU2WReadySessionID = "—"
         hudU2WConsecutiveUnhealthySTAStatus = 0
         hudU2WLastSTAStatusAt = .distantPast
         hudU2WDisplayRecoveryCount = 0
@@ -2979,7 +3018,7 @@ final class AppState {
                 "final clear after renderer recreation reason=\(reason) generation=\(generation)"
             )
 
-            // v90.35.3.24.26: the Winding Wy field case showed that the physical
+            // v90.35.3.24.27: the Winding Wy field case showed that the physical
             // HUD can occasionally keep the previous lane overlay even after the
             // maneuver changed, CarPlay reported showing=false, and the app had
             // already sent multiple empty-lane packets. Give the stock renderer

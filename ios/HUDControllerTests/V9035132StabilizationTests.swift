@@ -22,7 +22,7 @@ final class V9035132StabilizationTests: XCTestCase {
 
     func testHUDViewerReadinessIsScopedToCurrentRelaySession() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("clientSeen && liveFrameSent"))
+        XCTAssertTrue(app.contains("established && clientSeen && liveFrameSent"))
         XCTAssertTrue(app.contains("CURRENT SESSION READY"))
         XCTAssertTrue(app.contains("hudU2WAutomaticViewerRecoveryCount == 0"))
         XCTAssertTrue(app.contains("AUTO VIEWER RECOVERY mode4→mode6 only"))

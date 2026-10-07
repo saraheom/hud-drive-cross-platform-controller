@@ -45,8 +45,9 @@ def test_v831_mainvideo_is_explicit_map_mode_only_and_navigation_independent():
 
 def test_minus8969_burst_uses_fresh_epoch_quarantine_instead_of_poisoned_wait():
     assert "dropping this AU" in VIDEO
-    assert 'requestHardRecovery(reason: "\(consecutiveDecodeErrors) consecutive codecBadDataErr (-8969) submissions")' in VIDEO
-    assert 'requestHardRecovery(reason: "\(outputCallbackErrors) codecBadDataErr (-8969) output callback failures")' in VIDEO
+    assert "CODEC_BAD_DATA_GRACE_ARMED" in VIDEO
+    assert "CODEC_BAD_DATA_GRACE_EXHAUSTED" in VIDEO
+    assert 'requestHardRecovery(reason: "sustained codecBadDataErr (-8969) after bounded grace")' in VIDEO
     assert 'sourceEpochCorruption = reason.contains("codecBadDataErr (-8969)")' in VIDEO
     assert "hardRecoverAwaitingFreshCodecEpoch" in VIDEO
     assert "TCP PRESERVED" in VIDEO
@@ -58,7 +59,7 @@ def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
     assert 'passive v8.27.2 source/topology observer' not in UI
     assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
     assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
-    assert 'v90.35.3.24.26 MainVideo client for U2W v8.37 forensic seam capture' in VIDEO
+    assert 'v90.35.3.24.27 MainVideo client for U2W v8.37 forensic seam capture' in VIDEO
     assert 'no adapter parser/cache/GOP replay' in VIDEO
 
 

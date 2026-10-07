@@ -16,7 +16,7 @@ STATUS = (V836 / "source/u2wvideo-relay-status.cgi").read_text()
 
 
 def test_current_release_and_passive_seam_snapshot_collection():
-    assert 'appVersion=v90.35.3.24.26' in APP
+    assert 'appVersion=v90.35.3.24.27' in APP
     assert 'u2wvideo-seam-log.cgi' in APP
     assert 'v8.37 Forensic Seam Capture' in APP
     assert 'v836_marker' in VIDEO
