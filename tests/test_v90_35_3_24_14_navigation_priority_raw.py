@@ -48,7 +48,7 @@ def test_post_ready_sta_status_never_bounces_mode_automatically():
 
 def test_background_preserves_live_session_instead_of_guaranteed_teardown():
     background = ROOTVIEW.split("case .background:", 1)[1].split("default:", 1)[0]
-    assert "preserving TCP/HUD cast source while VideoToolbox is lifecycle-paused" in background
+    assert "preserving TCP/HUD cast source and existing VideoToolbox/reference chain" in background
     assert "state.stopHUDU2WSTAHomeProbe()" not in background
     assert 'state.stopMainVideoPreview(reason: "app background")' not in background
     assert "state.mainVideo.applicationDidEnterBackground()" in background

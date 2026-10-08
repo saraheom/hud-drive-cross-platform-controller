@@ -894,7 +894,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.27 — forensic live-map state
+            HUD Controller v90.35.3.24.28 — forensic live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -969,7 +969,7 @@ final class AppState {
         }
     }
 
-    // MARK: - v90.35.3.24.27 Map Mode direct OBD ownership
+    // MARK: - v90.35.3.24.28 Map Mode direct OBD ownership
 
     private func beginMapModeDirectOBDOwnership(reason: String) {
         mapModeDirectOBDOwnershipTask?.cancel()
@@ -1315,7 +1315,7 @@ final class AppState {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
 
-                // v24.27: readiness is no longer a permanent latch. The Oct-7
+                // v24.28: readiness is no longer a permanent latch. The Oct-7
                 // drive showed session_client_seen/session_live_frame_sent could
                 // remain true after KivicCast had already closed the MJPEG socket.
                 // Poll the current relay session and require a presently established
@@ -1544,7 +1544,7 @@ final class AppState {
         /// v8.15.1 session fields present, success requires the *current* relay
         /// session to have accepted a HUD client and sent at least one live frame.
         var currentSessionReady: Bool {
-            // v24.27: clientSeen/liveFrameSent are session-history latches. They
+            // v24.28: clientSeen/liveFrameSent are session-history latches. They
             // can remain YES after the physical HUD MJPEG socket has already
             // closed. Require the socket to be established *now* as well as the
             // current-session proof before declaring/retaining readiness.
@@ -2052,7 +2052,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.27",
+                "appVersion=v90.35.3.24.28",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -3018,7 +3018,7 @@ final class AppState {
                 "final clear after renderer recreation reason=\(reason) generation=\(generation)"
             )
 
-            // v90.35.3.24.27: the Winding Wy field case showed that the physical
+            // v90.35.3.24.28: the Winding Wy field case showed that the physical
             // HUD can occasionally keep the previous lane overlay even after the
             // maneuver changed, CarPlay reported showing=false, and the app had
             // already sent multiple empty-lane packets. Give the stock renderer

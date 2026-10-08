@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-/// v90.35.3.24.27 one-drive MainVideo + ELM forensic evidence recorder.
+/// v90.35.3.24.28 one-drive MainVideo + ELM forensic evidence recorder.
 ///
 /// This recorder is intentionally iPhone-side and passive. It never signals or
 /// restarts AppleCarPlay, never changes AppleCarPlay/Route Guidance behavior, and never
@@ -358,7 +358,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
 
             let externalNames = externalEvidence.map(\.name).sorted()
             let completeness = """
-            Live Map Diagnostic Completeness — v90.35.3.24.27
+            Live Map Diagnostic Completeness — v90.35.3.24.28
             ==================================================
             startup_capture_bytes=\(startupBytes)
             startup_capture_target_bytes=\(startupLimit)
@@ -385,7 +385,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             try Data(completeness.utf8).write(to: sessionDirectory.appendingPathComponent("COMPLETENESS_REPORT.txt"), options: .atomic)
 
             let manifest = """
-            Live Map Diagnostic Bundle — HUD Controller v90.35.3.24.27
+            Live Map Diagnostic Bundle — HUD Controller v90.35.3.24.28
             ==========================================================
             Paired adapter: U2W v8.37 Forensic Seam Capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
 
@@ -435,7 +435,7 @@ final class LiveMapDiagnosticRecorder: @unchecked Sendable {
             try? timelineHandle?.synchronize()
 
             let parent = sessionDirectory.deletingLastPathComponent()
-            let zipURL = parent.appendingPathComponent("LiveMap_Diagnostic_v90.35.3.24.27_\(Self.timestamp()).zip")
+            let zipURL = parent.appendingPathComponent("LiveMap_Diagnostic_v90.35.3.24.28_\(Self.timestamp()).zip")
             try? fileManager.removeItem(at: zipURL)
             let writer = try LiveMapStoredZipWriter(url: zipURL)
             let files = try fileManager.subpathsOfDirectory(atPath: sessionDirectory.path)

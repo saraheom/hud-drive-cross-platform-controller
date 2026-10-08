@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.27 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.28 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -395,7 +395,7 @@ final class U2WMainVideoClient {
                 adapterCacheSummary = "\(process) • \(clientState) • SPS \(haveSPS) PPS \(havePPS) • IDR \(idr) • boots \(bootstraps) recent \(recentReady)/\(recentBytes)B/\(recentNals)NAL cap \(recentCap) • recentBoots \(recentBoots) liveIDRBoots \(liveIDRBoots) mode \(lastBootstrapMode) invalid \(recentOverflows) • sendFail \(sendFailures) • src \(sourceBytes)B gen \(generationChanges) preIDRdrop \(droppedPreIDR) lastNAL \(lastNAL)"
             }
             let supportedRelay = relayVersion.contains("v8.34") || relayVersion.contains("v8.33") || relayVersion.contains("v8.32") || relayVersion.contains("v8.31") || relayVersion.contains("v8.30") || relayVersion.contains("v8.24") || relayVersion.contains("v8.25") || relayVersion.contains("v8.26") || relayVersion.contains("v8.27") || relayVersion.contains("v8.28")
-            // v90.35.3.24.27: v8.35 deliberately leaves the v8.34 relay binary
+            // v90.35.3.24.28: v8.35 deliberately leaves the v8.34 relay binary
             // untouched, but its wrapper status page renamed the legacy marker
             // field to v835_marker/v834_mirror_marker. v24.22 accidentally
             // required only marker=YES, so a healthy RUNNING relay was rejected
@@ -499,7 +499,9 @@ final class U2WMainVideoClient {
                 // WAITING_FRESH_IDR without reconnecting the healthy TCP stream.
                 self.logger.log("U2W VIDEO RECOVERY", reason)
                 self.diagnosticRecorder.record("decoder", "recovery_requested", fields: ["reason": reason, "generation": generation])
-                self.diagnosticRecorder.triggerFirstFailureEvidence("decoder_recovery", detail: reason)
+                // v24.28: the reserved large window is owned only by concrete
+                // codec/transport failure signals from onDiagnostic. Lifecycle or
+                // watchdog recovery callbacks must never consume it.
                 self.diagnosticRecorder.triggerEvidenceWindow("decoder_recovery", detail: reason)
             }
         }
@@ -575,7 +577,7 @@ final class U2WMainVideoClient {
                         "relay": self.adapterCacheSummary
                     ])
                 }
-                // v24.27: reserve the large first-failure raw window for stream
+                // v24.28: reserve the large first-failure raw window for stream
                 // corruption / codec bad-data / transport failure. A known iOS
                 // lifecycle -12903 invalid-session event gets a normal evidence
                 // window but must not consume the once-per-drive corruption slot.
@@ -797,9 +799,9 @@ final class U2WMainVideoClient {
         }
         logger.log(
             "U2W VIDEO LIFECYCLE",
-            "Lifecycle pause reason=\(reason); raw TCP/source PRESERVED, VideoToolbox session intentionally invalidated, VCL decode paused until stable foreground. generation=\(lifecycleGeneration)"
+            "Lifecycle notice reason=\(reason); raw TCP + Annex-B parser + VideoToolbox + reference chain PRESERVED. No proactive decoder invalidation. generation=\(lifecycleGeneration)"
         )
-        diagnosticRecorder.record("lifecycle", "decoder_paused", fields: ["reason": reason, "generation": lifecycleGeneration])
+        diagnosticRecorder.record("lifecycle", "decoder_preserved", fields: ["reason": reason, "generation": lifecycleGeneration])
     }
 
     func applicationDidBecomeActive() {
@@ -813,7 +815,7 @@ final class U2WMainVideoClient {
         lifecycleRecoveryTask?.cancel()
         logger.log(
             "U2W VIDEO LIFECYCLE",
-            "Scene active candidate generation=\(generation); waiting \(String(format: "%.1f", stableForegroundDelay))s for stable foreground before rebuilding VideoToolbox. backgroundDuration=\(backgroundDuration.map { String(format: "%.1f", $0) } ?? "none")"
+            "Scene active candidate generation=\(generation); decoder/reference chain remained preserved. Verifying stable foreground without forcing IDR. backgroundDuration=\(backgroundDuration.map { String(format: "%.1f", $0) } ?? "none")"
         )
         diagnosticRecorder.record("lifecycle", "active_candidate", fields: ["generation": generation, "background_seconds": backgroundDuration ?? -1])
         lifecycleRecoveryTask = Task { @MainActor [weak self] in
@@ -821,8 +823,8 @@ final class U2WMainVideoClient {
             try? await Task.sleep(for: .milliseconds(Int(self.stableForegroundDelay * 1000)))
             guard !Task.isCancelled, self.running, self.lifecycleActive, self.lifecycleGeneration == generation else { return }
             self.worker?.resumeDecoderAfterLifecycle(reason: "stable foreground generation \(generation)")
-            self.logger.log("U2W VIDEO LIFECYCLE", "Stable foreground confirmed generation=\(generation); decoder rebuilt awaiting IDR; TCP remained continuous")
-            self.diagnosticRecorder.record("lifecycle", "stable_active_resume", fields: ["generation": generation])
+            self.logger.log("U2W VIDEO LIFECYCLE", "Stable foreground confirmed generation=\(generation); existing VideoToolbox/reference chain retained; no IDR dependency manufactured")
+            self.diagnosticRecorder.record("lifecycle", "stable_active_preserved", fields: ["generation": generation])
         }
     }
 
@@ -843,7 +845,7 @@ final class U2WMainVideoClient {
 
     private func requestBoundedKeyframe(reason: String) async {
         guard running, lifecycleActive else { return }
-        // v90.35.3.24.27 / U2W v8.37: the Oct-5 field drive proved that the
+        // v90.35.3.24.28 / U2W v8.37: the Oct-5 field drive proved that the
         // v8.35 helper used SOCK_DGRAM against stock Unix SOCK_STREAM listeners
         // and always returned send_failed/route=none.  Keep the installed v8.35
         // helper for rollback provenance, but do not keep injecting the known-wrong
@@ -1129,31 +1131,24 @@ private final class U2WMainVideoTCPWorker {
     func suspendDecoderForLifecycle(reason: String) {
         queue.async { [weak self] in
             guard let self, self.running else { return }
-            guard !self.lifecyclePaused else { return }
-            self.lifecyclePaused = true
-            self.waitingForFreshLiveIDRAfterRejectedAnchor = true
+            // v24.28: an ordinary scene inactive/background notification is not a
+            // decoder failure. Keep VCL flowing and preserve the sparse H.264
+            // reference chain. If iOS truly invalidates VideoToolbox, -12903 is
+            // handled by the normal bounded recovery path instead.
+            self.lifecyclePaused = false
             self.decoder.suspendForLifecycle(reason: reason)
             self.emitDecoderState()
-            self.onPhase?("LIFECYCLE_PAUSED")
-            self.onStatus?("App lifecycle transition • raw MainVideo preserved, decoder paused", true)
-            self.onDiagnostic?("LIFECYCLE PAUSE reason=\(reason); TCP + Annex-B stream PRESERVED; VideoToolbox invalidated intentionally; VCL decode gated until stable foreground")
+            self.onDiagnostic?("LIFECYCLE PRESERVE reason=\(reason); TCP + Annex-B + VideoToolbox + reference chain PRESERVED; decode remains active")
         }
     }
 
     func resumeDecoderAfterLifecycle(reason: String) {
         queue.async { [weak self] in
             guard let self, self.running else { return }
-            guard self.lifecyclePaused else { return }
             self.lifecyclePaused = false
-            self.sanitizer.quarantineReferenceChainUntilIDR()
-            self.decoder.hardRecoverAwaitingIDR(reason: reason)
-            self.waitingForFreshLiveIDRAfterRejectedAnchor = true
-            self.onDecoderRecovery?("lifecycle resume: \(reason)")
+            self.decoder.resumeAfterLifecycle(reason: reason)
             self.emitDecoderState()
-            self.onPhase?("WAITING_FRESH_IDR")
-            self.onStatus?("Foreground stable • waiting for fresh live IDR", true)
-            self.onDiagnostic?("LIFECYCLE RESUME reason=\(reason); rebuilt VideoToolbox from last validated SPS/PPS when available; TCP PRESERVED")
-            self.onKeyframeRequestNeeded?("lifecycle resume needs fresh IDR")
+            self.onDiagnostic?("LIFECYCLE RESUME PRESERVED reason=\(reason); no decoder rebuild, no sanitizer quarantine, no fresh-IDR requirement")
         }
     }
 
@@ -1468,9 +1463,22 @@ private final class U2WMainVideoTCPWorker {
     }
 
     private func processNAL(_ nal: Data, generation: Int) {
-        let accepted = sanitizer.process(nal)
+        let acceptedBatch = sanitizer.processBatch(nal)
 
-        // v24.27: a reference-priority mismatch combined with an off-sequence
+        // v24.28: generalized one-picture look-ahead catches gross off-cadence
+        // P candidates regardless of nal_ref_idc. This covers both observed
+        // contaminants: 3170->3999->3171 and 2239->1151->2240.
+        if let quarantine = sanitizer.takeContinuityQuarantineReason() {
+            onDiagnostic?("AU_CONTINUITY_QUARANTINE generation=\(generation) \(quarantine); candidate never reaches VideoToolbox until cadence is proven")
+            if quarantine.contains("action=WAIT_IDR") {
+                waitingForFreshLiveIDRAfterRejectedAnchor = true
+                onPhase?("WAITING_FRESH_IDR")
+                onStatus?("H.264 cadence changed unexpectedly • waiting for validated IDR", true)
+            }
+        }
+
+        // v24.28 retains the older ref-IDC diagnostic for candidates whose
+        // reference priority also differs from the learned epoch.
         // frame_num is the exact Oct-6 poison signature. The sanitizer drops it
         // before VideoToolbox and before reference continuity is updated.
         if let foreignReject = sanitizer.takeForeignReferenceRejectReason() {
@@ -1490,7 +1498,7 @@ private final class U2WMainVideoTCPWorker {
             onDiagnostic?("REFERENCE CONTINUITY WARNING generation=\(generation): \(continuityWarning); frame forwarded, decoder remains authoritative")
         }
 
-        if let accepted {
+        for accepted in acceptedBatch {
             if lifecyclePaused {
                 if accepted.kind == .sps || accepted.kind == .pps {
                     onDiagnostic?("Lifecycle-paused filter accepted \(accepted.kind); decoder feed intentionally gated")
@@ -1719,7 +1727,7 @@ private final class H264VideoToolboxDecoder {
     private var hardRecoveryCount = 0
     private var recoveryRequestPending = false
 
-    // v24.27: do not destroy a potentially recoverable reference chain after the
+    // v24.28: do not destroy a potentially recoverable reference chain after the
     // first codecBadDataErr burst. The Oct-7 drive proved raw TCP stayed healthy
     // while three output callback errors immediately forced WAITING_FRESH_IDR.
     // Preserve the session for a short, bounded grace window; a real image output
@@ -1766,27 +1774,15 @@ private final class H264VideoToolboxDecoder {
         publishLock.unlock()
     }
 
-    /// iOS can invalidate VideoToolbox sessions across scene/background transitions.
-    /// Preserve the last validated SPS/PPS but intentionally retire the VT session;
-    /// the worker keeps TCP/Annex-B flowing and requests a fresh IDR only after the
-    /// app has returned to a stable foreground state.
+    /// v24.28: a scene inactive/background notification by itself is not proof
+    /// that VideoToolbox became invalid. Preserve the decoder and all reference
+    /// state. A real kVTInvalidSessionErr (-12903) still enters bounded recovery.
     func suspendForLifecycle(reason: String) {
-        discardPendingAccessUnit()
-        if let decompressionSession {
-            VTDecompressionSessionInvalidate(decompressionSession)
-        }
-        decompressionSession = nil
-        formatDescription = nil
-        pendingSPS = nil
-        pendingPPS = nil
-        needsIDR = true
-        rebuildAtNextIDR = false
-        consecutiveDecodeErrors = 0
-        recoveryRequestPending = false
-        clearCodecBadDataGrace()
-        lastDecodeStatus = noErr
-        lastOutputCallbackStatus = noErr
-        onDiagnostic?("Decoder lifecycle suspend reason=\(reason); active SPS/PPS preserved, VT session invalidated")
+        onDiagnostic?("Decoder lifecycle preserve reason=\(reason); VT session/reference chain unchanged")
+    }
+
+    func resumeAfterLifecycle(reason: String) {
+        onDiagnostic?("Decoder lifecycle resume reason=\(reason); existing VT session/reference chain unchanged")
     }
 
     /// A v8.17 transport reconnect can begin at an arbitrary raw position. Keep
@@ -2096,7 +2092,7 @@ private final class H264VideoToolboxDecoder {
         // queue. Do not keep feeding the session while that reset is pending.
         if recoveryRequestPending { return }
 
-        // v24.27 staged recovery: keep feeding a short run of validated access
+        // v24.28 staged recovery: keep feeding a short run of validated access
         // units after codecBadDataErr so VideoToolbox can conceal/transiently
         // recover. Escalate only when that bounded grace budget is exhausted.
         if escalateCodecBadDataGraceIfNeeded(origin: "pre-submit") { return }

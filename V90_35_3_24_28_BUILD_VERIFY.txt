@@ -1,0 +1,32 @@
+HUD Controller v90.35.3.24.28 build verification
+================================================
+Base: v90.35.3.24.27 CI/runtime repository
+Adapter pairing: existing U2W v8.37 (UNCHANGED)
+
+Validation completed:
+- pytest/source regressions: 534 passed, 1 skipped
+- Swift syntax parse: 216/216 files
+- H264MainVideoSanitizer.swift standalone type-check: PASS
+- standalone v24.28 sanitizer behavior harness: PASS
+  * legitimate one-picture frame_num loss flows
+  * gross nal_ref_idc=0 candidate is held
+  * old cadence resumption drops contaminant
+  * no manufactured WAITING_FRESH_IDR after contaminant drop
+- workflow YAML parse: 8/8
+- U2W tree comparison: 427/427 files byte-for-byte identical to v24.27
+- test/cache directories removed before archive
+
+Important runtime scope:
+1. generalized one-picture look-ahead quarantine for gross P-picture frame_num discontinuities
+2. ordinary scene inactive/background preserves VideoToolbox/reference chain
+3. v24.27 staged codecBadData grace retained
+4. corruption-only first-failure recorder reservation corrected
+5. v24.27 HUD MJPEG viewer-health/re-entry fix retained
+
+Not changed / not addressed in this release:
+- startup bootstrap / automatic SPS+PPS+IDR acquisition
+- U2W transport or CarPlay encoder-refresh mechanism
+
+Environment limitation:
+- Full Xcode build/XCTest execution requires macOS/Xcode and was not available locally.
+- GitHub iOS CI is therefore the final compile/test gate.

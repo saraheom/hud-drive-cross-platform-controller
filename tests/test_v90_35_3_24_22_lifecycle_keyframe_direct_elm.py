@@ -19,11 +19,11 @@ HELPER = (V835 / "source/u2w_request_keyframe").read_bytes()
 def test_v2422_lifecycle_pauses_decoder_but_preserves_raw_tcp():
     assert 'case .inactive:' in ROOTVIEW
     assert 'applicationWillResignActive()' in ROOTVIEW
-    assert 'preserving TCP/HUD cast source while VideoToolbox is lifecycle-paused' in ROOTVIEW
+    assert 'preserving TCP/HUD cast source and existing VideoToolbox/reference chain' in ROOTVIEW
     assert 'worker?.suspendDecoderForLifecycle(reason: reason)' in VIDEO
     assert 'worker?.resumeDecoderAfterLifecycle' in VIDEO
     assert 'stableForegroundDelay: TimeInterval = 0.6' in VIDEO
-    assert 'TCP + Annex-B stream PRESERVED' in VIDEO
+    assert 'TCP + Annex-B + VideoToolbox + reference chain PRESERVED' in VIDEO
     assert 'kVTInvalidSessionErr (-12903)' in VIDEO
     assert 'one bounded native keyframe request armed' in VIDEO
     assert 'reconnectAtLiveEdge(reason: "lifecycle' not in VIDEO

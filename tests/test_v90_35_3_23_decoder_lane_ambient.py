@@ -36,7 +36,7 @@ def test_preflight_requires_sustained_continuity_not_two_frames():
 def test_scene_lifecycle_is_connected_to_mainvideo_recovery():
     assert 'state.mainVideo.applicationDidEnterBackground()' in ROOTVIEW
     assert 'state.mainVideo.applicationDidBecomeActive()' in ROOTVIEW
-    assert 'VideoToolbox session intentionally invalidated' in VIDEO
+    assert 'VideoToolbox + reference chain PRESERVED' in VIDEO
     assert 'stable foreground' in VIDEO
 
 

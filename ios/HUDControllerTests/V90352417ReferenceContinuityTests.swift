@@ -47,7 +47,7 @@ final class V90352417ReferenceContinuityTests: XCTestCase {
     }
     /// Oct-6 field signature: normal refIDC-1 P pictures were interrupted by one
     /// syntactically plausible refIDC-2 picture with an unrelated frame_num.
-    /// v24.27 must drop that candidate before it can poison VideoToolbox, while
+    /// v24.28 must drop that candidate before it can poison VideoToolbox, while
     /// preserving the previous reference frame so the next real picture flows.
     func testForeignReferencePriorityDiscontinuityIsDroppedBeforeDecoder() {
         let sanitizer = H264MainVideoSanitizer()

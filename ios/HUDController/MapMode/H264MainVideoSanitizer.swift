@@ -17,13 +17,18 @@ struct H264MainVideoSanitizerStats: Equatable {
     var acceptedSlices = 0
     var frameNumDiscontinuities = 0
     var foreignReferenceRejects = 0
+    var continuityQuarantineCandidates = 0
+    var continuityQuarantineRejects = 0
+    var continuityQuarantineChainShifts = 0
     var waitingForReferenceIDR = true
     var lastAcceptedAt: Date?
 
     var summary: String {
         "raw \(rawNALs) • valid \(acceptedNALs) • rejected \(rejectedNALs) • " +
         "SPS \(acceptedSPS) PPS \(acceptedPPS) IDR \(acceptedIDR) slices \(acceptedSlices) • " +
-        "frameBreaks \(frameNumDiscontinuities) foreignRefRejects \(foreignReferenceRejects) waitIDR \(waitingForReferenceIDR ? 1 : 0)"
+        "frameBreaks \(frameNumDiscontinuities) foreignRefRejects \(foreignReferenceRejects) " +
+        "auQuarantine \(continuityQuarantineCandidates)/\(continuityQuarantineRejects)/\(continuityQuarantineChainShifts) " +
+        "waitIDR \(waitingForReferenceIDR ? 1 : 0)"
     }
 }
 
@@ -71,6 +76,23 @@ final class H264MainVideoSanitizer {
         let frameNum: UInt32
         let nalType: UInt8
         let idrPicID: UInt32?
+    }
+
+    /// v24.28 holds a grossly off-cadence P picture for one-picture look-ahead
+    /// instead of feeding a syntactically plausible foreign slice to VideoToolbox.
+    /// Continuation slices are retained with the first slice until the next first
+    /// slice either proves that the old cadence resumed or proves a true epoch shift.
+    private struct QuarantinedPFrame {
+        let key: SliceFrameKey
+        var nals: [Data]
+        let frameNum: UInt32
+        let ppsID: UInt32
+        let modulus: UInt32
+        let previous: UInt32
+        let expected: UInt32
+        let nalRefIDC: UInt8
+        let learnedRefIDC: UInt8?
+        let circularDistanceFromExpected: UInt32
     }
 
     private struct BitReader {
@@ -133,7 +155,7 @@ final class H264MainVideoSanitizer {
     private var lastReferenceFrameNum: UInt32?
     private var lastReferenceFrameModulus: UInt32?
     // Learned from the first accepted reference P-picture in each validated IDR
-    // epoch. A different nal_ref_idc by itself is legal H.264, so v24.27 only
+    // epoch. A different nal_ref_idc by itself is legal H.264, so v24.28 only
     // rejects it when it also arrives off the expected frame_num. This targets
     // the Oct-6 field contaminant (3170 -> refIDC2/frame3999 -> 3171) without
     // turning ordinary frame loss or a valid priority change into an outage.
@@ -141,6 +163,12 @@ final class H264MainVideoSanitizer {
     private var awaitingReferenceIDR = true
     private var pendingContinuityBreakReason: String?
     private var pendingForeignReferenceRejectReason: String?
+    private var pendingContinuityQuarantineReason: String?
+    private var quarantinedPFrame: QuarantinedPFrame?
+    /// Small field losses (all observed genuine gaps were one picture) remain
+    /// telemetry and flow immediately. Only a gross circular frame_num jump is
+    /// held for one-picture confirmation. This is deliberately conservative.
+    private let grossContinuityDistanceThreshold: UInt32 = 8
     private(set) var stats = H264MainVideoSanitizerStats()
 
     init(expectedWidth: Int = 800, expectedHeight: Int = 480) {
@@ -157,6 +185,8 @@ final class H264MainVideoSanitizer {
         awaitingReferenceIDR = true
         pendingContinuityBreakReason = nil
         pendingForeignReferenceRejectReason = nil
+        pendingContinuityQuarantineReason = nil
+        quarantinedPFrame = nil
         stats.waitingForReferenceIDR = true
         if clearParameterSets {
             spsByID.removeAll(keepingCapacity: true)
@@ -180,6 +210,7 @@ final class H264MainVideoSanitizer {
         continuationFrame = nil
         lastReferenceFrameNum = nil
         lastReferenceFrameModulus = nil
+        quarantinedPFrame = nil
         awaitingReferenceIDR = true
         stats.waitingForReferenceIDR = true
     }
@@ -201,8 +232,140 @@ final class H264MainVideoSanitizer {
         return pendingForeignReferenceRejectReason
     }
 
+    /// One-shot diagnostic for v24.28's generalized one-picture continuity
+    /// quarantine. A rejection is protective and does not itself reset VT.
+    func takeContinuityQuarantineReason() -> String? {
+        defer { pendingContinuityQuarantineReason = nil }
+        return pendingContinuityQuarantineReason
+    }
+
+    /// Backward-compatible single-NAL API used by older unit tests. Production
+    /// MainVideo uses processBatch(_:) so a suspicious picture can be held until
+    /// the following first slice confirms or rejects it.
     func process(_ nal: Data) -> H264SanitizedNAL? {
-        stats.rawNALs += 1
+        processImmediate(nal)
+    }
+
+    /// Production v24.28 path. Gross frame_num jumps are not sent to VideoToolbox
+    /// immediately. One subsequent first-slice P picture decides the candidate:
+    /// - old cadence resumes -> drop the held foreign candidate;
+    /// - candidate cadence persists -> quarantine the reference chain until IDR;
+    /// - ambiguous -> drop the held candidate and re-evaluate the new picture.
+    /// Small gaps (for example 1656 -> 1658) are never held and remain telemetry.
+    func processBatch(_ nal: Data) -> [H264SanitizedNAL] {
+        guard let first = nal.first, first & 0x80 == 0 else {
+            return processImmediate(nal).map { [$0] } ?? []
+        }
+        let type = first & 0x1F
+
+        if var pending = quarantinedPFrame {
+            if type == 1, let info = parseSlice(nal) {
+                let key = SliceFrameKey(ppsID: info.ppsID, frameNum: info.frameNum, nalType: info.nalType, idrPicID: info.idrPicID)
+                if info.firstMacroblock != 0 {
+                    if key == pending.key {
+                        stats.rawNALs += 1
+                        pending.nals.append(nal)
+                        quarantinedPFrame = pending
+                        return []
+                    }
+                    rejectQuarantinedCandidate(pending, resolution: "continuation_mismatch")
+                    return processBatch(nal)
+                }
+
+                if info.ppsID == pending.ppsID,
+                   frameNumModulus(forPPS: info.ppsID) == pending.modulus {
+                    if info.frameNum == pending.expected {
+                        // Exact old cadence resumed: this is the observed field
+                        // contaminant shape (2239 -> 1151 -> 2240 and
+                        // 3170 -> 3999 -> 3171). Drop only the held picture.
+                        rejectQuarantinedCandidate(pending, resolution: "old_cadence_resumed")
+                        return processImmediate(nal).map { [$0] } ?? []
+                    }
+                    let continuation = Self.forwardDistance(from: pending.frameNum, to: info.frameNum, modulus: pending.modulus)
+                    if (1...4).contains(continuation) {
+                        // A gross jump that persists is not safely decodable from
+                        // the old reference chain. Do not poison VT; hold dependent
+                        // P pictures until a genuine IDR resets the epoch.
+                        rejectQuarantinedCandidate(pending, resolution: "persistent_shift_next=\(info.frameNum)")
+                        stats.continuityQuarantineChainShifts += 1
+                        quarantineReferenceChainUntilIDR()
+                        pendingContinuityQuarantineReason =
+                            "action=WAIT_IDR previous=\(pending.previous) expected=\(pending.expected) candidate=\(pending.frameNum) next=\(info.frameNum) modulus=\(pending.modulus)"
+                        return processImmediate(nal).map { [$0] } ?? []
+                    }
+                }
+
+                rejectQuarantinedCandidate(pending, resolution: "unconfirmed_by_next_first_slice=\(info.frameNum)")
+                return processBatch(nal)
+            }
+
+            if type == 5 || type == 7 || type == 8 {
+                rejectQuarantinedCandidate(pending, resolution: "codec_boundary_type=\(type)")
+                return processImmediate(nal).map { [$0] } ?? []
+            }
+
+            // SEI/AUD/unknown data cannot confirm a picture cadence. Process it
+            // normally (normally rejected) while retaining the held P picture.
+            return processImmediate(nal).map { [$0] } ?? []
+        }
+
+        if type == 1,
+           let info = parseSlice(nal),
+           info.firstMacroblock == 0 {
+            let normalizedSliceType = info.sliceType >= 5 ? info.sliceType - 5 : info.sliceType
+            if normalizedSliceType == 0, !awaitingReferenceIDR,
+               let modulus = frameNumModulus(forPPS: info.ppsID),
+               let previous = lastReferenceFrameNum,
+               lastReferenceFrameModulus == modulus {
+                let expected = (previous + 1) % modulus
+                if info.frameNum != expected {
+                    let distance = Self.circularDistance(from: expected, to: info.frameNum, modulus: modulus)
+                    if distance > grossContinuityDistanceThreshold {
+                        stats.rawNALs += 1
+                        stats.continuityQuarantineCandidates += 1
+                        let key = SliceFrameKey(ppsID: info.ppsID, frameNum: info.frameNum, nalType: info.nalType, idrPicID: info.idrPicID)
+                        quarantinedPFrame = QuarantinedPFrame(
+                            key: key, nals: [nal], frameNum: info.frameNum, ppsID: info.ppsID,
+                            modulus: modulus, previous: previous, expected: expected,
+                            nalRefIDC: (first >> 5) & 0x03, learnedRefIDC: expectedReferenceNALRefIDC,
+                            circularDistanceFromExpected: distance
+                        )
+                        pendingContinuityQuarantineReason =
+                            "action=HOLD previous=\(previous) expected=\(expected) candidate=\(info.frameNum) distance=\(distance) modulus=\(modulus) ref_idc=\((first >> 5) & 0x03)"
+                        return []
+                    }
+                }
+            }
+        }
+
+        return processImmediate(nal).map { [$0] } ?? []
+    }
+
+    private func rejectQuarantinedCandidate(_ pending: QuarantinedPFrame, resolution: String) {
+        stats.rejectedNALs += pending.nals.count
+        stats.continuityQuarantineRejects += 1
+        if let learned = pending.learnedRefIDC, pending.nalRefIDC != 0, pending.nalRefIDC != learned {
+            stats.foreignReferenceRejects += 1
+            pendingForeignReferenceRejectReason =
+                "expected_ref_idc=\(learned) actual_ref_idc=\(pending.nalRefIDC) previous=\(pending.previous) expected_frame_num=\(pending.expected) actual_frame_num=\(pending.frameNum) modulus=\(pending.modulus) pps=\(pending.ppsID)"
+        }
+        pendingContinuityQuarantineReason =
+            "action=DROP resolution=\(resolution) previous=\(pending.previous) expected=\(pending.expected) candidate=\(pending.frameNum) distance=\(pending.circularDistanceFromExpected) modulus=\(pending.modulus) ref_idc=\(pending.nalRefIDC)"
+        quarantinedPFrame = nil
+    }
+
+    private static func forwardDistance(from: UInt32, to: UInt32, modulus: UInt32) -> UInt32 {
+        guard modulus > 0 else { return UInt32.max }
+        return (to &+ modulus &- from) % modulus
+    }
+
+    private static func circularDistance(from: UInt32, to: UInt32, modulus: UInt32) -> UInt32 {
+        let forward = forwardDistance(from: from, to: to, modulus: modulus)
+        return min(forward, modulus &- forward)
+    }
+
+    private func processImmediate(_ nal: Data, countRaw: Bool = true) -> H264SanitizedNAL? {
+        if countRaw { stats.rawNALs += 1 }
         guard let first = nal.first,
               first & 0x80 == 0 else {
             reject()
@@ -227,6 +390,7 @@ final class H264MainVideoSanitizer {
             lastReferenceFrameNum = nil
             lastReferenceFrameModulus = nil
             expectedReferenceNALRefIDC = nil
+            quarantinedPFrame = nil
             awaitingReferenceIDR = true
             stats.waitingForReferenceIDR = true
             accept(kind: .sps)

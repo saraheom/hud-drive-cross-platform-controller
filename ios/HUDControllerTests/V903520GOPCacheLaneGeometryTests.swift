@@ -46,7 +46,7 @@ final class V903520GOPCacheLaneGeometryTests: XCTestCase {
         XCTAssertTrue(video.contains("u2wvideo-relay-start.cgi"))
         XCTAssertTrue(video.contains("u2wvideo-relay-status.cgi"))
         XCTAssertTrue(video.contains("v8.34-hard-bounded-mirror-v831-raw-tcp-15332"))
-        // v24.27 intentionally removes the verbose relay diagnostics from the everyday UI.
+        // v24.28 intentionally removes the verbose relay diagnostics from the everyday UI.
         XCTAssertTrue(ui.contains("Map Mode FPS"))
         XCTAssertTrue(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
         XCTAssertFalse(ui.contains("U2W H.264 relay"))

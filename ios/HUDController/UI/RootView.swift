@@ -78,7 +78,7 @@ struct RootView: View {
                 state.mainVideo.applicationWillResignActive()
             case .background:
                 if state.hudU2WLiveRelayActive || state.mainVideoPreviewActive {
-                    state.logger.log("NAV PRIORITY", "App backgrounded with live MainVideo active; preserving TCP/HUD cast source while VideoToolbox is lifecycle-paused")
+                    state.logger.log("NAV PRIORITY", "App backgrounded with live MainVideo active; preserving TCP/HUD cast source and existing VideoToolbox/reference chain")
                 }
                 state.mainVideo.applicationDidEnterBackground()
             default:

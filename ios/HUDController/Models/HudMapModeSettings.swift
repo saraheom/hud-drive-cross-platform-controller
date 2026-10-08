@@ -365,7 +365,7 @@ final class HudMapModeSettings {
         didSet { defaults.set(maneuverWarningIntervalSeconds, forKey: "HUD.MapMode.maneuverWarning.intervalSeconds") }
     }
 
-    // v90.35.3.24.27: compact Map Mode overspeed presentation controls. These
+    // v90.35.3.24.28: compact Map Mode overspeed presentation controls. These
     // are global behavior settings rather than visual-preset values so switching
     // the layout designer cannot silently change the driver's warning policy.
     var speedWarningEnabled: Bool { didSet { defaults.set(speedWarningEnabled, forKey: "HUD.MapMode.SpeedWarning.enabled") } }

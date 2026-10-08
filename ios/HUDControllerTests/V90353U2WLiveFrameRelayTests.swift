@@ -30,7 +30,7 @@ final class V90353U2WLiveFrameRelayTests: XCTestCase {
         // v90.35.3.10 intentionally removed the old verbose relay heading and
         // folded the controls into the compact Map Mode card. Keep this test
         // aligned with the production UI while still verifying the relay
-        // v24.27 removes the disclosure block entirely and keeps only production controls.
+        // v24.28 removes the disclosure block entirely and keeps only production controls.
         XCTAssertTrue(ui.contains("CarPlay adapter Wi-Fi name"))
         XCTAssertTrue(ui.contains("Enable Map Mode"))
         XCTAssertTrue(ui.contains("Map Mode FPS"))

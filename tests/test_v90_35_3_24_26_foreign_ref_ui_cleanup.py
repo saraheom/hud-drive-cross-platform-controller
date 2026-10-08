@@ -11,8 +11,8 @@ ELM = (ROOT / 'ios/HUDController/Bluetooth/DirectELM327Manager.swift').read_text
 
 
 def test_v2426_release_keeps_v837_transport_pairing():
-    assert 'appVersion=v90.35.3.24.27' in APP
-    assert 'v90.35.3.24.27 MainVideo client for U2W v8.37 forensic seam capture' in VIDEO
+    assert 'appVersion=v90.35.3.24.28' in APP
+    assert 'v90.35.3.24.28 MainVideo client for U2W v8.37 forensic seam capture' in VIDEO
     assert 'unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
 
 

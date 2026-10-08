@@ -19,7 +19,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
 
     func testV2411OBDArchiveCollectionHasNoGPSGate() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.27"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.28"))
         XCTAssertTrue(app.contains("no GPS gate; v24.10 length/framing reconstruction retained"))
         XCTAssertFalse(app.contains("guard speedEngine.currentSpeedMph <= 1 else"))
     }
@@ -38,7 +38,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         XCTAssertTrue(diagnostic.contains("u2wvideo-diag-start.cgi"))
         XCTAssertTrue(diagnostic.contains("u2wvideo-diag-bundle.cgi"))
-        // v24.27 keeps the diagnostic endpoints underneath but retires the old probe-specific UI.
+        // v24.28 keeps the diagnostic endpoints underneath but retires the old probe-specific UI.
         XCTAssertTrue(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
         XCTAssertTrue(ui.contains("Detailed MainVideo, decoder, adapter-seam, and OBD ownership telemetry remains in the diagnostic ZIP"))
         XCTAssertFalse(ui.contains("Collect passive codec diagnostic bundle"))

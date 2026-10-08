@@ -50,7 +50,7 @@ final class V9035247PersistentGOPInternalOBDTests: XCTestCase {
         XCTAssertTrue(bluetooth.contains("startOBDDriveFlightRecorder(reason:"))
         XCTAssertTrue(bluetooth.contains("recordOBDDriveRX(data)"))
         XCTAssertTrue(bluetooth.contains("recordOBDDriveGPS"))
-        // v24.27 keeps the recorder/bundle machinery but removes the legacy probe block from Map Mode UI.
+        // v24.28 keeps the recorder/bundle machinery but removes the legacy probe block from Map Mode UI.
         XCTAssertFalse(ui.contains("Collect OBD Drive Diagnostic ZIP (parked)"))
         XCTAssertFalse(ui.contains("does not open a second OBD connection"))
         XCTAssertFalse(ui.contains("Run 90 s HUD-internal OBD probe v4"))
