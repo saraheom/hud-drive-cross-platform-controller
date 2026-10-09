@@ -1,0 +1,36 @@
+v90.35.3.24.29 CI FIX 1 verification
+=====================================
+
+Failure reproduced from uploaded GitHub Actions logs:
+  ios/HUDController/MapMode/U2WMainVideoClient.swift:1585:10
+  error: method must be declared fileprivate because its parameter uses a private type
+
+Cause:
+  U2WMainVideoBootstrapSnapshot is private to U2WMainVideoClient.swift, while
+  applyStartupBootstrapSnapshots(_:) had default internal visibility.
+
+Patch:
+  func applyStartupBootstrapSnapshots(...)
+  -> fileprivate func applyStartupBootstrapSnapshots(...)
+
+Scope:
+  - one Swift access-control modifier changed
+  - runtime algorithm/body unchanged
+  - startup bootstrap unchanged
+  - full-canvas Map Mode layout unchanged
+  - background continuity unchanged
+  - H.264 mid-drive protections unchanged
+  - U2W tree unchanged (449/449 files byte-identical to original v24.29 repo)
+
+Validation after patch:
+  pytest: 542 passed, 1 skipped
+  Swift syntax parse: 217/217 files
+  YAML parse: 10/10 files
+  U2W v8.38 shell/CGI sh -n: 17/17
+  U2W tree vs original v24.29: 449/449 byte-identical
+  test/bytecode caches removed before packaging
+
+Remaining gate:
+  Full Xcode 26 module compile / XCTest requires GitHub/macOS CI. The uploaded CI
+  bundle contained one Swift compiler error; no additional compiler error was
+  reported before the module emit failed.

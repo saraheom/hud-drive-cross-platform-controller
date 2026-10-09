@@ -1582,7 +1582,7 @@ final class U2WMainVideoTCPWorker {
         }
     }
 
-    func applyStartupBootstrapSnapshots(_ snapshots: [U2WMainVideoBootstrapSnapshot]) {
+    fileprivate func applyStartupBootstrapSnapshots(_ snapshots: [U2WMainVideoBootstrapSnapshot]) {
         queue.async { [weak self] in
             guard let self, self.running, self.startupBootstrapBuffering, !self.startupBootstrapApplied else { return }
             let bridge = self.startupBridgeBuffer
