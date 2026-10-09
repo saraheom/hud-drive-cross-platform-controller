@@ -176,19 +176,42 @@ struct NavigationHUDPreviewCard: View {
                 .buttonStyle(.bordered)
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(designerComponents) { component in
-                        Button {
-                            selectedDesignerComponent = component
-                            designerDragging = false
-                        } label: {
-                            Label(component.title, systemImage: component.systemImage)
-                                .font(.caption.weight(.semibold))
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(selectedDesignerComponent == component ? accent : Color.gray)
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 104, maximum: 170), spacing: 6)],
+                alignment: .leading,
+                spacing: 6
+            ) {
+                ForEach(designerComponents) { component in
+                    Button {
+                        selectedDesignerComponent = component
+                        designerDragging = false
+                    } label: {
+                        Label(component.title, systemImage: component.systemImage)
+                            .font(.caption.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 34, alignment: .center)
+                            .padding(.horizontal, 6)
+                            .background(
+                                selectedDesignerComponent == component
+                                    ? accent.opacity(0.24)
+                                    : Color.white.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(
+                                        selectedDesignerComponent == component
+                                            ? accent.opacity(0.85)
+                                            : Color.white.opacity(0.12),
+                                        lineWidth: selectedDesignerComponent == component ? 1.2 : 0.8
+                                    )
+                            }
+                            .foregroundStyle(
+                                selectedDesignerComponent == component ? accent : Color.primary
+                            )
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Select \(component.title) Map Mode component")
                 }
             }
 

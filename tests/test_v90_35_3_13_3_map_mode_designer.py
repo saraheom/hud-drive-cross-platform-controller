@@ -48,7 +48,8 @@ def test_designer_uses_one_true_480x240_canvas_while_migrating_legacy_calibratio
     assert '.position(canvasPoint(.map))' in CANVAS
     assert '.position(canvasPoint(.maneuver))' in CANVAS
     assert '.position(canvasPoint(.lanes))' in CANVAS
-    assert '.position(canvasPoint(.eta))' in CANVAS
+    assert 'etaCanvasComponent' in CANVAS
+    assert 'settings.etaUsesLanePositionWhenNoLanes ? .lanes : .eta' in CANVAS
     # Legacy offsets remain only as migration/default anchors, not parent layout boundaries.
     assert 'return (centerOffsetX, centerOffsetY)' in SETTINGS
     assert 'return (rightOffsetX + maneuverOffsetX, rightOffsetY + maneuverOffsetY)' in SETTINGS

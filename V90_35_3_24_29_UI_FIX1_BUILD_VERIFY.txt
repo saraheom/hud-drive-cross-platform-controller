@@ -1,0 +1,35 @@
+HUD Controller v90.35.3.24.29 — UI FIX 1 build verification
+Base: v90.35.3.24.29 CI FIX 2 + U2W v8.38
+Scope: app-only Map Mode layout-designer selector + ETA/lane shared-position rendering contract
+
+Functional changes:
+1. NavigationHUDPreviewCard.swift
+   - Replaces nested horizontal component ScrollView with adaptive multi-row LazyVGrid.
+   - Every component button has an explicit rectangular hit target.
+   - ETA remains omitted from selector when ETA/lane shared-position mode is enabled.
+2. HudMapModeCanvas.swift
+   - Shared ETA/lane policy is explicit through shouldRenderETA + etaCanvasComponent.
+   - Shared mode: lane guidance wins whenever lane data exists; ETA is not rendered simultaneously.
+   - No lane data: ETA renders at the exact Lane Guidance position.
+   - Preview and physical 480x240 HUD JPEG use this same shared renderer.
+
+Unchanged safety boundaries:
+- v24.28/v24.29 mid-drive H.264 continuity/sanitizer logic unchanged.
+- v24.29 startup bootstrap/background continuity logic unchanged.
+- OBD/navigation/ambient logic unchanged.
+- U2W v8.38 unchanged: 449/449 files byte-for-byte identical to CI FIX 2 base.
+
+Validation:
+- pytest/source regression suite: 546 passed, 1 skipped.
+- Swift syntax parse: 217/217 files passed (swiftc -parse).
+- GitHub workflow YAML parse: 8/8 passed.
+- Targeted selector/shared-ETA source regressions added and collected.
+- Runtime diff from CI FIX 2 limited to exactly two files:
+  ios/HUDController/UI/NavigationHUDPreviewCard.swift
+  ios/HUDController/MapMode/HudMapModeCanvas.swift
+- U2W tree diff from CI FIX 2: zero files.
+- pytest/bytecode caches removed before packaging.
+
+Environment boundary:
+- Full Xcode/iOS compile and XCTest execution cannot be performed in this Linux container.
+- GitHub iOS CI remains the final Apple toolchain compile/test gate.

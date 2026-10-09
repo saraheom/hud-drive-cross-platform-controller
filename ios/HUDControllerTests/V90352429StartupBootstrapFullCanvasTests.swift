@@ -57,10 +57,27 @@ final class V90352429StartupBootstrapFullCanvasTests: XCTestCase {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         let settings = try source("HUDController/Models/HudMapModeSettings.swift")
         XCTAssertTrue(settings.contains("etaUsesLanePositionWhenNoLanes"))
-        XCTAssertTrue(canvas.contains("if settings.etaUsesLanePositionWhenNoLanes"))
-        XCTAssertTrue(canvas.contains("if !laneGuidanceAvailable"))
+        XCTAssertTrue(canvas.contains("private var shouldRenderETA: Bool"))
+        XCTAssertTrue(canvas.contains("return !laneGuidanceAvailable"))
         XCTAssertTrue(ui.contains("Use lane-guidance position for ETA when lanes are unavailable"))
         XCTAssertTrue(ui.contains("!(state.mapModeSettings.etaUsesLanePositionWhenNoLanes && $0 == .eta)"))
         XCTAssertTrue(canvas.contains(".position(canvasPoint(.timeLeft))"))
     }
+    func testLayoutDesignerUsesTapGridAndSharedETARenderingIsMutuallyExclusive() throws {
+        let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
+        let canvas = try source("HUDController/MapMode/HudMapModeCanvas.swift")
+
+        XCTAssertTrue(ui.contains("LazyVGrid("))
+        XCTAssertTrue(ui.contains("GridItem(.adaptive(minimum: 104, maximum: 170)"))
+        XCTAssertFalse(ui.contains("ScrollView(.horizontal, showsIndicators: false)"))
+        XCTAssertTrue(ui.contains(".contentShape(Rectangle())"))
+        XCTAssertTrue(ui.contains("!(state.mapModeSettings.etaUsesLanePositionWhenNoLanes && $0 == .eta)"))
+
+        XCTAssertTrue(canvas.contains("private var shouldRenderETA: Bool"))
+        XCTAssertTrue(canvas.contains("return !laneGuidanceAvailable"))
+        XCTAssertTrue(canvas.contains("private var etaCanvasComponent: HudMapDesignerComponent"))
+        XCTAssertTrue(canvas.contains("settings.etaUsesLanePositionWhenNoLanes ? .lanes : .eta"))
+        XCTAssertTrue(canvas.contains("if shouldRenderETA"))
+    }
+
 }

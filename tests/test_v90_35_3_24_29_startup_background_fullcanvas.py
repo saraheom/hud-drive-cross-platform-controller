@@ -83,8 +83,8 @@ def test_designer_positions_cover_full_480x240_canvas_and_hide_eta_when_shared()
 
 
 def test_eta_lane_shared_slot_behavior_and_time_left_independence():
-    assert 'if settings.etaUsesLanePositionWhenNoLanes' in CANVAS
-    assert 'if !laneGuidanceAvailable' in CANVAS
+    assert 'private var shouldRenderETA: Bool' in CANVAS
+    assert 'return !laneGuidanceAvailable' in CANVAS
     assert '.position(canvasPoint(.lanes))' in CANVAS
     assert '.position(canvasPoint(.timeLeft))' in CANVAS
     assert 'etaUsesLanePositionWhenNoLanes = preset.etaUsesLanePositionWhenNoLanes ?? false' in SETTINGS

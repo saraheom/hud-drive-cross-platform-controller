@@ -90,18 +90,14 @@ struct HudMapModeCanvas: View {
                         .position(canvasPoint(.lanes))
                 }
 
-                if settings.showETA {
-                    if settings.etaUsesLanePositionWhenNoLanes {
-                        if !laneGuidanceAvailable {
-                            etaBlock
-                                .scaleEffect(settings.rightScale)
-                                .position(canvasPoint(.lanes))
-                        }
-                    } else {
-                        etaBlock
-                            .scaleEffect(settings.rightScale)
-                            .position(canvasPoint(.eta))
-                    }
+                // ETA/lane sharing is intentionally mutually exclusive in this shared
+                // renderer. The phone designer preview and the physical 480x240 JPEG both
+                // execute this exact path: real/sample lane arrows win; ETA occupies the
+                // same Lane Guidance coordinate only while lane guidance is unavailable.
+                if shouldRenderETA {
+                    etaBlock
+                        .scaleEffect(settings.rightScale)
+                        .position(canvasPoint(etaCanvasComponent))
                 }
 
                 if settings.showTimeLeft {
@@ -268,6 +264,19 @@ struct HudMapModeCanvas: View {
 
     private var laneGuidanceAvailable: Bool {
         settings.showLaneGuidance && !effectiveLaneValues.isEmpty
+    }
+
+    /// Shared ETA/lane policy used identically by the in-app designer preview and
+    /// the physical HUD renderer. When sharing is enabled, ETA and lane guidance
+    /// can never be visible at the same time.
+    private var shouldRenderETA: Bool {
+        guard settings.showETA else { return false }
+        guard settings.etaUsesLanePositionWhenNoLanes else { return true }
+        return !laneGuidanceAvailable
+    }
+
+    private var etaCanvasComponent: HudMapDesignerComponent {
+        settings.etaUsesLanePositionWhenNoLanes ? .lanes : .eta
     }
 
     private var etaBlock: some View {
