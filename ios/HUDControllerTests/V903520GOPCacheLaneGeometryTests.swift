@@ -24,7 +24,8 @@ final class V903520GOPCacheLaneGeometryTests: XCTestCase {
         XCTAssertTrue(canvas.contains("let straightApexY = h * 0.12"))
         XCTAssertTrue(canvas.contains("func turnOnlyCombined(right: Bool)"))
         XCTAssertTrue(canvas.contains("Image(systemName: snapshot.maneuver.symbol)"))
-        XCTAssertTrue(canvas.contains("size: CGFloat(34 * settings.maneuverArrowScale)"))
+        XCTAssertTrue(canvas.contains(".font(.system(size: 34, weight: symbolWeight(settings.maneuverArrowThickness)))"))
+        XCTAssertTrue(canvas.contains(".scaleEffect(settings.maneuverArrowScale)"))
     }
 
     func testLaneCustomizationAllowsThinVectorStrokes() throws {

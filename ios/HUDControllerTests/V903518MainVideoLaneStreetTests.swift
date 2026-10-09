@@ -24,7 +24,7 @@ final class V903518MainVideoLaneStreetTests: XCTestCase {
         XCTAssertTrue(canvas.contains("laneGlyphStyle(for wireValue: Int)"))
         XCTAssertTrue(canvas.contains("MergeManeuverGlyph"))
         XCTAssertTrue(canvas.contains(".lineLimit(2)"))
-        XCTAssertTrue(canvas.contains("minHeight: 29, maxHeight: 29"))
+        XCTAssertTrue(canvas.contains(".frame(width: 104, height: 32, alignment: .center)"))
     }
 
     func testItem10ProbeIsNotExposedInNavigationUI() throws {

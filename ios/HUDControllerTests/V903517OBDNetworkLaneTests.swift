@@ -28,7 +28,7 @@ final class V903517OBDNetworkLaneTests: XCTestCase {
     func testSpeedLimitSlotAndLaneWindowing() throws {
         let canvas = try source("HUDController/MapMode/HudMapModeCanvas.swift")
         XCTAssertTrue(canvas.contains("settings.showSpeedLimit && snapshot.speedLimitMph > 0"))
-        XCTAssertTrue(canvas.contains("No OSM speed limit = no white rectangle"))
+        XCTAssertTrue(canvas.contains(".position(canvasPoint(.speedLimit))"))
         XCTAssertTrue(canvas.contains("private var displayedLaneValues"))
         XCTAssertTrue(canvas.contains("guard values.count > 4 else { return values }"))
         XCTAssertTrue(canvas.contains("activeInside"))
