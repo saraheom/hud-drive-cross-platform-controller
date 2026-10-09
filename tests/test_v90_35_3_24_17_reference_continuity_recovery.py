@@ -44,6 +44,6 @@ def test_background_transition_does_not_deliberately_kill_live_map_anymore():
 def test_release_remains_navigation_safe_and_u2w_v831_is_unchanged():
     assert 'self.mainVideo.start(reason: "physical Map Mode live source (optional)")' in APP
     assert 'mainVideo.start(reason: "app-only live preview")' in APP
-    assert 'v90.35.3.24.28 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
+    assert 'v90.35.3.24.29 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
     assert 'no adapter parser/cache/GOP replay' in VIDEO
-    assert 'appVersion=v90.35.3.24.28' in APP
+    assert 'appVersion=v90.35.3.24.29' in APP

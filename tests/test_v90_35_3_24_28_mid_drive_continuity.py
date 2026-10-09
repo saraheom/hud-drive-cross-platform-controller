@@ -41,5 +41,5 @@ def test_v2428_reserved_corruption_window_not_taken_by_generic_recovery_callback
     assert '-8969' in diagnostic
 
 def test_v2428_version_and_u2w_pairing():
-    assert 'appVersion=v90.35.3.24.28' in APP
-    assert 'v90.35.3.24.28 MainVideo client for U2W v8.37' in VIDEO
+    assert 'appVersion=v90.35.3.24.29' in APP
+    assert 'v90.35.3.24.29 MainVideo client for U2W v8.38' in VIDEO

@@ -136,6 +136,8 @@ private struct HudMapModePresetSnapshot: Codable {
     var showLaneGuidance: Bool
     var showETA: Bool
     var showTimeLeft: Bool
+    // Optional so presets saved before v90.35.3.24.29 still decode.
+    var etaUsesLanePositionWhenNoLanes: Bool?
     var nativeOBDSpeedOverlayExperiment: Bool
     var mapAppearanceRaw: String
 
@@ -210,6 +212,7 @@ private struct HudMapModePresetSnapshot: Codable {
         showLaneGuidance = settings.showLaneGuidance
         showETA = settings.showETA
         showTimeLeft = settings.showTimeLeft
+        etaUsesLanePositionWhenNoLanes = settings.etaUsesLanePositionWhenNoLanes
         nativeOBDSpeedOverlayExperiment = settings.nativeOBDSpeedOverlayExperiment
         mapAppearanceRaw = settings.mapAppearance.rawValue
         speedScale = settings.speedScale
@@ -323,6 +326,11 @@ final class HudMapModeSettings {
         didSet { defaults.set(showETAAMPM, forKey: "HUD.MapMode.showETAAMPM") }
     }
     var showTimeLeft: Bool { didSet { persist(showTimeLeft, key: "HUD.MapMode.showTimeLeft") } }
+    /// When enabled, ETA borrows the Lane Guidance canvas position whenever no actual lane data is available.
+    /// When lane data appears, lane arrows win and ETA is suppressed. This is visual-preset state.
+    var etaUsesLanePositionWhenNoLanes: Bool {
+        didSet { persist(etaUsesLanePositionWhenNoLanes, key: "HUD.MapMode.etaUsesLanePositionWhenNoLanes") }
+    }
 
     var nativeOBDSpeedOverlayExperiment: Bool {
         didSet { persist(nativeOBDSpeedOverlayExperiment, key: "HUD.MapMode.nativeOBDSpeedOverlayExperiment") }
@@ -471,6 +479,7 @@ final class HudMapModeSettings {
         showETA = bool("HUD.MapMode.showETA", default: true)
         showETAAMPM = bool("HUD.MapMode.showETAAMPM", default: true)
         showTimeLeft = bool("HUD.MapMode.showTimeLeft", default: true)
+        etaUsesLanePositionWhenNoLanes = bool("HUD.MapMode.etaUsesLanePositionWhenNoLanes", default: false)
         nativeOBDSpeedOverlayExperiment = bool("HUD.MapMode.nativeOBDSpeedOverlayExperiment", default: false)
         hudFrameRate = Self.normalizedHUDFrameRate(integer("HUD.MapMode.hudFrameRate", default: 5))
 
@@ -544,8 +553,8 @@ final class HudMapModeSettings {
 
     private static func clampDesigner(_ value: Double, axis: DesignerAxis) -> Double {
         switch axis {
-        case .x: return min(210, max(-210, value))
-        case .y: return min(110, max(-110, value))
+        case .x: return min(480, max(-480, value))
+        case .y: return min(240, max(-240, value))
         }
     }
 
@@ -670,6 +679,7 @@ final class HudMapModeSettings {
         showLaneGuidance = preset.showLaneGuidance
         showETA = preset.showETA
         showTimeLeft = preset.showTimeLeft
+        etaUsesLanePositionWhenNoLanes = preset.etaUsesLanePositionWhenNoLanes ?? false
         nativeOBDSpeedOverlayExperiment = preset.nativeOBDSpeedOverlayExperiment
         mapAppearance = HudMapAppearance(rawValue: preset.mapAppearanceRaw) ?? .followSource
         speedScale = preset.speedScale
@@ -699,6 +709,61 @@ final class HudMapModeSettings {
         case 0: return "Preset 1"
         case 1: return "Preset 2"
         default: return "Preset 3"
+        }
+    }
+
+    /// v90.35.3.24.29 canonical 480x240 canvas coordinates. The old left/center/right
+    /// containers are no longer part of rendering. Existing legacy offsets are folded into
+    /// each component's default anchor only so an upgraded phone keeps approximately the
+    /// same visual layout; every component can then move across the entire canvas.
+    func designerCanvasPosition(for component: HudMapDesignerComponent) -> (x: Double, y: Double) {
+        let base = Self.defaultCanvasPosition(for: component)
+        let legacy = legacyCanvasAdjustment(for: component)
+        let delta = designerOffset(for: component)
+        return (
+            min(480, max(0, base.x + legacy.x + delta.x)),
+            min(240, max(0, base.y + legacy.y + delta.y))
+        )
+    }
+
+    func setDesignerCanvasPosition(_ component: HudMapDesignerComponent, x: Double, y: Double) {
+        let base = Self.defaultCanvasPosition(for: component)
+        let legacy = legacyCanvasAdjustment(for: component)
+        setDesignerOffset(
+            component,
+            x: min(480, max(0, x)) - base.x - legacy.x,
+            y: min(240, max(0, y)) - base.y - legacy.y
+        )
+    }
+
+    private static func defaultCanvasPosition(for component: HudMapDesignerComponent) -> (x: Double, y: Double) {
+        switch component {
+        case .speed: return (48, 66)
+        case .speedLimit: return (48, 153)
+        case .map: return (236, 120)
+        case .turningStreet: return (427, 29)
+        case .maneuver: return (427, 78)
+        case .distance: return (427, 116)
+        case .lanes: return (427, 154)
+        case .eta: return (427, 190)
+        case .timeLeft: return (427, 208)
+        }
+    }
+
+    private func legacyCanvasAdjustment(for component: HudMapDesignerComponent) -> (x: Double, y: Double) {
+        switch component {
+        case .speed, .speedLimit:
+            return (leftOffsetX, leftOffsetY)
+        case .map:
+            return (centerOffsetX, centerOffsetY)
+        case .turningStreet, .distance:
+            return (rightOffsetX, rightOffsetY)
+        case .maneuver:
+            return (rightOffsetX + maneuverOffsetX, rightOffsetY + maneuverOffsetY)
+        case .lanes:
+            return (rightOffsetX + laneOffsetX, rightOffsetY + laneOffsetY)
+        case .eta, .timeLeft:
+            return (rightOffsetX + etaOffsetX, rightOffsetY + etaOffsetY)
         }
     }
 

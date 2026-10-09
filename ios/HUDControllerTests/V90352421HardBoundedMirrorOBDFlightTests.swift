@@ -13,9 +13,9 @@ final class V90352421HardBoundedMirrorOBDFlightTests: XCTestCase {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         XCTAssertTrue(video.contains("v8.34-hard-bounded-mirror-v831-raw-tcp-15332"))
         XCTAssertTrue(video.contains("U2WH2648"))
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.28"))
-        XCTAssertTrue(app.contains("paired_u2w=v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
-        XCTAssertFalse(ui.contains("pairs with U2W v8.37"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.29"))
+        XCTAssertTrue(app.contains("paired_u2w=v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
+        XCTAssertFalse(ui.contains("pairs with U2W v8.38"))
     }
 
     func testWholeDriveOBDRecorderIsPassiveAndAutomatic() throws {

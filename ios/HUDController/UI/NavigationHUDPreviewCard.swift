@@ -49,9 +49,7 @@ struct NavigationHUDPreviewCard: View {
                         layoutDesignerControls
                         mapAppearanceControls
                         mapCropControls
-                        sizeControls
                         speedLimitSignControls
-                        widgetPositionControls
                         rightSideFineTuningControls
                         maneuverWarningControls
                         componentControls
@@ -75,7 +73,7 @@ struct NavigationHUDPreviewCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Custom Map Mode")
                     .font(.headline)
-                Text("Left / center / right HUD-safe layout • 480×240 cast target")
+                Text("Full-canvas 480×240 layout • preview matches physical HUD coordinates")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -144,7 +142,7 @@ struct NavigationHUDPreviewCard: View {
                     .stroke(.white.opacity(0.10), lineWidth: 1)
             }
 
-            Text("This preview always contains a sample map, speed-limit sign, maneuver, distance, lanes, and ETA so visual settings can be tuned outside the car. The preview above Map Mode remains the real current HUD-equivalent output.")
+            Text("This sample uses the same canonical 480×240 coordinates as the physical HUD. Every component can move across the full canvas. When ETA shares the lane position, sample lanes take priority and ETA is intentionally hidden.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -180,7 +178,7 @@ struct NavigationHUDPreviewCard: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(HudMapDesignerComponent.allCases) { component in
+                    ForEach(designerComponents) { component in
                         Button {
                             selectedDesignerComponent = component
                             designerDragging = false
@@ -219,12 +217,14 @@ struct NavigationHUDPreviewCard: View {
                             h.addLine(to: CGPoint(x: size.width, y: size.height * CGFloat(fraction)))
                             context.stroke(h, with: .color(gridColor), lineWidth: 0.6)
                         }
-                        for fraction in [0.20, 0.78] {
-                            var v = Path()
-                            v.move(to: CGPoint(x: size.width * CGFloat(fraction), y: 0))
-                            v.addLine(to: CGPoint(x: size.width * CGFloat(fraction), y: size.height))
-                            context.stroke(v, with: .color(guideColor), lineWidth: 1.0)
-                        }
+                        var centerV = Path()
+                        centerV.move(to: CGPoint(x: size.width * 0.5, y: 0))
+                        centerV.addLine(to: CGPoint(x: size.width * 0.5, y: size.height))
+                        context.stroke(centerV, with: .color(guideColor), lineWidth: 1.0)
+                        var centerH = Path()
+                        centerH.move(to: CGPoint(x: 0, y: size.height * 0.5))
+                        centerH.addLine(to: CGPoint(x: size.width, y: size.height * 0.5))
+                        context.stroke(centerH, with: .color(guideColor), lineWidth: 1.0)
                     }
                     .allowsHitTesting(false)
 
@@ -234,7 +234,7 @@ struct NavigationHUDPreviewCard: View {
                             DragGesture(minimumDistance: 1)
                                 .onChanged { value in
                                     if !designerDragging {
-                                        let current = state.mapModeSettings.designerOffset(for: selectedDesignerComponent)
+                                        let current = state.mapModeSettings.designerCanvasPosition(for: selectedDesignerComponent)
                                         designerDragOrigin = CGSize(width: CGFloat(current.x), height: CGFloat(current.y))
                                         designerDragging = true
                                     }
@@ -242,7 +242,7 @@ struct NavigationHUDPreviewCard: View {
                                     let sy = 240.0 / max(1.0, Double(proxy.size.height))
                                     let x = snapDesignerPixel(Double(designerDragOrigin.width) + Double(value.translation.width) * sx)
                                     let y = snapDesignerPixel(Double(designerDragOrigin.height) + Double(value.translation.height) * sy)
-                                    state.mapModeSettings.setDesignerOffset(selectedDesignerComponent, x: x, y: y)
+                                    state.mapModeSettings.setDesignerCanvasPosition(selectedDesignerComponent, x: x, y: y)
                                 }
                                 .onEnded { _ in
                                     designerDragging = false
@@ -271,10 +271,10 @@ struct NavigationHUDPreviewCard: View {
                     .stroke(accent.opacity(0.45), lineWidth: 1)
             }
 
-            let selectedOffset = state.mapModeSettings.designerOffset(for: selectedDesignerComponent)
+            let selectedOffset = state.mapModeSettings.designerCanvasPosition(for: selectedDesignerComponent)
             HStack(spacing: 8) {
                 Label(
-                    "x \(Int(selectedOffset.x)) • y \(Int(selectedOffset.y))",
+                    "x \(Int(selectedOffset.x)) / 480 • y \(Int(selectedOffset.y)) / 240",
                     systemImage: "move.3d"
                 )
                 .font(.caption.monospacedDigit())
@@ -325,7 +325,7 @@ struct NavigationHUDPreviewCard: View {
                 }
                 .buttonStyle(.bordered)
 
-                Button("Reset all free-move offsets") {
+                Button("Reset all component positions") {
                     state.mapModeSettings.resetAllDesignerOffsets()
                 }
                 .buttonStyle(.bordered)
@@ -369,12 +369,18 @@ struct NavigationHUDPreviewCard: View {
     }
 
     private func adjustSelectedDesigner(dx: Double, dy: Double) {
-        let current = state.mapModeSettings.designerOffset(for: selectedDesignerComponent)
-        state.mapModeSettings.setDesignerOffset(
+        let current = state.mapModeSettings.designerCanvasPosition(for: selectedDesignerComponent)
+        state.mapModeSettings.setDesignerCanvasPosition(
             selectedDesignerComponent,
             x: snapDesignerPixel(current.x + dx),
             y: snapDesignerPixel(current.y + dy)
         )
+    }
+
+    private var designerComponents: [HudMapDesignerComponent] {
+        HudMapDesignerComponent.allCases.filter {
+            !(state.mapModeSettings.etaUsesLanePositionWhenNoLanes && $0 == .eta)
+        }
     }
 
 
@@ -804,7 +810,7 @@ struct NavigationHUDPreviewCard: View {
     private var rightSideFineTuningControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Right-side component size / spacing")
+                Text("Navigation component styling")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Button("Reset styling") {
@@ -961,82 +967,7 @@ struct NavigationHUDPreviewCard: View {
 
             Divider().opacity(0.35)
 
-            Text("Vertical component spacing")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            tuningSlider(
-                icon: "arrow.up.and.down",
-                title: "Street → maneuver",
-                value: Binding(
-                    get: { state.mapModeSettings.streetToManeuverSpacing },
-                    set: { state.mapModeSettings.streetToManeuverSpacing = $0 }
-                ),
-                range: 0...20,
-                step: 1,
-                format: { "\(Int($0)) px" }
-            )
-            tuningSlider(
-                icon: "arrow.up.and.down",
-                title: "Maneuver → lanes",
-                value: Binding(
-                    get: { state.mapModeSettings.maneuverToLaneSpacing },
-                    set: { state.mapModeSettings.maneuverToLaneSpacing = $0 }
-                ),
-                range: 0...20,
-                step: 1,
-                format: { "\(Int($0)) px" }
-            )
-            tuningSlider(
-                icon: "arrow.up.and.down",
-                title: "Lanes → ETA",
-                value: Binding(
-                    get: { state.mapModeSettings.laneToETASpacing },
-                    set: { state.mapModeSettings.laneToETASpacing = $0 }
-                ),
-                range: 0...20,
-                step: 1,
-                format: { "\(Int($0)) px" }
-            )
-
-            HStack {
-                Text("Fine position")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Reset fine position") {
-                    state.mapModeSettings.resetRightComponentOffsets()
-                }
-                .font(.caption2)
-                .buttonStyle(.bordered)
-            }
-
-            positionPad(
-                title: "Turn arrow",
-                icon: "arrow.turn.up.right",
-                x: \.maneuverOffsetX,
-                y: \.maneuverOffsetY,
-                xRange: -12...12,
-                yRange: -10...10
-            )
-            positionPad(
-                title: "Lane guidance",
-                icon: "arrow.triangle.branch",
-                x: \.laneOffsetX,
-                y: \.laneOffsetY,
-                xRange: -12...12,
-                yRange: -10...10
-            )
-            positionPad(
-                title: "ETA / time left",
-                icon: "clock",
-                x: \.etaOffsetX,
-                y: \.etaOffsetY,
-                xRange: -12...12,
-                yRange: -10...10
-            )
-
-            Text("Size, spacing, boldness, and fine-position controls are persisted and applied to both the on-phone preview and the live 480×240 JPEG sent to U2W.")
+            Text("Position is controlled only by the full-canvas layout designer above. Legacy block spacing and fine-position controls are retired so the preview and physical HUD use one coordinate source.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -1049,23 +980,42 @@ struct NavigationHUDPreviewCard: View {
             Text("Visible components")
                 .font(.subheadline.weight(.semibold))
 
-            componentGroup("Left", rows: [
-                ("Speed", binding(\.showSpeed)),
-                ("Speed limit sign", binding(\.showSpeedLimit)),
-            ])
+            VStack(spacing: 7) {
+                componentToggle("Speed", binding(\.showSpeed))
+                componentToggle("Speed limit sign", binding(\.showSpeedLimit))
+                componentToggle("Map", binding(\.showMap))
+                componentToggle("Turning street", binding(\.showTurningStreet))
+                componentToggle("Turn maneuver", binding(\.showManeuver))
+                componentToggle("Distance", binding(\.showDistance))
+                componentToggle("Lane guidance", binding(\.showLaneGuidance))
+                componentToggle("ETA", binding(\.showETA))
+                componentToggle("Time left", binding(\.showTimeLeft))
+            }
 
-            componentGroup("Center", rows: [
-                ("Map", binding(\.showMap)),
-            ])
+            Divider().opacity(0.35)
 
-            componentGroup("Right", rows: [
-                ("Turning street", binding(\.showTurningStreet)),
-                ("Turn maneuver", binding(\.showManeuver)),
-                ("Distance", binding(\.showDistance)),
-                ("Lane guidance", binding(\.showLaneGuidance)),
-                ("ETA", binding(\.showETA)),
-                ("Time left", binding(\.showTimeLeft)),
-            ])
+            Toggle("Use lane-guidance position for ETA when lanes are unavailable", isOn: Binding(
+                get: { state.mapModeSettings.etaUsesLanePositionWhenNoLanes },
+                set: { enabled in
+                    state.mapModeSettings.etaUsesLanePositionWhenNoLanes = enabled
+                    if enabled && selectedDesignerComponent == .eta {
+                        selectedDesignerComponent = .lanes
+                    }
+                }
+            ))
+            .font(.caption)
+
+            Text("When enabled, lane arrows have priority. If no actual lane data is available, ETA appears at the Lane Guidance position instead. ETA is removed from the position selector because it no longer has an independent location. Time Left remains independent.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func componentToggle(_ title: String, _ value: Binding<Bool>) -> some View {
+        HStack {
+            Text(title).font(.caption)
+            Spacer()
+            Toggle("", isOn: value).labelsHidden()
         }
     }
 

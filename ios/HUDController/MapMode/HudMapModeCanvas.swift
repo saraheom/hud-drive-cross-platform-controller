@@ -17,94 +17,129 @@ struct HudMapModeCanvas: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let size = proxy.size
+            let scale = min(
+                proxy.size.width / 480.0,
+                proxy.size.height / 240.0
+            )
             ZStack {
                 Color.black
-
-                HStack(spacing: 0) {
-                    leftWidget
-                        .frame(width: size.width * 0.20, height: size.height)
-                        .scaleEffect(settings.leftScale)
-                        .offset(
-                            x: CGFloat(settings.leftOffsetX),
-                            y: CGFloat(settings.leftOffsetY)
-                        )
-
-                    centerWidget
-                        .frame(width: size.width * 0.58, height: size.height)
-                        .scaleEffect(settings.centerScale)
-                        .offset(
-                            x: CGFloat(settings.centerOffsetX + settings.designerMapOffsetX),
-                            y: CGFloat(settings.centerOffsetY + settings.designerMapOffsetY)
-                        )
-
-                    rightWidget
-                        .frame(width: size.width * 0.22, height: size.height)
-                        .scaleEffect(settings.rightScale)
-                        .offset(
-                            x: CGFloat(settings.rightOffsetX),
-                            y: CGFloat(settings.rightOffsetY)
-                        )
-                }
+                canonicalCanvas
+                    .frame(width: 480, height: 240)
+                    .scaleEffect(scale, anchor: .center)
             }
-            .frame(width: size.width, height: size.height)
+            .frame(width: proxy.size.width, height: proxy.size.height)
             .clipped()
         }
         .background(Color.black)
     }
 
-    private var leftWidget: some View {
-        VStack(spacing: 7) {
-            Spacer(minLength: 10)
+    /// v90.35.3.24.29 renders every Map Mode element directly on one canonical
+    /// 480x240 coordinate space. The old 20% / 58% / 22% parent HStack is gone;
+    /// the same final coordinates are therefore used by the phone preview and by
+    /// the 480x240 JPEG sent to the physical HUD.
+    private var canonicalCanvas: some View {
+        ZStack {
+            Color.black
 
-            Group {
-                if settings.showSpeed && !suppressCustomSpeedForNativeOBDProbe {
-                    VStack(spacing: -3) {
-                        Text("\(max(0, snapshot.speedMph))")
-                            .font(.system(size: 48, weight: .bold, design: .rounded))
-                            .minimumScaleFactor(0.55)
-                            .lineLimit(1)
-                            .foregroundStyle(speedNumberColor)
-                            .padding(.horizontal, speedWarningActive && settings.speedWarningBackgroundEnabled ? 6 : 0)
-                            .padding(.vertical, speedWarningActive && settings.speedWarningBackgroundEnabled ? 1 : 0)
-                            .background {
-                                if speedWarningActive && settings.speedWarningBackgroundEnabled {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(speedWarningBackgroundColor.opacity(settings.speedWarningBackgroundOpacity))
-                                }
-                            }
-                        Text("MPH")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.60))
+            if settings.showMap && snapshot.hasLiveRoute {
+                mapBlock
+                    .frame(width: 278, height: 240)
+                    .scaleEffect(settings.centerScale)
+                    .position(canvasPoint(.map))
+            }
+
+            if settings.showSpeed && !suppressCustomSpeedForNativeOBDProbe {
+                speedBlock
+                    .frame(width: 96, height: 72)
+                    .scaleEffect(settings.speedScale * settings.leftScale)
+                    .position(canvasPoint(.speed))
+            }
+
+            if settings.showSpeedLimit && snapshot.speedLimitMph > 0 {
+                usSpeedLimitSign
+                    .scaleEffect(settings.leftScale)
+                    .position(canvasPoint(.speedLimit))
+            }
+
+            if snapshot.hasLiveRoute {
+                if settings.showTurningStreet {
+                    streetBlock
+                        .frame(width: 108, height: 34)
+                        .scaleEffect(settings.rightScale)
+                        .position(canvasPoint(.turningStreet))
+                }
+
+                if settings.showManeuver {
+                    maneuverBlock
+                        .frame(width: 80, height: 58)
+                        .scaleEffect(settings.rightScale)
+                        .position(canvasPoint(.maneuver))
+                }
+
+                if settings.showDistance {
+                    distanceBlock
+                        .frame(width: 108, height: 34)
+                        .scaleEffect(settings.rightScale)
+                        .position(canvasPoint(.distance))
+                }
+
+                if laneGuidanceAvailable {
+                    laneGuidanceRow
+                        .frame(width: 112, height: CGFloat(30 * max(1.0, settings.laneScale)))
+                        .scaleEffect(settings.laneScale * settings.rightScale)
+                        .position(canvasPoint(.lanes))
+                }
+
+                if settings.showETA {
+                    if settings.etaUsesLanePositionWhenNoLanes {
+                        if !laneGuidanceAvailable {
+                            etaBlock
+                                .scaleEffect(settings.rightScale)
+                                .position(canvasPoint(.lanes))
+                        }
+                    } else {
+                        etaBlock
+                            .scaleEffect(settings.rightScale)
+                            .position(canvasPoint(.eta))
                     }
-                    .scaleEffect(settings.speedScale)
-                    .offset(
-                        x: CGFloat(settings.designerSpeedOffsetX / max(0.01, settings.leftScale)),
-                        y: CGFloat(settings.designerSpeedOffsetY / max(0.01, settings.leftScale))
-                    )
-                } else {
-                    // Keep a fixed speed slot even when the native item-10 probe owns
-                    // this region. That prevents any vertical layout shift.
-                    Color.clear.frame(height: 60)
+                }
+
+                if settings.showTimeLeft {
+                    timeLeftBlock
+                        .scaleEffect(settings.rightScale)
+                        .position(canvasPoint(.timeLeft))
                 }
             }
-            .frame(height: 60)
-
-            Group {
-                if settings.showSpeedLimit && snapshot.speedLimitMph > 0 {
-                    usSpeedLimitSign
-                } else {
-                    // No OSM speed limit = no white rectangle. Preserve the exact
-                    // sign slot so the speed number never re-centers vertically.
-                    Color.clear
-                        .frame(width: 42, height: CGFloat(34 * settings.speedLimitSignHeightScale))
-                }
-            }
-
-            Spacer(minLength: 10)
         }
+        .frame(width: 480, height: 240)
         .foregroundStyle(.white)
-        .frame(maxWidth: .infinity)
+        .clipped()
+    }
+
+    private func canvasPoint(_ component: HudMapDesignerComponent) -> CGPoint {
+        let p = settings.designerCanvasPosition(for: component)
+        return CGPoint(x: p.x, y: p.y)
+    }
+
+    private var speedBlock: some View {
+        VStack(spacing: -3) {
+            Text("\(max(0, snapshot.speedMph))")
+                .font(.system(size: 48, weight: .bold, design: .rounded))
+                .minimumScaleFactor(0.55)
+                .lineLimit(1)
+                .foregroundStyle(speedNumberColor)
+                .padding(.horizontal, speedWarningActive && settings.speedWarningBackgroundEnabled ? 6 : 0)
+                .padding(.vertical, speedWarningActive && settings.speedWarningBackgroundEnabled ? 1 : 0)
+                .background {
+                    if speedWarningActive && settings.speedWarningBackgroundEnabled {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(speedWarningBackgroundColor.opacity(settings.speedWarningBackgroundOpacity))
+                    }
+                }
+            Text("MPH")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.60))
+        }
     }
 
     private var speedWarningActive: Bool {
@@ -150,196 +185,113 @@ struct HudMapModeCanvas: View {
                     .padding(2)
             }
             .clipShape(RoundedRectangle(cornerRadius: 3))
-            .offset(
-                x: CGFloat(settings.designerSpeedLimitOffsetX / max(0.01, settings.leftScale)),
-                y: CGFloat(settings.designerSpeedLimitOffsetY / max(0.01, settings.leftScale))
-            )
     }
 
     @ViewBuilder
-    private var centerWidget: some View {
-        if settings.showMap && snapshot.hasLiveRoute {
-            Group {
-                if let sourceMapImage {
-                    // Deliberately content-blind: crop the same configured rectangle
-                    // from every live CarPlay frame. Dashboard, Maps, Music, or any
-                    // other CarPlay screen is treated identically.
-                    HudMapModeSourceCrop(
-                        image: sourceMapImage,
-                        appearance: settings.mapAppearance,
-                        zoom: settings.sourceMapZoom,
-                        offsetX: settings.sourceMapOffsetX,
-                        offsetY: settings.sourceMapOffsetY
-                    )
-                } else {
-                    HudMapModeSchematic(
-                        snapshot: snapshot,
-                        appearance: settings.mapAppearance,
-                        routeBlue: routeBlue
-                    )
-                }
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 4)
-            .mask(edgeFadeMask(
-                fraction: settings.mapFadeHorizontal,
-                startPoint: .leading,
-                endPoint: .trailing
-            ))
-            .mask(edgeFadeMask(
-                fraction: settings.mapFadeVertical,
-                startPoint: .top,
-                endPoint: .bottom
-            ))
-        } else {
-            Color.clear
-        }
-    }
-
-    @ViewBuilder
-    private var rightWidget: some View {
-        if snapshot.hasLiveRoute {
-            rightNavigationWidget
-        } else {
-            Color.clear
-        }
-    }
-
-    private var rightNavigationWidget: some View {
-        VStack(alignment: .center, spacing: 0) {
-            Spacer(minLength: 8)
-
-            if settings.showTurningStreet {
-                Text(nonempty(snapshot.turningStreet, fallback: "Upcoming road"))
-                    .font(.system(
-                        size: CGFloat(10.5 * settings.turningStreetScale),
-                        weight: .semibold
-                    ))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.62)
-                    .allowsTightening(true)
-                    .multilineTextAlignment(.center)
-                    // Always reserve two lines. Short names stay on the top line;
-                    // long names wrap at a word boundary instead of clipping right.
-                    .frame(maxWidth: .infinity, minHeight: 29, maxHeight: 29, alignment: .top)
-                    .offset(
-                        x: CGFloat(settings.designerStreetOffsetX / max(0.01, settings.rightScale)),
-                        y: CGFloat(settings.designerStreetOffsetY / max(0.01, settings.rightScale))
-                    )
-            }
-
-            if settings.showTurningStreet && (settings.showManeuver || settings.showDistance) {
-                Color.clear.frame(height: CGFloat(settings.streetToManeuverSpacing))
-            }
-
-            if settings.showManeuver || settings.showDistance {
-                VStack(spacing: 2) {
-                    if settings.showManeuver {
-                        Group {
-                            if let mergeKind = mergeManeuverKind {
-                                MergeManeuverGlyph(
-                                    kind: mergeKind,
-                                    color: .white,
-                                    lineWidth: CGFloat(max(1.0, min(3.0, settings.maneuverArrowThickness * 1.05)))
-                                )
-                                .frame(width: 34, height: 38)
-                            } else {
-                                Image(systemName: snapshot.maneuver.symbol)
-                                    .font(.system(
-                                        size: CGFloat(34 * settings.maneuverArrowScale),
-                                        weight: symbolWeight(settings.maneuverArrowThickness)
-                                    ))
-                            }
-                        }
-                        .foregroundStyle(.white)
-                        .opacity(warningHiddenTarget == .maneuverArrow ? 0 : 1)
-                        .scaleEffect(settings.maneuverArrowScale)
-                        .frame(height: CGFloat(40 * max(1.0, settings.maneuverArrowScale)))
-                        .offset(
-                            x: CGFloat(settings.maneuverOffsetX + settings.designerManeuverOffsetX / max(0.01, settings.rightScale)),
-                            y: CGFloat(settings.maneuverOffsetY + settings.designerManeuverOffsetY / max(0.01, settings.rightScale))
-                        )
-                    }
-
-                    if settings.showDistance {
-                        Text(nonempty(snapshot.distanceText, fallback: "—"))
-                            .font(.system(
-                                size: CGFloat(19 * settings.distanceScale),
-                                weight: .bold,
-                                design: .rounded
-                            ))
-                            .minimumScaleFactor(0.50)
-                            .lineLimit(1)
-                            .opacity(warningHiddenTarget == .distance ? 0 : 1)
-                            .offset(
-                                x: CGFloat(settings.designerDistanceOffsetX / max(0.01, settings.rightScale)),
-                                y: CGFloat(settings.designerDistanceOffsetY / max(0.01, settings.rightScale))
-                            )
-                    }
-                }
-            }
-
-            if (settings.showManeuver || settings.showDistance) && settings.showLaneGuidance {
-                Color.clear.frame(height: CGFloat(settings.maneuverToLaneSpacing))
-            }
-
-            if settings.showLaneGuidance {
-                laneGuidanceRow
-                    .frame(height: CGFloat(25 * max(1.0, settings.laneScale)))
-                    .scaleEffect(settings.laneScale)
-                    .offset(
-                        x: CGFloat(settings.laneOffsetX + settings.designerLaneOffsetX / max(0.01, settings.rightScale)),
-                        y: CGFloat(settings.laneOffsetY + settings.designerLaneOffsetY / max(0.01, settings.rightScale))
-                    )
-            }
-
-            if settings.showLaneGuidance && (settings.showETA || settings.showTimeLeft) {
-                Color.clear.frame(height: CGFloat(settings.laneToETASpacing))
-            }
-
-            if settings.showETA || settings.showTimeLeft {
-                VStack(spacing: 0) {
-                    if settings.showETA {
-                        Text("ETA \(etaDisplayText(snapshot.etaText))")
-                            .font(.system(
-                                size: CGFloat(9.5 * settings.etaScale),
-                                weight: .semibold,
-                                design: .rounded
-                            ))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.55)
-                            .offset(
-                                x: CGFloat(settings.designerETAOffsetX / max(0.01, settings.rightScale)),
-                                y: CGFloat(settings.designerETAOffsetY / max(0.01, settings.rightScale))
-                            )
-                    }
-                    if settings.showTimeLeft {
-                        Text(nonempty(snapshot.timeLeftText, fallback: "—"))
-                            .font(.system(
-                                size: CGFloat(9.5 * settings.etaScale * settings.timeLeftScale),
-                                weight: .medium,
-                                design: .rounded
-                            ))
-                            .foregroundStyle(.white.opacity(0.64))
-                            .lineLimit(1)
-                            .offset(
-                                x: CGFloat(settings.designerTimeLeftOffsetX / max(0.01, settings.rightScale)),
-                                y: CGFloat(settings.designerTimeLeftOffsetY / max(0.01, settings.rightScale))
-                            )
-                    }
-                }
-                .offset(
-                    x: CGFloat(settings.etaOffsetX),
-                    y: CGFloat(settings.etaOffsetY)
+    private var mapBlock: some View {
+        Group {
+            if let sourceMapImage {
+                HudMapModeSourceCrop(
+                    image: sourceMapImage,
+                    appearance: settings.mapAppearance,
+                    zoom: settings.sourceMapZoom,
+                    offsetX: settings.sourceMapOffsetX,
+                    offsetY: settings.sourceMapOffsetY
+                )
+            } else {
+                HudMapModeSchematic(
+                    snapshot: snapshot,
+                    appearance: settings.mapAppearance,
+                    routeBlue: routeBlue
                 )
             }
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 4)
+        .mask(edgeFadeMask(
+            fraction: settings.mapFadeHorizontal,
+            startPoint: .leading,
+            endPoint: .trailing
+        ))
+        .mask(edgeFadeMask(
+            fraction: settings.mapFadeVertical,
+            startPoint: .top,
+            endPoint: .bottom
+        ))
+    }
 
-            Spacer(minLength: 8)
+    private var streetBlock: some View {
+        Text(nonempty(snapshot.turningStreet, fallback: "Upcoming road"))
+            .font(.system(
+                size: CGFloat(10.5 * settings.turningStreetScale),
+                weight: .semibold
+            ))
+            .foregroundStyle(.white)
+            .lineLimit(2)
+            .minimumScaleFactor(0.62)
+            .allowsTightening(true)
+            .multilineTextAlignment(.center)
+            .frame(width: 104, height: 32, alignment: .center)
+    }
+
+    @ViewBuilder
+    private var maneuverBlock: some View {
+        Group {
+            if let mergeKind = mergeManeuverKind {
+                MergeManeuverGlyph(
+                    kind: mergeKind,
+                    color: .white,
+                    lineWidth: CGFloat(max(1.0, min(3.0, settings.maneuverArrowThickness * 1.05)))
+                )
+                .frame(width: 34, height: 38)
+            } else {
+                Image(systemName: snapshot.maneuver.symbol)
+                    .font(.system(size: 34, weight: symbolWeight(settings.maneuverArrowThickness)))
+            }
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 7)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .opacity(warningHiddenTarget == .maneuverArrow ? 0 : 1)
+        .scaleEffect(settings.maneuverArrowScale)
+    }
+
+    private var distanceBlock: some View {
+        Text(nonempty(snapshot.distanceText, fallback: "—"))
+            .font(.system(
+                size: CGFloat(19 * settings.distanceScale),
+                weight: .bold,
+                design: .rounded
+            ))
+            .minimumScaleFactor(0.50)
+            .lineLimit(1)
+            .opacity(warningHiddenTarget == .distance ? 0 : 1)
+    }
+
+    private var laneGuidanceAvailable: Bool {
+        settings.showLaneGuidance && !effectiveLaneValues.isEmpty
+    }
+
+    private var etaBlock: some View {
+        Text("ETA \(etaDisplayText(snapshot.etaText))")
+            .font(.system(
+                size: CGFloat(9.5 * settings.etaScale),
+                weight: .semibold,
+                design: .rounded
+            ))
+            .lineLimit(1)
+            .minimumScaleFactor(0.55)
+            .frame(width: 118, height: 24)
+    }
+
+    private var timeLeftBlock: some View {
+        Text(nonempty(snapshot.timeLeftText, fallback: "—"))
+            .font(.system(
+                size: CGFloat(9.5 * settings.etaScale * settings.timeLeftScale),
+                weight: .medium,
+                design: .rounded
+            ))
+            .foregroundStyle(.white.opacity(0.64))
+            .lineLimit(1)
+            .frame(width: 118, height: 22)
     }
 
     private func etaDisplayText(_ raw: String) -> String {

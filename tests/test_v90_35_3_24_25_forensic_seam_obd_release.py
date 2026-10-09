@@ -14,13 +14,13 @@ BUNDLE = (U2W / "source/u2wvideo-forensic-bundle.cgi").read_text()
 
 
 def test_release_pair_and_navigation_safety_boundary():
-    assert "appVersion=v90.35.3.24.28" in APP
-    assert "v90.35.3.24.28 MainVideo client for U2W v8.37 forensic seam capture" in VIDEO
+    assert "appVersion=v90.35.3.24.29" in APP
+    assert "v90.35.3.24.29 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture" in VIDEO
     assert "exact v8.31 raw relay" in VIDEO
     assert "unchanged v8.34 Hard-Bounded Mirror" in VIDEO
     assert "u2wvideo-forensic-status.cgi" in APP
     assert "u2wvideo-forensic-bundle.cgi" in APP
-    assert 'evidence.append(("U2W_v8.37_ForensicSeams.tar.gz", forensic))' in APP
+    assert 'evidence.append(("U2W_v8.38_ForensicAndBootstrap.tar.gz", forensic))' in APP
 
 
 def test_first_failure_is_reserved_and_raw_evidence_is_rolling_bounded():

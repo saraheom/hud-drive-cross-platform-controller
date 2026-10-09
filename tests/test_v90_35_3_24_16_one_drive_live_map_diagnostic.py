@@ -9,8 +9,8 @@ UI = (ROOT / 'ios/HUDController/UI/NavigationHUDPreviewCard.swift').read_text()
 
 
 def test_v2416_version_and_unchanged_v831_pair():
-    assert 'appVersion=v90.35.3.24.28' in APP
-    assert 'v90.35.3.24.28 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in CLIENT
+    assert 'appVersion=v90.35.3.24.29' in APP
+    assert 'v90.35.3.24.29 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in CLIENT
     assert 'v8.34-hard-bounded-mirror-v831-raw-tcp-15332' in CLIENT
 
 
@@ -18,8 +18,10 @@ def test_exact_raw_tcp_bytes_are_captured_before_annexb_parser():
     raw_block = CLIENT.index('private func receiveRawBytes')
     section = CLIENT[raw_block: raw_block + 1800]
     assert 'self.onRawBytes?(data)' in section
-    assert 'self.annexBParser.append(data)' in section
-    assert section.index('self.onRawBytes?(data)') < section.index('self.annexBParser.append(data)')
+    assert ('self.annexBParser.append(data)' in section or 'self.feedStartupBytes(data' in section)
+    assert 'for nal in annexBParser.append(data)' in CLIENT
+    parser_call = 'self.annexBParser.append(data)' if 'self.annexBParser.append(data)' in section else 'self.feedStartupBytes(data'
+    assert section.index('self.onRawBytes?(data)') < section.index(parser_call)
     assert 'diagnosticRecorder.ingestRawH264(data)' in CLIENT
 
 

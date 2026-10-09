@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.28 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.29 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -98,6 +98,8 @@ final class U2WMainVideoClient {
     private var preflightPassLogged = false
     private var decoderRecoveryPending = false
     private var backgroundedAt: Date?
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTaskExpired = false
     private var lifecycleActive = true
     private var lifecycleGeneration: UInt64 = 0
     private var lifecycleRecoveryTask: Task<Void, Never>?
@@ -117,6 +119,8 @@ final class U2WMainVideoClient {
     private let relayStatusEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi")!
     private let relayStopEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-relay-stop.cgi")!
     private let keyframeRequestEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-request-keyframe.cgi")!
+    private let bootstrapPreviousEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-bootstrap-previous.cgi")!
+    private let bootstrapCurrentEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-bootstrap-current.cgi")!
 
     private let decoderStaleFrameInterval: TimeInterval = 3.0
     private let startupDecoderGraceFrameCount = 10
@@ -159,6 +163,8 @@ final class U2WMainVideoClient {
         preflightPassLogged = false
         decoderRecoveryPending = false
         backgroundedAt = nil
+        backgroundTaskExpired = false
+        endBackgroundContinuityTask(reason: "new MainVideo start")
         lifecycleActive = true
         lifecycleGeneration &+= 1
         lifecycleRecoveryTask?.cancel(); lifecycleRecoveryTask = nil
@@ -183,7 +189,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.37-forensic-sidecar-v835-helper-v834-hardmirror-v831-raw-tcp-15332 inherited=v8.35-bounded-keyframe-v834-hardmirror-v831-raw-tcp-15332 base architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.38-readonly-bootstrap-v837-forensic-v835-helper-v834-hardmirror-v831-raw-tcp-15332 inherited=v8.35-bounded-keyframe-v834-hardmirror-v831-raw-tcp-15332 base architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
         diagnosticRecorder.record("mainvideo", "start", fields: ["reason": reason, "generation": workerGeneration + 1])
         startNetworkPathLogging()
         startFreshnessWatchdog()
@@ -202,7 +208,12 @@ final class U2WMainVideoClient {
                 guard self.running, !Task.isCancelled else { return }
                 if ready {
                     self.logger.log("MAINVIDEO PREFLIGHT", "v8.34 hard-bounded-mirror raw relay confirmed RUNNING before TCP open attempt=\(attempt)")
-                    self.startWorker(reason: "relay confirmed / \(reason)")
+                    // v24.29: attach the exact v8.31 live-edge TCP relay FIRST. The worker
+                    // buffers those live bytes while the read-only v8.38 previous/current
+                    // snapshots are fetched. This removes the bootstrap->live transfer gap:
+                    // the current snapshot is overlapped against the already-buffered TCP
+                    // bytes before either side is fed to the Annex-B parser.
+                    self.startWorker(reason: "relay confirmed / \(reason)", startupBootstrap: true)
                     return
                 }
                 self.status = "Waiting for explicit Map Mode recovery relay…"
@@ -215,6 +226,65 @@ final class U2WMainVideoClient {
                 self.logger.log("MAINVIDEO PREFLIGHT", "FAIL CLOSED: lossless-mirror raw relay unavailable after 3 attempts; no further adapter retries")
             }
         }
+    }
+
+    /// v90.35.3.24.29 / U2W v8.38: after the exact v8.31 live-edge TCP client is
+    /// already attached and buffering, fetch passive read-only mirror history. The
+    /// adapter does not parse H.264 or replay snapshots through TCP; the iPhone proves
+    /// a byte overlap between the current snapshot and buffered live bytes, then feeds
+    /// one continuous Annex-B stream through the existing sanitizer/decoder. Failure is
+    /// safe: snapshots are discarded and startup falls back to WAITING_LIVE_IDR.
+    private func fetchStartupBootstrapSnapshots(reason: String) async -> [U2WMainVideoBootstrapSnapshot] {
+        // Fetch CURRENT first. If a mirror rotation occurs before PREVIOUS is fetched,
+        // the generation headers let us safely reject that stale/mismatched pair while
+        // still using CURRENT when its snapshot/live overlap is proven.
+        let endpoints: [(String, URL)] = [
+            ("current-generation", bootstrapCurrentEndpoint),
+            ("previous-generation", bootstrapPreviousEndpoint),
+        ]
+        var snapshots: [U2WMainVideoBootstrapSnapshot] = []
+        let maxSnapshotBytes = 9 * 1024 * 1024
+        for (label, url) in endpoints {
+            var captured = false
+            for attempt in 1...2 {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.timeoutIntervalForRequest = 4
+                configuration.timeoutIntervalForResource = 8
+                configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+                let session = URLSession(configuration: configuration)
+                defer { session.invalidateAndCancel() }
+                do {
+                    var request = URLRequest(url: url)
+                    request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                    let (data, response) = try await session.data(for: request)
+                    let http = response as? HTTPURLResponse
+                    let code = http?.statusCode ?? -1
+                    guard code == 200, !data.isEmpty, data.count <= maxSnapshotBytes else {
+                        logger.log("U2W BOOTSTRAP", "snapshot \(label) unavailable HTTP=\(code) bytes=\(data.count) attempt=\(attempt)/2 reason=\(reason)")
+                        diagnosticRecorder.record("startup_bootstrap", "snapshot_unavailable", fields: ["label": label, "http": code, "bytes": data.count, "attempt": attempt])
+                        if code == 204 { break }
+                        if attempt < 2 { try? await Task.sleep(for: .milliseconds(100)) }
+                        continue
+                    }
+                    let generation = http?.value(forHTTPHeaderField: "X-U2W-Generation").flatMap(Int.init)
+                    let nextGeneration = http?.value(forHTTPHeaderField: "X-U2W-Next-Generation").flatMap(Int.init)
+                    let sha1 = http?.value(forHTTPHeaderField: "X-U2W-SHA1")
+                    snapshots.append(.init(label: label, data: data, generation: generation, nextGeneration: nextGeneration, sha1: sha1))
+                    logger.log("U2W BOOTSTRAP", "snapshot \(label) fetched bytes=\(data.count) generation=\(generation.map { String($0) } ?? "?") next=\(nextGeneration.map { String($0) } ?? "?") attempt=\(attempt) reason=\(reason)")
+                    diagnosticRecorder.record("startup_bootstrap", "snapshot_fetched", fields: ["label": label, "bytes": data.count, "generation": generation ?? -1, "next_generation": nextGeneration ?? -1, "attempt": attempt])
+                    captured = true
+                    break
+                } catch {
+                    logger.log("U2W BOOTSTRAP", "snapshot \(label) failed attempt=\(attempt)/2 error=\(error.localizedDescription); live-IDR fallback preserved")
+                    diagnosticRecorder.record("startup_bootstrap", "snapshot_failed", fields: ["label": label, "attempt": attempt, "error": error.localizedDescription])
+                    if attempt < 2 { try? await Task.sleep(for: .milliseconds(100)) }
+                }
+            }
+            if !captured {
+                logger.log("U2W BOOTSTRAP", "snapshot \(label) not captured after bounded attempts; continuing fail-safe")
+            }
+        }
+        return snapshots
     }
 
     @discardableResult
@@ -266,6 +336,7 @@ final class U2WMainVideoClient {
             let v834MirrorMarker = fields["v834_mirror_marker"] ?? "?"
             let v836Marker = fields["v836_marker"] ?? "?"
             let v837Marker = fields["v837_marker"] ?? "?"
+            let v838Marker = fields["v838_marker"] ?? "?"
             let seamCountText = fields["seam_event_count"] ?? "0"
             let completeSamplesText = fields["complete_boundary_samples"] ?? fields["seam_complete_samples"] ?? fields["complete_sample_count"] ?? "0"
             let seamLatest = fields["seam_latest"] ?? "none"
@@ -281,7 +352,7 @@ final class U2WMainVideoClient {
             let generationChanges = fields["source_generation_changes"] ?? "?"
             adapterRelayVersion = relayVersion
             adapterRelayClientState = clientState
-            adapterSeamObserverActive = v837Marker == "YES" || v836Marker == "YES"
+            adapterSeamObserverActive = v838Marker == "YES" || v837Marker == "YES" || v836Marker == "YES"
             if let seamCount = Int(seamCountText), seamCount != adapterSeamEventCount {
                 let previous = adapterSeamEventCount
                 adapterSeamEventCount = seamCount
@@ -293,6 +364,7 @@ final class U2WMainVideoClient {
                     "latest": seamLatest,
                     "relay_version": relayVersion,
                     "v837_marker": v837Marker,
+                    "v838_marker": v838Marker,
                     "complete_boundary_samples": completeSamplesText
                 ])
             } else if seamLatest != "none" {
@@ -408,7 +480,7 @@ final class U2WMainVideoClient {
             adapterRelayConfirmedRunning = ready
             logger.log(
                 "U2W H264 RELAY",
-                "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) package=\(packageVersion) markers={legacy=\(legacyMarker),v835=\(v835Marker),v834=\(v834MirrorMarker),v836=\(v836Marker)} seam=\(seamCountText) \(adapterCacheSummary)"
+                "status reason=\(reason) HTTP=\(code) ready=\(ready ? 1 : 0) version=\(relayVersion) package=\(packageVersion) markers={legacy=\(legacyMarker),v835=\(v835Marker),v834=\(v834MirrorMarker),v836=\(v836Marker),v837=\(v837Marker),v838=\(v838Marker)} seam=\(seamCountText) \(adapterCacheSummary)"
             )
             return ready
         } catch {
@@ -420,14 +492,23 @@ final class U2WMainVideoClient {
         }
     }
 
-    private func startWorker(reason: String) {
+    private func startWorker(reason: String, startupBootstrap: Bool = false) {
         worker?.stop()
         workerGeneration &+= 1
         let generation = workerGeneration
         connectedAt = nil
         lastReceivedBytesAt = nil
 
-        let worker = U2WMainVideoTCPWorker(host: "192.168.50.2", port: 15332)
+        let worker = U2WMainVideoTCPWorker(host: "192.168.50.2", port: 15332, startupBootstrapRequested: startupBootstrap)
+        worker.onStartupBootstrapBufferingReady = { [weak self, weak worker] in
+            Task { @MainActor [weak self, weak worker] in
+                guard let self, let worker, self.running, self.workerGeneration == generation, self.worker === worker else { return }
+                self.logger.log("U2W BOOTSTRAP", "live TCP attached and buffering; fetching read-only previous/current generations")
+                let snapshots = await self.fetchStartupBootstrapSnapshots(reason: reason)
+                guard self.running, self.workerGeneration == generation, self.worker === worker else { return }
+                worker.applyStartupBootstrapSnapshots(snapshots)
+            }
+        }
         worker.onRawBytes = { [weak self] data in
             self?.diagnosticRecorder.ingestRawH264(data)
         }
@@ -782,6 +863,7 @@ final class U2WMainVideoClient {
     func applicationDidEnterBackground() {
         guard running else { return }
         backgroundedAt = backgroundedAt ?? Date()
+        beginBackgroundContinuityTask()
         pauseDecoderForLifecycle(reason: "scene background")
     }
 
@@ -809,6 +891,7 @@ final class U2WMainVideoClient {
         let now = Date()
         let backgroundDuration = backgroundedAt.map { now.timeIntervalSince($0) }
         backgroundedAt = nil
+        endBackgroundContinuityTask(reason: "scene active")
         lifecycleGeneration &+= 1
         let generation = lifecycleGeneration
         lifecycleActive = true
@@ -826,6 +909,32 @@ final class U2WMainVideoClient {
             self.logger.log("U2W VIDEO LIFECYCLE", "Stable foreground confirmed generation=\(generation); existing VideoToolbox/reference chain retained; no IDR dependency manufactured")
             self.diagnosticRecorder.record("lifecycle", "stable_active_preserved", fields: ["generation": generation])
         }
+    }
+
+    private func beginBackgroundContinuityTask() {
+        guard running, backgroundTaskID == .invalid else { return }
+        backgroundTaskExpired = false
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "HUD Map Mode continuity") { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.backgroundTaskExpired = true
+                self.logger.log("U2W VIDEO BACKGROUND", "bounded iOS background continuity task expired; TCP/decoder state left untouched for suspension/resume")
+                self.diagnosticRecorder.record("lifecycle", "background_task_expired", fields: ["phase": self.transportPhase])
+                self.endBackgroundContinuityTask(reason: "expiration")
+            }
+        }
+        if backgroundTaskID != .invalid {
+            logger.log("U2W VIDEO BACKGROUND", "started bounded background continuity task; MainVideo TCP + VideoToolbox + HUD relay may continue during short app switches")
+            diagnosticRecorder.record("lifecycle", "background_task_started", fields: ["phase": transportPhase])
+        }
+    }
+
+    private func endBackgroundContinuityTask(reason: String) {
+        guard backgroundTaskID != .invalid else { return }
+        let id = backgroundTaskID
+        backgroundTaskID = .invalid
+        UIApplication.shared.endBackgroundTask(id)
+        logger.log("U2W VIDEO BACKGROUND", "ended bounded background continuity task reason=\(reason) expired=\(backgroundTaskExpired ? 1 : 0)")
     }
 
     private func scheduleBoundedKeyframeRequest(reason: String, delay: TimeInterval, requiredPhases: Set<String>) {
@@ -893,6 +1002,7 @@ final class U2WMainVideoClient {
     func stop(reason: String) {
         guard running || worker != nil else { status = "U2W main video idle"; return }
         running = false
+        endBackgroundContinuityTask(reason: "MainVideo stop / \(reason)")
         freshnessTask?.cancel(); freshnessTask = nil
         bootstrapTask?.cancel(); bootstrapTask = nil
         lifecycleRecoveryTask?.cancel(); lifecycleRecoveryTask = nil
@@ -1020,7 +1130,15 @@ final class U2WMainVideoClient {
 /// Dedicated TCP/15332 worker.  The adapter already provides explicit NAL
 /// boundaries, so the iPhone no longer has to recover Annex-B boundaries from a
 /// Boa byte stream. Syntax validation remains on the iPhone before VideoToolbox.
-private final class U2WMainVideoTCPWorker {
+private struct U2WMainVideoBootstrapSnapshot {
+    let label: String
+    let data: Data
+    let generation: Int?
+    let nextGeneration: Int?
+    let sha1: String?
+}
+
+final class U2WMainVideoTCPWorker {
     let host: NWEndpoint.Host
     let port: NWEndpoint.Port
     var onStatus: ((String, Bool) -> Void)?
@@ -1072,10 +1190,18 @@ private final class U2WMainVideoTCPWorker {
     ]
     private let magicLength = 8
     private let maximumNALBytes = 512 * 1024
+    private let startupBootstrapRequested: Bool
+    private let startupBridgeCapBytes = 16 * 1024 * 1024
+    private var startupBridgeBuffer = Data()
+    private var startupBootstrapBuffering = false
+    private var startupBootstrapApplied = false
+    private var startupBootstrapReadyNotified = false
+    var onStartupBootstrapBufferingReady: (() -> Void)?
 
-    init(host: String, port: UInt16) {
+    init(host: String, port: UInt16, startupBootstrapRequested: Bool = false) {
         self.host = NWEndpoint.Host(host)
         self.port = NWEndpoint.Port(rawValue: port)!
+        self.startupBootstrapRequested = startupBootstrapRequested
         decoder.onFrame = { [weak self] image in
             guard let self else { return }
             if self.recentAnchorRecoveryUsed || self.waitingForFreshLiveIDRAfterRejectedAnchor {
@@ -1107,6 +1233,10 @@ private final class U2WMainVideoTCPWorker {
         boundedCheckpointRecovery = false
         lifecyclePaused = false
         decoder.reset()
+        startupBridgeBuffer.removeAll(keepingCapacity: false)
+        startupBootstrapBuffering = false
+        startupBootstrapApplied = false
+        startupBootstrapReadyNotified = false
         openConnection()
     }
 
@@ -1124,6 +1254,10 @@ private final class U2WMainVideoTCPWorker {
         rawNavigationPriorityMode = false
         boundedCheckpointRecovery = false
         lifecyclePaused = false
+        startupBridgeBuffer.removeAll(keepingCapacity: false)
+        startupBootstrapBuffering = false
+        startupBootstrapApplied = false
+        startupBootstrapReadyNotified = false
         decoder.reset()
         onPhase?("IDLE")
     }
@@ -1372,6 +1506,18 @@ private final class U2WMainVideoTCPWorker {
                 self.liveIDROnlyRecovery = true
                 self.boundedCheckpointRecovery = false
                 self.annexBParser.reset()
+                if self.startupBootstrapRequested && !self.startupBootstrapApplied {
+                    // The exact v8.31 relay is now attached at the live edge BEFORE
+                    // snapshot fetch. Hold its raw bytes until the current snapshot
+                    // can be overlap-joined to this live buffer with no transfer gap.
+                    self.startupBootstrapBuffering = true
+                    self.startupBridgeBuffer.removeAll(keepingCapacity: true)
+                    self.onDiagnostic?("STARTUP_BOOTSTRAP_LIVE_BRIDGE armed on U2WH2648; buffering exact v8.31 live-edge bytes before snapshot fetch")
+                    if !self.startupBootstrapReadyNotified {
+                        self.startupBootstrapReadyNotified = true
+                        self.onStartupBootstrapBufferingReady?()
+                    }
+                }
                 self.onPhase?("WAITING_LIVE_IDR")
                 self.onStatus?("U2W raw relay connected • iPhone parsing lossless mirror", true)
                 self.onDiagnostic?("TCP relay handshake U2WH2648 accepted; v8.35 package keeps exact v8.31 raw relay + unchanged v8.34 hard-bounded mirror; adapter parser/cache=NONE; raw Annex-B parsing owned by iPhone; mirror rotation is lossless/atomic")
@@ -1436,6 +1582,83 @@ private final class U2WMainVideoTCPWorker {
         }
     }
 
+    func applyStartupBootstrapSnapshots(_ snapshots: [U2WMainVideoBootstrapSnapshot]) {
+        queue.async { [weak self] in
+            guard let self, self.running, self.startupBootstrapBuffering, !self.startupBootstrapApplied else { return }
+            let bridge = self.startupBridgeBuffer
+            self.startupBridgeBuffer.removeAll(keepingCapacity: false)
+            self.startupBootstrapBuffering = false
+            self.startupBootstrapApplied = true
+
+            guard !snapshots.isEmpty else {
+                self.onDiagnostic?("STARTUP_BOOTSTRAP_END no snapshots available; flushing \(bridge.count) buffered live bytes and preserving normal WAITING_LIVE_IDR fallback")
+                self.feedStartupBytes(bridge, generation: self.connectionGeneration, source: "live-bridge-no-snapshot")
+                return
+            }
+
+            let previous = snapshots.first(where: { $0.label == "previous-generation" })
+            let currentSnapshot = snapshots.first(where: { $0.label == "current-generation" })
+            let current = currentSnapshot?.data
+            self.onDiagnostic?("STARTUP_BOOTSTRAP_BEGIN snapshots=\(snapshots.count) bridgeBytes=\(bridge.count); exact v8.31 TCP stayed attached while snapshots transferred")
+
+            guard let current, !current.isEmpty,
+                  let overlap = Self.bootstrapOverlap(currentSnapshot: current, liveBridge: bridge) else {
+                self.onDiagnostic?("STARTUP_BOOTSTRAP_ABORT overlap_not_proven current=\(current?.count ?? 0) bridge=\(bridge.count); snapshots NOT fed; flushing live bridge only")
+                self.feedStartupBytes(bridge, generation: self.connectionGeneration, source: "live-bridge-overlap-fallback")
+                return
+            }
+
+            // PREVIOUS is safe only when its observer metadata proves it immediately
+            // precedes the exact CURRENT generation we just overlap-joined to live TCP.
+            // A rotation between the two HTTP requests therefore degrades safely to
+            // CURRENT+live instead of ever injecting a skipped generation.
+            let previousPairIsCoherent: Bool = {
+                guard let previous,
+                      let previousNext = previous.nextGeneration,
+                      let currentGeneration = currentSnapshot?.generation else { return false }
+                return previousNext == currentGeneration
+            }()
+            if let previous, !previous.data.isEmpty, previousPairIsCoherent {
+                self.onDiagnostic?("STARTUP_BOOTSTRAP_SNAPSHOT label=previous-generation bytes=\(previous.data.count) generation=\(previous.generation.map { String($0) } ?? "?") next=\(previous.nextGeneration.map { String($0) } ?? "?") pair=COHERENT")
+                self.feedStartupBytes(previous.data, generation: 0, source: "previous-generation")
+            } else if let previous {
+                self.onDiagnostic?("STARTUP_BOOTSTRAP_SKIP previous-generation pair=MISMATCH_OR_UNPROVEN previousGen=\(previous.generation.map { String($0) } ?? "?") previousNext=\(previous.nextGeneration.map { String($0) } ?? "?") currentGen=\(currentSnapshot?.generation.map { String($0) } ?? "?"); CURRENT+live remains safe")
+            }
+            self.onDiagnostic?("STARTUP_BOOTSTRAP_SNAPSHOT label=current-generation bytes=\(current.count) generation=\(currentSnapshot?.generation.map { String($0) } ?? "?") overlapAnchor=\(overlap.anchorLength) bridgeResume=\(overlap.bridgeResumeOffset)")
+            self.feedStartupBytes(current, generation: 0, source: "current-generation")
+            if overlap.bridgeResumeOffset < bridge.count {
+                let tail = bridge.subdata(in: overlap.bridgeResumeOffset..<bridge.count)
+                self.feedStartupBytes(tail, generation: self.connectionGeneration, source: "live-bridge-post-overlap")
+            }
+            self.emitSanitizerStats()
+            self.onDiagnostic?("STARTUP_BOOTSTRAP_END continuous_join=YES stats={\(self.sanitizer.stats.summary)}; exact v8.31 TCP remains live")
+        }
+    }
+
+    private func feedStartupBytes(_ data: Data, generation: Int, source: String) {
+        guard !data.isEmpty else { return }
+        for nal in annexBParser.append(data) { processNAL(nal, generation: generation) }
+        emitSanitizerStats()
+        if data.count >= 1024 * 1024 {
+            onDiagnostic?("STARTUP_BOOTSTRAP_FEED source=\(source) bytes=\(data.count)")
+        }
+    }
+
+    private static func bootstrapOverlap(currentSnapshot: Data, liveBridge: Data) -> (bridgeResumeOffset: Int, anchorLength: Int)? {
+        guard !currentSnapshot.isEmpty, !liveBridge.isEmpty else { return nil }
+        // Fetch begins only after the live TCP handshake, so the end of the stable
+        // current snapshot should already exist somewhere in the buffered live data.
+        // Use a long exact anchor first; progressively shorten only for very small files.
+        for anchorLength in [1024, 512, 256, 128, 64, 32] {
+            guard currentSnapshot.count >= anchorLength else { continue }
+            let anchor = currentSnapshot.suffix(anchorLength)
+            if let range = liveBridge.range(of: anchor, options: .backwards) {
+                return (range.upperBound, anchorLength)
+            }
+        }
+        return nil
+    }
+
     private func receiveRawBytes(_ connection: NWConnection, generation: Int) {
         guard running, self.connection === connection, self.connectionGeneration == generation else { return }
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self, weak connection] data, _, complete, error in
@@ -1443,8 +1666,25 @@ private final class U2WMainVideoTCPWorker {
             if let data, !data.isEmpty {
                 self.onBytes?(data.count)
                 self.onRawBytes?(data)
-                for nal in self.annexBParser.append(data) { self.processNAL(nal, generation: generation) }
-                self.emitSanitizerStats()
+                if self.startupBootstrapBuffering && !self.startupBootstrapApplied {
+                    if self.startupBridgeBuffer.count + data.count <= self.startupBridgeCapBytes {
+                        self.startupBridgeBuffer.append(data)
+                    } else {
+                        // Fail safe rather than evicting the prefix needed for an exact
+                        // overlap. Continue from the already-attached live stream with
+                        // the old WAITING_LIVE_IDR behavior.
+                        self.onDiagnostic?("STARTUP_BOOTSTRAP_ABORT bridge_cap_exceeded cap=\(self.startupBridgeCapBytes) buffered=\(self.startupBridgeBuffer.count) incoming=\(data.count); processing buffered live bytes only")
+                        self.startupBootstrapBuffering = false
+                        self.startupBootstrapApplied = true
+                        let bridge = self.startupBridgeBuffer
+                        self.startupBridgeBuffer.removeAll(keepingCapacity: false)
+                        self.feedStartupBytes(bridge, generation: generation, source: "live-bridge-fallback")
+                        self.feedStartupBytes(data, generation: generation, source: "live-after-bootstrap-fallback")
+                    }
+                } else {
+                    for nal in self.annexBParser.append(data) { self.processNAL(nal, generation: generation) }
+                    self.emitSanitizerStats()
+                }
             }
             if let error {
                 self.onDiagnostic?("raw TCP read failed generation=\(generation) error=\(error.localizedDescription); FAIL CLOSED, no reconnect loop")

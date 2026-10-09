@@ -17,21 +17,22 @@ def test_persisted_layout_offsets_and_right_side_controls():
         assert token in SETTINGS
 
 
-def test_canvas_applies_tuning_without_transport_changes():
+def test_canvas_applies_visual_tuning_on_absolute_component_positions():
     for token in [
-        "settings.leftOffsetX", "settings.centerOffsetX", "settings.rightOffsetX",
+        "designerCanvasPosition(for:",
         "symbolWeight(settings.maneuverArrowThickness)",
         "settings.laneArrowThickness * 0.82",
-        "settings.laneActiveEmphasis", "settings.etaOffsetX",
+        "settings.laneActiveEmphasis", "settings.etaScale",
     ]:
         assert token in CANVAS
+    assert 'HStack(spacing: 0)' not in CANVAS
 
 
-def test_ui_has_two_pixel_bounded_position_controls_and_boldness():
+def test_ui_uses_full_canvas_designer_and_keeps_styling_controls():
     for token in [
-        "Physical HUD position", "Right-side component size / spacing",
+        "Full-canvas 480×240 layout", "Navigation component styling",
         "Turn arrow boldness", "Lane arrow thickness", "Active lane emphasis",
-        "delta: -2", "delta: 2", "xRange: -20...20", "yRange: -12...12",
+        "setDesignerCanvasPosition", "Use lane-guidance position for ETA when lanes are unavailable",
     ]:
         assert token in UI
 

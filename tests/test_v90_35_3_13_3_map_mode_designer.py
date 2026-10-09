@@ -34,19 +34,26 @@ def test_designer_supports_all_requested_components():
         'case maneuver', 'case distance', 'case lanes', 'case eta', 'case timeLeft'
     ]:
         assert case in SETTINGS
-    assert 'ForEach(HudMapDesignerComponent.allCases)' in UI
+    assert 'ForEach(designerComponents)' in UI
     assert 'DragGesture(minimumDistance: 1)' in UI
-    assert 'setDesignerOffset(selectedDesignerComponent' in UI
+    assert 'setDesignerCanvasPosition(selectedDesignerComponent' in UI
     assert 'snapDesignerPixel' in UI
 
 
-def test_new_designer_offsets_are_layered_on_existing_calibration():
-    assert 'settings.centerOffsetX + settings.designerMapOffsetX' in CANVAS
-    assert 'settings.maneuverOffsetX + settings.designerManeuverOffsetX' in CANVAS
-    assert 'settings.laneOffsetX + settings.designerLaneOffsetX' in CANVAS
-    assert 'settings.etaOffsetX' in CANVAS
-    assert 'settings.designerETAOffsetX' in CANVAS
-    assert 'settings.designerTimeLeftOffsetX' in CANVAS
+def test_designer_uses_one_true_480x240_canvas_while_migrating_legacy_calibration():
+    assert 'designerCanvasPosition(for component:' in SETTINGS
+    assert 'setDesignerCanvasPosition' in SETTINGS
+    assert 'defaultCanvasPosition' in SETTINGS
+    assert 'frame(width: 480, height: 240)' in CANVAS
+    assert '.position(canvasPoint(.map))' in CANVAS
+    assert '.position(canvasPoint(.maneuver))' in CANVAS
+    assert '.position(canvasPoint(.lanes))' in CANVAS
+    assert '.position(canvasPoint(.eta))' in CANVAS
+    # Legacy offsets remain only as migration/default anchors, not parent layout boundaries.
+    assert 'return (centerOffsetX, centerOffsetY)' in SETTINGS
+    assert 'return (rightOffsetX + maneuverOffsetX, rightOffsetY + maneuverOffsetY)' in SETTINGS
+    assert 'return (rightOffsetX + laneOffsetX, rightOffsetY + laneOffsetY)' in SETTINGS
+    assert 'case .map: return (designerMapOffsetX, designerMapOffsetY)' in SETTINGS
     assert 'settings.speedScale' in CANVAS
 
 

@@ -1,0 +1,59 @@
+HUD Controller v90.35.3.24.29 + U2W v8.38 build verification
+================================================================
+
+Source baseline:
+- app: v90.35.3.24.28 MidDriveContinuityGuard
+- adapter: v8.37 forensic sidecar over unchanged v8.34 mirror / exact v8.31 raw relay
+
+App changes:
+- startup live TCP attaches first and buffers raw bytes
+- rotation-stable current + retained previous v8.38 snapshots fetched only after live TCP bridge is active
+- current snapshot -> live bridge requires exact byte-overlap proof before snapshot bytes are fed
+- previous snapshot is prepended only when X-U2W generation metadata proves previous.next == current.generation
+- overlap failure safely discards snapshots and falls back to live WAITING_LIVE_IDR
+- bounded iOS background task for short app switching; ordinary lifecycle transitions preserve decoder/reference chain
+- canonical 480x240 absolute Map Mode renderer / designer
+- all major Map Mode elements individually movable across full canvas
+- optional ETA-at-lane-position fallback behavior
+- Map Mode FPS remains max 15 fps
+
+Adapter v8.38 safety boundary:
+- v8.34 mirror binary unchanged and exact-SHA1 gated
+- v8.31 raw TCP/15332 relay unchanged and exact-SHA1 gated
+- v8.35 helper unchanged
+- no adapter-side H.264 parser/cache for startup bootstrap
+- no AppleCarPlay / ARMiPhoneIAP2 / Route Guidance process control
+- boot hook starts only the passive read-only observer; it does not start TCP/15332
+
+Regression validation:
+- pytest: 542 passed, 1 skipped
+- Swift parse: 217/217
+- HudMapModeSettings.swift standalone Swift type-check: PASS
+- YAML parse: 10/10
+- v8.38 shell/CGI syntax: 17/17 PASS
+- v8.38 current/previous CGI simulation: PASS (generation/SHA headers + exact body)
+- prior U2W tree excluding new v8.38 folder: 427 files compared; 0 changed, 0 missing, 0 extra vs v24.28
+- v24.28 H264MainVideoSanitizer.swift: byte-for-byte unchanged
+
+v8.38 image validation:
+- install SHA-256: d963352c94f0bf402e143680a4f55a13539f4692b6a7370512083e97cba672f3
+- rollback SHA-256: 0618532c1d0a0cb1b96593ec917fd3ab0f3f971d655ad819dcc84b1a0542e022
+- deterministic rebuild: PASS
+- AES decrypt round-trip assertion: PASS
+- install image members:
+  tmp/once.sh
+  tmp/u2w_generation_seam_observer.sh
+  tmp/u2w_v838_bootstrap_observer_boot.sh
+  tmp/u2wvideo-relay-start.cgi
+  tmp/u2wvideo-relay-status.cgi
+  tmp/u2wvideo-seam-log.cgi
+  tmp/u2wvideo-forensic-status.cgi
+  tmp/u2wvideo-forensic-bundle.cgi
+  tmp/u2wvideo-bootstrap-current.cgi
+  tmp/u2wvideo-bootstrap-previous.cgi
+- rollback members restore the v8.37 observer/status/start/seam/forensic sidecar
+
+Known validation boundary:
+- no macOS/Xcode toolchain is available here; GitHub iOS CI is the final full compile/XCTest gate.
+- startup bootstrap is deliberately fail-safe/best-effort: if no usable IDR exists in retained history or exact snapshot/live overlap cannot be proven, it falls back to WAITING_LIVE_IDR instead of guessing.
+- iOS background execution is bounded by the OS; this build targets short app switches, not unlimited background video processing.

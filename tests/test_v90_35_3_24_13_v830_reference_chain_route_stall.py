@@ -59,7 +59,7 @@ def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
     assert 'passive v8.27.2 source/topology observer' not in UI
     assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
     assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
-    assert 'v90.35.3.24.28 MainVideo client for U2W v8.37 forensic seam capture' in VIDEO
+    assert 'v90.35.3.24.29 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture' in VIDEO
     assert 'no adapter parser/cache/GOP replay' in VIDEO
 
 

@@ -16,7 +16,7 @@ def test_v2423_accepts_actual_v835_status_markers_before_tcp_open():
     assert 'legacyMarker == "YES" || v835Marker == "YES" || v834MirrorMarker == "YES"' in VIDEO
     assert 'process == "RUNNING" && compatibleMarker && supportedRelay' in VIDEO
     assert 'markers={legacy=' in VIDEO
-    assert 'startWorker(reason: "relay confirmed / \\(reason)")' in VIDEO
+    assert 'startWorker(reason: "relay confirmed / \\(reason)", startupBootstrap: true)' in VIDEO
 
 
 def test_v2423_keeps_v835_keyframe_and_v834_raw_transport_contract():
@@ -56,5 +56,5 @@ def test_v2423_obd_manual_ownership_controls_are_explicit_and_logged():
 
 
 def test_v2423_current_release_strings_are_aligned():
-    assert 'appVersion=v90.35.3.24.28' in APP
-    assert 'v90.35.3.24.28 MainVideo client for U2W v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
+    assert 'appVersion=v90.35.3.24.29' in APP
+    assert 'v90.35.3.24.29 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO

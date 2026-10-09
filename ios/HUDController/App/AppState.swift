@@ -871,7 +871,7 @@ final class AppState {
                 }
             }
 
-            // v8.37 preserves binary old-tail/new-head evidence across MainVideo
+            // v8.38 retains the v8.37 binary old-tail/new-head evidence across MainVideo
             // generation seams without touching the relay or CarPlay processes.
             // Fetch this parked-only bundle before the generic historical dump so
             // the exact boundary samples are captured in the same iPhone ZIP.
@@ -879,7 +879,7 @@ final class AppState {
                 "http://192.168.50.2/cgi-bin/u2wvideo-forensic-bundle.cgi",
                 timeout: 45
             ), forensic.count > 32 {
-                evidence.append(("U2W_v8.37_ForensicSeams.tar.gz", forensic))
+                evidence.append(("U2W_v8.38_ForensicAndBootstrap.tar.gz", forensic))
             }
 
             // v8.31 is based on the v8.27.2 diagnostic image. If its passive
@@ -894,9 +894,9 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.28 — forensic live-map state
+            HUD Controller v90.35.3.24.29 — startup-bootstrap + forensic live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
-            paired_u2w=v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
+            paired_u2w=v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
             app_preview_active=\(self.mainVideoPreviewActive)
             mainvideo_phase=\(self.mainVideo.transportPhase)
@@ -2052,7 +2052,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.28",
+                "appVersion=v90.35.3.24.29",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

@@ -71,10 +71,10 @@ struct RootView: View {
                 consumePendingShortcut()
                 state.nowPlaying.refreshNow()
             case .inactive:
-                // v24.23 field evidence: preserving a VideoToolbox session through
-                // an iOS lifecycle transition can end in kVTInvalidSessionErr
-                // (-12903). Preserve the raw TCP source, but retire/gate only the
-                // decoder until the scene is stably active again.
+                // v24.29: ordinary inactive transitions are not decoder failures.
+                // Keep TCP, Annex-B state, VideoToolbox and the H.264 reference
+                // chain alive; the real -12903 path remains available if iOS
+                // actually invalidates the session.
                 state.mainVideo.applicationWillResignActive()
             case .background:
                 if state.hudU2WLiveRelayActive || state.mainVideoPreviewActive {

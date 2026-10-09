@@ -23,32 +23,33 @@ final class V903538MapUILayoutCalibrationTests: XCTestCase {
         XCTAssertTrue(settings.contains("resetRightStyling"))
     }
 
-    func testRendererAppliesOffsetsBoldnessAndLaneEmphasisOnlyInJPEGComposition() throws {
+    func testRendererUsesAbsoluteCanvasPositionsWhilePreservingStyling() throws {
         let canvas = try source("HUDController/MapMode/HudMapModeCanvas.swift")
-        XCTAssertTrue(canvas.contains("settings.leftOffsetX"))
-        XCTAssertTrue(canvas.contains("settings.centerOffsetX"))
-        XCTAssertTrue(canvas.contains("settings.rightOffsetX"))
+        let settings = try source("HUDController/Models/HudMapModeSettings.swift")
+        XCTAssertTrue(canvas.contains("frame(width: 480, height: 240)"))
+        XCTAssertTrue(canvas.contains("designerCanvasPosition(for:"))
+        XCTAssertTrue(canvas.contains(".position(canvasPoint(.map))"))
+        XCTAssertTrue(canvas.contains(".position(canvasPoint(.lanes))"))
+        XCTAssertFalse(canvas.contains("HStack(spacing: 0)"))
+        // Legacy offsets remain in settings only as migration/default anchors.
+        XCTAssertTrue(settings.contains("return (centerOffsetX, centerOffsetY)"))
+        XCTAssertTrue(settings.contains("return (rightOffsetX + laneOffsetX, rightOffsetY + laneOffsetY)"))
         XCTAssertTrue(canvas.contains("symbolWeight(settings.maneuverArrowThickness)"))
-        // v90.35.3.18 replaced lane SF Symbols with custom vector paths. Lane
-        // boldness is therefore applied as vector stroke width, not Font.Weight.
         XCTAssertTrue(canvas.contains("LaneGuidanceGlyph("))
         XCTAssertTrue(canvas.contains("settings.laneArrowThickness * 0.82"))
         XCTAssertTrue(canvas.contains("settings.laneActiveEmphasis"))
         XCTAssertTrue(canvas.contains("settings.laneSpacing"))
-        XCTAssertTrue(canvas.contains("settings.etaOffsetX"))
     }
 
-    func testNavigationUIExposesBoundedTwoPixelNudgesAndStylingControls() throws {
+    func testNavigationUIExposesFullCanvasDesignerAndStylingControls() throws {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
-        XCTAssertTrue(ui.contains("Physical HUD position"))
-        XCTAssertTrue(ui.contains("Right-side component size / spacing"))
+        XCTAssertTrue(ui.contains("Full-canvas 480×240 layout"))
+        XCTAssertTrue(ui.contains("ForEach(designerComponents)"))
+        XCTAssertTrue(ui.contains("setDesignerCanvasPosition"))
         XCTAssertTrue(ui.contains("Turn arrow boldness"))
         XCTAssertTrue(ui.contains("Lane arrow thickness"))
         XCTAssertTrue(ui.contains("Active lane emphasis"))
-        XCTAssertTrue(ui.contains("delta: -2"))
-        XCTAssertTrue(ui.contains("delta: 2"))
-        XCTAssertTrue(ui.contains("xRange: -20...20"))
-        XCTAssertTrue(ui.contains("yRange: -12...12"))
+        XCTAssertTrue(ui.contains("Use lane-guidance position for ETA when lanes are unavailable"))
     }
 
     func testKnownGoodRelaySequenceWasNotChangedForLayoutRevision() throws {

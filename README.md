@@ -1,3 +1,11 @@
+# HUD Controller v90.35.3.24.29 + U2W v8.38 — read-only startup bootstrap + background continuity + full-canvas Map Mode
+
+This paired release keeps v24.28's successful mid-drive H.264 continuity guard intact and adds three focused improvements: a read-only startup bootstrap using v8.38's rotation-stable current + retained previous MainVideo generations joined to an already-attached exact v8.31 live TCP stream by byte-overlap and generation-coherence proof; a bounded iOS background-continuity task for short app switching; and a canonical 480×240 Map Mode renderer where every major UI component is independently positionable. It also adds the optional ETA-at-lane-guidance-position fallback.
+
+U2W v8.38 is a sidecar only: the v8.34 mirror, exact v8.31 TCP/15332 relay, v8.35 helper, and CarPlay/Route Guidance processes remain untouched. See `V90_35_3_24_29_RELEASE.md`, `V90_35_3_24_29_BUILD_VERIFY.txt`, and `u2w/v8.38_ReadOnlyBootstrapSnapshot_v837Forensic_v834Mirror/README.md`.
+
+---
+
 # HUD Controller v90.35.3.24.27 + existing U2W v8.37 — staged decoder recovery + current-viewer health
 
 This is an **app-only reliability release** based on the October 7 v24.26/v8.37 road test. The v24.26 `FOREIGN_REF_IDC_REJECT` sanitizer guard is retained because it successfully rejected several clearly foreign H.264 candidates, but the 8:44:57 freeze proved that not every `codecBadDataErr (-8969)` failure carries that exact signature. Raw TCP remained healthy while the old policy destroyed VideoToolbox after the third bad-data callback and then waited indefinitely for a fresh IDR.
