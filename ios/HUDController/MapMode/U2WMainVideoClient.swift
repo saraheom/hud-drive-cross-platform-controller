@@ -2372,7 +2372,7 @@ private final class H264VideoToolboxDecoder {
                 candidateSession,
                 key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
                 allocator: kCFAllocatorDefault,
-                propertyValueOut: &backendProperty
+                valueOut: &backendProperty
             )
             let hardwareActive = backendStatus == noErr && ((backendProperty as? NSNumber)?.boolValue ?? false)
             decoderBackend = hardwareActive ? "hardware" : "software"
