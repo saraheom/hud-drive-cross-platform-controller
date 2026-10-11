@@ -18,7 +18,7 @@ final class V90352420LosslessMirrorRawRelayTests: XCTestCase {
         XCTAssertTrue(video.contains("lossless/atomic"))
         XCTAssertTrue(app.contains("appVersion=v90.35.3.24.30"))
         // Pairing metadata remains in diagnostics/AppState instead of a long visible UI banner.
-        XCTAssertTrue(app.contains("paired_u2w=v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
+        XCTAssertTrue(app.contains("paired_u2w=v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
         XCTAssertFalse(ui.contains("pairs with U2W v8.38"))
     }
 
