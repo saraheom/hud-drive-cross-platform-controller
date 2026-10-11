@@ -10,9 +10,9 @@ V838 = ROOT / 'u2w/v8.38_ReadOnlyBootstrapSnapshot_v837Forensic_v834Mirror/sourc
 
 
 def test_v2429_pairs_with_read_only_v838_and_preserves_transport_stack():
-    assert 'appVersion=v90.35.3.24.29' in APP
+    assert 'appVersion=v90.35.3.24.30' in APP
     assert 'v8.38 Read-Only Startup Bootstrap' in APP
-    assert 'v90.35.3.24.29 MainVideo client for U2W v8.38 read-only startup bootstrap' in VIDEO
+    assert 'v90.35.3.24.30 MainVideo client for U2W v8.38 read-only startup bootstrap' in VIDEO
     install = (V838 / 'install_once.sh').read_text()
     assert 'V834_SHIM_SHA1=b982322ee65fd45405ab40f98512dbd76450976b' in install
     assert 'V831_RELAY_SHA1=b3964792342f9bc5ad22eaeb70eaf84ec04562f6' in install

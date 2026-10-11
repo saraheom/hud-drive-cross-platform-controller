@@ -29,8 +29,10 @@ def test_ios_uses_v824_and_bounded_exact_framing_with_software_decoder_preferenc
     assert 'receiveExactly' in VIDEO
     assert 'maximumNALBytes = 512 * 1024' in VIDEO
     assert 'kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder' in VIDEO
-    assert 'NSNumber(value: false)' in VIDEO
-    assert 'software-preferred=1' in VIDEO
+    assert 'NSNumber(value: preferHardwareAccelerated)' in VIDEO
+    assert 'backgroundProbeMode == .hardwareDecoderBackgroundTask' in VIDEO
+    assert 'VTSessionCopyProperty' in VIDEO
+    assert 'kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder' in VIDEO
 
 
 def test_decoder_recovery_reconnects_to_recent_anchor_instead_of_dead_session_loop():

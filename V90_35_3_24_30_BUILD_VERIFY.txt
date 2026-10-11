@@ -1,0 +1,17 @@
+HUD Controller v90.35.3.24.30 / U2W v8.39 build verification
+
+pytest: 551 passed, 1 skipped
+Swift parse: 217/217
+workflow YAML: 8/8
+v8.39 shell/CGI sh -n: PASS
+v8.39 preload file type: ELF 32-bit LSB shared object, ARM, EABI5
+v8.39 preload SHA1: 2052b3aac2f979b17fef683ab6a7f202b60cfea5
+v8.38 baseline preload SHA1: 2dca814e86be234bdbe7c8effdd381b2f16bd0fa
+H264MainVideoSanitizer SHA256: aa65a46aae5a309d7332c47e41bd09ab6a301e58c7c61df9ede746a2a001d997
+H264 sanitizer equals v24.29 UI FIX1 baseline: YES
+v8.39 MainVideo mirror modification: NONE
+v8.39 MainVideo raw relay modification: NONE
+v8.39 startup snapshot modification: NONE
+AppleCarPlay process control from v8.39: NEVER
+
+Remaining external gate: GitHub macOS/Xcode build + XCTest.

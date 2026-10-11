@@ -21,7 +21,8 @@ final class V903524RecentIDRSoftwareCenterGuardTests: XCTestCase {
     func testSoftwareDecoderAndRecentAnchorRecoveryAreRequested() throws {
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
         XCTAssertTrue(video.contains("kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder"))
-        XCTAssertTrue(video.contains("NSNumber(value: false)"))
+        XCTAssertTrue(video.contains("NSNumber(value: preferHardwareAccelerated)"))
+        XCTAssertTrue(video.contains("kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder"))
         XCTAssertTrue(video.contains("bounded recovery attempt #1"))
         XCTAssertTrue(video.contains("WAITING_FRESH_IDR"))
         XCTAssertTrue(video.contains("TCP PRESERVED, quarantining replay and waiting for next live IDR"))

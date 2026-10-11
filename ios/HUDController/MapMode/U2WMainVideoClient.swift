@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.29 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.30 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -44,6 +44,23 @@ final class U2WMainVideoClient {
     private var adapterRelayLastSourceProgressAt: Date?
     private var adapterRelayConsecutiveStatusFailures = 0
     private(set) var decoderSummary = "session=none • needsIDR=1 • errors=0"
+    private(set) var backgroundProbeMode: HudMapBackgroundProbeMode = .baseline
+    private(set) var backgroundProbeScene = "Active"
+    private(set) var backgroundProbeEvent = "Idle"
+    private(set) var backgroundProbeTaskActive = false
+
+    var backgroundProbeStatus: String {
+        let taskText: String
+        if backgroundTaskID == .invalid {
+            taskText = "BG task off"
+        } else {
+            let remaining = UIApplication.shared.backgroundTimeRemaining
+            taskText = remaining.isFinite && remaining < 100000
+                ? "BG task \(Int(max(0, remaining)))s"
+                : "BG task active"
+        }
+        return "\(backgroundProbeMode.title) • \(backgroundProbeScene) • \(taskText) • \(transportPhase)"
+    }
 
     private let preflightRequiredContinuity: TimeInterval = 300.0
 
@@ -136,6 +153,20 @@ final class U2WMainVideoClient {
     init(logger: LogManager, diagnosticRecorder: LiveMapDiagnosticRecorder) {
         self.logger = logger
         self.diagnosticRecorder = diagnosticRecorder
+    }
+
+    func configureBackgroundProbe(mode: HudMapBackgroundProbeMode) {
+        let hardwareWasRequested = backgroundProbeMode == .hardwareDecoderBackgroundTask
+        let hardwareNowRequested = mode == .hardwareDecoderBackgroundTask
+        backgroundProbeMode = mode
+        backgroundProbeEvent = "Configured \(mode.title)"
+        worker?.setHardwareDecoderPreference(hardwareNowRequested)
+        logger.log("U2W VIDEO BACKGROUND", "probe configured mode=\(mode.rawValue) hardwareRequested=\(hardwareNowRequested ? 1 : 0)")
+        diagnosticRecorder.record("background_probe", "configured", fields: ["mode": mode.rawValue, "hardware_requested": hardwareNowRequested])
+        if running, hardwareWasRequested != hardwareNowRequested {
+            backgroundProbeEvent = "Applying decoder backend with read-only bootstrap"
+            restartWorkerWithReadOnlyBootstrap(reason: "background probe decoder backend changed")
+        }
     }
 
     func start(reason: String) {
@@ -499,7 +530,7 @@ final class U2WMainVideoClient {
         connectedAt = nil
         lastReceivedBytesAt = nil
 
-        let worker = U2WMainVideoTCPWorker(host: "192.168.50.2", port: 15332, startupBootstrapRequested: startupBootstrap)
+        let worker = U2WMainVideoTCPWorker(host: "192.168.50.2", port: 15332, startupBootstrapRequested: startupBootstrap, preferHardwareDecoder: backgroundProbeMode == .hardwareDecoderBackgroundTask)
         worker.onStartupBootstrapBufferingReady = { [weak self, weak worker] in
             Task { @MainActor [weak self, weak worker] in
                 guard let self, let worker, self.running, self.workerGeneration == generation, self.worker === worker else { return }
@@ -857,14 +888,29 @@ final class U2WMainVideoClient {
     }
 
     func applicationWillResignActive() {
+        guard running else { return }
+        backgroundProbeScene = "Inactive"
+        if backgroundProbeMode != .baseline {
+            // Arm before iOS transitions fully to background so the experiment gets
+            // the longest supported finite execution window.
+            beginBackgroundContinuityTask()
+        }
         pauseDecoderForLifecycle(reason: "scene inactive")
     }
 
     func applicationDidEnterBackground() {
         guard running else { return }
+        backgroundProbeScene = "Background"
         backgroundedAt = backgroundedAt ?? Date()
         beginBackgroundContinuityTask()
-        pauseDecoderForLifecycle(reason: "scene background")
+        if backgroundProbeMode == .suspendDecodePreserveStream {
+            backgroundProbeEvent = "Decode suspended; raw stream preserved"
+            worker?.suspendDecodePreservingTransport(reason: "background probe")
+            logger.log("U2W VIDEO BACKGROUND", "SUSPEND-DECODE probe: TCP/parser continue; VCL decode gated until foreground read-only rebootstrap")
+            diagnosticRecorder.record("background_probe", "decode_suspended", fields: ["mode": backgroundProbeMode.rawValue])
+        } else {
+            pauseDecoderForLifecycle(reason: "scene background")
+        }
     }
 
     private func pauseDecoderForLifecycle(reason: String) {
@@ -876,18 +922,19 @@ final class U2WMainVideoClient {
         lifecycleActive = false
         preflightStableSince = nil
         preflightPassLogged = false
-        if wasActive {
+        if wasActive, backgroundProbeMode != .suspendDecodePreserveStream {
             worker?.suspendDecoderForLifecycle(reason: reason)
         }
         logger.log(
             "U2W VIDEO LIFECYCLE",
-            "Lifecycle notice reason=\(reason); raw TCP + Annex-B parser + VideoToolbox + reference chain PRESERVED. No proactive decoder invalidation. generation=\(lifecycleGeneration)"
+            "Lifecycle notice reason=\(reason) probe=\(backgroundProbeMode.rawValue); transport preserved. generation=\(lifecycleGeneration)"
         )
-        diagnosticRecorder.record("lifecycle", "decoder_preserved", fields: ["reason": reason, "generation": lifecycleGeneration])
+        diagnosticRecorder.record("lifecycle", "probe_transition", fields: ["reason": reason, "generation": lifecycleGeneration, "mode": backgroundProbeMode.rawValue])
     }
 
     func applicationDidBecomeActive() {
         guard running else { return }
+        backgroundProbeScene = "Active"
         let now = Date()
         let backgroundDuration = backgroundedAt.map { now.timeIntervalSince($0) }
         backgroundedAt = nil
@@ -896,19 +943,54 @@ final class U2WMainVideoClient {
         let generation = lifecycleGeneration
         lifecycleActive = true
         lifecycleRecoveryTask?.cancel()
-        logger.log(
-            "U2W VIDEO LIFECYCLE",
-            "Scene active candidate generation=\(generation); decoder/reference chain remained preserved. Verifying stable foreground without forcing IDR. backgroundDuration=\(backgroundDuration.map { String(format: "%.1f", $0) } ?? "none")"
-        )
-        diagnosticRecorder.record("lifecycle", "active_candidate", fields: ["generation": generation, "background_seconds": backgroundDuration ?? -1])
+        logger.log("U2W VIDEO LIFECYCLE", "Scene active probe=\(backgroundProbeMode.rawValue) generation=\(generation) backgroundDuration=\(backgroundDuration.map { String(format: "%.1f", $0) } ?? "none")")
+        diagnosticRecorder.record("lifecycle", "active_candidate", fields: ["generation": generation, "background_seconds": backgroundDuration ?? -1, "mode": backgroundProbeMode.rawValue])
+
         lifecycleRecoveryTask = Task { @MainActor [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: .milliseconds(Int(self.stableForegroundDelay * 1000)))
             guard !Task.isCancelled, self.running, self.lifecycleActive, self.lifecycleGeneration == generation else { return }
+
+            if self.backgroundProbeMode == .suspendDecodePreserveStream {
+                self.backgroundProbeEvent = "Foreground read-only snapshot rebootstrap"
+                self.restartWorkerWithReadOnlyBootstrap(reason: "foreground resume from suspend-decode probe")
+                return
+            }
+
             self.worker?.resumeDecoderAfterLifecycle(reason: "stable foreground generation \(generation)")
-            self.logger.log("U2W VIDEO LIFECYCLE", "Stable foreground confirmed generation=\(generation); existing VideoToolbox/reference chain retained; no IDR dependency manufactured")
-            self.diagnosticRecorder.record("lifecycle", "stable_active_preserved", fields: ["generation": generation])
+
+            // Keep-decoder and hardware-decoder probes explicitly measure whether
+            // VideoToolbox survived. If iOS invalidated it anyway, recover using the
+            // proven v8.38 read-only history instead of waiting for a spontaneous IDR.
+            if self.backgroundProbeMode != .baseline {
+                try? await Task.sleep(for: .milliseconds(650))
+                guard !Task.isCancelled, self.running, self.lifecycleActive, self.lifecycleGeneration == generation else { return }
+                let frameAge = self.lastDecodedFrameAt.map { Date().timeIntervalSince($0) } ?? .infinity
+                let healthy = self.transportPhase == "LIVE" && frameAge < 2.0
+                if !healthy {
+                    self.backgroundProbeEvent = "Foreground fallback rebootstrap"
+                    self.logger.log("U2W VIDEO BACKGROUND", "probe foreground health failed phase=\(self.transportPhase) frameAge=\(frameAge.isFinite ? String(format: "%.1f", frameAge) : "none")s; restarting iPhone worker with read-only bootstrap")
+                    self.diagnosticRecorder.record("background_probe", "foreground_rebootstrap", fields: ["mode": self.backgroundProbeMode.rawValue, "phase": self.transportPhase, "frame_age": frameAge])
+                    self.restartWorkerWithReadOnlyBootstrap(reason: "background probe foreground fallback")
+                } else {
+                    self.backgroundProbeEvent = "Decoder survived background"
+                    self.diagnosticRecorder.record("background_probe", "decoder_survived", fields: ["mode": self.backgroundProbeMode.rawValue, "frame_age": frameAge])
+                }
+            } else {
+                self.backgroundProbeEvent = "Baseline active"
+            }
         }
+    }
+
+    private func restartWorkerWithReadOnlyBootstrap(reason: String) {
+        guard running else { return }
+        logger.log("U2W VIDEO BACKGROUND", "read-only bootstrap restart reason=\(reason); adapter mirror/relay untouched")
+        diagnosticRecorder.record("background_probe", "readonly_rebootstrap", fields: ["reason": reason, "mode": backgroundProbeMode.rawValue])
+        worker?.stop()
+        worker = nil
+        connected = false
+        connectedAt = nil
+        startWorker(reason: reason, startupBootstrap: true)
     }
 
     private func beginBackgroundContinuityTask() {
@@ -918,14 +1000,19 @@ final class U2WMainVideoClient {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.backgroundTaskExpired = true
-                self.logger.log("U2W VIDEO BACKGROUND", "bounded iOS background continuity task expired; TCP/decoder state left untouched for suspension/resume")
-                self.diagnosticRecorder.record("lifecycle", "background_task_expired", fields: ["phase": self.transportPhase])
+                self.backgroundProbeTaskActive = false
+                self.backgroundProbeEvent = "Background task expired"
+                self.logger.log("U2W VIDEO BACKGROUND", "bounded iOS background continuity task expired mode=\(self.backgroundProbeMode.rawValue)")
+                self.diagnosticRecorder.record("background_probe", "background_task_expired", fields: ["phase": self.transportPhase, "mode": self.backgroundProbeMode.rawValue])
                 self.endBackgroundContinuityTask(reason: "expiration")
             }
         }
         if backgroundTaskID != .invalid {
-            logger.log("U2W VIDEO BACKGROUND", "started bounded background continuity task; MainVideo TCP + VideoToolbox + HUD relay may continue during short app switches")
-            diagnosticRecorder.record("lifecycle", "background_task_started", fields: ["phase": transportPhase])
+            backgroundProbeTaskActive = true
+            let remaining = UIApplication.shared.backgroundTimeRemaining
+            backgroundProbeEvent = "Background task active"
+            logger.log("U2W VIDEO BACKGROUND", "started bounded background task mode=\(backgroundProbeMode.rawValue) remaining=\(remaining)")
+            diagnosticRecorder.record("background_probe", "background_task_started", fields: ["phase": transportPhase, "mode": backgroundProbeMode.rawValue, "remaining_seconds": remaining])
         }
     }
 
@@ -933,8 +1020,9 @@ final class U2WMainVideoClient {
         guard backgroundTaskID != .invalid else { return }
         let id = backgroundTaskID
         backgroundTaskID = .invalid
+        backgroundProbeTaskActive = false
         UIApplication.shared.endBackgroundTask(id)
-        logger.log("U2W VIDEO BACKGROUND", "ended bounded background continuity task reason=\(reason) expired=\(backgroundTaskExpired ? 1 : 0)")
+        logger.log("U2W VIDEO BACKGROUND", "ended bounded background continuity task reason=\(reason) expired=\(backgroundTaskExpired ? 1 : 0) mode=\(backgroundProbeMode.rawValue)")
     }
 
     private func scheduleBoundedKeyframeRequest(reason: String, delay: TimeInterval, requiredPhases: Set<String>) {
@@ -1191,6 +1279,7 @@ final class U2WMainVideoTCPWorker {
     private let magicLength = 8
     private let maximumNALBytes = 512 * 1024
     private let startupBootstrapRequested: Bool
+    private var preferHardwareDecoder: Bool
     private let startupBridgeCapBytes = 16 * 1024 * 1024
     private var startupBridgeBuffer = Data()
     private var startupBootstrapBuffering = false
@@ -1198,10 +1287,12 @@ final class U2WMainVideoTCPWorker {
     private var startupBootstrapReadyNotified = false
     var onStartupBootstrapBufferingReady: (() -> Void)?
 
-    init(host: String, port: UInt16, startupBootstrapRequested: Bool = false) {
+    init(host: String, port: UInt16, startupBootstrapRequested: Bool = false, preferHardwareDecoder: Bool = false) {
         self.host = NWEndpoint.Host(host)
         self.port = NWEndpoint.Port(rawValue: port)!
         self.startupBootstrapRequested = startupBootstrapRequested
+        self.preferHardwareDecoder = preferHardwareDecoder
+        decoder.setPreferHardwareAccelerated(preferHardwareDecoder)
         decoder.onFrame = { [weak self] image in
             guard let self else { return }
             if self.recentAnchorRecoveryUsed || self.waitingForFreshLiveIDRAfterRejectedAnchor {
@@ -1260,6 +1351,25 @@ final class U2WMainVideoTCPWorker {
         startupBootstrapReadyNotified = false
         decoder.reset()
         onPhase?("IDLE")
+    }
+
+    func setHardwareDecoderPreference(_ enabled: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.preferHardwareDecoder = enabled
+            self.decoder.setPreferHardwareAccelerated(enabled)
+            self.onDiagnostic?("Background probe hardware preference=\(enabled ? 1 : 0); applies to next decoder session")
+        }
+    }
+
+    func suspendDecodePreservingTransport(reason: String) {
+        queue.async { [weak self] in
+            guard let self, self.running else { return }
+            self.lifecyclePaused = true
+            self.decoder.discardPendingAccessUnit()
+            self.emitDecoderState()
+            self.onDiagnostic?("BACKGROUND PROBE SUSPEND reason=\(reason); TCP + Annex-B parser preserved; VCL decode gated until foreground bootstrap")
+        }
     }
 
     func suspendDecoderForLifecycle(reason: String) {
@@ -1966,6 +2076,13 @@ private final class H264VideoToolboxDecoder {
     private var lastOutputCallbackStatus: OSStatus = noErr
     private var hardRecoveryCount = 0
     private var recoveryRequestPending = false
+    private var preferHardwareAccelerated = false
+    private var decoderBackend = "none"
+
+    func setPreferHardwareAccelerated(_ enabled: Bool) {
+        preferHardwareAccelerated = enabled
+        onDiagnostic?("VideoToolbox backend preference hardwareRequested=\(enabled ? 1 : 0)")
+    }
 
     // v24.28: do not destroy a potentially recoverable reference chain after the
     // first codecBadDataErr burst. The Oct-7 drive proved raw TCP stayed healthy
@@ -2007,6 +2124,7 @@ private final class H264VideoToolboxDecoder {
         lastOutputCallbackStatus = noErr
         hardRecoveryCount = 0
         recoveryRequestPending = false
+        decoderBackend = "none"
         codecBadDataGraceEvents = 0
         clearCodecBadDataGrace()
         publishLock.lock()
@@ -2048,7 +2166,7 @@ private final class H264VideoToolboxDecoder {
 
     var stateSummary: String {
         let session = decompressionSession == nil ? "none" : "ready"
-        return "session=\(session) • needsIDR=\(needsIDR ? 1 : 0) • rebuildOnIDR=\(rebuildAtNextIDR ? 1 : 0) • badDataGrace=\(codecBadDataGraceStartAU == nil ? 0 : 1) • recoveryPending=\(recoveryRequestPending ? 1 : 0) • recoveries=\(hardRecoveryCount) • AU=\(submittedAccessUnits) • errors=\(totalDecodeErrors)/\(consecutiveDecodeErrors) • outputs=\(outputCallbackFrames) • outputErr=\(outputCallbackErrors) • imageErr=\(imageConversionErrors) • lastStatus=\(lastDecodeStatus) • outputStatus=\(lastOutputCallbackStatus)"
+        return "session=\(session) • backend=\(decoderBackend) • hwRequested=\(preferHardwareAccelerated ? 1 : 0) • needsIDR=\(needsIDR ? 1 : 0) • rebuildOnIDR=\(rebuildAtNextIDR ? 1 : 0) • badDataGrace=\(codecBadDataGraceStartAU == nil ? 0 : 1) • recoveryPending=\(recoveryRequestPending ? 1 : 0) • recoveries=\(hardRecoveryCount) • AU=\(submittedAccessUnits) • errors=\(totalDecodeErrors)/\(consecutiveDecodeErrors) • outputs=\(outputCallbackFrames) • outputErr=\(outputCallbackErrors) • imageErr=\(imageConversionErrors) • lastStatus=\(lastDecodeStatus) • outputStatus=\(lastOutputCallbackStatus)"
     }
 
     private func armCodecBadDataGrace(origin: String) {
@@ -2208,13 +2326,13 @@ private final class H264VideoToolboxDecoder {
             let attributes: [CFString: Any] = [
                 kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA)
             ]
-            // v90.35.3.24: prefer the software VideoToolbox decoder for this tiny
-            // 800×480 navigation surface. Field logs correlated hardware-session
-            // invalidation (-12903) with iOS lifecycle transitions; software decode
-            // avoids losing a sparse H.264 reference chain merely because the app
-            // temporarily backgrounds while CarPlay remains active.
+            // v90.35.3.24.30 background probe: baseline/keep modes retain the
+            // field-proven software-preferred decoder. The explicit hardware probe
+            // requests hardware acceleration so we can determine from field logs
+            // whether iOS lifecycle invalidation differs by backend. This does not
+            // bypass iOS suspension policy; actual backend is queried below.
             let decoderSpecification: [CFString: Any] = [
-                kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: NSNumber(value: false)
+                kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: NSNumber(value: preferHardwareAccelerated)
             ]
             var candidateSession: VTDecompressionSession?
             let createStatus = VTDecompressionSessionCreate(
@@ -2248,6 +2366,17 @@ private final class H264VideoToolboxDecoder {
             if realTimeStatus != noErr {
                 onDiagnostic?("VideoToolbox RealTime property status=\(realTimeStatus); continuing with decoder")
             }
+
+            var backendProperty: CFTypeRef?
+            let backendStatus = VTSessionCopyProperty(
+                candidateSession,
+                key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+                allocator: kCFAllocatorDefault,
+                propertyValueOut: &backendProperty
+            )
+            let hardwareActive = backendStatus == noErr && ((backendProperty as? NSNumber)?.boolValue ?? false)
+            decoderBackend = hardwareActive ? "hardware" : "software"
+            onDiagnostic?("VideoToolbox session backend=\(decoderBackend) hardwareRequested=\(preferHardwareAccelerated ? 1 : 0) propertyStatus=\(backendStatus)")
 
             // Atomic promotion: only now retire the prior VideoToolbox session.
             let previousSession = decompressionSession

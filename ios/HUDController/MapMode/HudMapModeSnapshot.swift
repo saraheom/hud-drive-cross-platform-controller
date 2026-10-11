@@ -14,6 +14,9 @@ struct HudMapModeSnapshot: Equatable {
     var etaText: String
     var timeLeftText: String
     var laneValues: [Int]
+    /// True only while the navigation provider is actively presenting lane guidance.
+    /// Cached lane values may remain populated after this becomes false.
+    var laneGuidanceVisible: Bool
     var routeRoads: [String]
     var hasLiveRoute: Bool
 
@@ -33,6 +36,7 @@ struct HudMapModeSnapshot: Equatable {
         etaText: "6:20 PM",
         timeLeftText: "7 min",
         laneValues: [-4, 1, 3, -2],
+        laneGuidanceVisible: true,
         routeRoads: [
             "Martin Luther King Jr Dr",
             "Sweetbriar Dr",
@@ -55,6 +59,7 @@ struct HudMapModeSnapshot: Equatable {
         etaText: "9:05 AM",
         timeLeftText: "1 min",
         laneValues: [-1, -1, 2],
+        laneGuidanceVisible: false,
         routeRoads: [
             "Ridge Ave",
             "Calumet St",

@@ -497,6 +497,55 @@ struct NavigationHUDPreviewCard: View {
             .tint(accent)
             .disabled(state.liveMapDiagnosticCollecting)
 
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Map Mode Background Continuity Probe")
+                    .font(.caption.weight(.semibold))
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 7) {
+                    ForEach(HudMapBackgroundProbeMode.allCases) { mode in
+                        Button {
+                            state.setMapModeBackgroundProbeMode(mode)
+                        } label: {
+                            Text(mode.title)
+                                .font(.caption2.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity, minHeight: 34)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(state.mapModeSettings.backgroundProbeMode == mode ? accent : .secondary)
+                    }
+                }
+
+                Text(state.mapModeSettings.backgroundProbeMode.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                LabeledContent("Probe status", value: state.mainVideo.backgroundProbeStatus)
+                    .font(.caption2)
+
+                Toggle(
+                    "Prevent Auto-Lock while Map Mode is active",
+                    isOn: Binding(
+                        get: { state.mapModeSettings.preventAutoLockWhileMapMode },
+                        set: { state.setMapModePreventAutoLock($0) }
+                    )
+                )
+                .font(.caption)
+
+                Button(state.liveMapDiagnosticCollecting ? "Collecting Background Probe ZIP…" : "Collect Background Probe ZIP") {
+                    state.collectLiveMapDiagnosticBundle()
+                }
+                .buttonStyle(.bordered)
+                .disabled(state.liveMapDiagnosticCollecting)
+
+                Text("Experimental modes are mutually exclusive. iOS may still suspend an app or invalidate VideoToolbox while locked; the probe records whether TCP, decoder output, or the finite background task stops first.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(8)
+            .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+
             if let url = state.liveMapDiagnosticBundleURL {
                 ShareLink(item: url) {
                     Label("Share Live Map Diagnostic ZIP", systemImage: "square.and.arrow.up")

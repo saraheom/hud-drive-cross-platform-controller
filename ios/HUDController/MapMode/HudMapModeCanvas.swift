@@ -263,7 +263,7 @@ struct HudMapModeCanvas: View {
     }
 
     private var laneGuidanceAvailable: Bool {
-        settings.showLaneGuidance && !effectiveLaneValues.isEmpty
+        settings.showLaneGuidance && snapshot.laneGuidanceVisible && !effectiveLaneValues.isEmpty
     }
 
     /// Shared ETA/lane policy used identically by the in-app designer preview and
@@ -306,7 +306,13 @@ struct HudMapModeCanvas: View {
     private func etaDisplayText(_ raw: String) -> String {
         let value = nonempty(raw, fallback: "—")
         guard !settings.showETAAMPM else { return value }
-        let parts = value.split(separator: " ", omittingEmptySubsequences: true)
+        // CarPlay/Google Maps frequently separates the time suffix with U+202F
+        // (narrow no-break space) instead of ASCII space. Normalize both common
+        // no-break variants, then split on all Unicode whitespace.
+        let normalized = value
+            .replacingOccurrences(of: "\u{202F}", with: " ")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+        let parts = normalized.split(whereSeparator: { $0.isWhitespace })
         guard let suffix = parts.last?.uppercased(), suffix == "AM" || suffix == "PM" else {
             return value
         }

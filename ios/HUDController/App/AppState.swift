@@ -135,6 +135,9 @@ final class AppState {
     // they should remain visible. No HUD firmware write is involved.
     private var laneGuidanceRefreshTask: Task<Void, Never>?
     private var activeLaneGuidance: [HudCommands.NativeLane] = []
+    /// Map Mode uses the provider's current showing edge, not the retained
+    /// stock-HUD lane cache, when deciding whether shared-position ETA should hide.
+    private var mapModeLaneGuidanceVisible = false
     private var activeLaneDistanceMeters = 0
     private var activeLaneContext = ""
     private var activeLaneIsLive = false
@@ -203,6 +206,10 @@ final class AppState {
         self.liveMapDiagnostics = liveMapDiagnostics
         let mainVideo = U2WMainVideoClient(logger: logger, diagnosticRecorder: liveMapDiagnostics)
         self.mainVideo = mainVideo
+        let initialProbeMode = HudMapBackgroundProbeMode(
+            rawValue: UserDefaults.standard.string(forKey: "HUD.MapMode.BackgroundProbe.mode") ?? ""
+        ) ?? .baseline
+        mainVideo.configureBackgroundProbe(mode: initialProbeMode)
         let mainVideoDiagnostic = U2WMainVideoDiagnosticClient(logger: logger)
         self.mainVideoDiagnostic = mainVideoDiagnostic
         let hudU2WFrameRelay = U2WHUDFrameRelayClient(logger: logger)
@@ -463,6 +470,7 @@ final class AppState {
             self.hudU2WRelayFrameTask = nil
             self.hudU2WFrameRelay.stop(reason: "HUD BLE transport disconnected")
             self.hudU2WLiveRelayActive = false
+            self.updateMapModeIdleTimerPolicy(reason: "HUD BLE disconnected")
             self.hudU2WSTAConnected = false
             self.laneGuidanceRefreshTask?.cancel()
             self.laneGuidanceRefreshTask = nil
@@ -894,9 +902,9 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.29 — startup-bootstrap + forensic live-map state
+            HUD Controller v90.35.3.24.30 — background-probe + session-boundary + startup-bootstrap + forensic live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
-            paired_u2w=v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
+            paired_u2w=v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
             app_preview_active=\(self.mainVideoPreviewActive)
             mainvideo_phase=\(self.mainVideo.transportPhase)
@@ -1035,6 +1043,25 @@ final class AppState {
         }
     }
 
+    func setMapModeBackgroundProbeMode(_ mode: HudMapBackgroundProbeMode) {
+        mapModeSettings.backgroundProbeMode = mode
+        mainVideo.configureBackgroundProbe(mode: mode)
+        logger.log("MAP BACKGROUND PROBE", "mode=\(mode.rawValue)")
+    }
+
+    func setMapModePreventAutoLock(_ enabled: Bool) {
+        mapModeSettings.preventAutoLockWhileMapMode = enabled
+        updateMapModeIdleTimerPolicy(reason: "setting changed")
+    }
+
+    private func updateMapModeIdleTimerPolicy(reason: String) {
+        let shouldDisable = mapModeSettings.preventAutoLockWhileMapMode && hudU2WLiveRelayActive
+        if UIApplication.shared.isIdleTimerDisabled != shouldDisable {
+            UIApplication.shared.isIdleTimerDisabled = shouldDisable
+            logger.log("MAP BACKGROUND PROBE", "idleTimerDisabled=\(shouldDisable ? 1 : 0) reason=\(reason)")
+        }
+    }
+
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
         guard bluetooth.state == .connected else {
@@ -1132,6 +1159,7 @@ final class AppState {
             let prewarmStartCount = self.hudU2WFrameRelay.sentFrameCount
             self.hudU2WFrameRelay.start()
             self.hudU2WLiveRelayActive = true
+            self.updateMapModeIdleTimerPolicy(reason: "Map Mode relay active")
             self.startHUDU2WRelayFrameLoop()
             self.hudU2WSTAStatus = "Preparing first HUD Map Mode frame…"
 
@@ -1168,6 +1196,7 @@ final class AppState {
                 )
                 self.hudU2WSTAStatus = "HUD frame relay unavailable — Navigation retained"
                 self.hudU2WLiveRelayActive = false
+                self.updateMapModeIdleTimerPolicy(reason: "Map Mode prewarm failed")
                 self.hudU2WRelayFrameTask?.cancel()
                 self.hudU2WRelayFrameTask = nil
                 self.hudU2WFrameRelay.stop(reason: "Map Mode prewarm failed")
@@ -2052,7 +2081,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.29",
+                "appVersion=v90.35.3.24.30",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -2318,6 +2347,7 @@ final class AppState {
             mainVideo.stop(reason: "live U2W Map Mode disabled — restore Navigation-only adapter load")
         }
         hudU2WLiveRelayActive = false
+        updateMapModeIdleTimerPolicy(reason: "Map Mode disabled")
         hudU2WSTAConnected = false
         hudU2WSTAAddress = ""
         hudU2WSTAReason = ""
@@ -2541,6 +2571,7 @@ final class AppState {
     /// the already-resolved current lane event instead of guessing a mapping to
     /// the independently moving route-maneuver cursor.
     private func receiveResolvedV88LaneGuidance(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState) {
+        mapModeLaneGuidanceVisible = state.routeState != 0 && state.laneGuidanceShowing && !state.lanes.isEmpty
         // The physical Google Maps capture establishes two distinct concepts:
         //   * 0x5204 events may be pre-cached well before they are needed.
         //   * 0x5201 InfoType 16 selects an event, while InfoType 18 says whether
@@ -2668,6 +2699,7 @@ final class AppState {
     /// with v8.7. Keep the old best-effort mapping without allowing transient
     /// backward cursor movement to wipe the cache.
     private func receiveLegacyV87LaneGuidance(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState) {
+        mapModeLaneGuidanceVisible = state.routeState != 0 && state.laneGuidanceShowing && !state.lanes.isEmpty
         if !loggedLegacyV87LaneSchema {
             loggedLegacyV87LaneSchema = true
             logger.log("CARPLAY LANE", "U2W v8.7 lane schema detected; best-effort only — install v8.8 for active-event resolution")
@@ -2944,6 +2976,7 @@ final class AppState {
         laneGuidanceRefreshTask?.cancel()
         laneGuidanceRefreshTask = nil
         activeLaneGuidance = []
+        mapModeLaneGuidanceVisible = false
         activeLaneDistanceMeters = 0
         activeLaneContext = ""
         activeLaneIsLive = false
@@ -3277,6 +3310,7 @@ final class AppState {
             etaText: routeGuidance.etaText,
             timeLeftText: Self.mapModeTimeLeftText(routeGuidance.timeRemainingSeconds),
             laneValues: activeLaneGuidance.map { Int($0.wireValue) },
+            laneGuidanceVisible: mapModeLaneGuidanceVisible,
             routeRoads: routeGuidance.routeRoads,
             hasLiveRoute: liveRoute
         )
@@ -3289,6 +3323,7 @@ final class AppState {
             if !activeLaneGuidance.isEmpty {
                 frozen.laneValues = activeLaneGuidance.map { Int($0.wireValue) }
             }
+            frozen.laneGuidanceVisible = mapModeLaneGuidanceVisible
             return frozen
         }
 

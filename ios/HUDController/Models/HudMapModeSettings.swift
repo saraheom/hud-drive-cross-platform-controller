@@ -38,6 +38,37 @@ enum HudManeuverWarningTarget: String, CaseIterable, Identifiable {
     }
 }
 
+enum HudMapBackgroundProbeMode: String, CaseIterable, Identifiable {
+    case baseline
+    case keepDecoderBackgroundTask
+    case hardwareDecoderBackgroundTask
+    case suspendDecodePreserveStream
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .baseline: return "Baseline"
+        case .keepDecoderBackgroundTask: return "Keep decoder + BG task"
+        case .hardwareDecoderBackgroundTask: return "Hardware decoder + BG task"
+        case .suspendDecodePreserveStream: return "Suspend decode + preserve stream"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .baseline:
+            return "Current v24.29 behavior: software-preferred VideoToolbox stays active; the bounded task starts after background entry."
+        case .keepDecoderBackgroundTask:
+            return "Starts the bounded task before leaving foreground and keeps the software-preferred decoder fed while iOS permits execution."
+        case .hardwareDecoderBackgroundTask:
+            return "Same pre-background assertion, but new VideoToolbox sessions request hardware acceleration and log the backend actually granted."
+        case .suspendDecodePreserveStream:
+            return "Stops feeding VCL while backgrounded, keeps transport/parser continuity, then performs an automatic v8.38 snapshot/live-edge rebootstrap on foreground return."
+        }
+    }
+}
+
 enum HudMapDesignerComponent: String, CaseIterable, Identifiable {
     case speed
     case speedLimit
@@ -336,6 +367,15 @@ final class HudMapModeSettings {
         didSet { persist(nativeOBDSpeedOverlayExperiment, key: "HUD.MapMode.nativeOBDSpeedOverlayExperiment") }
     }
 
+    // v90.35.3.24.30 background-continuity experiment controls. These are
+    // deliberately global and never travel with visual presets.
+    var backgroundProbeMode: HudMapBackgroundProbeMode {
+        didSet { defaults.set(backgroundProbeMode.rawValue, forKey: "HUD.MapMode.BackgroundProbe.mode") }
+    }
+    var preventAutoLockWhileMapMode: Bool {
+        didSet { defaults.set(preventAutoLockWhileMapMode, forKey: "HUD.MapMode.BackgroundProbe.preventAutoLock") }
+    }
+
     // v90.35.3.24.5 transport probe. This is global rather than preset-specific:
     // changing a visual design preset must not silently change network cadence.
     static let supportedHUDFrameRates = [5, 8, 10, 12, 15]
@@ -481,6 +521,9 @@ final class HudMapModeSettings {
         showTimeLeft = bool("HUD.MapMode.showTimeLeft", default: true)
         etaUsesLanePositionWhenNoLanes = bool("HUD.MapMode.etaUsesLanePositionWhenNoLanes", default: false)
         nativeOBDSpeedOverlayExperiment = bool("HUD.MapMode.nativeOBDSpeedOverlayExperiment", default: false)
+        let backgroundProbeRaw = store.string(forKey: "HUD.MapMode.BackgroundProbe.mode") ?? HudMapBackgroundProbeMode.baseline.rawValue
+        backgroundProbeMode = HudMapBackgroundProbeMode(rawValue: backgroundProbeRaw) ?? .baseline
+        preventAutoLockWhileMapMode = bool("HUD.MapMode.BackgroundProbe.preventAutoLock", default: false)
         hudFrameRate = Self.normalizedHUDFrameRate(integer("HUD.MapMode.hudFrameRate", default: 5))
 
         let raw = store.string(forKey: "HUD.MapMode.mapAppearance") ?? HudMapAppearance.followSource.rawValue
