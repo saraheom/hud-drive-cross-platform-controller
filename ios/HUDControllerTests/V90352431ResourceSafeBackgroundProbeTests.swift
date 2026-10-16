@@ -27,7 +27,7 @@ final class V90352431ResourceSafeBackgroundProbeTests: XCTestCase {
         XCTAssertTrue(app.contains("selectMapModeBackgroundProbeMode"))
         XCTAssertTrue(app.contains("applyMapModeBackgroundProbeModeForNextSession"))
         XCTAssertTrue(ui.contains("Apply for next Map Mode session"))
-        XCTAssertTrue(ui.contains("Decoder: \(state.mainVideo.decoderSummary)"))
+        XCTAssertTrue(ui.contains("Decoder: \\(state.mainVideo.decoderSummary)"))
         XCTAssertFalse(video.contains("restartWorkerWithReadOnlyBootstrap(reason: \"background probe decoder backend changed\")"))
     }
 
