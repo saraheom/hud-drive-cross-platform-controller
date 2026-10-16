@@ -30,6 +30,7 @@ final class AppState {
     private var mapModeFrozenSourceImage: UIImage?
     private(set) var mapModeActive = false
     private(set) var mapModeStatus = "Map Mode off"
+    private(set) var pendingMapModeBackgroundProbeMode: HudMapBackgroundProbeMode = .baseline
     private(set) var mapModeLastNetworkEvent = "Cast server idle"
     private(set) var hudU2WSTAStatus = "Not tested"
     private(set) var hudU2WSTAAddress = ""
@@ -209,6 +210,7 @@ final class AppState {
         let initialProbeMode = HudMapBackgroundProbeMode(
             rawValue: UserDefaults.standard.string(forKey: "HUD.MapMode.BackgroundProbe.mode") ?? ""
         ) ?? .baseline
+        pendingMapModeBackgroundProbeMode = initialProbeMode
         mainVideo.configureBackgroundProbe(mode: initialProbeMode)
         let mainVideoDiagnostic = U2WMainVideoDiagnosticClient(logger: logger)
         self.mainVideoDiagnostic = mainVideoDiagnostic
@@ -866,6 +868,7 @@ final class AppState {
             var evidence: [(name: String, data: Data)] = []
             let snapshots: [(String, String, TimeInterval)] = [
                 ("u2wvideo-relay-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-relay-status.cgi", 5),
+                ("u2wresource-status.cgi", "http://192.168.50.2/cgi-bin/u2wresource-status.cgi", 5),
                 ("u2wvideo-forensic-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-forensic-status.cgi", 6),
                 ("u2wvideo-seam-log.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-seam-log.cgi", 6),
                 ("u2wvideo-status.cgi", "http://192.168.50.2/cgi-bin/u2wvideo-status.cgi", 5),
@@ -902,9 +905,9 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.30 — background-probe + session-boundary + startup-bootstrap + forensic live-map state
+            HUD Controller v90.35.3.24.31 — background-probe + session-boundary + startup-bootstrap + forensic live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
-            paired_u2w=v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
+            paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
             app_preview_active=\(self.mainVideoPreviewActive)
             mainvideo_phase=\(self.mainVideo.transportPhase)
@@ -917,6 +920,9 @@ final class AppState {
             mainvideo_filter=\(self.mainVideo.sanitizerSummary)
             mainvideo_decoder=\(self.mainVideo.decoderSummary)
             mainvideo_relay=\(self.mainVideo.adapterCacheSummary)
+            background_probe_active=\(self.mapModeSettings.backgroundProbeMode.rawValue)
+            background_probe_pending=\(self.pendingMapModeBackgroundProbeMode.rawValue)
+            background_probe_status=\(self.mainVideo.backgroundProbeStatus)
             iphone_network=\(self.mainVideo.networkPathSummary)
             hud_sta_status=\(self.hudU2WSTAStatus)
             hud_sta_ip=\(self.hudU2WSTAAddress.isEmpty ? "none" : self.hudU2WSTAAddress)
@@ -1043,10 +1049,20 @@ final class AppState {
         }
     }
 
-    func setMapModeBackgroundProbeMode(_ mode: HudMapBackgroundProbeMode) {
+    func selectMapModeBackgroundProbeMode(_ mode: HudMapBackgroundProbeMode) {
+        pendingMapModeBackgroundProbeMode = mode
+        logger.log("MAP BACKGROUND PROBE", "selected=\(mode.rawValue) active=\(mapModeSettings.backgroundProbeMode.rawValue) apply=PENDING")
+    }
+
+    func applyMapModeBackgroundProbeModeForNextSession() {
+        guard !hudU2WLiveRelayActive, !mainVideoPreviewActive else {
+            logger.log("MAP BACKGROUND PROBE", "apply blocked while physical Map Mode is active pending=\(pendingMapModeBackgroundProbeMode.rawValue)")
+            return
+        }
+        let mode = pendingMapModeBackgroundProbeMode
         mapModeSettings.backgroundProbeMode = mode
         mainVideo.configureBackgroundProbe(mode: mode)
-        logger.log("MAP BACKGROUND PROBE", "mode=\(mode.rawValue)")
+        logger.log("MAP BACKGROUND PROBE", "applied=\(mode.rawValue) scope=NEXT_MAINVIDEO_SESSION")
     }
 
     func setMapModePreventAutoLock(_ enabled: Bool) {
@@ -2081,7 +2097,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.30",
+                "appVersion=v90.35.3.24.31",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

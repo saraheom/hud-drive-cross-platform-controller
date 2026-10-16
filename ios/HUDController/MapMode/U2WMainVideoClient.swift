@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.30 MainVideo client for U2W v8.38 read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.31 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -102,6 +102,12 @@ final class U2WMainVideoClient {
     private var running = false
     private var freshnessTask: Task<Void, Never>?
     private var bootstrapTask: Task<Void, Never>?
+    // v24.31: resource-safe bootstrap arbitration. Only one snapshot HTTP fetch may
+    // exist at a time, and recovery restarts are cooldown-gated so lifecycle/backend
+    // events cannot fan out into concurrent 8 MiB requests.
+    private var startupSnapshotFetchTask: Task<[U2WMainVideoBootstrapSnapshot], Never>?
+    private var lastReadOnlyRebootstrapAt: Date?
+    private let readOnlyRebootstrapCooldown: TimeInterval = 6.0
     private var connectedAt: Date?
     private var lastDecodedFrameAt: Date?
     private var lastReceivedBytesAt: Date?
@@ -156,17 +162,17 @@ final class U2WMainVideoClient {
     }
 
     func configureBackgroundProbe(mode: HudMapBackgroundProbeMode) {
-        let hardwareWasRequested = backgroundProbeMode == .hardwareDecoderBackgroundTask
         let hardwareNowRequested = mode == .hardwareDecoderBackgroundTask
         backgroundProbeMode = mode
-        backgroundProbeEvent = "Configured \(mode.title)"
-        worker?.setHardwareDecoderPreference(hardwareNowRequested)
-        logger.log("U2W VIDEO BACKGROUND", "probe configured mode=\(mode.rawValue) hardwareRequested=\(hardwareNowRequested ? 1 : 0)")
-        diagnosticRecorder.record("background_probe", "configured", fields: ["mode": mode.rawValue, "hardware_requested": hardwareNowRequested])
-        if running, hardwareWasRequested != hardwareNowRequested {
-            backgroundProbeEvent = "Applying decoder backend with read-only bootstrap"
-            restartWorkerWithReadOnlyBootstrap(reason: "background probe decoder backend changed")
-        }
+        backgroundProbeEvent = running
+            ? "Configured for next MainVideo session"
+            : "Configured \(mode.title)"
+        // v24.31: never rebuild the decoder from a probe-selection tap. The worker
+        // backend is fixed when the next MainVideo session starts. This prevents a
+        // mid-drive UI tap from launching a second bootstrap while another lifecycle
+        // recovery is active.
+        logger.log("U2W VIDEO BACKGROUND", "probe configured mode=\(mode.rawValue) hardwareRequested=\(hardwareNowRequested ? 1 : 0) apply=NEXT_MAINVIDEO_SESSION")
+        diagnosticRecorder.record("background_probe", "configured_next_session", fields: ["mode": mode.rawValue, "hardware_requested": hardwareNowRequested, "running": running])
     }
 
     func start(reason: String) {
@@ -220,7 +226,7 @@ final class U2WMainVideoClient {
         acceptedIDRCount = 0
         acceptedSliceCount = 0
         decoderSummary = "session=none • needsIDR=1 • errors=0"
-        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.38-readonly-bootstrap-v837-forensic-v835-helper-v834-hardmirror-v831-raw-tcp-15332 inherited=v8.35-bounded-keyframe-v834-hardmirror-v831-raw-tcp-15332 base architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
+        logger.log("U2W VIDEO", "Start reason=\(reason) architecture=v8.40-resource-safe-v8.38-readonly-bootstrap-v837-forensic-v835-helper-v834-hardmirror-v831-raw-tcp-15332 inherited=v8.35-bounded-keyframe-v834-hardmirror-v831-raw-tcp-15332 base architecture=v8.34-hard-bounded-mirror-v831-raw-tcp-15332 base=v8.34-hard-8MiB-lossless-mirror/v8.31-raw/v8.27.2-observer explicitOnDemandVideoOnly=1 adapterParser=0 adapterCache=0 autostart=0 sourceReacquire=NEVER softwareDecoder=1")
         diagnosticRecorder.record("mainvideo", "start", fields: ["reason": reason, "generation": workerGeneration + 1])
         startNetworkPathLogging()
         startFreshnessWatchdog()
@@ -266,6 +272,22 @@ final class U2WMainVideoClient {
     /// one continuous Annex-B stream through the existing sanitizer/decoder. Failure is
     /// safe: snapshots are discarded and startup falls back to WAITING_LIVE_IDR.
     private func fetchStartupBootstrapSnapshots(reason: String) async -> [U2WMainVideoBootstrapSnapshot] {
+        if let task = startupSnapshotFetchTask {
+            logger.log("U2W BOOTSTRAP", "single-flight JOIN reason=\(reason)")
+            diagnosticRecorder.record("startup_bootstrap", "single_flight_join", fields: ["reason": reason])
+            return await task.value
+        }
+        let task = Task { @MainActor [weak self] () -> [U2WMainVideoBootstrapSnapshot] in
+            guard let self else { return [] }
+            return await self.fetchStartupBootstrapSnapshotsImpl(reason: reason)
+        }
+        startupSnapshotFetchTask = task
+        let result = await task.value
+        startupSnapshotFetchTask = nil
+        return result
+    }
+
+    private func fetchStartupBootstrapSnapshotsImpl(reason: String) async -> [U2WMainVideoBootstrapSnapshot] {
         // Fetch CURRENT first. If a mirror rotation occurs before PREVIOUS is fetched,
         // the generation headers let us safely reject that stale/mismatched pair while
         // still using CURRENT when its snapshot/live overlap is proven.
@@ -984,8 +1006,23 @@ final class U2WMainVideoClient {
 
     private func restartWorkerWithReadOnlyBootstrap(reason: String) {
         guard running else { return }
-        logger.log("U2W VIDEO BACKGROUND", "read-only bootstrap restart reason=\(reason); adapter mirror/relay untouched")
-        diagnosticRecorder.record("background_probe", "readonly_rebootstrap", fields: ["reason": reason, "mode": backgroundProbeMode.rawValue])
+        let now = Date()
+        if startupSnapshotFetchTask != nil {
+            backgroundProbeEvent = "Bootstrap already in progress"
+            logger.log("U2W VIDEO BACKGROUND", "read-only bootstrap SUPPRESSED reason=\(reason) cause=single-flight-active")
+            diagnosticRecorder.record("background_probe", "readonly_rebootstrap_suppressed", fields: ["reason": reason, "cause": "single_flight_active", "mode": backgroundProbeMode.rawValue])
+            return
+        }
+        if let lastReadOnlyRebootstrapAt, now.timeIntervalSince(lastReadOnlyRebootstrapAt) < readOnlyRebootstrapCooldown {
+            let age = now.timeIntervalSince(lastReadOnlyRebootstrapAt)
+            backgroundProbeEvent = "Bootstrap cooldown"
+            logger.log("U2W VIDEO BACKGROUND", "read-only bootstrap SUPPRESSED reason=\(reason) cause=cooldown age=\(String(format: "%.1f", age))s")
+            diagnosticRecorder.record("background_probe", "readonly_rebootstrap_suppressed", fields: ["reason": reason, "cause": "cooldown", "age_seconds": age, "mode": backgroundProbeMode.rawValue])
+            return
+        }
+        lastReadOnlyRebootstrapAt = now
+        logger.log("U2W VIDEO BACKGROUND", "read-only bootstrap restart reason=\(reason); adapter mirror/relay untouched singleFlight=1 cooldown=\(readOnlyRebootstrapCooldown)s")
+        diagnosticRecorder.record("background_probe", "readonly_rebootstrap", fields: ["reason": reason, "mode": backgroundProbeMode.rawValue, "single_flight": true])
         worker?.stop()
         worker = nil
         connected = false
@@ -2326,7 +2363,7 @@ private final class H264VideoToolboxDecoder {
             let attributes: [CFString: Any] = [
                 kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA)
             ]
-            // v90.35.3.24.30 background probe: baseline/keep modes retain the
+            // v90.35.3.24.31 background probe: baseline/keep modes retain the
             // field-proven software-preferred decoder. The explicit hardware probe
             // requests hardware acceleration so we can determine from field logs
             // whether iOS lifecycle invalidation differs by backend. This does not

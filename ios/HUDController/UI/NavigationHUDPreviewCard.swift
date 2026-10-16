@@ -504,7 +504,7 @@ struct NavigationHUDPreviewCard: View {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 7) {
                     ForEach(HudMapBackgroundProbeMode.allCases) { mode in
                         Button {
-                            state.setMapModeBackgroundProbeMode(mode)
+                            state.selectMapModeBackgroundProbeMode(mode)
                         } label: {
                             Text(mode.title)
                                 .font(.caption2.weight(.semibold))
@@ -513,16 +513,34 @@ struct NavigationHUDPreviewCard: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.bordered)
-                        .tint(state.mapModeSettings.backgroundProbeMode == mode ? accent : .secondary)
+                        .tint(state.pendingMapModeBackgroundProbeMode == mode ? accent : .secondary)
                     }
                 }
 
-                Text(state.mapModeSettings.backgroundProbeMode.detail)
+                Text(state.pendingMapModeBackgroundProbeMode.detail)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
+                HStack {
+                    LabeledContent("Active", value: state.mapModeSettings.backgroundProbeMode.title)
+                        .font(.caption2)
+                    Spacer()
+                }
+
+                Button("Apply for next Map Mode session") {
+                    state.applyMapModeBackgroundProbeModeForNextSession()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(accent)
+                .disabled(state.hudU2WLiveRelayActive || state.mainVideoPreviewActive || state.pendingMapModeBackgroundProbeMode == state.mapModeSettings.backgroundProbeMode)
+
                 LabeledContent("Probe status", value: state.mainVideo.backgroundProbeStatus)
                     .font(.caption2)
+
+                Text("Decoder: \(state.mainVideo.decoderSummary)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
 
                 Toggle(
                     "Prevent Auto-Lock while Map Mode is active",
@@ -539,7 +557,7 @@ struct NavigationHUDPreviewCard: View {
                 .buttonStyle(.bordered)
                 .disabled(state.liveMapDiagnosticCollecting)
 
-                Text("Experimental modes are mutually exclusive. iOS may still suspend an app or invalidate VideoToolbox while locked; the probe records whether TCP, decoder output, or the finite background task stops first.")
+                Text("Experimental modes are mutually exclusive. Selection is staged and only applies to the next Map Mode session; it will not rebuild VideoToolbox mid-drive. iOS may still suspend an app or invalidate VideoToolbox while locked; the probe records whether TCP, decoder output, or the finite background task stops first.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

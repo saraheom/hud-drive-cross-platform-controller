@@ -1,0 +1,18 @@
+HUD Controller v90.35.3.24.31 / U2W v8.40 build verification
+
+Local source regression suite: 556 passed, 1 skipped
+Swift syntax parse: 218/218 files passed
+GitHub workflow YAML parse: 8/8 files passed
+U2W v8.40 shell/CGI sh -n: passed
+U2W v8.40 RGD preload: ELF32 ARM, EABI5, soft-float ABI
+U2W v8.40 preload export set: unchanged from v8.39; new libc dependency only lseek
+U2W image encryption/decryption round trip: passed by build_images.py
+U2W image deterministic rebuild: passed
+Zero-copy current CGI simulation: header present, body byte-identical, no request temp H.264 file
+Zero-copy previous CGI simulation: header present, SHA/body valid, no request temp H.264 file
+v24.28 H264MainVideoSanitizer.swift: byte-for-byte unchanged
+v8.34 Hard-Bounded Mirror tree: byte-for-byte unchanged from v24.30 CI FIX 2 baseline
+v8.38 base tree: byte-for-byte unchanged
+v8.39 base tree: byte-for-byte unchanged
+
+Remaining external gate: macOS/Xcode GitHub CI compile + XCTest execution.

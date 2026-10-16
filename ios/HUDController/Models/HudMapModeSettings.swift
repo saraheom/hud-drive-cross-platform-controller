@@ -367,7 +367,7 @@ final class HudMapModeSettings {
         didSet { persist(nativeOBDSpeedOverlayExperiment, key: "HUD.MapMode.nativeOBDSpeedOverlayExperiment") }
     }
 
-    // v90.35.3.24.30 background-continuity experiment controls. These are
+    // v90.35.3.24.31 background-continuity experiment controls. These are
     // deliberately global and never travel with visual presets.
     var backgroundProbeMode: HudMapBackgroundProbeMode {
         didSet { defaults.set(backgroundProbeMode.rawValue, forKey: "HUD.MapMode.BackgroundProbe.mode") }

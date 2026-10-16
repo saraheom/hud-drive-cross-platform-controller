@@ -18,7 +18,8 @@ def test_background_probe_modes_and_ui_are_explicit_and_mutually_exclusive():
     assert '.hardwareDecoderBackgroundTask' in VIDEO and '.suspendDecodePreserveStream' in VIDEO
     assert 'Map Mode Background Continuity Probe' in UI
     assert 'Prevent Auto-Lock while Map Mode is active' in UI
-    assert 'setMapModeBackgroundProbeMode' in APP
+    assert 'selectMapModeBackgroundProbeMode' in APP
+    assert 'applyMapModeBackgroundProbeModeForNextSession' in APP
     assert 'setMapModePreventAutoLock' in APP
 
 def test_background_probe_requests_and_reports_hardware_and_has_readonly_rebootstrap_fallback():
