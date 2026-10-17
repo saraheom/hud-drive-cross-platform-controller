@@ -19,7 +19,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
 
     func testV2411OBDArchiveCollectionHasNoGPSGate() throws {
         let app = try source("HUDController/App/AppState.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.31"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.32"))
         XCTAssertTrue(app.contains("no GPS gate; v24.10 length/framing reconstruction retained"))
         XCTAssertFalse(app.contains("guard speedEngine.currentSpeedMph <= 1 else"))
     }
@@ -28,7 +28,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
         let app = try source("HUDController/App/AppState.swift")
         XCTAssertFalse(app.contains("app session early predecode"))
         XCTAssertFalse(app.contains("HUD BLE transport ready — early predecode"))
-        XCTAssertTrue(app.contains(#"mainVideo.start(reason: "app-only live preview")"#))
+        XCTAssertFalse(app.contains(#"mainVideo.start(reason: "app-only live preview")"#))
         XCTAssertTrue(app.contains(#"self.mainVideo.start(reason: "physical Map Mode live source (optional)")"#))
         XCTAssertTrue(app.contains("MainVideo remains idle"))
     }

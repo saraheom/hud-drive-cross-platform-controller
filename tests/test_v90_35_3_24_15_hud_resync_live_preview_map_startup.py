@@ -28,25 +28,20 @@ def test_live_route_sparse_navigation_mode_assurance_bounds_missed_mode_packet()
     assert 'return !self.hudU2WLiveRelayActive' in APP
 
 
-def test_app_only_live_preview_never_starts_physical_hud_casting():
-    start = APP.index('func startMainVideoPreview()')
-    end = APP.index('func stopMainVideoPreview', start)
-    block = APP[start:end]
-    assert 'mainVideo.start(reason: "app-only live preview")' in block
-    assert 'HudCommands.kivicMode(6)' not in block
-    assert 'u2whud-start.cgi' not in block
-    assert 'hudU2WFrameRelay.start()' not in block
-    assert 'Start Live Preview (app only)' in UI
-    assert 'physical HUD mode unchanged' in APP
+def test_map_mode_is_the_only_mainvideo_owner_and_preview_is_passive():
+    starts = [line.strip() for line in APP.splitlines() if "mainVideo.start(" in line]
+    assert starts == ['self.mainVideo.start(reason: "physical Map Mode live source (optional)")']
+    assert 'func startMainVideoPreview()' not in APP
+    assert 'Start Live Preview (app only)' not in UI
+    assert 'guard hudU2WLiveRelayActive || mapModeActive else { return nil }' in APP
 
 
-def test_preview_is_explicit_but_background_no_longer_intentionally_stops_it():
-    assert 'mainVideoPreviewActive = false' in APP
+def test_background_continuity_tracks_physical_map_mode_only():
     background = ROOTVIEW.split("case .background:", 1)[1].split("default:", 1)[0]
-    assert 'state.hudU2WLiveRelayActive || state.mainVideoPreviewActive' in background
-    assert 'state.stopMainVideoPreview(reason: "app background")' not in background
+    assert 'if state.hudU2WLiveRelayActive {' in background
+    assert 'state.mainVideoPreviewActive' not in background
+    assert 'state.mainVideo.applicationDidEnterBackground()' in background
     assert 'Route Guidance endpoint reachable; MainVideo intentionally idle unless Map Mode is explicitly enabled' in APP
-
 
 def test_v2414_false_failed_safe_during_tcp_connect_is_removed():
     old = 'if self.adapterRelayVersion.contains("v8.31") {\n                        self.transportPhase = "FAILED_SAFE"\n                        self.status = "Live map disconnected — Navigation remains active"'
@@ -70,12 +65,11 @@ def test_map_mode_attempt_generation_fences_stale_cancellation():
     assert APP.count('hudU2WMapModeAttemptGeneration &+= 1') >= 2
 
 
-def test_map_mode_stop_preserves_only_explicit_preview():
-    assert 'if mainVideoPreviewActive {' in APP
-    assert 'Physical Map Mode stopped; app-only preview retained' in APP
-    assert 'mainVideo.stop(reason: "live U2W Map Mode disabled — restore Navigation-only adapter load")' in APP
+def test_map_mode_stop_always_stops_mainvideo():
+    assert 'if mainVideoPreviewActive {' not in APP
+    assert 'mainVideo.stop(reason: "live U2W Map Mode disabled — Map Mode owns MainVideo")' in APP
 
 
 def test_current_version_and_pairing_marker():
-    assert 'appVersion=v90.35.3.24.31' in APP
-    assert 'v90.35.3.24.31 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
+    assert 'appVersion=v90.35.3.24.32' in APP
+    assert 'v90.35.3.24.32 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO

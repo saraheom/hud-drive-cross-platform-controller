@@ -197,6 +197,7 @@ final class RouteGuidanceAdapterClient {
     private(set) var etaText = "—"
     private(set) var timeRemainingSeconds = 0
     private(set) var routeRoads: [String] = []
+    private(set) var distanceToManeuverMeters = 0
     private(set) var distanceToManeuverText = "—"
     private(set) var lastError = ""
     private(set) var lastUpdateAt: Date?
@@ -253,6 +254,7 @@ final class RouteGuidanceAdapterClient {
         etaText = "—"
         timeRemainingSeconds = 0
         routeRoads = []
+        distanceToManeuverMeters = 0
         distanceToManeuverText = "—"
         status = "Adapter feed stopped"
         navigation.navigationOff(owner: .carPlayAdapter)
@@ -496,6 +498,7 @@ final class RouteGuidanceAdapterClient {
             etaText = "—"
             timeRemainingSeconds = 0
             routeRoads = []
+            distanceToManeuverMeters = 0
             distanceToManeuverText = "—"
             lastDeliveredSignature = ""
             lastEtaMilliseconds = nil
@@ -544,6 +547,7 @@ final class RouteGuidanceAdapterClient {
         destination = snapshot.destination.isEmpty ? "—" : snapshot.destination
         timeRemainingSeconds = max(0, snapshot.timeRemainingSeconds)
         routeRoads = Self.uniqueRouteRoads(from: snapshot)
+        distanceToManeuverMeters = max(0, snapshot.distanceToManeuverMeters)
         distanceToManeuverText = displayDistance(snapshot)
         status = "Live Route Guidance • \(selectedSource) • seq \(snapshot.sequence)"
 

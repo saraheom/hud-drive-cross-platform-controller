@@ -16,7 +16,7 @@ STATUS = (V836 / "source/u2wvideo-relay-status.cgi").read_text()
 
 
 def test_current_release_and_passive_seam_snapshot_collection():
-    assert 'appVersion=v90.35.3.24.31' in APP
+    assert 'appVersion=v90.35.3.24.32' in APP
     assert 'u2wvideo-seam-log.cgi' in APP
     assert 'v8.37 Forensic Seam Capture' in APP
     assert 'v836_marker' in VIDEO
@@ -72,5 +72,5 @@ def test_speed_warning_is_independently_customizable_and_separate_main_tab_card(
     assert 'Enable overspeed warning' in CARD
     assert 'Change speed number color' in CARD
     assert 'Highlight speed background' in CARD
-    assert 'Number warning color' in CARD
-    assert 'Background warning color' in CARD
+    assert 'Warning text color' in CARD
+    assert 'Speed background warning color' in CARD

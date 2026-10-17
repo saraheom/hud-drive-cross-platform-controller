@@ -8,7 +8,6 @@ ROOTVIEW = (ROOT / "ios/HUDController/UI/RootView.swift").read_text()
 def test_navigation_mode_has_zero_automatic_mainvideo_starts():
     starts = [line.strip() for line in APP.splitlines() if "mainVideo.start(" in line]
     assert starts == [
-        'mainVideo.start(reason: "app-only live preview")',
         'self.mainVideo.start(reason: "physical Map Mode live source (optional)")',
     ]
     assert "Route Guidance endpoint reachable; MainVideo intentionally idle" in APP
@@ -25,7 +24,7 @@ def test_map_mode_proves_first_jpeg_before_mode6_but_does_not_require_mainvideo(
     assert 'Live map unavailable — Navigation retained' not in APP
 
 def test_map_mode_stop_stops_experimental_video_work():
-    assert 'mainVideo.stop(reason: "live U2W Map Mode disabled — restore Navigation-only adapter load")' in APP
+    assert 'mainVideo.stop(reason: "live U2W Map Mode disabled — Map Mode owns MainVideo")' in APP
     assert "u2wvideo-relay-stop.cgi" in VIDEO
 
 def test_raw_v831_moves_h264_semantics_to_iphone():

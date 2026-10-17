@@ -10,6 +10,7 @@ struct HudMapModeSnapshot: Equatable {
     /// even when the stock HUD maneuver vocabulary collapses them to straight.
     var maneuverText: String
     var distanceText: String
+    var distanceToManeuverMeters: Int
     var destination: String
     var etaText: String
     var timeLeftText: String
@@ -32,6 +33,7 @@ struct HudMapModeSnapshot: Equatable {
         maneuver: .right,
         maneuverText: "Turn right",
         distanceText: "0.4 mi",
+        distanceToManeuverMeters: 644,
         destination: "Demo destination",
         etaText: "6:20 PM",
         timeLeftText: "7 min",
@@ -55,6 +57,7 @@ struct HudMapModeSnapshot: Equatable {
         maneuver: .right,
         maneuverText: "Turn right",
         distanceText: "100 ft",
+        distanceToManeuverMeters: 30,
         destination: "Work",
         etaText: "9:05 AM",
         timeLeftText: "1 min",

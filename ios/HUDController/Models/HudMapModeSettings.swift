@@ -367,8 +367,8 @@ final class HudMapModeSettings {
         didSet { persist(nativeOBDSpeedOverlayExperiment, key: "HUD.MapMode.nativeOBDSpeedOverlayExperiment") }
     }
 
-    // v90.35.3.24.31 background-continuity experiment controls. These are
-    // deliberately global and never travel with visual presets.
+    // v90.35.3.24.32 production background-continuity state. The selectable
+    // probe UI is retired; Keep Decoder + BG Task is the fixed production mode.
     var backgroundProbeMode: HudMapBackgroundProbeMode {
         didSet { defaults.set(backgroundProbeMode.rawValue, forKey: "HUD.MapMode.BackgroundProbe.mode") }
     }
@@ -394,9 +394,9 @@ final class HudMapModeSettings {
         }
     }
 
-    // v90.35.3.24.4 close-maneuver warning. These are intentionally global,
-    // not design-preset values: changing visual presets should not silently
-    // change when or how an approaching-turn warning is delivered.
+    // v90.35.3.24.32 approaching-turn distance color warning. Enable + threshold
+    // remain global behavior settings. Legacy blink fields below are retained only
+    // for preference/source compatibility and are no longer exposed or rendered.
     var maneuverWarningEnabled: Bool {
         didSet { defaults.set(maneuverWarningEnabled, forKey: "HUD.MapMode.maneuverWarning.enabled") }
     }
@@ -521,8 +521,10 @@ final class HudMapModeSettings {
         showTimeLeft = bool("HUD.MapMode.showTimeLeft", default: true)
         etaUsesLanePositionWhenNoLanes = bool("HUD.MapMode.etaUsesLanePositionWhenNoLanes", default: false)
         nativeOBDSpeedOverlayExperiment = bool("HUD.MapMode.nativeOBDSpeedOverlayExperiment", default: false)
-        let backgroundProbeRaw = store.string(forKey: "HUD.MapMode.BackgroundProbe.mode") ?? HudMapBackgroundProbeMode.baseline.rawValue
-        backgroundProbeMode = HudMapBackgroundProbeMode(rawValue: backgroundProbeRaw) ?? .baseline
+        // v24.32 retires the experimental selector. Always migrate to the
+        // field-validated Keep Decoder + BG Task production behavior.
+        backgroundProbeMode = .keepDecoderBackgroundTask
+        store.set(HudMapBackgroundProbeMode.keepDecoderBackgroundTask.rawValue, forKey: "HUD.MapMode.BackgroundProbe.mode")
         preventAutoLockWhileMapMode = bool("HUD.MapMode.BackgroundProbe.preventAutoLock", default: false)
         hudFrameRate = Self.normalizedHUDFrameRate(integer("HUD.MapMode.hudFrameRate", default: 5))
 

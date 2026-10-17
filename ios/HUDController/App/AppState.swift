@@ -30,7 +30,6 @@ final class AppState {
     private var mapModeFrozenSourceImage: UIImage?
     private(set) var mapModeActive = false
     private(set) var mapModeStatus = "Map Mode off"
-    private(set) var pendingMapModeBackgroundProbeMode: HudMapBackgroundProbeMode = .baseline
     private(set) var mapModeLastNetworkEvent = "Cast server idle"
     private(set) var hudU2WSTAStatus = "Not tested"
     private(set) var hudU2WSTAAddress = ""
@@ -136,9 +135,8 @@ final class AppState {
     // they should remain visible. No HUD firmware write is involved.
     private var laneGuidanceRefreshTask: Task<Void, Never>?
     private var activeLaneGuidance: [HudCommands.NativeLane] = []
-    /// Map Mode uses the provider's current showing edge, not the retained
-    /// stock-HUD lane cache, when deciding whether shared-position ETA should hide.
-    private var mapModeLaneGuidanceVisible = false
+    /// Shared-position ETA must use the exact same visibility decision as the
+    /// custom lane renderer. `shouldDisplayActiveLanes()` is the single source of truth.
     private var activeLaneDistanceMeters = 0
     private var activeLaneContext = ""
     private var activeLaneIsLive = false
@@ -166,16 +164,6 @@ final class AppState {
     private var laneRendererResetTask: Task<Void, Never>?
     private var lanePresentationGeneration: UInt64 = 0
 
-    // v90.35.3.24.4 Map Mode close-maneuver warning. Route Guidance publishes
-    // current maneuver index + distance on every selected-source poll, even when
-    // no lanes are visible. That lets this coordinator fire once per maneuver
-    // without depending on lane guidance or on repeated HUD maneuver packets.
-    private(set) var mapModeManeuverWarningHiddenTarget: HudManeuverWarningTarget?
-    private(set) var mapModeManeuverWarningStatus = "Armed"
-    private var mapModeManeuverWarningTask: Task<Void, Never>?
-    private var mapModeManeuverWarningGeneration: UInt64 = 0
-    private var mapModeManeuverWarningCurrentKey: String?
-    private var mapModeManeuverWarningTriggeredKeys: Set<String> = []
 
     // Legacy U2W v8.7 fallback cache. v8.7 incorrectly labeled the 0x5204
     // composed-guidance-event id as a route maneuver index and retained only the
@@ -207,11 +195,9 @@ final class AppState {
         self.liveMapDiagnostics = liveMapDiagnostics
         let mainVideo = U2WMainVideoClient(logger: logger, diagnosticRecorder: liveMapDiagnostics)
         self.mainVideo = mainVideo
-        let initialProbeMode = HudMapBackgroundProbeMode(
-            rawValue: UserDefaults.standard.string(forKey: "HUD.MapMode.BackgroundProbe.mode") ?? ""
-        ) ?? .baseline
-        pendingMapModeBackgroundProbeMode = initialProbeMode
-        mainVideo.configureBackgroundProbe(mode: initialProbeMode)
+        // v24.32 production behavior: Keep Decoder + BG Task is fixed.
+        // Hardware/suspend probe choices are no longer user-selectable.
+        mainVideo.configureBackgroundProbe(mode: .keepDecoderBackgroundTask)
         let mainVideoDiagnostic = U2WMainVideoDiagnosticClient(logger: logger)
         self.mainVideoDiagnostic = mainVideoDiagnostic
         let hudU2WFrameRelay = U2WHUDFrameRelayClient(logger: logger)
@@ -480,7 +466,6 @@ final class AppState {
             self.postManeuverLaneClearTask = nil
             self.laneRendererResetTask?.cancel()
             self.laneRendererResetTask = nil
-            self.resetMapModeManeuverWarning(reason: "HUD BLE transport disconnected", clearTriggered: true)
             self.laneRightSideProbeActive = false
             self.laneRightSideProbeWidget = nil
             self.hudWiFiExposureTask?.cancel()
@@ -905,7 +890,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.31 — background-probe + session-boundary + startup-bootstrap + forensic live-map state
+            HUD Controller v90.35.3.24.32 — production-background-continuity + session-boundary + startup-bootstrap + forensic live-map state
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -921,7 +906,6 @@ final class AppState {
             mainvideo_decoder=\(self.mainVideo.decoderSummary)
             mainvideo_relay=\(self.mainVideo.adapterCacheSummary)
             background_probe_active=\(self.mapModeSettings.backgroundProbeMode.rawValue)
-            background_probe_pending=\(self.pendingMapModeBackgroundProbeMode.rawValue)
             background_probe_status=\(self.mainVideo.backgroundProbeStatus)
             iphone_network=\(self.mainVideo.networkPathSummary)
             hud_sta_status=\(self.hudU2WSTAStatus)
@@ -1027,43 +1011,7 @@ final class AppState {
         return "HUD/stock speed"
     }
 
-    func startMainVideoPreview() {
-        guard !firmwareMaintenanceActive else {
-            logger.log("MAINVIDEO PREVIEW", "Start blocked during HUD firmware maintenance")
-            return
-        }
-        guard !mainVideoPreviewActive else { return }
-        mainVideoPreviewActive = true
-        logger.log("MAINVIDEO PREVIEW", "App-only live preview START; physical HUD mode unchanged")
-        mainVideo.start(reason: "app-only live preview")
-    }
 
-    func stopMainVideoPreview(reason: String = "manual") {
-        guard mainVideoPreviewActive else { return }
-        mainVideoPreviewActive = false
-        logger.log("MAINVIDEO PREVIEW", "App-only live preview STOP reason=\(reason)")
-        if !hudU2WLiveRelayActive {
-            mainVideo.stop(reason: "app-only live preview stopped — \(reason)")
-        } else {
-            logger.log("MAINVIDEO PREVIEW", "Decoder retained because physical Map Mode is active")
-        }
-    }
-
-    func selectMapModeBackgroundProbeMode(_ mode: HudMapBackgroundProbeMode) {
-        pendingMapModeBackgroundProbeMode = mode
-        logger.log("MAP BACKGROUND PROBE", "selected=\(mode.rawValue) active=\(mapModeSettings.backgroundProbeMode.rawValue) apply=PENDING")
-    }
-
-    func applyMapModeBackgroundProbeModeForNextSession() {
-        guard !hudU2WLiveRelayActive, !mainVideoPreviewActive else {
-            logger.log("MAP BACKGROUND PROBE", "apply blocked while physical Map Mode is active pending=\(pendingMapModeBackgroundProbeMode.rawValue)")
-            return
-        }
-        let mode = pendingMapModeBackgroundProbeMode
-        mapModeSettings.backgroundProbeMode = mode
-        mainVideo.configureBackgroundProbe(mode: mode)
-        logger.log("MAP BACKGROUND PROBE", "applied=\(mode.rawValue) scope=NEXT_MAINVIDEO_SESSION")
-    }
 
     func setMapModePreventAutoLock(_ enabled: Bool) {
         mapModeSettings.preventAutoLockWhileMapMode = enabled
@@ -1121,7 +1069,6 @@ final class AppState {
         hudU2WJoinRecoveryTask?.cancel()
         hudU2WJoinRecoveryTask = nil
         hudU2WFrameRelay.stop(reason: "new relay session")
-        resetMapModeManeuverWarning(reason: "new live Map Mode relay session", clearTriggered: true)
         hudU2WKivicKickCount = 0
         hudU2WAutomaticViewerRecoveryCount = 0
         hudU2WAutomaticJoinRecoveryCount = 0
@@ -1217,9 +1164,7 @@ final class AppState {
                 self.hudU2WRelayFrameTask = nil
                 self.hudU2WFrameRelay.stop(reason: "Map Mode prewarm failed")
                 self.endMapModeDirectOBDOwnership(reason: "Map Mode prewarm failed")
-                if !self.mainVideoPreviewActive {
-                    self.mainVideo.stop(reason: "Map Mode physical relay unavailable")
-                }
+                self.mainVideo.stop(reason: "Map Mode physical relay unavailable")
                 if let stopURL = URL(string: "http://192.168.50.2/cgi-bin/u2whud-stop.cgi") {
                     _ = try? await URLSession.shared.data(from: stopURL)
                 }
@@ -1754,7 +1699,7 @@ final class AppState {
                     settings: self.mapModeSettings,
                     sourceMapImage: freshLiveMapImage,
                     suppressCustomSpeedForNativeOBDProbe: false,
-                    warningHiddenTarget: self.mapModeManeuverWarningHiddenTarget
+                    warningHiddenTarget: nil
                 ) {
                     renderCount += 1
                     self.hudU2WFrameRelay.sendFrame(frame)
@@ -1763,7 +1708,7 @@ final class AppState {
                     if renderCount == 1 || renderCount % heartbeatEvery == 0 {
                         self.logger.log(
                             "MAP RENDER HEARTBEAT",
-                            "render=\(renderCount) targetFPS=\(targetFPS) speedSource=\(self.directELM.freshSpeedMph() != nil ? "OBD" : "GPS") actualFPS=\(String(format: "%.1f", self.hudU2WFrameRelay.actualFPS)) throughput=\(String(format: "%.1f", self.hudU2WFrameRelay.recentKilobytesPerSecond))KBps speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
+                            "render=\(renderCount) targetFPS=\(targetFPS) speedSource=\(self.directELM.freshSpeedMph() != nil ? "OBD" : "GPS") actualFPS=\(String(format: "%.1f", self.hudU2WFrameRelay.actualFPS)) throughput=\(String(format: "%.1f", self.hudU2WFrameRelay.recentKilobytesPerSecond))KBps speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) lanesVisible=\(snapshot.laneGuidanceVisible ? 1 : 0) laneCount=\(snapshot.laneValues.count) etaShared=\(self.mapModeSettings.etaUsesLanePositionWhenNoLanes ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
                         )
                     }
                 }
@@ -2097,7 +2042,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.31",
+                "appVersion=v90.35.3.24.32",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -2312,7 +2257,6 @@ final class AppState {
 
     func stopHUDU2WSTAHomeProbe() {
         hudU2WMapModeAttemptGeneration &+= 1
-        resetMapModeManeuverWarning(reason: "live Map Mode relay stopped", clearTriggered: true)
         endMapModeDirectOBDOwnership(reason: "physical Map Mode disabled")
         hudU2WSTAStatusTask?.cancel()
         hudU2WSTAStatusTask = nil
@@ -2354,14 +2298,9 @@ final class AppState {
         hudU2WSTAResetInProgress = false
         hudU2WIgnoreEmptyStatusUntil = .distantPast
         hudU2WFrameRelay.stop(reason: "relay stopped")
-        // Navigation-priority v8.31: the physical casting stack always stops here.
-        // If the user explicitly enabled app-only Live Preview, retain only the
-        // tiny raw relay + iPhone decoder; otherwise return to zero video workload.
-        if mainVideoPreviewActive {
-            logger.log("MAINVIDEO PREVIEW", "Physical Map Mode stopped; app-only preview retained")
-        } else {
-            mainVideo.stop(reason: "live U2W Map Mode disabled — restore Navigation-only adapter load")
-        }
+        // v24.32: Map Mode enable/disable is the sole MainVideo ownership gate.
+        // Disabling Map Mode always returns to zero live-video workload.
+        mainVideo.stop(reason: "live U2W Map Mode disabled — Map Mode owns MainVideo")
         hudU2WLiveRelayActive = false
         updateMapModeIdleTimerPolicy(reason: "Map Mode disabled")
         hudU2WSTAConnected = false
@@ -2412,7 +2351,6 @@ final class AppState {
             guard liveLaneSessionActive else { return }
             logger.log("CARPLAY LANE", "Live Route Guidance ended; clearing live lane state")
             liveLaneSessionActive = false
-            resetMapModeManeuverWarning(reason: "Route Guidance ended", clearTriggered: true)
             liveLaneCacheByManeuver.removeAll()
             liveLaneCurrentManeuverIndex = nil
             liveLaneSource = nil
@@ -2431,7 +2369,6 @@ final class AppState {
             if let previous = liveLaneSource {
                 logger.log("CARPLAY LANE", "Source changed \(previous) → \(state.source); dropping old live lane state")
             }
-            resetMapModeManeuverWarning(reason: "CarPlay source changed", clearTriggered: true)
             liveLaneCacheByManeuver.removeAll()
             liveLaneCurrentManeuverIndex = nil
             activeLiveLaneGuidanceIndex = nil
@@ -2444,7 +2381,6 @@ final class AppState {
 
         let enteredReroute = state.routeState == 5 && liveLaneLastRouteState != 5
         if enteredReroute {
-            resetMapModeManeuverWarning(reason: "CarPlay reroute started", clearTriggered: true)
             liveLaneCacheByManeuver.removeAll()
             liveLaneCurrentManeuverIndex = nil
             activeLiveLaneGuidanceIndex = nil
@@ -2471,7 +2407,6 @@ final class AppState {
             )
         }
 
-        updateMapModeManeuverWarning(state)
 
         if state.schemaVersion >= 2 {
             receiveResolvedV88LaneGuidance(state)
@@ -2480,114 +2415,12 @@ final class AppState {
         }
     }
 
-    private var maneuverWarningThresholdMeters: Int {
-        max(1, Int((Double(mapModeSettings.maneuverWarningThresholdFeet) * 0.3048).rounded()))
-    }
-
-    private func updateMapModeManeuverWarning(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState) {
-        guard mapModeSettings.maneuverWarningEnabled else {
-            resetMapModeManeuverWarning(reason: "warning disabled", clearTriggered: false)
-            return
-        }
-        guard state.routeState != 0 && state.routeState != 5,
-              let index = state.currentManeuverIndex else {
-            return
-        }
-
-        let key = "\(state.source)|\(index)"
-        if mapModeManeuverWarningCurrentKey != key {
-            mapModeManeuverWarningTask?.cancel()
-            mapModeManeuverWarningTask = nil
-            mapModeManeuverWarningHiddenTarget = nil
-            mapModeManeuverWarningCurrentKey = key
-            mapModeManeuverWarningStatus = "Armed • maneuver \(index)"
-        }
-
-        // Do not consume the once-per-maneuver warning while Map Mode is not
-        // actually being rendered to the HUD. If Map Mode starts after the car
-        // is already inside the threshold, the next poll can still warn.
-        guard mapModeActive || hudU2WLiveRelayActive else { return }
-
-        let liveDistance = max(0, state.distanceToManeuverMeters)
-        let distance = liveDistance > 0 ? liveDistance : max(0, navigation.current.distanceMeters)
-        let threshold = maneuverWarningThresholdMeters
-        guard distance > 0,
-              distance <= threshold,
-              !mapModeManeuverWarningTriggeredKeys.contains(key) else { return }
-
-        mapModeManeuverWarningTriggeredKeys.insert(key)
-        startMapModeManeuverWarning(
-            key: key,
-            maneuverIndex: index,
-            distanceMeters: distance,
-            source: state.source
-        )
-    }
-
-    private func startMapModeManeuverWarning(
-        key: String,
-        maneuverIndex: Int,
-        distanceMeters: Int,
-        source: String
-    ) {
-        mapModeManeuverWarningTask?.cancel()
-        mapModeManeuverWarningGeneration &+= 1
-        let generation = mapModeManeuverWarningGeneration
-        let target = mapModeSettings.maneuverWarningTarget
-        let count = min(5, max(2, mapModeSettings.maneuverWarningBlinkCount))
-        let interval = min(2.0, max(0.5, mapModeSettings.maneuverWarningIntervalSeconds))
-        mapModeManeuverWarningStatus = "Blinking \(target.title) • \(count)x"
-        logger.log(
-            "MAP MANEUVER WARNING",
-            "trigger source=\(source) maneuver=\(maneuverIndex) distance=\(distanceMeters)m threshold=\(maneuverWarningThresholdMeters)m target=\(target.rawValue) blinks=\(count) interval=\(String(format: "%.2f", interval))s"
-        )
-
-        mapModeManeuverWarningTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for blink in 1...count {
-                guard !Task.isCancelled,
-                      self.mapModeManeuverWarningGeneration == generation,
-                      self.mapModeManeuverWarningCurrentKey == key else { return }
-                self.mapModeManeuverWarningHiddenTarget = target
-                self.logger.log("MAP MANEUVER WARNING", "blink \(blink)/\(count) OFF target=\(target.rawValue)")
-                try? await Task.sleep(for: .seconds(interval))
-
-                guard !Task.isCancelled,
-                      self.mapModeManeuverWarningGeneration == generation,
-                      self.mapModeManeuverWarningCurrentKey == key else { return }
-                self.mapModeManeuverWarningHiddenTarget = nil
-                self.logger.log("MAP MANEUVER WARNING", "blink \(blink)/\(count) ON target=\(target.rawValue)")
-                if blink < count {
-                    try? await Task.sleep(for: .seconds(interval))
-                }
-            }
-            guard self.mapModeManeuverWarningGeneration == generation else { return }
-            self.mapModeManeuverWarningHiddenTarget = nil
-            self.mapModeManeuverWarningStatus = "Complete • maneuver \(maneuverIndex)"
-            self.mapModeManeuverWarningTask = nil
-        }
-    }
-
-    private func resetMapModeManeuverWarning(reason: String, clearTriggered: Bool) {
-        mapModeManeuverWarningTask?.cancel()
-        mapModeManeuverWarningTask = nil
-        mapModeManeuverWarningGeneration &+= 1
-        mapModeManeuverWarningHiddenTarget = nil
-        mapModeManeuverWarningCurrentKey = nil
-        if clearTriggered {
-            mapModeManeuverWarningTriggeredKeys.removeAll()
-        }
-        mapModeManeuverWarningStatus = mapModeSettings.maneuverWarningEnabled ? "Armed" : "Off"
-        logger.log("MAP MANEUVER WARNING", "reset reason=\(reason) clearTriggered=\(clearTriggered ? 1 : 0)")
-    }
-
     /// U2W v8.8 resolves the protocol correctly on the adapter:
     /// 0x5204 TLV1 is a composedGuidanceEventIndex and 0x5201 InfoType 16
     /// selects the active event from that cache. The iPhone therefore consumes
     /// the already-resolved current lane event instead of guessing a mapping to
     /// the independently moving route-maneuver cursor.
     private func receiveResolvedV88LaneGuidance(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState) {
-        mapModeLaneGuidanceVisible = state.routeState != 0 && state.laneGuidanceShowing && !state.lanes.isEmpty
         // The physical Google Maps capture establishes two distinct concepts:
         //   * 0x5204 events may be pre-cached well before they are needed.
         //   * 0x5201 InfoType 16 selects an event, while InfoType 18 says whether
@@ -2715,7 +2548,6 @@ final class AppState {
     /// with v8.7. Keep the old best-effort mapping without allowing transient
     /// backward cursor movement to wipe the cache.
     private func receiveLegacyV87LaneGuidance(_ state: RouteGuidanceAdapterClient.LiveLaneGuidanceState) {
-        mapModeLaneGuidanceVisible = state.routeState != 0 && state.laneGuidanceShowing && !state.lanes.isEmpty
         if !loggedLegacyV87LaneSchema {
             loggedLegacyV87LaneSchema = true
             logger.log("CARPLAY LANE", "U2W v8.7 lane schema detected; best-effort only — install v8.8 for active-event resolution")
@@ -2992,7 +2824,6 @@ final class AppState {
         laneGuidanceRefreshTask?.cancel()
         laneGuidanceRefreshTask = nil
         activeLaneGuidance = []
-        mapModeLaneGuidanceVisible = false
         activeLaneDistanceMeters = 0
         activeLaneContext = ""
         activeLaneIsLive = false
@@ -3100,7 +2931,8 @@ final class AppState {
     }
 
     var mapModePreviewSourceImage: UIImage? {
-        mapModeActive ? (mapModeFrozenSourceImage ?? mainVideo.latestFrame) : mainVideo.latestFrame
+        guard hudU2WLiveRelayActive || mapModeActive else { return nil }
+        return mapModeActive ? (mapModeFrozenSourceImage ?? mainVideo.latestFrame) : mainVideo.latestFrame
     }
 
     func enableMapMode() {
@@ -3135,7 +2967,6 @@ final class AppState {
         // exclusive on the iPhone. Normal polling resumes on Map Mode exit.
         routeGuidance.stop(reason: "Map Mode frozen-route Wi-Fi handoff")
         nowPlaying.stop(reason: "Map Mode HUD Wi-Fi handoff")
-        resetMapModeManeuverWarning(reason: "legacy Map Mode started", clearTriggered: true)
         beginMapModeDirectOBDOwnership(reason: "legacy Map Mode start")
         mapModeActive = true
         mapModeStatus = "Starting Map Mode cast server…"
@@ -3231,7 +3062,7 @@ final class AppState {
                     settings: self.mapModeSettings,
                     sourceMapImage: self.mapModeFrozenSourceImage ?? self.mainVideo.latestFrame,
                     suppressCustomSpeedForNativeOBDProbe: false,
-                    warningHiddenTarget: self.mapModeManeuverWarningHiddenTarget
+                    warningHiddenTarget: nil
                 ) {
                     self.mapModeCastServer.updateFrame(frame)
                 }
@@ -3322,11 +3153,12 @@ final class AppState {
             maneuver: navigation.current.maneuver,
             maneuverText: navigation.current.sourceDescription ?? navigation.current.primaryText,
             distanceText: distance,
+            distanceToManeuverMeters: routeGuidance.distanceToManeuverMeters > 0 ? routeGuidance.distanceToManeuverMeters : max(0, navigation.current.distanceMeters),
             destination: routeGuidance.destination,
             etaText: routeGuidance.etaText,
             timeLeftText: Self.mapModeTimeLeftText(routeGuidance.timeRemainingSeconds),
             laneValues: activeLaneGuidance.map { Int($0.wireValue) },
-            laneGuidanceVisible: mapModeLaneGuidanceVisible,
+            laneGuidanceVisible: shouldDisplayActiveLanes(),
             routeRoads: routeGuidance.routeRoads,
             hasLiveRoute: liveRoute
         )
@@ -3336,10 +3168,11 @@ final class AppState {
         if useFrozenRouteWhenUnavailable, var frozen = mapModeFrozenSnapshot {
             frozen.speedMph = speed
             frozen.speedLimitMph = limit
+            frozen.distanceToManeuverMeters = routeGuidance.distanceToManeuverMeters > 0 ? routeGuidance.distanceToManeuverMeters : max(0, navigation.current.distanceMeters)
             if !activeLaneGuidance.isEmpty {
                 frozen.laneValues = activeLaneGuidance.map { Int($0.wireValue) }
             }
-            frozen.laneGuidanceVisible = mapModeLaneGuidanceVisible
+            frozen.laneGuidanceVisible = shouldDisplayActiveLanes()
             return frozen
         }
 

@@ -20,15 +20,17 @@ final class V90352431ResourceSafeBackgroundProbeTests: XCTestCase {
         XCTAssertFalse(previous.contains("u2w_v838_bootstrap_previous_$$.h264"))
     }
 
-    func testProbeSelectionCannotRebuildDecoderMidDrive() throws {
+    func testProductionBackgroundModeUsesResourceSafeLockRecovery() throws {
         let app = try source("HUDController/App/AppState.swift")
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(app.contains("selectMapModeBackgroundProbeMode"))
-        XCTAssertTrue(app.contains("applyMapModeBackgroundProbeModeForNextSession"))
-        XCTAssertTrue(ui.contains("Apply for next Map Mode session"))
-        XCTAssertTrue(ui.contains("Decoder: \\(state.mainVideo.decoderSummary)"))
-        XCTAssertFalse(video.contains("restartWorkerWithReadOnlyBootstrap(reason: \"background probe decoder backend changed\")"))
+        XCTAssertFalse(app.contains("selectMapModeBackgroundProbeMode"))
+        XCTAssertFalse(app.contains("applyMapModeBackgroundProbeModeForNextSession"))
+        XCTAssertFalse(ui.contains("Apply for next Map Mode session"))
+        XCTAssertTrue(ui.contains(#"Decoder: \(state.mainVideo.decoderSummary)"#))
+        XCTAssertTrue(ui.contains("Keep decoder + BG task"))
+        XCTAssertTrue(video.contains("lock-time -12903 detected"))
+        XCTAssertTrue(video.contains(#"restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")"#))
     }
 
     func testRouteGuidancePublicationPreservesLastGoodFileOnFailure() throws {
@@ -42,7 +44,7 @@ final class V90352431ResourceSafeBackgroundProbeTests: XCTestCase {
     func testReleasePairingIsV840AndV834V831RemainUnchanged() throws {
         let app = try source("HUDController/App/AppState.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.31"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.32"))
         XCTAssertTrue(app.contains("paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery"))
         XCTAssertTrue(video.contains("unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay"))
     }

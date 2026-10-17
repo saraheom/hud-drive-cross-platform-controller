@@ -6,7 +6,7 @@ import CoreMedia
 import CoreImage
 import Network
 
-/// v90.35.3.24.31 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Navigation Mode is the safety boundary: MainVideo starts only for an explicit app-only preview or Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
+/// v90.35.3.24.32 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay. Map Mode enable/disable is the ownership boundary: MainVideo starts only for an explicit Map Mode attempt and failure never restarts/signals AppleCarPlay or Route Guidance.
 ///
 /// U2W v8.35 leaves the proven v8.34 mirror/relay bytes unchanged and adds only a bounded native keyframe-request helper. U2W v8.34 keeps the v8.33 lossless mirror fidelity and adds a hard 8-MiB write-boundary rotation independent of SPS/IDR cadence: file rotation preserves the complete
 /// successful AppleCarPlay write across an atomic inode swap, mirror writes are write-all,
@@ -44,7 +44,7 @@ final class U2WMainVideoClient {
     private var adapterRelayLastSourceProgressAt: Date?
     private var adapterRelayConsecutiveStatusFailures = 0
     private(set) var decoderSummary = "session=none • needsIDR=1 • errors=0"
-    private(set) var backgroundProbeMode: HudMapBackgroundProbeMode = .baseline
+    private(set) var backgroundProbeMode: HudMapBackgroundProbeMode = .keepDecoderBackgroundTask
     private(set) var backgroundProbeScene = "Active"
     private(set) var backgroundProbeEvent = "Idle"
     private(set) var backgroundProbeTaskActive = false
@@ -161,18 +161,13 @@ final class U2WMainVideoClient {
         self.diagnosticRecorder = diagnosticRecorder
     }
 
-    func configureBackgroundProbe(mode: HudMapBackgroundProbeMode) {
-        let hardwareNowRequested = mode == .hardwareDecoderBackgroundTask
-        backgroundProbeMode = mode
-        backgroundProbeEvent = running
-            ? "Configured for next MainVideo session"
-            : "Configured \(mode.title)"
-        // v24.31: never rebuild the decoder from a probe-selection tap. The worker
-        // backend is fixed when the next MainVideo session starts. This prevents a
-        // mid-drive UI tap from launching a second bootstrap while another lifecycle
-        // recovery is active.
-        logger.log("U2W VIDEO BACKGROUND", "probe configured mode=\(mode.rawValue) hardwareRequested=\(hardwareNowRequested ? 1 : 0) apply=NEXT_MAINVIDEO_SESSION")
-        diagnosticRecorder.record("background_probe", "configured_next_session", fields: ["mode": mode.rawValue, "hardware_requested": hardwareNowRequested, "running": running])
+    func configureBackgroundProbe(mode _: HudMapBackgroundProbeMode) {
+        // v24.32: the field-validated Keep Decoder + BG Task path is production.
+        // Legacy experimental enum cases remain source-compatible but are no longer selectable.
+        backgroundProbeMode = .keepDecoderBackgroundTask
+        backgroundProbeEvent = running ? "Production continuity active" : "Keep decoder + BG task"
+        logger.log("U2W VIDEO BACKGROUND", "production continuity configured mode=keepDecoderBackgroundTask hardwareRequested=0")
+        diagnosticRecorder.record("background_probe", "production_mode_configured", fields: ["mode": backgroundProbeMode.rawValue, "hardware_requested": false, "running": running])
     }
 
     func start(reason: String) {
@@ -637,6 +632,28 @@ final class U2WMainVideoClient {
                 // codec/transport failure signals from onDiagnostic. Lifecycle or
                 // watchdog recovery callbacks must never consume it.
                 self.diagnosticRecorder.triggerEvidenceWindow("decoder_recovery", detail: reason)
+
+                // v24.32 lock-transition recovery: field evidence shows iOS may
+                // invalidate the current VT session (-12903) exactly when the phone
+                // locks, while TCP and the bounded background task remain alive.
+                // Instead of passively waiting for the head unit to emit another IDR,
+                // immediately try the v8.40 zero-copy retained-history bootstrap.
+                // Single-flight + cooldown guards in restartWorkerWithReadOnlyBootstrap
+                // prevent recovery fan-out. If retained history has no usable IDR, the
+                // normal WAITING_FRESH_IDR behavior remains as a safe fallback.
+                if reason.contains("kVTInvalidSessionErr (-12903)"),
+                   self.backgroundProbeMode == .keepDecoderBackgroundTask,
+                   self.backgroundProbeScene != "Active" {
+                    self.backgroundProbeEvent = "Lock recovery bootstrap"
+                    self.logger.log("U2W VIDEO BACKGROUND", "lock-time -12903 detected scene=\(self.backgroundProbeScene); attempting v8.40 retained-history bootstrap")
+                    self.diagnosticRecorder.record("background_probe", "lock_invalid_session_rebootstrap", fields: ["scene": self.backgroundProbeScene, "phase": self.transportPhase, "generation": generation])
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        try? await Task.sleep(for: .milliseconds(120))
+                        guard self.running, self.workerGeneration == generation, self.backgroundProbeScene != "Active" else { return }
+                        self.restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")
+                    }
+                }
             }
         }
         worker.onKeyframeRequestNeeded = { [weak self] reason in
@@ -2363,7 +2380,7 @@ private final class H264VideoToolboxDecoder {
             let attributes: [CFString: Any] = [
                 kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA)
             ]
-            // v90.35.3.24.31 background probe: baseline/keep modes retain the
+            // v90.35.3.24.32 production continuity: keep-decoder mode retains the
             // field-proven software-preferred decoder. The explicit hardware probe
             // requests hardware acceleration so we can determine from field logs
             // whether iOS lifecycle invalidation differs by backend. This does not

@@ -6,12 +6,13 @@ final class V903520GOPCacheLaneGeometryTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    func testMapPreviewAndPhysicalCanvasHaveNoFakeRouteWhenNavigationInactive() throws {
+    func testMapRemainsVisibleWhenNavigationIsInactiveButRouteOverlaysStayGated() throws {
         let app = try source("HUDController/App/AppState.swift")
         let canvas = try source("HUDController/MapMode/HudMapModeCanvas.swift")
         XCTAssertTrue(app.contains("mapModePreviewSnapshot"))
         XCTAssertTrue(app.contains("allowDesignFallback: false"))
-        XCTAssertTrue(canvas.contains("settings.showMap && snapshot.hasLiveRoute"))
+        XCTAssertTrue(canvas.contains("if settings.showMap {"))
+        XCTAssertFalse(canvas.contains("settings.showMap && snapshot.hasLiveRoute"))
         XCTAssertTrue(canvas.contains("if snapshot.hasLiveRoute"))
     }
 

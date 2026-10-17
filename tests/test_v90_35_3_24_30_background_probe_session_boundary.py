@@ -11,15 +11,14 @@ START=(U2W/'source/u2whud-start.cgi').read_text()
 INSTALL=(U2W/'source/install_once.sh').read_text()
 RGD=(U2W/'source/u2w_rgd_preload_v839.c').read_text()
 
-def test_background_probe_modes_and_ui_are_explicit_and_mutually_exclusive():
-    for token in ['keepDecoderBackgroundTask','hardwareDecoderBackgroundTask','suspendDecodePreserveStream']:
-        assert token in SETTINGS
+def test_background_continuity_is_fixed_to_field_validated_production_mode():
     assert 'backgroundProbeMode' in VIDEO
-    assert '.hardwareDecoderBackgroundTask' in VIDEO and '.suspendDecodePreserveStream' in VIDEO
-    assert 'Map Mode Background Continuity Probe' in UI
-    assert 'Prevent Auto-Lock while Map Mode is active' in UI
-    assert 'selectMapModeBackgroundProbeMode' in APP
-    assert 'applyMapModeBackgroundProbeModeForNextSession' in APP
+    assert 'backgroundProbeMode = .keepDecoderBackgroundTask' in SETTINGS
+    assert 'Map Mode Background Continuity Probe' not in UI
+    assert 'Apply for next Map Mode session' not in UI
+    assert 'Keep decoder + BG task' in UI
+    assert 'selectMapModeBackgroundProbeMode' not in APP
+    assert 'applyMapModeBackgroundProbeModeForNextSession' not in APP
     assert 'setMapModePreventAutoLock' in APP
 
 def test_background_probe_requests_and_reports_hardware_and_has_readonly_rebootstrap_fallback():
@@ -32,7 +31,7 @@ def test_background_probe_requests_and_reports_hardware_and_has_readonly_reboots
 
 def test_eta_lane_arbitration_uses_actual_visibility_and_ampm_is_unicode_safe():
     assert 'laneGuidanceVisible' in SNAP and 'snapshot.laneGuidanceVisible' in CANVAS
-    assert 'mapModeLaneGuidanceVisible = state.routeState != 0 && state.laneGuidanceShowing' in APP
+    assert 'laneGuidanceVisible: shouldDisplayActiveLanes()' in APP
     assert '\\u{202F}' in CANVAS and '\\u{00A0}' in CANVAS and '.isWhitespace' in CANVAS
 
 def test_v839_fresh_hud_session_restarts_only_custom_helpers():

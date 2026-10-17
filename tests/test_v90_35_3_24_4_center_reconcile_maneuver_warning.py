@@ -13,25 +13,25 @@ def test_center_role_replaces_stale_tracker_and_reconciles_night():
 
 def test_warning_settings_and_ranges_exist():
     s = text('ios/HUDController/Models/HudMapModeSettings.swift')
-    assert 'enum HudManeuverWarningTarget' in s
     assert 'maneuverWarningThresholdFeet' in s
     assert 'default: 500' in s
-    assert 'maneuverWarningBlinkCount' in s and 'default: 3' in s
-    assert 'maneuverWarningIntervalSeconds' in s and 'default: 0.75' in s
 
-def test_warning_is_once_per_maneuver_and_map_mode_only():
-    s = text('ios/HUDController/App/AppState.swift')
-    assert 'mapModeManeuverWarningTriggeredKeys' in s
-    assert 'distance <= threshold' in s
-    assert 'mapModeActive || hudU2WLiveRelayActive' in s
-    assert 'MAP MANEUVER WARNING' in s
-
-def test_renderer_hides_only_selected_component_without_layout_removal():
+def test_turn_warning_is_continuous_distance_color_and_map_mode_rendered():
     s = text('ios/HUDController/MapMode/HudMapModeCanvas.swift')
-    assert 'warningHiddenTarget == .maneuverArrow ? 0 : 1' in s
-    assert 'warningHiddenTarget == .distance ? 0 : 1' in s
+    assert 'turnDistanceWarningActive' in s
+    assert 'snapshot.distanceToManeuverMeters' in s
+    assert 'maneuverWarningThresholdFeet' in s
+    assert '.foregroundStyle(turnDistanceWarningActive ? warningTextColor : .white)' in s
 
-def test_customization_ui_has_requested_controls():
+
+def test_renderer_no_longer_blinks_or_hides_turn_components():
+    s = text('ios/HUDController/MapMode/HudMapModeCanvas.swift')
+    assert 'warningHiddenTarget == .maneuverArrow' not in s
+    assert 'warningHiddenTarget == .distance' not in s
+
+
+def test_compact_warning_ui_has_turn_threshold_and_shared_color():
     s = text('ios/HUDController/UI/NavigationHUDPreviewCard.swift')
-    for phrase in ['Blink target', 'Warning threshold', 'Blink count', 'Blink interval', 'Preview blink']:
+    for phrase in ['Map Mode Warnings', 'Turn distance warning', 'Warning below', 'Warning text color']:
         assert phrase in s
+    assert 'Preview blink' not in s

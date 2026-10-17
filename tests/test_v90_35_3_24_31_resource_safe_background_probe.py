@@ -23,13 +23,12 @@ def test_bootstrap_is_single_flight_and_cooldown_gated():
     assert 'readOnlyRebootstrapCooldown' in VIDEO
     assert 'readonly_rebootstrap_suppressed' in VIDEO
 
-def test_probe_selection_is_staged_until_apply():
-    assert 'selectMapModeBackgroundProbeMode' in APP
-    assert 'applyMapModeBackgroundProbeModeForNextSession' in APP
-    assert 'Apply for next Map Mode session' in UI
-    assert r'Decoder: \(state.mainVideo.decoderSummary)' in UI
-    assert 'setMapModeBackgroundProbeMode' not in UI
-    assert 'restartWorkerWithReadOnlyBootstrap(reason: "background probe decoder backend changed")' not in VIDEO
+def test_resource_safe_bootstrap_is_used_by_fixed_production_background_mode():
+    assert 'selectMapModeBackgroundProbeMode' not in APP
+    assert 'applyMapModeBackgroundProbeModeForNextSession' not in APP
+    assert 'Keep decoder + BG task' in UI
+    assert 'lock-time -12903 detected' in VIDEO
+    assert 'restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")' in VIDEO
 
 def test_rgd_publish_is_fail_closed_and_diagnostics_bounded():
     assert 'publish_atomic_full' in RGD
@@ -40,6 +39,6 @@ def test_rgd_publish_is_fail_closed_and_diagnostics_bounded():
     assert 'legacy_bootstrap_temp_cleanup=YES' in INSTALL
 
 def test_release_pairs_v840_without_changing_proven_mirror_relay():
-    assert 'appVersion=v90.35.3.24.31' in APP
+    assert 'appVersion=v90.35.3.24.32' in APP
     assert 'paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery' in APP
     assert 'unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO

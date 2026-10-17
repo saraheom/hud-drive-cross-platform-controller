@@ -15,8 +15,6 @@ struct NavigationHUDPreviewCard: View {
     @State private var selectedDesignerComponent: HudMapDesignerComponent = .map
     @State private var designerDragOrigin = CGSize.zero
     @State private var designerDragging = false
-    @State private var maneuverWarningPreviewHidden = false
-    @State private var maneuverWarningPreviewGeneration = 0
 
     private let accent = HudTheme.accent
 
@@ -31,7 +29,7 @@ struct NavigationHUDPreviewCard: View {
                     sourceMapImage: state.mapModePreviewSourceImage,
                     previewLanePlaceholder: false,
                     suppressCustomSpeedForNativeOBDProbe: false,
-                    warningHiddenTarget: state.mapModeManeuverWarningHiddenTarget
+                    warningHiddenTarget: nil
                 )
                 .aspectRatio(2.0, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -51,7 +49,6 @@ struct NavigationHUDPreviewCard: View {
                         mapCropControls
                         speedLimitSignControls
                         rightSideFineTuningControls
-                        maneuverWarningControls
                         componentControls
                     }
                     .padding(.top, 8)
@@ -133,7 +130,7 @@ struct NavigationHUDPreviewCard: View {
                 sourceMapImage: nil,
                 previewLanePlaceholder: false,
                 suppressCustomSpeedForNativeOBDProbe: false,
-                warningHiddenTarget: maneuverWarningPreviewHidden ? state.mapModeSettings.maneuverWarningTarget : nil
+                warningHiddenTarget: nil
             )
             .aspectRatio(2.0, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -419,28 +416,6 @@ struct NavigationHUDPreviewCard: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
 
-            HStack(spacing: 8) {
-                if state.mainVideoPreviewActive {
-                    Button("Stop Live Preview", role: .destructive) {
-                        state.stopMainVideoPreview(reason: "Map Mode UI")
-                    }
-                    .buttonStyle(.bordered)
-                } else {
-                    Button("Start Live Preview (app only)") {
-                        state.startMainVideoPreview()
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(accent)
-                }
-                Spacer()
-                Text(state.mainVideoPreviewActive ? state.mainVideo.transportPhase : "OFF")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-
-            Text("Live Preview starts only the tiny v8.31 raw relay and iPhone decoder. It updates the preview above without changing the physical HUD mode or starting KivicCast; Navigation remains authoritative on the HUD.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
 
             if state.hudU2WLiveRelayActive {
                 Button("Disable Map Mode", role: .destructive) {
@@ -461,7 +436,7 @@ struct NavigationHUDPreviewCard: View {
 
             LabeledContent(
                 "Stream",
-                value: (state.mainVideoPreviewActive || state.hudU2WLiveRelayActive)
+                value: state.hudU2WLiveRelayActive
                     ? state.mainVideo.transportPhase
                     : "Not active"
             )
@@ -498,43 +473,16 @@ struct NavigationHUDPreviewCard: View {
             .disabled(state.liveMapDiagnosticCollecting)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Map Mode Background Continuity Probe")
-                    .font(.caption.weight(.semibold))
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 7) {
-                    ForEach(HudMapBackgroundProbeMode.allCases) { mode in
-                        Button {
-                            state.selectMapModeBackgroundProbeMode(mode)
-                        } label: {
-                            Text(mode.title)
-                                .font(.caption2.weight(.semibold))
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: .infinity, minHeight: 34)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(state.pendingMapModeBackgroundProbeMode == mode ? accent : .secondary)
-                    }
-                }
-
-                Text(state.pendingMapModeBackgroundProbeMode.detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
                 HStack {
-                    LabeledContent("Active", value: state.mapModeSettings.backgroundProbeMode.title)
-                        .font(.caption2)
+                    Label("Background continuity", systemImage: "lock.shield")
+                        .font(.caption.weight(.semibold))
                     Spacer()
+                    Text("Keep decoder + BG task")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
 
-                Button("Apply for next Map Mode session") {
-                    state.applyMapModeBackgroundProbeModeForNextSession()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(accent)
-                .disabled(state.hudU2WLiveRelayActive || state.mainVideoPreviewActive || state.pendingMapModeBackgroundProbeMode == state.mapModeSettings.backgroundProbeMode)
-
-                LabeledContent("Probe status", value: state.mainVideo.backgroundProbeStatus)
+                LabeledContent("Status", value: state.mainVideo.backgroundProbeStatus)
                     .font(.caption2)
 
                 Text("Decoder: \(state.mainVideo.decoderSummary)")
@@ -551,13 +499,7 @@ struct NavigationHUDPreviewCard: View {
                 )
                 .font(.caption)
 
-                Button(state.liveMapDiagnosticCollecting ? "Collecting Background Probe ZIP…" : "Collect Background Probe ZIP") {
-                    state.collectLiveMapDiagnosticBundle()
-                }
-                .buttonStyle(.bordered)
-                .disabled(state.liveMapDiagnosticCollecting)
-
-                Text("Experimental modes are mutually exclusive. Selection is staged and only applies to the next Map Mode session; it will not rebuild VideoToolbox mid-drive. iOS may still suspend an app or invalidate VideoToolbox while locked; the probe records whether TCP, decoder output, or the finite background task stops first.")
+                Text("When iOS invalidates VideoToolbox during a lock transition, Map Mode automatically attempts a resource-safe v8.40 retained-history bootstrap before falling back to waiting for a fresh live IDR.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -747,108 +689,6 @@ struct NavigationHUDPreviewCard: View {
         }
         .padding(10)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private var maneuverWarningControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Approaching-turn blink warning")
-                        .font(.subheadline.weight(.semibold))
-                    Text(state.mapModeManeuverWarningStatus)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { state.mapModeSettings.maneuverWarningEnabled },
-                    set: { state.mapModeSettings.maneuverWarningEnabled = $0 }
-                ))
-                .labelsHidden()
-            }
-
-            if state.mapModeSettings.maneuverWarningEnabled {
-                Picker("Blink target", selection: Binding(
-                    get: { state.mapModeSettings.maneuverWarningTarget },
-                    set: { state.mapModeSettings.maneuverWarningTarget = $0 }
-                )) {
-                    ForEach(HudManeuverWarningTarget.allCases) { target in
-                        Label(target.title, systemImage: target.systemImage).tag(target)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                LabeledContent(
-                    "Warning threshold",
-                    value: "below \(state.mapModeSettings.maneuverWarningThresholdFeet) ft"
-                )
-                Slider(
-                    value: Binding(
-                        get: { Double(state.mapModeSettings.maneuverWarningThresholdFeet) },
-                        set: { state.mapModeSettings.maneuverWarningThresholdFeet = Int($0.rounded()) }
-                    ),
-                    in: 100...2000,
-                    step: 50
-                )
-
-                Picker("Blink count", selection: Binding(
-                    get: { state.mapModeSettings.maneuverWarningBlinkCount },
-                    set: { state.mapModeSettings.maneuverWarningBlinkCount = $0 }
-                )) {
-                    ForEach(2...5, id: \.self) { count in
-                        Text("\(count)x").tag(count)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                LabeledContent(
-                    "Blink interval",
-                    value: String(format: "%.2f s", state.mapModeSettings.maneuverWarningIntervalSeconds)
-                )
-                Slider(
-                    value: Binding(
-                        get: { state.mapModeSettings.maneuverWarningIntervalSeconds },
-                        set: { state.mapModeSettings.maneuverWarningIntervalSeconds = $0 }
-                    ),
-                    in: 0.5...2.0,
-                    step: 0.25
-                )
-
-                Button {
-                    previewManeuverWarning()
-                } label: {
-                    Label("Preview blink", systemImage: "eye")
-                }
-                .buttonStyle(.bordered)
-
-                Text("Triggers once per maneuver when live Route Guidance first enters the selected threshold. The interval is the time between OFF and ON changes. Only the selected arrow or distance becomes transparent; its layout space stays fixed so the rest of the HUD does not jump.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(10)
-        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func previewManeuverWarning() {
-        maneuverWarningPreviewGeneration &+= 1
-        let generation = maneuverWarningPreviewGeneration
-        let count = min(5, max(2, state.mapModeSettings.maneuverWarningBlinkCount))
-        let interval = min(2.0, max(0.5, state.mapModeSettings.maneuverWarningIntervalSeconds))
-        maneuverWarningPreviewHidden = false
-
-        Task { @MainActor in
-            for blink in 1...count {
-                guard generation == maneuverWarningPreviewGeneration else { return }
-                maneuverWarningPreviewHidden = true
-                try? await Task.sleep(for: .seconds(interval))
-                guard generation == maneuverWarningPreviewGeneration else { return }
-                maneuverWarningPreviewHidden = false
-                if blink < count {
-                    try? await Task.sleep(for: .seconds(interval))
-                }
-            }
-        }
     }
 
     private var widgetPositionControls: some View {
@@ -1257,8 +1097,8 @@ struct NavigationHUDPreviewCard: View {
     }
 }
 
-/// Compact, main-tab controls for the custom Map Mode overspeed treatment.
-/// Kept separate from the large Map Mode designer/diagnostic controls on purpose.
+/// Compact main-tab controls for Map Mode overspeed + approaching-turn warnings.
+/// Both warnings share one configurable warning text color.
 struct MapModeSpeedWarningCard: View {
     @Bindable var state: AppState
 
@@ -1268,7 +1108,7 @@ struct MapModeSpeedWarningCard: View {
                 HStack {
                     Image(systemName: "speedometer")
                         .foregroundStyle(HudTheme.accent)
-                    Text("Map Mode Speed Warning")
+                    Text("Map Mode Warnings")
                         .font(.headline)
                     Spacer()
                     Text(state.mapModeSpeedSourceSummary)
@@ -1286,16 +1126,13 @@ struct MapModeSpeedWarningCard: View {
                         get: { state.mapModeSettings.speedWarningNumberColorEnabled },
                         set: { state.mapModeSettings.speedWarningNumberColorEnabled = $0 }
                     ))
-                    if state.mapModeSettings.speedWarningNumberColorEnabled {
-                        ColorPicker("Number warning color", selection: numberColorBinding, supportsOpacity: false)
-                    }
 
                     Toggle("Highlight speed background", isOn: Binding(
                         get: { state.mapModeSettings.speedWarningBackgroundEnabled },
                         set: { state.mapModeSettings.speedWarningBackgroundEnabled = $0 }
                     ))
                     if state.mapModeSettings.speedWarningBackgroundEnabled {
-                        ColorPicker("Background warning color", selection: backgroundColorBinding, supportsOpacity: false)
+                        ColorPicker("Speed background warning color", selection: backgroundColorBinding, supportsOpacity: false)
                         HStack {
                             Text("Background opacity")
                             Slider(value: Binding(
@@ -1309,7 +1146,34 @@ struct MapModeSpeedWarningCard: View {
                     }
                 }
 
-                Text("Map Mode only • warning activates above the active posted speed limit • OBD speed is preferred with GPS fallback")
+                Divider().opacity(0.35)
+
+                Toggle("Turn distance warning", isOn: Binding(
+                    get: { state.mapModeSettings.maneuverWarningEnabled },
+                    set: { state.mapModeSettings.maneuverWarningEnabled = $0 }
+                ))
+
+                if state.mapModeSettings.maneuverWarningEnabled {
+                    LabeledContent(
+                        "Warning below",
+                        value: "\(state.mapModeSettings.maneuverWarningThresholdFeet) ft"
+                    )
+                    Slider(
+                        value: Binding(
+                            get: { Double(state.mapModeSettings.maneuverWarningThresholdFeet) },
+                            set: { state.mapModeSettings.maneuverWarningThresholdFeet = Int($0.rounded()) }
+                        ),
+                        in: 100...2000,
+                        step: 50
+                    )
+                }
+
+                if state.mapModeSettings.maneuverWarningEnabled ||
+                    (state.mapModeSettings.speedWarningEnabled && state.mapModeSettings.speedWarningNumberColorEnabled) {
+                    ColorPicker("Warning text color", selection: numberColorBinding, supportsOpacity: false)
+                }
+
+                Text("Map Mode only • turn distance changes to the shared warning text color at or below the threshold (default 500 ft) • overspeed number color uses the same color when enabled • speed background remains independent")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

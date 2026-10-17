@@ -77,7 +77,7 @@ struct RootView: View {
                 // actually invalidates the session.
                 state.mainVideo.applicationWillResignActive()
             case .background:
-                if state.hudU2WLiveRelayActive || state.mainVideoPreviewActive {
+                if state.hudU2WLiveRelayActive {
                     state.logger.log("NAV PRIORITY", "App backgrounded with live MainVideo active; preserving TCP/HUD cast source and existing VideoToolbox/reference chain")
                 }
                 state.mainVideo.applicationDidEnterBackground()

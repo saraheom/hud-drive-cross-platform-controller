@@ -17,14 +17,14 @@ final class V90352415HUDResyncLivePreviewMapStartupTests: XCTestCase {
         XCTAssertTrue(rgd.contains("navigation.sendCurrent(owner: .carPlayAdapter)"))
     }
 
-    func testAppOnlyPreviewDoesNotEnterPhysicalMapMode() throws {
+    func testMapModeIsTheOnlyMainVideoOwnerAndPhonePreviewIsPassive() throws {
         let app = try source("HUDController/App/AppState.swift")
-        let start = try XCTUnwrap(app.range(of: "func startMainVideoPreview()"))
-        let stop = try XCTUnwrap(app.range(of: "func stopMainVideoPreview", range: start.upperBound..<app.endIndex))
-        let block = String(app[start.lowerBound..<stop.lowerBound])
-        XCTAssertTrue(block.contains(#"mainVideo.start(reason: "app-only live preview")"#))
-        XCTAssertFalse(block.contains("HudCommands.kivicMode(6)"))
-        XCTAssertFalse(block.contains("u2whud-start.cgi"))
+        let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
+        XCTAssertFalse(app.contains("func startMainVideoPreview()"))
+        XCTAssertFalse(app.contains(#"mainVideo.start(reason: "app-only live preview")"#))
+        XCTAssertTrue(app.contains(#"self.mainVideo.start(reason: "physical Map Mode live source (optional)")"#))
+        XCTAssertTrue(app.contains("guard hudU2WLiveRelayActive || mapModeActive else { return nil }"))
+        XCTAssertFalse(ui.contains("Start Live Preview (app only)"))
     }
 
     func testMapModeStartupNoLongerFailsDuringTCPPreparing() throws {

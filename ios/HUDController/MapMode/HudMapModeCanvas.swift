@@ -9,8 +9,8 @@ struct HudMapModeCanvas: View {
     var sourceMapImage: UIImage? = nil
     var previewLanePlaceholder = false
     var suppressCustomSpeedForNativeOBDProbe = false
-    /// When non-nil, keep the component's layout slot but render it transparent.
-    /// This is the close-maneuver warning blink used by Map Mode only.
+    // Kept for source compatibility with older preview/renderer call sites.
+    // v24.32 no longer blinks or hides maneuver components.
     var warningHiddenTarget: HudManeuverWarningTarget? = nil
 
     private let routeBlue = Color(red: 0.18, green: 0.62, blue: 1.00)
@@ -41,7 +41,7 @@ struct HudMapModeCanvas: View {
         ZStack {
             Color.black
 
-            if settings.showMap && snapshot.hasLiveRoute {
+            if settings.showMap {
                 mapBlock
                     .frame(width: 278, height: 240)
                     .scaleEffect(settings.centerScale)
@@ -146,11 +146,7 @@ struct HudMapModeCanvas: View {
 
     private var speedNumberColor: Color {
         guard speedWarningActive && settings.speedWarningNumberColorEnabled else { return .white }
-        return Color(
-            red: settings.speedWarningNumberRed,
-            green: settings.speedWarningNumberGreen,
-            blue: settings.speedWarningNumberBlue
-        )
+        return warningTextColor
     }
 
     private var speedWarningBackgroundColor: Color {
@@ -246,7 +242,6 @@ struct HudMapModeCanvas: View {
             }
         }
         .foregroundStyle(.white)
-        .opacity(warningHiddenTarget == .maneuverArrow ? 0 : 1)
         .scaleEffect(settings.maneuverArrowScale)
     }
 
@@ -259,7 +254,24 @@ struct HudMapModeCanvas: View {
             ))
             .minimumScaleFactor(0.50)
             .lineLimit(1)
-            .opacity(warningHiddenTarget == .distance ? 0 : 1)
+            .foregroundStyle(turnDistanceWarningActive ? warningTextColor : .white)
+    }
+
+    private var turnDistanceWarningActive: Bool {
+        guard settings.maneuverWarningEnabled, snapshot.hasLiveRoute else { return false }
+        let distanceMeters = snapshot.distanceToManeuverMeters
+        let thresholdMeters = max(1, Int((Double(settings.maneuverWarningThresholdFeet) * 0.3048).rounded()))
+        return distanceMeters > 0 && distanceMeters <= thresholdMeters
+    }
+
+    /// Shared warning text color: the overspeed number and approaching-turn
+    /// distance intentionally use the same user-selected RGB value.
+    private var warningTextColor: Color {
+        Color(
+            red: settings.speedWarningNumberRed,
+            green: settings.speedWarningNumberGreen,
+            blue: settings.speedWarningNumberBlue
+        )
     }
 
     private var laneGuidanceAvailable: Bool {

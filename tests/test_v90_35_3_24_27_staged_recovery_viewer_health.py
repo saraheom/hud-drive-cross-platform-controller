@@ -5,8 +5,8 @@ APP = (ROOT / "ios/HUDController/App/AppState.swift").read_text()
 
 
 def test_version_and_adapter_pairing_stay_v837():
-    assert "v90.35.3.24.31 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap" in VIDEO
-    assert 'appVersion=v90.35.3.24.31' in APP
+    assert "v90.35.3.24.32 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap" in VIDEO
+    assert 'appVersion=v90.35.3.24.32' in APP
 
 
 def test_codec_bad_data_is_staged_before_hard_reset():

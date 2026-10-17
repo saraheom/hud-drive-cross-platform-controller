@@ -15,25 +15,26 @@ final class V9035244CenterManeuverWarningTests: XCTestCase {
         XCTAssertTrue(monitor.contains("positive Center evidence"))
     }
 
-    func testMapModeWarningHasRequestedCustomizationAndOneShotGate() throws {
+    func testMapModeTurnWarningUsesContinuousSharedColorAndThreshold() throws {
         let settings = try source("HUDController/Models/HudMapModeSettings.swift")
-        let app = try source("HUDController/App/AppState.swift")
         let canvas = try source("HUDController/MapMode/HudMapModeCanvas.swift")
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
+        let snapshot = try source("HUDController/MapMode/HudMapModeSnapshot.swift")
 
-        XCTAssertTrue(settings.contains("enum HudManeuverWarningTarget"))
         XCTAssertTrue(settings.contains("maneuverWarningThresholdFeet"))
         XCTAssertTrue(settings.contains("default: 500"))
-        XCTAssertTrue(settings.contains("default: 3"))
-        XCTAssertTrue(settings.contains("default: 0.75"))
-        XCTAssertTrue(app.contains("mapModeManeuverWarningTriggeredKeys"))
-        XCTAssertTrue(app.contains("distance <= threshold"))
-        XCTAssertTrue(canvas.contains("warningHiddenTarget == .maneuverArrow ? 0 : 1"))
-        XCTAssertTrue(canvas.contains("warningHiddenTarget == .distance ? 0 : 1"))
-        XCTAssertTrue(ui.contains("Blink target"))
-        XCTAssertTrue(ui.contains("Warning threshold"))
-        XCTAssertTrue(ui.contains("Blink count"))
-        XCTAssertTrue(ui.contains("Blink interval"))
-        XCTAssertTrue(ui.contains("Preview blink"))
+        XCTAssertTrue(snapshot.contains("distanceToManeuverMeters"))
+        XCTAssertTrue(canvas.contains("turnDistanceWarningActive"))
+        XCTAssertTrue(canvas.contains("snapshot.distanceToManeuverMeters"))
+        XCTAssertTrue(canvas.contains(".foregroundStyle(turnDistanceWarningActive ? warningTextColor : .white)"))
+        XCTAssertTrue(canvas.contains("speedWarningNumberRed"))
+        XCTAssertFalse(canvas.contains("warningHiddenTarget == .maneuverArrow"))
+        XCTAssertFalse(canvas.contains("warningHiddenTarget == .distance"))
+        XCTAssertTrue(ui.contains("Map Mode Warnings"))
+        XCTAssertTrue(ui.contains("Turn distance warning"))
+        XCTAssertTrue(ui.contains("Warning below"))
+        XCTAssertTrue(ui.contains("Warning text color"))
+        XCTAssertFalse(ui.contains("Preview blink"))
     }
+
 }

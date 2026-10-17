@@ -10,9 +10,9 @@ final class V90352429StartupBootstrapFullCanvasTests: XCTestCase {
     func testReleasePairsReadOnlyV838WithUnchangedTransport() throws {
         let app = try source("HUDController/App/AppState.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.31"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.32"))
         XCTAssertTrue(app.contains("v8.38 Read-Only Startup Bootstrap"))
-        XCTAssertTrue(video.contains("v90.35.3.24.31 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap"))
+        XCTAssertTrue(video.contains("v90.35.3.24.32 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap"))
         XCTAssertTrue(video.contains("unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay"))
     }
 
@@ -51,7 +51,9 @@ final class V90352429StartupBootstrapFullCanvasTests: XCTestCase {
         XCTAssertTrue(settings.contains("case keepDecoderBackgroundTask"))
         XCTAssertTrue(settings.contains("case hardwareDecoderBackgroundTask"))
         XCTAssertTrue(settings.contains("case suspendDecodePreserveStream"))
-        XCTAssertTrue(ui.contains("Map Mode Background Continuity Probe"))
+        XCTAssertTrue(ui.contains("Background continuity"))
+        XCTAssertTrue(ui.contains("Keep decoder + BG task"))
+        XCTAssertFalse(ui.contains("Apply for next Map Mode session"))
         XCTAssertTrue(ui.contains("Prevent Auto-Lock while Map Mode is active"))
         XCTAssertTrue(video.contains("VTSessionCopyProperty"))
         XCTAssertTrue(video.contains("restartWorkerWithReadOnlyBootstrap"))
@@ -66,7 +68,7 @@ final class V90352429StartupBootstrapFullCanvasTests: XCTestCase {
         let app = try source("HUDController/App/AppState.swift")
         XCTAssertTrue(snapshot.contains("laneGuidanceVisible"))
         XCTAssertTrue(canvas.contains("snapshot.laneGuidanceVisible"))
-        XCTAssertTrue(app.contains("state.laneGuidanceShowing"))
+        XCTAssertTrue(app.contains("laneGuidanceVisible: shouldDisplayActiveLanes()"))
         XCTAssertTrue(canvas.contains("\\u{202F}"))
         XCTAssertTrue(canvas.contains("\\u{00A0}"))
         XCTAssertTrue(canvas.contains(".isWhitespace"))
