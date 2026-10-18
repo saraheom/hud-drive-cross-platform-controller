@@ -76,6 +76,7 @@ final class HUDMapModeShortcutCoordinator {
 struct EnableAutomaticMapModeIntent: AppIntent {
     static var title: LocalizedStringResource = "Enable HUD Map Mode"
     static var description = IntentDescription("Save automatic Map Mode ON and activate it when the HUD is ready.")
+    @available(iOS 26.0, *)
     static let supportedModes: IntentModes = [.background]
 
     func perform() async throws -> some IntentResult {
@@ -87,6 +88,7 @@ struct EnableAutomaticMapModeIntent: AppIntent {
 struct DisableAutomaticMapModeIntent: AppIntent {
     static var title: LocalizedStringResource = "Disable HUD Map Mode"
     static var description = IntentDescription("Save automatic Map Mode OFF and use standard Navigation or Free Ride.")
+    @available(iOS 26.0, *)
     static let supportedModes: IntentModes = [.background]
 
     func perform() async throws -> some IntentResult {
@@ -98,6 +100,7 @@ struct DisableAutomaticMapModeIntent: AppIntent {
 struct ToggleAutomaticMapModeIntent: AppIntent {
     static var title: LocalizedStringResource = "Toggle HUD Map Mode"
     static var description = IntentDescription("Toggle the saved automatic Map Mode preference using the iPhone Action Button or Back Tap.")
+    @available(iOS 26.0, *)
     static let supportedModes: IntentModes = [.background]
 
     func perform() async throws -> some IntentResult {
