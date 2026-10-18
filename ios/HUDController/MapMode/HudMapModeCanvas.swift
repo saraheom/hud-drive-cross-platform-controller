@@ -191,11 +191,9 @@ struct HudMapModeCanvas: View {
                     offsetY: settings.sourceMapOffsetY
                 )
             } else {
-                HudMapModeSchematic(
-                    snapshot: snapshot,
-                    appearance: settings.mapAppearance,
-                    routeBlue: routeBlue
-                )
+                // v24.33: no invented/sample map on physical HUD or phone preview.
+                // Speed/route overlays are intentionally independent of the source.
+                Color.black
             }
         }
         .padding(.vertical, 12)
@@ -293,6 +291,7 @@ struct HudMapModeCanvas: View {
 
     private var etaBlock: some View {
         Text("ETA \(etaDisplayText(snapshot.etaText))")
+            .foregroundStyle(.white) // v24.33: avoid black-on-black ETA at lane position
             .font(.system(
                 size: CGFloat(9.5 * settings.etaScale),
                 weight: .semibold,

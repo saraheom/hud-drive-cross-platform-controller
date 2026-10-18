@@ -71,5 +71,5 @@ def test_map_mode_stop_always_stops_mainvideo():
 
 
 def test_current_version_and_pairing_marker():
-    assert 'appVersion=v90.35.3.24.32' in APP
+    assert 'appVersion=v90.35.3.24.33' in APP
     assert 'v90.35.3.24.32 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap + v8.37 forensic seam capture + unchanged v8.35 helper + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO

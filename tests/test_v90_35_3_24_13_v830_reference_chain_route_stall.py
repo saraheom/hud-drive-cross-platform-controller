@@ -55,7 +55,7 @@ def test_minus8969_burst_uses_fresh_epoch_quarantine_instead_of_poisoned_wait():
 
 
 def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
-    assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")' in APP
+    assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")' not in APP
     assert 'passive v8.27.2 source/topology observer' not in UI
     assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
     assert 'Collect Live Map Diagnostic ZIP (parked)' in UI

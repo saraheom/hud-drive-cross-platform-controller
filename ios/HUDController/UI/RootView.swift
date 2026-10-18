@@ -62,6 +62,7 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             consumePendingShortcut()
+            state.synchronizeAutomaticMapModePreference(reason: "RootView appeared")
         }
         .onChange(of: scenePhase) { _, phase in
             state.logger.log("APP LIFECYCLE", "Scene phase \(String(describing: phase))")
@@ -69,6 +70,7 @@ struct RootView: View {
             case .active:
                 state.mainVideo.applicationDidBecomeActive()
                 consumePendingShortcut()
+                state.synchronizeAutomaticMapModePreference(reason: "app became active")
                 state.nowPlaying.refreshNow()
             case .inactive:
                 // v24.29: ordinary inactive transitions are not decoder failures.

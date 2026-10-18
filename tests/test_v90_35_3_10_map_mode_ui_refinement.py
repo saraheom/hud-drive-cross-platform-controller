@@ -37,8 +37,8 @@ def test_speed_limit_sign_is_number_only_rectangle():
 
 
 def test_map_mode_ui_is_compact_and_legacy_mode5_block_removed():
-    assert 'Button("Enable Map Mode")' in UI
-    assert 'Button("Disable Map Mode"' in UI
+    assert 'Toggle("Automatic Map Mode"' in UI
+    assert 'setAutomaticMapModeEnabled($0, reason: "main-tab switch")' in UI
     assert 'CarPlay adapter Wi-Fi name' in UI
     assert 'CarPlay adapter Wi-Fi password' in UI
     assert 'Collect Live Map Diagnostic ZIP (parked)' in UI

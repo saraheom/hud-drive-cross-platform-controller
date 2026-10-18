@@ -250,7 +250,7 @@ final class U2WMainVideoClient {
                 }
                 self.status = "Waiting for explicit Map Mode recovery relay…"
                 self.logger.log("MAINVIDEO PREFLIGHT", "lossless-mirror raw relay not ready attempt=\(attempt)/3; Navigation path remains independent")
-                if attempt < 3 { try? await Task.sleep(for: .seconds(1)) }
+                if attempt < 3 { try? await Task.sleep(for: .seconds(attempt == 1 ? 2 : 3)) }
             }
             if self.running, self.worker == nil {
                 self.transportPhase = "FAILED_SAFE"
@@ -339,7 +339,11 @@ final class U2WMainVideoClient {
     func ensureAdapterRelay(reason: String) async -> Bool {
         let now = Date()
         if let lastRelayEnsureAt, now.timeIntervalSince(lastRelayEnsureAt) < relayEnsureCooldown {
-            return adapterRelayConfirmedRunning
+            // An earlier CGI status timeout is not proof the newly spawned relay
+            // failed. Re-check read-only readiness without reissuing relay-start.
+            if adapterRelayConfirmedRunning { return true }
+            logger.log("MAINVIDEO PREFLIGHT", "startup ensure cooldown: performing fresh read-only relay status verification")
+            return await refreshAdapterRelayStatus(reason: "cold-start cooldown recheck / \(reason)")
         }
         lastRelayEnsureAt = now
         let configuration = URLSessionConfiguration.ephemeral

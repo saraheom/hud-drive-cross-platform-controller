@@ -417,22 +417,17 @@ struct NavigationHUDPreviewCard: View {
                 .autocorrectionDisabled()
 
 
-            if state.hudU2WLiveRelayActive {
-                Button("Disable Map Mode", role: .destructive) {
-                    state.stopHUDU2WSTAHomeProbe()
-                }
-                .buttonStyle(.borderedProminent)
-            } else {
-                Button("Enable Map Mode") {
-                    state.startHUDU2WSTAHomeProbe(ssid: u2wSSID, password: u2wPassword)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(accent)
-                .disabled(
-                    u2wSSID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                    u2wPassword.isEmpty
-                )
-            }
+            Toggle("Automatic Map Mode", isOn: Binding(
+                get: { state.automaticMapModeEnabled },
+                set: { state.setAutomaticMapModeEnabled($0, reason: "main-tab switch") }
+            ))
+            .tint(accent)
+
+            Text(state.automaticMapModeEnabled
+                 ? (state.hudU2WLiveRelayActive ? "On • current HUD session starting/active" : "On • waiting for HUD connection or startup")
+                 : "Off • CarPlay navigation uses the standard HUD Navigation mode")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             LabeledContent(
                 "Stream",

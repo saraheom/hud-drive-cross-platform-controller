@@ -59,6 +59,12 @@ final class AppState {
     private var hudU2WLastSTAStatusAt = Date.distantPast
     private var hudU2WDisplayRecoveryCount = 0
     private(set) var hudU2WLiveRelayActive = false
+    // Desired mode is persisted separately from the physical session and survives
+    // HUD power cycles. Actual relay activity is NOT persisted as a preference.
+    private(set) var automaticMapModeEnabled = UserDefaults.standard.bool(forKey: "HUD.MapMode.autoEnabled")
+    private var automaticMapModeStartTask: Task<Void, Never>?
+    private var automaticMapModeScheduleGeneration: UInt64 = 0
+    private var automaticMapModeAttemptedOnThisConnection = false
     private(set) var mainVideoPreviewActive = false
     private(set) var liveMapDiagnosticStatus = "One-drive recorder armed"
     private(set) var liveMapDiagnosticBundleURL: URL?
@@ -220,14 +226,16 @@ final class AppState {
         self.navigation = navigation
         let routeGuidance = RouteGuidanceAdapterClient(logger: logger, navigation: navigation)
         self.routeGuidance = routeGuidance
-        routeGuidance.onAdapterReachable = { [weak logger, weak mainVideoDiagnostic, weak liveMapDiagnostics] in
+        routeGuidance.onAdapterReachable = { [weak logger, weak liveMapDiagnostics] in
             // v90.35.3.24.21 keeps the navigation-priority boundary: ordinary
             // Route Guidance NEVER starts MainVideo. The low-frequency passive
             // v8.27.2 source/topology observer is diagnostic-only and does not
             // hook, signal, or restart AppleCarPlay.
             logger?.log("NAV PRIORITY", "Route Guidance endpoint reachable; MainVideo intentionally idle unless Map Mode is explicitly enabled")
             liveMapDiagnostics?.record("adapter", "route_guidance_reachable_passive_probe_ensure")
-            mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")
+            // v24.33: no automatic codec/topology archive download during the
+            // first maneuver/voice prompt. Parked Live Map Diagnostic ZIP still
+            // captures evidence on explicit user request.
         }
         let nowPlaying = CarPlayNowPlayingClient(logger: logger)
         self.nowPlaying = nowPlaying
@@ -401,7 +409,7 @@ final class AppState {
             self.nowPlaying.start(reason: "HUD BLE transport ready")
             // v90.35.3.24.15: MainVideo deliberately remains OFF in ordinary
             // Navigation/Freeride. Only an explicit Map Mode attempt may start it.
-            self.logger.log("NAV PRIORITY", "HUD BLE ready; Route Guidance + Now Playing active; MainVideo remains idle")
+            self.logger.log("NAV PRIORITY", "HUD BLE ready; Route Guidance + Now Playing active; automaticMapMode=\(self.automaticMapModeEnabled ? 1 : 0)")
 
             if UserDefaults.standard.bool(forKey: self.hudWiFiRecoveryKey),
                !self.hudWiFiExposureActive {
@@ -409,12 +417,16 @@ final class AppState {
             }
 
             self.scheduleHUDRehydration(reason: "BLE transport ready")
+            self.scheduleAutomaticMapModeStart(reason: "HUD BLE transport ready")
         }
 
         bluetooth.onHUDSessionReset = { [weak self] in
             guard let self else { return }
             self.speedEngine.primeRectangularStyle()
             self.scheduleHUDRehydration(reason: "HUD firmware hello / physical session reset")
+            // Mode 6 can emit a firmware hello. The guarded reconciler will not
+            // restart a live/current attempt or issue duplicate enable requests.
+            self.scheduleAutomaticMapModeStart(reason: "HUD physical session reset")
         }
 
         bluetooth.onTransportDisconnected = { [weak self] in
@@ -423,6 +435,11 @@ final class AppState {
             // Any HUD disconnect closes that gate; courtesy lights may remain on,
             // but automatic Breath waits for the next HUD transport connection.
             self.ambientLight.hudTransportPowerSignal(false)
+            self.automaticMapModeScheduleGeneration &+= 1
+            self.automaticMapModeStartTask?.cancel()
+            self.automaticMapModeStartTask = nil
+            self.automaticMapModeAttemptedOnThisConnection = false
+            self.hudU2WMapModeAttemptGeneration &+= 1
             self.hudRehydrateTask?.cancel()
             self.hudRehydrateTask = nil
             self.hudReassertTask?.cancel()
@@ -510,10 +527,11 @@ final class AppState {
             }
         }
 
-        // v90.35.3.24.15: do NOT start MainVideo at app launch. This is the
-        // central Navigation-priority invariant: the adapter does zero v8.31 video
-        // work until the user explicitly requests Map Mode.
-
+        // v24.33: App Intents may run in the background. Share the already-running
+        // AppState if available; the saved preference remains authoritative if not.
+        HUDMapModeShortcutCoordinator.shared.activeState = self
+        // do NOT start MainVideo at app launch. Auto ON is a saved preference;
+        // actual live-video work starts only when the HUD transport is ready.
     }
 
     /// The original HUDWAY protocol separates dashboard profile configuration
@@ -890,7 +908,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.32 — production-background-continuity + session-boundary + startup-bootstrap + forensic live-map state
+            HUD Controller v90.35.3.24.33 — automatic-map-preference + cold-start readiness + visible ETA + empty map
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -1026,6 +1044,79 @@ final class AppState {
         }
     }
 
+    /// Single desired-state entry point for the UI and App Intents. Intentionally
+    /// keeps the preference ON when BLE/Wi-Fi/MainVideo fail temporarily.
+    func setAutomaticMapModeEnabled(_ enabled: Bool, reason: String) {
+        automaticMapModeEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "HUD.MapMode.autoEnabled")
+        logger.log("MAP AUTO", "desired=\(enabled ? 1 : 0) reason=\(reason)")
+        automaticMapModeScheduleGeneration &+= 1
+        automaticMapModeStartTask?.cancel()
+        automaticMapModeStartTask = nil
+        if enabled {
+            // An explicit OFF→ON is also a deliberate manual retry in this BLE session.
+            automaticMapModeAttemptedOnThisConnection = false
+            scheduleAutomaticMapModeStart(reason: reason)
+        } else {
+            automaticMapModeAttemptedOnThisConnection = false
+            if hudU2WLiveRelayActive || hudU2WSTAStatusTask != nil {
+                stopHUDU2WSTAHomeProbe()
+            }
+        }
+    }
+
+    /// Picks up a preference saved by a background Shortcut when the main app
+    /// becomes active. Never starts MainVideo without the actual BLE transport.
+    func synchronizeAutomaticMapModePreference(reason: String) {
+        let saved = UserDefaults.standard.bool(forKey: "HUD.MapMode.autoEnabled")
+        if saved != automaticMapModeEnabled {
+            setAutomaticMapModeEnabled(saved, reason: reason)
+        } else if saved && !hudU2WLiveRelayActive {
+            scheduleAutomaticMapModeStart(reason: reason)
+        }
+    }
+
+    private func scheduleAutomaticMapModeStart(reason: String) {
+        guard automaticMapModeEnabled,
+              bluetooth.state == .connected,
+              !hudU2WLiveRelayActive,
+              !mapModeActive,
+              !firmwareMaintenanceActive,
+              !automaticMapModeAttemptedOnThisConnection else { return }
+        guard automaticMapModeStartTask == nil, hudU2WSTAStatusTask == nil else { return }
+        let ssid = (UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.ssid") ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.password") ?? ""
+        guard !ssid.isEmpty, !password.isEmpty else {
+            hudU2WSTAStatus = "Auto Map Mode waiting for saved adapter Wi-Fi credentials"
+            logger.log("MAP AUTO", "start deferred: missing adapter Wi-Fi credentials reason=\(reason)")
+            return
+        }
+        automaticMapModeScheduleGeneration &+= 1
+        let generation = automaticMapModeScheduleGeneration
+        automaticMapModeStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.automaticMapModeScheduleGeneration == generation {
+                    self.automaticMapModeStartTask = nil
+                }
+            }
+            // Wait until stock firmware/dashboard rehydration has settled. Starting
+            // mode 6 during its delayed reassert could immediately undo the cast.
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled,
+                  self.automaticMapModeScheduleGeneration == generation,
+                  self.automaticMapModeEnabled,
+                  self.bluetooth.state == .connected,
+                  !self.hudU2WLiveRelayActive,
+                  !self.automaticMapModeAttemptedOnThisConnection,
+                  !self.firmwareMaintenanceActive else { return }
+            self.automaticMapModeAttemptedOnThisConnection = true
+            self.logger.log("MAP AUTO", "starting persisted Map Mode for session reason=\(reason)")
+            self.startHUDU2WSTAHomeProbe(ssid: ssid, password: password)
+        }
+    }
+
     func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
         guard bluetooth.state == .connected else {
@@ -1091,6 +1182,11 @@ final class AppState {
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
             guard let self, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
+            defer {
+                if self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration {
+                    self.hudU2WSTAStatusTask = nil
+                }
+            }
             do {
                 let url = URL(string: "http://192.168.50.2/cgi-bin/u2whud-start.cgi")!
                 var request = URLRequest(url: url)
@@ -1196,11 +1292,13 @@ final class AppState {
             // Allow association/DHCP to settle, then ask for status. If this firmware
             // returns status=6 together with a valid 192.168.50.x address, the status
             // callback treats that as link-up and immediately kicks the KivicCast viewer.
-            try? await Task.sleep(for: .seconds(4.0))
+            try? await Task.sleep(for: .seconds(7.0))
             guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
             self.requestHUDU2WSTAStatus()
 
-            try? await Task.sleep(for: .seconds(4.0))
+            // Field test: second-trip DHCP joined after the old retry window.
+            // Let the current association settle before refreshing credentials.
+            try? await Task.sleep(for: .seconds(7.0))
             guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration, !self.hudU2WSTAConnected else { return }
 
             // One non-destructive credentials refresh only. Never send empty SSID here.
@@ -1209,7 +1307,7 @@ final class AppState {
                 HudCommands.wifiSTAMode(ssid: cleanSSID, password: password, security: 2),
                 label: "HUD/U2W live relay → one-shot Wi-Fi credential refresh for \(cleanSSID)"
             )
-            try? await Task.sleep(for: .seconds(4.0))
+            try? await Task.sleep(for: .seconds(8.0))
             guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration, !self.hudU2WSTAConnected else { return }
             self.requestHUDU2WSTAStatus()
 
@@ -1219,7 +1317,7 @@ final class AppState {
             // short chance to arrive, then perform exactly one full STA/viewer join
             // recreation. This mirrors the proven manual recovery sequence but is
             // bounded to one automatic attempt per Map Mode session.
-            try? await Task.sleep(for: .seconds(2.0))
+            try? await Task.sleep(for: .seconds(4.0))
             guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration, !self.hudU2WSTAConnected else { return }
             self.scheduleHUDU2WAutomaticJoinRecovery(
                 reason: "STA still not linked after initial join + credential refresh",
@@ -1706,6 +1804,13 @@ final class AppState {
                     let targetFPS = HudMapModeSettings.normalizedHUDFrameRate(self.mapModeSettings.hudFrameRate)
                     let heartbeatEvery = max(1, targetFPS * 5)
                     if renderCount == 1 || renderCount % heartbeatEvery == 0 {
+                        let etaShown = self.mapModeSettings.showETA && snapshot.hasLiveRoute &&
+                            (!self.mapModeSettings.etaUsesLanePositionWhenNoLanes ||
+                             !(self.mapModeSettings.showLaneGuidance && snapshot.laneGuidanceVisible && !snapshot.laneValues.isEmpty))
+                        let etaPosition = self.mapModeSettings.designerCanvasPosition(
+                            for: self.mapModeSettings.etaUsesLanePositionWhenNoLanes ? .lanes : .eta
+                        )
+                        self.logger.log("MAP ETA", "showETA=\(self.mapModeSettings.showETA ? 1 : 0) route=\(snapshot.hasLiveRoute ? 1 : 0) showAtLane=\(self.mapModeSettings.etaUsesLanePositionWhenNoLanes ? 1 : 0) laneCount=\(snapshot.laneValues.count) visible=\(etaShown ? 1 : 0) text={\(snapshot.etaText)} position=(\(Int(etaPosition.x)),\(Int(etaPosition.y))) explicitForeground=white")
                         self.logger.log(
                             "MAP RENDER HEARTBEAT",
                             "render=\(renderCount) targetFPS=\(targetFPS) speedSource=\(self.directELM.freshSpeedMph() != nil ? "OBD" : "GPS") actualFPS=\(String(format: "%.1f", self.hudU2WFrameRelay.actualFPS)) throughput=\(String(format: "%.1f", self.hudU2WFrameRelay.recentKilobytesPerSecond))KBps speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) lanesVisible=\(snapshot.laneGuidanceVisible ? 1 : 0) laneCount=\(snapshot.laneValues.count) etaShared=\(self.mapModeSettings.etaUsesLanePositionWhenNoLanes ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
@@ -2042,7 +2147,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.32",
+                "appVersion=v90.35.3.24.33",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -2932,7 +3037,9 @@ final class AppState {
 
     var mapModePreviewSourceImage: UIImage? {
         guard hudU2WLiveRelayActive || mapModeActive else { return nil }
-        return mapModeActive ? (mapModeFrozenSourceImage ?? mainVideo.latestFrame) : mainVideo.latestFrame
+        if mapModeActive { return mapModeFrozenSourceImage }
+        guard let age = mainVideo.lastFrameAgeSeconds, age < 1.5 else { return nil }
+        return mainVideo.latestFrame
     }
 
     func enableMapMode() {

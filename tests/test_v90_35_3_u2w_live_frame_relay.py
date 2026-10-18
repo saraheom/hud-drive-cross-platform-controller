@@ -13,5 +13,5 @@ def test_v90353_live_relay_sources():
     assert 'CarPlay adapter Wi-Fi name' in ui
     assert 'Status & diagnostics' not in ui
     assert 'Collect Live Map Diagnostic ZIP (parked)' in ui
-    assert 'Button("Enable Map Mode")' in ui
+    assert 'Toggle("Automatic Map Mode"' in ui
     assert 'Map Mode FPS' in ui
