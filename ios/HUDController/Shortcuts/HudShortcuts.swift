@@ -99,7 +99,7 @@ struct DisableAutomaticMapModeIntent: AppIntent {
 
 struct ToggleAutomaticMapModeIntent: AppIntent {
     static var title: LocalizedStringResource = "Toggle HUD Map Mode"
-    static var description = IntentDescription("Toggle the saved automatic Map Mode preference using the iPhone Action Button or Back Tap.")
+    static var description = IntentDescription("Toggle the saved automatic Map Mode preference using the Action Button or Back Tap.")
     @available(iOS 26.0, *)
     static let supportedModes: IntentModes = [.background]
 
