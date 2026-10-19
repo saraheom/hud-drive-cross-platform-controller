@@ -13,7 +13,7 @@ final class V90352421HardBoundedMirrorOBDFlightTests: XCTestCase {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         XCTAssertTrue(video.contains("v8.34-hard-bounded-mirror-v831-raw-tcp-15332"))
         XCTAssertTrue(video.contains("U2WH2648"))
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.33"))
+        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.34"))
         XCTAssertTrue(app.contains("paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay"))
         XCTAssertFalse(ui.contains("pairs with U2W v8.38"))
     }

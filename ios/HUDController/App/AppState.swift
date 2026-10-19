@@ -2,6 +2,35 @@ import Foundation
 import Observation
 import UIKit
 
+// v90.35.3.24.34: share exactly the same adapter Wi-Fi defaults between the
+// editable UI and automatic, recovery, and manual Map Mode startup paths.
+// An unset SSID inherits the previously displayed NISSAN68 default; an
+// explicitly cleared SSID is intentionally invalid. Never default a password.
+enum HUDU2WAdapterWiFiCredentials {
+    static let ssidKey = "HUD.U2WHomeProbe.ssid"
+    static let passwordKey = "HUD.U2WHomeProbe.password"
+    static let defaultSSID = "NISSAN68"
+
+    static func current(defaults: UserDefaults = .standard) -> (ssid: String, password: String) {
+        let ssid = (defaults.string(forKey: ssidKey) ?? defaultSSID)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = defaults.string(forKey: passwordKey) ?? ""
+        return (ssid, password)
+    }
+
+    static func missingField(defaults: UserDefaults = .standard) -> String? {
+        let credentials = current(defaults: defaults)
+        if credentials.ssid.isEmpty { return "network name" }
+        if credentials.password.isEmpty { return "password" }
+        return nil
+    }
+
+    static func save(ssid: String, password: String, defaults: UserDefaults = .standard) {
+        defaults.set(ssid.trimmingCharacters(in: .whitespacesAndNewlines), forKey: ssidKey)
+        defaults.set(password, forKey: passwordKey)
+    }
+}
+
 @MainActor
 @Observable
 final class AppState {
@@ -65,6 +94,7 @@ final class AppState {
     private var automaticMapModeStartTask: Task<Void, Never>?
     private var automaticMapModeScheduleGeneration: UInt64 = 0
     private var automaticMapModeAttemptedOnThisConnection = false
+    private(set) var adapterWiFiCredentialsStatus = HUDU2WAdapterWiFiCredentials.missingField().map { "Wi-Fi \($0) required — enter it below and save" } ?? "Adapter Wi-Fi credentials saved"
     private(set) var mainVideoPreviewActive = false
     private(set) var liveMapDiagnosticStatus = "One-drive recorder armed"
     private(set) var liveMapDiagnosticBundleURL: URL?
@@ -908,7 +938,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.33 — automatic-map-preference + cold-start readiness + visible ETA + empty map
+            HUD Controller v90.35.3.24.34 — automatic-map-preference + adapter credential recovery + cold-start readiness + visible ETA + empty map
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -1076,6 +1106,27 @@ final class AppState {
         }
     }
 
+    /// Called when adapter Wi-Fi fields are saved, including a default SSID that
+    /// was visible in the settings UI but had never been written to UserDefaults.
+    /// A saved ON preference triggers one newly eligible, serialized Map Mode
+    /// attempt. Never disturb an already active video/HUD session.
+    func saveMapModeAdapterWiFiCredentials(ssid: String, password: String) {
+        HUDU2WAdapterWiFiCredentials.save(ssid: ssid, password: password)
+        if let missing = HUDU2WAdapterWiFiCredentials.missingField() {
+            adapterWiFiCredentialsStatus = "Wi-Fi \(missing) required — enter it below and save"
+            logger.log("MAP AUTO", "adapter Wi-Fi settings incomplete: missing \(missing)")
+            return
+        }
+        adapterWiFiCredentialsStatus = "Adapter Wi-Fi credentials saved"
+        logger.log("MAP AUTO", "adapter Wi-Fi settings saved; password_present=1, automatic=\(automaticMapModeEnabled ? 1 : 0)")
+        guard automaticMapModeEnabled, !hudU2WLiveRelayActive, !mapModeActive else { return }
+        automaticMapModeScheduleGeneration &+= 1
+        automaticMapModeStartTask?.cancel()
+        automaticMapModeStartTask = nil
+        automaticMapModeAttemptedOnThisConnection = false
+        scheduleAutomaticMapModeStart(reason: "adapter Wi-Fi credentials saved")
+    }
+
     private func scheduleAutomaticMapModeStart(reason: String) {
         guard automaticMapModeEnabled,
               bluetooth.state == .connected,
@@ -1084,14 +1135,16 @@ final class AppState {
               !firmwareMaintenanceActive,
               !automaticMapModeAttemptedOnThisConnection else { return }
         guard automaticMapModeStartTask == nil, hudU2WSTAStatusTask == nil else { return }
-        let ssid = (UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.ssid") ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let password = UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.password") ?? ""
-        guard !ssid.isEmpty, !password.isEmpty else {
-            hudU2WSTAStatus = "Auto Map Mode waiting for saved adapter Wi-Fi credentials"
-            logger.log("MAP AUTO", "start deferred: missing adapter Wi-Fi credentials reason=\(reason)")
+        let credentials = HUDU2WAdapterWiFiCredentials.current()
+        let ssid = credentials.ssid
+        let password = credentials.password
+        if let missing = HUDU2WAdapterWiFiCredentials.missingField() {
+            adapterWiFiCredentialsStatus = "Wi-Fi \(missing) required — enter it below and save"
+            hudU2WSTAStatus = "Auto Map Mode waiting for adapter Wi-Fi \(missing)"
+            logger.log("MAP AUTO", "start deferred: missing adapter Wi-Fi \(missing) reason=\(reason)")
             return
         }
+        adapterWiFiCredentialsStatus = "Adapter Wi-Fi credentials saved"
         automaticMapModeScheduleGeneration &+= 1
         let generation = automaticMapModeScheduleGeneration
         automaticMapModeStartTask = Task { @MainActor [weak self] in
@@ -1331,9 +1384,9 @@ final class AppState {
         guard hudU2WLiveRelayActive, bluetooth.state == .connected else { return }
         guard hudU2WAutomaticJoinRecoveryCount == 0, hudU2WJoinRecoveryTask == nil else { return }
 
-        let cleanSSID = (ssid ?? UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.ssid") ?? "NISSAN68")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanPassword = password ?? UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.password") ?? ""
+        let savedCredentials = HUDU2WAdapterWiFiCredentials.current()
+        let cleanSSID = (ssid ?? savedCredentials.ssid).trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanPassword = password ?? savedCredentials.password
         guard !cleanSSID.isEmpty, !cleanPassword.isEmpty else {
             logger.log("HUD/U2W STA", "AUTO JOIN RECOVERY skipped: saved STA credentials unavailable reason=\(reason)")
             return
@@ -1524,9 +1577,9 @@ final class AppState {
                 return
             }
 
-            let cleanSSID = (UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.ssid") ?? "NISSAN68")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let cleanPassword = UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.password") ?? ""
+            let savedCredentials = HUDU2WAdapterWiFiCredentials.current()
+            let cleanSSID = savedCredentials.ssid
+            let cleanPassword = savedCredentials.password
             guard !cleanSSID.isEmpty, !cleanPassword.isEmpty else {
                 self.hudU2WSTAStatus = "Saved U2W Wi-Fi credentials unavailable — staying on stock dashboard"
                 return
@@ -1607,8 +1660,8 @@ final class AppState {
             guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
             self.bluetooth.enqueue(
                 HudCommands.wifiSTAMode(
-                    ssid: UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.ssid") ?? "NISSAN68",
-                    password: UserDefaults.standard.string(forKey: "HUD.U2WHomeProbe.password") ?? "",
+                    ssid: HUDU2WAdapterWiFiCredentials.current().ssid,
+                    password: HUDU2WAdapterWiFiCredentials.current().password,
                     security: 2
                 ),
                 label: "HUD/U2W manual restart → Wi-Fi STA credentials"
@@ -2147,7 +2200,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.33",
+                "appVersion=v90.35.3.24.34",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

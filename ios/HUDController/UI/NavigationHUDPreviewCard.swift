@@ -9,8 +9,13 @@ import UIKit
 /// through U2W v8.15.1 to the HUD with session-scoped STA/MJPEG recovery.
 struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
-    @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = "NISSAN68"
+    @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = HUDU2WAdapterWiFiCredentials.defaultSSID
     @AppStorage("HUD.U2WHomeProbe.password") private var u2wPassword = ""
+    @FocusState private var editingAdapterWiFiField: AdapterWiFiField?
+
+    private enum AdapterWiFiField: Hashable {
+        case ssid, password
+    }
     @State private var showMapCustomization = false
     @State private var selectedDesignerComponent: HudMapDesignerComponent = .map
     @State private var designerDragOrigin = CGSize.zero
@@ -410,12 +415,26 @@ struct NavigationHUDPreviewCard: View {
                 .textFieldStyle(.roundedBorder)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .focused($editingAdapterWiFiField, equals: .ssid)
 
             SecureField("CarPlay adapter Wi-Fi password", text: $u2wPassword)
                 .textFieldStyle(.roundedBorder)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+                .focused($editingAdapterWiFiField, equals: .password)
 
+            // @AppStorage shows a default SSID without necessarily persisting it.
+            // Saving explicitly commits BOTH displayed values and retries Auto Map
+            // Mode on the current BLE session, without toggling the preference.
+            Button("Save adapter Wi-Fi & retry Map Mode") {
+                state.saveMapModeAdapterWiFiCredentials(ssid: u2wSSID, password: u2wPassword)
+            }
+            .buttonStyle(.bordered)
+            .tint(accent)
+
+            Text(state.adapterWiFiCredentialsStatus)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             Toggle("Automatic Map Mode", isOn: Binding(
                 get: { state.automaticMapModeEnabled },
@@ -510,6 +529,12 @@ struct NavigationHUDPreviewCard: View {
             Text("Detailed MainVideo, decoder, adapter-seam, and OBD ownership telemetry remains in the diagnostic ZIP but is hidden from the everyday Map Mode controls. Frame-rate choices remain capped at the proven 15 fps maximum.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+        }
+        .onChange(of: editingAdapterWiFiField) { previous, next in
+            // Save on keyboard dismissal too; do not start mid-password entry.
+            if previous != nil && next == nil {
+                state.saveMapModeAdapterWiFiCredentials(ssid: u2wSSID, password: u2wPassword)
+            }
         }
         .padding(10)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))

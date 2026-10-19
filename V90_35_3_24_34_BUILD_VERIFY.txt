@@ -1,0 +1,20 @@
+HUD Controller v90.35.3.24.34 — build verification
+=================================================
+Source baseline: v24.33 full repo with v24.33 CI FIX 2 Siri Metadata overlay (which incorporates CI FIX 1).
+Changed runtime files:
+  ios/HUDController/App/AppState.swift
+  ios/HUDController/UI/NavigationHUDPreviewCard.swift
+Changed validation assets:
+  ios/HUDControllerTests/V90352434AdapterWiFiCredentialsTests.swift (new)
+  tests/test_v90_35_3_24_34_adapter_wifi_credentials.py (new)
+  Historical test expectations for current appVersion string (24.33 to 24.34).
+
+Local checks:
+  pytest tests: 570 passed / 1 skipped
+  Swift syntax parse: 220 passed / 0 failed
+  GitHub Actions YAML: 8 parsed
+  U2W v8.40 tree: 478/478 identical to previous version
+  H264MainVideoSanitizer.swift: identical to previous version
+  Corrected App Intent wording: confirmed; no Apple-prohibited 'iPhone' description
+
+Limits: full Xcode Release archive, iOS XCTest and TestFlight processing NOT run locally. Run iOS CI and TestFlight workflows; Apple post-processing must still be checked independently.
