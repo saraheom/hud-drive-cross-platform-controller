@@ -94,6 +94,9 @@ final class AppState {
     private var automaticMapModeStartTask: Task<Void, Never>?
     private var automaticMapModeScheduleGeneration: UInt64 = 0
     private var automaticMapModeAttemptedOnThisConnection = false
+    // v24.35: one bounded 90-second readiness window per BLE connection/explicit retry.
+    private var automaticMapModeRetryDeadline = Date.distantPast
+    private var nativeMapModeMessageStage = ""
     private(set) var adapterWiFiCredentialsStatus = HUDU2WAdapterWiFiCredentials.missingField().map { "Wi-Fi \($0) required — enter it below and save" } ?? "Adapter Wi-Fi credentials saved"
     private(set) var mainVideoPreviewActive = false
     private(set) var liveMapDiagnosticStatus = "One-drive recorder armed"
@@ -469,6 +472,8 @@ final class AppState {
             self.automaticMapModeStartTask?.cancel()
             self.automaticMapModeStartTask = nil
             self.automaticMapModeAttemptedOnThisConnection = false
+            self.automaticMapModeRetryDeadline = .distantPast
+            self.nativeMapModeMessageStage = ""
             self.hudU2WMapModeAttemptGeneration &+= 1
             self.hudRehydrateTask?.cancel()
             self.hudRehydrateTask = nil
@@ -938,7 +943,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.34 — automatic-map-preference + adapter credential recovery + cold-start readiness + visible ETA + empty map
+            HUD Controller v90.35.3.24.35 — auto Map Mode adapter readiness retries + stock HUD startup info + simplified OBD UI
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -1086,9 +1091,13 @@ final class AppState {
         if enabled {
             // An explicit OFF→ON is also a deliberate manual retry in this BLE session.
             automaticMapModeAttemptedOnThisConnection = false
+            automaticMapModeRetryDeadline = .distantPast
+            nativeMapModeMessageStage = ""
             scheduleAutomaticMapModeStart(reason: reason)
         } else {
             automaticMapModeAttemptedOnThisConnection = false
+            automaticMapModeRetryDeadline = .distantPast
+            nativeMapModeMessageStage = ""
             if hudU2WLiveRelayActive || hudU2WSTAStatusTask != nil {
                 stopHUDU2WSTAHomeProbe()
             }
@@ -1124,7 +1133,26 @@ final class AppState {
         automaticMapModeStartTask?.cancel()
         automaticMapModeStartTask = nil
         automaticMapModeAttemptedOnThisConnection = false
+        automaticMapModeRetryDeadline = .distantPast
+        nativeMapModeMessageStage = ""
         scheduleAutomaticMapModeStart(reason: "adapter Wi-Fi credentials saved")
+    }
+
+    /// Show an informational message on the *stock* Free Ride/Navigation renderer.
+    /// The HUD's PushMessage packet is reverse engineered but not yet field-verified;
+    /// it is opt-out and deliberately does not touch music filters, icon state,
+    /// display mode, notification timeout, or the live Map Mode canvas.
+    private func showNativeMapModeStartupMessage(stage: String, detail: String) {
+        guard automaticMapModeEnabled, bluetooth.state == .connected,
+              !hudU2WLiveRelayActive, !mapModeActive, !firmwareMaintenanceActive,
+              (UserDefaults.standard.object(forKey: "HUD.MapMode.nativeStartupMessageEnabled") as? Bool ?? true),
+              nativeMapModeMessageStage != stage else { return }
+        nativeMapModeMessageStage = stage
+        bluetooth.enqueue(
+            HudCommands.pushMessage(position: 0, type: 0, title: "MAP MODE", message: detail),
+            label: "Map Mode stock HUD info: \(stage)"
+        )
+        logger.log("MAP AUTO", "stock native message stage=\(stage) (experimental INFO / TOP)")
     }
 
     private func scheduleAutomaticMapModeStart(reason: String) {
@@ -1135,9 +1163,6 @@ final class AppState {
               !firmwareMaintenanceActive,
               !automaticMapModeAttemptedOnThisConnection else { return }
         guard automaticMapModeStartTask == nil, hudU2WSTAStatusTask == nil else { return }
-        let credentials = HUDU2WAdapterWiFiCredentials.current()
-        let ssid = credentials.ssid
-        let password = credentials.password
         if let missing = HUDU2WAdapterWiFiCredentials.missingField() {
             adapterWiFiCredentialsStatus = "Wi-Fi \(missing) required — enter it below and save"
             hudU2WSTAStatus = "Auto Map Mode waiting for adapter Wi-Fi \(missing)"
@@ -1145,6 +1170,16 @@ final class AppState {
             return
         }
         adapterWiFiCredentialsStatus = "Adapter Wi-Fi credentials saved"
+        if automaticMapModeRetryDeadline == .distantPast {
+            automaticMapModeRetryDeadline = Date().addingTimeInterval(90)
+        }
+        guard Date() < automaticMapModeRetryDeadline else {
+            hudU2WSTAStatus = "Adapter unavailable after 90 s — Navigation retained"
+            logger.log("MAP AUTO", "readiness window exhausted; stock Navigation/Free Ride retained")
+            showNativeMapModeStartupMessage(stage: "unavailable", detail: "Map Mode unavailable")
+            return
+        }
+        showNativeMapModeStartupMessage(stage: "initializing", detail: "Map Mode initializing...")
         automaticMapModeScheduleGeneration &+= 1
         let generation = automaticMapModeScheduleGeneration
         automaticMapModeStartTask = Task { @MainActor [weak self] in
@@ -1154,23 +1189,65 @@ final class AppState {
                     self.automaticMapModeStartTask = nil
                 }
             }
-            // Wait until stock firmware/dashboard rehydration has settled. Starting
-            // mode 6 during its delayed reassert could immediately undo the cast.
+            // Stock firmware/dashboard rehydration must complete before switching
+            // to KivicCast. Do not mutate OBD or MainVideo until local U2W replies.
             try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled,
+            var readinessAttempt = 0
+            while !Task.isCancelled,
                   self.automaticMapModeScheduleGeneration == generation,
                   self.automaticMapModeEnabled,
                   self.bluetooth.state == .connected,
                   !self.hudU2WLiveRelayActive,
-                  !self.automaticMapModeAttemptedOnThisConnection,
-                  !self.firmwareMaintenanceActive else { return }
-            self.automaticMapModeAttemptedOnThisConnection = true
-            self.logger.log("MAP AUTO", "starting persisted Map Mode for session reason=\(reason)")
-            self.startHUDU2WSTAHomeProbe(ssid: ssid, password: password)
+                  !self.mapModeActive,
+                  !self.firmwareMaintenanceActive,
+                  !self.automaticMapModeAttemptedOnThisConnection {
+                guard Date() < self.automaticMapModeRetryDeadline else {
+                    self.hudU2WSTAStatus = "Adapter unavailable after 90 s — Navigation retained"
+                    self.logger.log("MAP AUTO", "readiness timeout after \(readinessAttempt) checks; Navigation/OBD preserved")
+                    self.showNativeMapModeStartupMessage(stage: "unavailable", detail: "Map Mode unavailable")
+                    return
+                }
+                readinessAttempt += 1
+                // Read-only CGI is intentionally independent of the iOS Internet
+                // status, which may remain 'unsatisfied' even while U2W is reachable.
+                var ready = false
+                do {
+                    var request = URLRequest(url: URL(string: "http://192.168.50.2/cgi-bin/u2whud-status.cgi")!)
+                    request.timeoutInterval = 3
+                    request.cachePolicy = .reloadIgnoringLocalCacheData
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    ready = (200...299).contains(status)
+                    if !ready {
+                        self.logger.log("MAP AUTO", "adapter preflight HTTP=\(status) check=\(readinessAttempt)")
+                    }
+                } catch {
+                    self.logger.log("MAP AUTO", "adapter preflight unavailable check=\(readinessAttempt) reason=\(error.localizedDescription)")
+                }
+                guard !Task.isCancelled,
+                      self.automaticMapModeScheduleGeneration == generation,
+                      self.automaticMapModeEnabled,
+                      self.bluetooth.state == .connected,
+                      !self.hudU2WLiveRelayActive,
+                      !self.firmwareMaintenanceActive else { return }
+                if ready {
+                    let credentials = HUDU2WAdapterWiFiCredentials.current()
+                    guard !credentials.ssid.isEmpty, !credentials.password.isEmpty else { return }
+                    self.automaticMapModeAttemptedOnThisConnection = true
+                    self.hudU2WSTAStatus = "Adapter ready — entering Map Mode..."
+                    self.showNativeMapModeStartupMessage(stage: "connecting", detail: "Connecting Map Mode...")
+                    self.logger.log("MAP AUTO", "adapter HTTP preflight ready on check=\(readinessAttempt); initiating Map Mode reason=\(reason)")
+                    self.startHUDU2WSTAHomeProbe(ssid: credentials.ssid, password: credentials.password, automaticAttempt: true)
+                    return
+                }
+                self.hudU2WSTAStatus = "Waiting for CarPlay adapter (check \(readinessAttempt))"
+                self.showNativeMapModeStartupMessage(stage: "waiting", detail: "Waiting for CarPlay...")
+                try? await Task.sleep(for: .seconds(Int64(min(8, 2 + readinessAttempt))))
+            }
         }
     }
 
-    func startHUDU2WSTAHomeProbe(ssid: String, password: String) {
+    func startHUDU2WSTAHomeProbe(ssid: String, password: String, automaticAttempt: Bool = false) {
         let cleanSSID = ssid.trimmingCharacters(in: .whitespacesAndNewlines)
         guard bluetooth.state == .connected else {
             hudU2WSTAStatus = "Connect HUD over BLE first"
@@ -1231,13 +1308,26 @@ final class AppState {
         hudU2WLiveRelayActive = false
         hudU2WSTAStatus = "Starting U2W v8.15.1 live relay…"
         logger.log("HUD/U2W STA", "live relay start ssid=\(cleanSSID); iPhone remains on U2W AP")
-        beginMapModeDirectOBDOwnership(reason: "physical Map Mode start")
+        // Preserve HUD OBD ownership until the adapter ACKs the start request.
+        // An unreachable local adapter must not disable stock OBD or Navigation.
 
         hudU2WSTAStatusTask = Task { @MainActor [weak self] in
             guard let self, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
+            var automaticStartFailure: String?
             defer {
                 if self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration {
                     self.hudU2WSTAStatusTask = nil
+                    // A healthy BLE session may outlive temporary U2W Wi-Fi loss.
+                    // Re-arm readiness checks only for failed automatic starts.
+                    if automaticAttempt, let failure = automaticStartFailure,
+                       self.automaticMapModeEnabled,
+                       self.bluetooth.state == .connected,
+                       Date() < self.automaticMapModeRetryDeadline {
+                        self.automaticMapModeAttemptedOnThisConnection = false
+                        self.nativeMapModeMessageStage = ""
+                        self.logger.log("MAP AUTO", "rearming readiness after start rejection: \(failure)")
+                        self.scheduleAutomaticMapModeStart(reason: "relay start retry")
+                    }
                 }
             }
             do {
@@ -1250,16 +1340,19 @@ final class AppState {
                 self.logger.log("HUD/U2W STA", "U2W v8.15.1 start HTTP=\(code) response=\(text.replacingOccurrences(of: "\n", with: " | "))")
                 guard (200...299).contains(code) else {
                     self.hudU2WSTAStatus = "U2W v8.15.1 start failed (HTTP \(code))"
+                    automaticStartFailure = "HTTP \(code)"
                     return
                 }
             } catch {
                 self.hudU2WSTAStatus = "U2W v8.15.1 unreachable"
                 self.hudU2WSTAReason = error.localizedDescription
                 self.logger.log("HUD/U2W STA", "U2W relay start request failed: \(error.localizedDescription)")
+                automaticStartFailure = "adapter unreachable"
                 return
             }
 
             guard !Task.isCancelled, self.hudU2WMapModeAttemptGeneration == mapModeAttemptGeneration else { return }
+            self.beginMapModeDirectOBDOwnership(reason: "physical Map Mode adapter start confirmed")
 
             // v90.35.3.24.21 preserves the field-proven Map Mode contract: the
             // physical HUD JPEG compositor is independent of MainVideo. Start the
@@ -2200,7 +2293,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.34",
+                "appVersion=v90.35.3.24.35",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

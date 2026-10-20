@@ -11,6 +11,7 @@ struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
     @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = HUDU2WAdapterWiFiCredentials.defaultSSID
     @AppStorage("HUD.U2WHomeProbe.password") private var u2wPassword = ""
+    @AppStorage("HUD.MapMode.nativeStartupMessageEnabled") private var nativeMapStartupMessageEnabled = true
     @FocusState private var editingAdapterWiFiField: AdapterWiFiField?
 
     private enum AdapterWiFiField: Hashable {
@@ -445,6 +446,12 @@ struct NavigationHUDPreviewCard: View {
             Text(state.automaticMapModeEnabled
                  ? (state.hudU2WLiveRelayActive ? "On • current HUD session starting/active" : "On • waiting for HUD connection or startup")
                  : "Off • CarPlay navigation uses the standard HUD Navigation mode")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Toggle("Show startup message on stock HUD", isOn: $nativeMapStartupMessageEnabled)
+                .tint(accent)
+            Text("Experimental native informational message during automatic initialization on Free Ride/Navigation only. No message is drawn on the Map Mode screen.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 

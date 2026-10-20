@@ -23,7 +23,7 @@ def test_speed_limit_height_and_font_are_persisted_independently():
 
 
 def test_obd_trace_is_passive_and_correlates_with_gps_reference():
-    assert 'OBD speed protocol trace' in VEHICLE
+    assert 'OBD speed protocol trace' not in VEHICLE
     assert 'OBD TRACE RX' in BLE
     assert 'updateOBDTraceReferenceSpeed(gpsMph:' in BLE
     assert 'bluetooth?.updateOBDTraceReferenceSpeed(gpsMph: speedMph)' in APP
@@ -31,7 +31,7 @@ def test_obd_trace_is_passive_and_correlates_with_gps_reference():
     assert 'u16be@' in BLE
     assert 'u32be@' in BLE
     assert 'f32be@' in BLE
-    assert 'the iPhone does not connect to the OBD adapter' in VEHICLE
+    assert 'Free Ride and Navigation use the HUD' in VEHICLE
 
 
 def test_obd_status_packet_is_explicitly_decoded_for_forensics():

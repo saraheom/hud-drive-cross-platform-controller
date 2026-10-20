@@ -33,9 +33,9 @@ def test_native_speed_probe_forensics_remain_available_but_map_overlay_is_retire
 
 
 def test_vehicle_ui_exposes_raw_capture_without_adapter_change():
-    assert 'Stop & save raw' in UI
-    assert 'Share raw HUD BLE capture' in UI
-    assert 'Returned categories' in UI
+    assert 'Stop & save raw' not in UI
+    assert 'Share raw HUD BLE capture' not in UI
+    assert 'Returned categories' not in UI
 
 
 def test_mainvideo_reliability_baseline_is_unchanged():

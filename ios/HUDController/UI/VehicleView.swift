@@ -41,51 +41,7 @@ struct VehicleView: View {
 
                             LabeledContent("HUD owns OBD", value: state.obd.connected ? "YES" : "NO")
                             LabeledContent("Status", value: state.obd.status)
-                            LabeledContent(
-                                "Supported PIDs",
-                                value: state.obd.supportedPIDs.isEmpty ? "—" : state.obd.supportedPIDs
-                            )
-                            LabeledContent("Vehicle speed PID", value: state.obd.vehicleSpeedPIDSupportSummary)
-                            HudDescription("The HUD owns OBD in Free Ride/Navigation. Map Mode temporarily transfers the single-client ELM327 connection to the iPhone, then returns it automatically when Map Mode ends.")
-
-                            Toggle("OBD speed protocol trace", isOn: Binding(
-                                get: { state.bluetooth.obdSpeedTraceEnabled },
-                                set: { state.bluetooth.obdSpeedTraceEnabled = $0 }
-                            ))
-                            LabeledContent("OBD trace", value: state.bluetooth.obdSpeedTraceStatus)
-                            HudDescription("Road-test instrumentation only. This is passive: the iPhone does not connect to the OBD adapter and does not send extra PID requests. While enabled, the log annotates HUD→iPhone BLE frames as OBD TRACE / OBD TRACE RX and compares numeric payload candidates against simultaneous GPS mph/km/h.")
-
-                            Divider()
-                            Text("HUD OBD diagnostic capture").font(.headline)
-                            LabeledContent("Diagnostic ZIP", value: state.bluetooth.obdDiagnosticStatus)
-                            LabeledContent("Returned categories", value: state.bluetooth.obdDiagnosticObservedCategories)
-                            HStack {
-                                Button("Request latest HUD OBD logs") {
-                                    state.bluetooth.requestOBDDiagnosticLogs(maxLastFilesCount: 2)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(state.bluetooth.state != .connected || state.bluetooth.obdDiagnosticTransferActive)
-
-                                if state.bluetooth.obdDiagnosticTransferActive {
-                                    Button("Stop & save raw") { state.bluetooth.cancelOBDDiagnosticLogs() }
-                                        .buttonStyle(.bordered)
-                                }
-                            }
-                            if let url = state.bluetooth.obdDiagnosticLogURL {
-                                ShareLink(item: url) {
-                                    Label("Share HUD OBD diagnostic ZIP", systemImage: "square.and.arrow.up")
-                                }
-                            }
-                            if let url = state.bluetooth.obdDiagnosticRawCaptureURL {
-                                ShareLink(item: url) {
-                                    Label("Share raw HUD BLE capture", systemImage: "waveform.badge.magnifyingglass")
-                                }
-                            }
-                            Button("Check whether HUD has stored OBD logs") {
-                                state.bluetooth.requestRemainingDiagnosticLogTypes()
-                            }
-                            .buttonStyle(.bordered)
-                            HudDescription("v90.35.3.13.2 keeps the bounded read-only LOG_CATEGORY_OBD forensic capture and hardens its framing. Only the three legal HUD escape pairs are accepted, immediate duplicate continuation notifications are suppressed for parsing while still preserved in the raw capture, and only exact-length diagnostic chunks are admitted to an archive. If the HUD returns LOG_CATEGORY_CRUSH instead of the requested OBD label, a structurally valid returned archive is now retained rather than discarded. If an archive still does not complete, tap Stop & save raw and share the .bin plus the normal HUD log. No second OBD connection or extra PID request is made by this capture.")
+                            HudDescription("Free Ride and Navigation use the HUD's OBD connection. Map Mode temporarily transfers the adapter to the phone and returns it when Map Mode ends.")
 
                             Divider()
                             Text("Freeride HUD widgets").font(.headline)
@@ -127,7 +83,7 @@ struct VehicleView: View {
                             }
                                 .buttonStyle(.borderedProminent)
 
-                            HudDescription("This uses the original app's HUD-managed OBD connection packets. Visible Freeride and Navigation side widgets are configured separately with the original HudWidgetCommandPacket (111/0).")
+                            HudDescription("Free Ride and Navigation widget layouts are saved separately and sent to the stock HUD.")
                         }
                     }
 

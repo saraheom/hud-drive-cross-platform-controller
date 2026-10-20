@@ -27,5 +27,5 @@ def test_stock_hud_obd_log_protocol_is_exposed():
     assert 'command: 5, p1: 1, p2: 0' in CMD
     assert 'CrushLogDiagnosticEventPacket' in BT
     assert 'HUD_Diagnostic_' in BT
-    assert 'Request latest HUD OBD logs' in UI
-    assert 'Share HUD OBD diagnostic ZIP' in UI
+    assert 'Request latest HUD OBD logs' not in UI
+    assert 'Share HUD OBD diagnostic ZIP' not in UI

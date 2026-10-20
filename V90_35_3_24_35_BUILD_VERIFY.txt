@@ -1,0 +1,11 @@
+HUD Controller v90.35.3.24.35 local verification
+Source baseline: v90.35.3.24.34 full ZIP
+Regression tests: 576 passed, 1 skipped
+Swift frontend parse: 220/220
+GitHub workflow YAML: 8/8
+U2W files: 478/478 byte-identical
+H264MainVideoSanitizer.swift: unchanged
+U2WMainVideoClient.swift: unchanged
+U2WHUDFrameRelayClient.swift: unchanged
+Xcode type check / archive: unavailable on Linux; GitHub CI required
+Native HUD PushMessage rendering: not physically verified; optional switch ON by default
