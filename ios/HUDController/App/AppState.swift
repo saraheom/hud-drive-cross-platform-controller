@@ -1060,7 +1060,9 @@ final class AppState {
 
     var mapModeSpeedSourceSummary: String {
         if let mph = directELM.freshSpeedMph() { return "OBD • \(mph) mph" }
-        if hudU2WLiveRelayActive || mapModeActive { return "GPS fallback • \(speedEngine.currentSpeedMph) mph" }
+        if hudU2WLiveRelayActive || mapModeActive {
+            return "\(directELM.speedSourceSummary) • GPS \(speedEngine.currentSpeedMph) mph"
+        }
         return "HUD/stock speed"
     }
 
@@ -1153,6 +1155,22 @@ final class AppState {
             label: "Map Mode stock HUD info: \(stage)"
         )
         logger.log("MAP AUTO", "stock native message stage=\(stage) (experimental INFO / TOP)")
+    }
+
+    /// Parked-only physical display check for the reverse-engineered stock
+    /// PushMessage renderer. Never alters display mode or sends music packets.
+    func testNativeMapModeStartupMessage() {
+        guard bluetooth.state == .connected, !hudU2WLiveRelayActive,
+              !mapModeActive, !firmwareMaintenanceActive else {
+            logger.log("MAP AUTO", "stock INFO test unavailable: HUD must be in stock mode")
+            return
+        }
+        bluetooth.enqueue(
+            HudCommands.pushMessage(position: 0, type: 0,
+                                    title: "MAP MODE", message: "Initializing... (test)"),
+            label: "Parked stock HUD INFO display test"
+        )
+        logger.log("MAP AUTO", "parked stock HUD PushMessage INFO test transmitted; on-screen rendering unverified")
     }
 
     private func scheduleAutomaticMapModeStart(reason: String) {

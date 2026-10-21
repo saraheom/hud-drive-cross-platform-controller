@@ -41,7 +41,10 @@ def test_shortcuts_use_real_app_intents_and_shared_saved_state():
 def test_no_dummy_map_and_eta_is_legible():
     map_block = CANVAS.split('private var mapBlock: some View {', 1)[1].split('private var streetBlock', 1)[0]
     assert 'Color.black' in map_block
-    assert 'HudMapModeSchematic(' not in map_block
+    assert 'else if showsCustomizationSampleMap {' in map_block
+    assert 'HudMapModeSchematic(' in map_block
+    assert 'Color.black' in map_block.split('HudMapModeSchematic(', 1)[1]
+    assert 'var showsCustomizationSampleMap = false' in CANVAS
     eta = CANVAS.split('private var etaBlock: some View {', 1)[1].split('private var timeLeftBlock', 1)[0]
     assert '.foregroundStyle(.white)' in eta
     assert '"MAP ETA"' in APP

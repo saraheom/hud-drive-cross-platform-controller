@@ -64,6 +64,14 @@ final class DirectELM327Manager: NSObject {
     private var scanStopTask: Task<Void, Never>?
     private var speedProbeTimeoutTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
+    private var productionPollingGeneration: UInt64 = 0
+    private var productionPollStartedAt: Date?
+    private var productionRecoveryTask: Task<Void, Never>?
+    private var productionConnectStartedAt: Date?
+    private var productionGATTStartedAt: Date?
+    private var timedOutProductionConnects: Set<UUID> = []
+    private var productionRecoveryAttempts = 0
+    private var productionReconnectDisconnectPending = false
     private var ownershipConnectTask: Task<Void, Never>?
     private var speedProbeActive = false
     private var speedProbeBuffer = ""
@@ -100,7 +108,7 @@ final class DirectELM327Manager: NSObject {
 
     var speedSourceSummary: String {
         if let mph = freshSpeedMph() { return "OBD • \(mph) mph" }
-        if mapModeOwnershipRequested { return productionPolling ? "OBD stale • GPS fallback" : "OBD connecting • GPS fallback" }
+        if mapModeOwnershipRequested { return productionPolling ? "OBD stale • GPS backup while retrying" : "OBD reconnecting • GPS backup" }
         return "HUD/stock ownership"
     }
 
@@ -191,6 +199,7 @@ final class DirectELM327Manager: NSObject {
             event: "connect_begin",
             fields: ["device": peripheral.name ?? peripheral.identifier.uuidString, "id": peripheral.identifier.uuidString, "hud_obd_before": hudOBDBeforeConnect ?? false, "production": production]
         )
+        if production { productionConnectStartedAt = Date() }
         central.connect(peripheral, options: nil)
     }
 
@@ -227,6 +236,7 @@ final class DirectELM327Manager: NSObject {
         currentSpeedKmh = nil
         lastSpeedAt = nil
         emit("OBD OWNERSHIP", "iPhone Map Mode ownership requested generation=\(ownershipGeneration) hudOBD=\((hudOBDConnectedProvider?() ?? false) ? 1 : 0)", event: "map_obd_claim", fields: ["ownership_generation": ownershipGeneration])
+        ensureProductionRecoveryLoop(reason: "Map Mode claim")
 
         if connectedPeripheral != nil {
             if gattReady { startPollingIfReady() }
@@ -250,13 +260,101 @@ final class DirectELM327Manager: NSObject {
         beginScan(duration: 8, productionAutoConnect: true)
     }
 
+    /// Maintains ELM ownership throughout Map Mode. Each scan/connect is bounded;
+    /// the loop persists until the physical Map Mode ends, but never resets the
+    /// adapter, changes its OBD protocol, or claims it during HUD-owned modes.
+    private func ensureProductionRecoveryLoop(reason: String) {
+        guard mapModeOwnershipRequested, productionRecoveryTask == nil else { return }
+        let generation = ownershipGeneration
+        emit("OBD RECOVERY", "watchdog started reason=\(reason) generation=\(generation)", event: "recovery_start")
+        productionRecoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.ownershipGeneration == generation { self.productionRecoveryTask = nil }
+            }
+            while !Task.isCancelled, self.mapModeOwnershipRequested,
+                  self.ownershipGeneration == generation {
+                if self.central.state != .poweredOn {
+                    self.ownershipStatus = "Bluetooth unavailable • GPS backup"
+                } else if let current = self.connectedPeripheral {
+                    if self.productionReconnectDisconnectPending {
+                        // Wait for the CoreBluetooth disconnect callback before
+                        // starting another poll or reconnecting the same peripheral.
+                        try? await Task.sleep(for: .seconds(2))
+                        continue
+                    }
+                    if current.state != .connected {
+                        self.connectedPeripheral = nil
+                        self.gattReady = false
+                        self.stopPolling(reason: "physical BLE link no longer connected")
+                        self.emit("OBD RECOVERY", "BLE peripheral state no longer connected; restart discovery", event: "link_lost")
+                        continue
+                    }
+                    // A BLE connection may stay alive while ECU replies stop. A
+                    // validated 41 0D response, not the connection flag alone,
+                    // determines whether OBD speed is healthy.
+                    let since = self.lastSpeedAt ?? self.productionPollStartedAt
+                    if self.productionPolling, let since,
+                       Date().timeIntervalSince(since) > 8 {
+                        self.emit("OBD RECOVERY", "ECU speed responses stale >8s; reconnecting saved BLE device", event: "stale_speed_reconnect")
+                        self.ownershipStatus = "OBD speed stale • reconnecting (GPS backup)"
+                        self.stopPolling(reason: "speed responses stale")
+                        self.productionReconnectDisconnectPending = true
+                        self.central.cancelPeripheralConnection(current)
+                    } else if !self.gattReady, let start = self.productionGATTStartedAt,
+                              Date().timeIntervalSince(start) > 15 {
+                        self.emit("OBD RECOVERY", "GATT discovery timed out; reconnecting", event: "gatt_timeout")
+                        self.productionReconnectDisconnectPending = true
+                        self.central.cancelPeripheralConnection(current)
+                    } else if self.gattReady && !self.productionPolling {
+                        self.startPollingIfReady()
+                    }
+                } else if self.connecting {
+                    if let pending = self.connectingPeripheral,
+                       let start = self.productionConnectStartedAt,
+                       Date().timeIntervalSince(start) > 15 {
+                        self.timedOutProductionConnects.insert(pending.identifier)
+                        self.emit("OBD RECOVERY", "BLE connection attempt timed out; cancelling", event: "connect_timeout")
+                        self.central.cancelPeripheralConnection(pending)
+                        self.connectingPeripheral = nil
+                        self.connecting = false
+                        self.productionConnectStartedAt = nil
+                    }
+                } else if !self.scanning {
+                    self.productionRecoveryAttempts += 1
+                    self.ownershipStatus = "OBD reconnecting • GPS backup"
+                    // Alternate retrieval of the paired peripheral and actual
+                    // BLE scans. Retrieval can fail when the dongle has restarted.
+                    if self.productionRecoveryAttempts % 2 == 1,
+                       let raw = UserDefaults.standard.string(forKey: self.savedPeripheralKey),
+                       let id = UUID(uuidString: raw),
+                       let peripheral = self.central.retrievePeripherals(withIdentifiers: [id]).first {
+                        self.peripherals[id] = peripheral
+                        self.selectedDeviceID = id
+                        self.emit("OBD RECOVERY", "retry=\(self.productionRecoveryAttempts) saved BLE peripheral", event: "saved_reconnect")
+                        self.connect(peripheral, production: true)
+                    } else {
+                        self.emit("OBD RECOVERY", "retry=\(self.productionRecoveryAttempts) scanning for ELM", event: "scan_retry")
+                        self.beginScan(duration: 7, productionAutoConnect: true)
+                    }
+                }
+                try? await Task.sleep(for: .seconds(2))
+            }
+            self.emit("OBD RECOVERY", "watchdog stopped generation=\(generation)", event: "recovery_stop")
+        }
+    }
+
     /// Releases the BLE link before the HUD resumes its normal OBD ownership.
     func releaseMapModeOwnership() {
         mapModeOwnershipRequested = false
+        productionRecoveryTask?.cancel(); productionRecoveryTask = nil
         ownershipGeneration &+= 1 // invalidate every in-flight production connect callback
         ownershipStatus = "Returning OBD to HUD…"
         autoConnectDiscoveredOBD = false
         stopPolling(reason: "Map Mode ended")
+        productionConnectStartedAt = nil
+        productionGATTStartedAt = nil
+        productionReconnectDisconnectPending = false
         currentSpeedMph = nil
         currentSpeedKmh = nil
         lastSpeedAt = nil
@@ -353,6 +451,9 @@ final class DirectELM327Manager: NSObject {
               let peripheral = connectedPeripheral, let txCharacteristic else { return }
         guard pollingTask == nil else { return }
         productionPolling = true
+        productionPollingGeneration &+= 1
+        let pollingGeneration = productionPollingGeneration
+        productionPollStartedAt = Date()
         ownershipStatus = "iPhone owns OBD • polling speed"
         emit("OBD OWNERSHIP", "Map Mode direct OBD polling START rate=5Hz command=010D only", event: "map_obd_poll_start")
         pollingTask = Task { @MainActor [weak self] in
@@ -365,13 +466,18 @@ final class DirectELM327Manager: NSObject {
                 }
                 try? await Task.sleep(for: .milliseconds(200))
             }
-            self.productionPolling = false
-            self.pollingTask = nil
+            if self.productionPollingGeneration == pollingGeneration {
+                self.productionPolling = false
+                self.productionPollStartedAt = nil
+                self.pollingTask = nil
+            }
         }
     }
 
     private func stopPolling(reason: String) {
+        productionPollingGeneration &+= 1
         pollingTask?.cancel(); pollingTask = nil
+        productionPollStartedAt = nil
         if productionPolling {
             emit("OBD OWNERSHIP", "Map Mode direct OBD polling STOP reason=\(reason)", event: "map_obd_poll_stop", fields: ["reason": reason])
         }
@@ -474,7 +580,7 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
                 self.stopPolling(reason: "Bluetooth state \(central.state.rawValue)")
                 self.status = "Bluetooth unavailable • state \(central.state.rawValue)"
             } else if self.mapModeOwnershipRequested && self.connectedPeripheral == nil {
-                self.claimForMapMode()
+                self.ensureProductionRecoveryLoop(reason: "Bluetooth powered on")
             }
         }
     }
@@ -510,7 +616,8 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         Task { @MainActor in
             let productionGeneration = self.productionConnectGeneration.removeValue(forKey: peripheral.identifier)
-            let staleProductionConnect = productionGeneration != nil && (!self.mapModeOwnershipRequested || productionGeneration != self.ownershipGeneration)
+            let timedOut = self.timedOutProductionConnects.remove(peripheral.identifier) != nil
+            let staleProductionConnect = timedOut || (productionGeneration != nil && (!self.mapModeOwnershipRequested || productionGeneration != self.ownershipGeneration))
             if staleProductionConnect {
                 if self.connectingPeripheral?.identifier == peripheral.identifier { self.connectingPeripheral = nil }
                 self.connecting = false
@@ -531,6 +638,9 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
             self.connecting = false
             if self.connectingPeripheral?.identifier == peripheral.identifier { self.connectingPeripheral = nil }
             self.connectedPeripheral = peripheral
+            self.productionConnectStartedAt = nil
+            self.productionGATTStartedAt = Date()
+            self.productionReconnectDisconnectPending = false
             self.connectedName = peripheral.name ?? peripheral.identifier.uuidString
             self.status = "Connected • discovering GATT"
             peripheral.delegate = self
@@ -551,12 +661,14 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
             let callbackGeneration = self.productionConnectGeneration.removeValue(forKey: peripheral.identifier)
             self.releaseCancellationPendingIDs.remove(peripheral.identifier)
             self.connecting = false
+            self.productionConnectStartedAt = nil
+            self.timedOutProductionConnects.remove(peripheral.identifier)
             if self.connectingPeripheral?.identifier == peripheral.identifier { self.connectingPeripheral = nil }
             self.status = "Connection failed"
             let belongsToCurrentOwnership = callbackGeneration == nil || callbackGeneration == self.ownershipGeneration
             if self.mapModeOwnershipRequested && belongsToCurrentOwnership {
-                self.ownershipStatus = "OBD connection failed • GPS fallback"
-                if !self.scanning { self.beginScan(duration: 6, productionAutoConnect: true) }
+                self.ownershipStatus = "OBD connection failed • retrying (GPS backup)"
+                self.ensureProductionRecoveryLoop(reason: "BLE connect failed")
             }
             self.emit("ELM CONN", "FAILED device=\(peripheral.name ?? peripheral.identifier.uuidString) error=\(error?.localizedDescription ?? "unknown") hudOBD=\((self.hudOBDConnectedProvider?() ?? false) ? 1 : 0)", event: "connect_failed", fields: ["error": error?.localizedDescription ?? "unknown"])
         }
@@ -565,7 +677,11 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         Task { @MainActor in
             self.productionConnectGeneration.removeValue(forKey: peripheral.identifier)
+            self.timedOutProductionConnects.remove(peripheral.identifier)
             self.releaseCancellationPendingIDs.remove(peripheral.identifier)
+            self.productionConnectStartedAt = nil
+            self.productionGATTStartedAt = nil
+            self.productionReconnectDisconnectPending = false
             self.speedProbeTimeoutTask?.cancel(); self.speedProbeTimeoutTask = nil
             self.speedProbeActive = false
             self.stopPolling(reason: "BLE disconnected")
@@ -580,8 +696,8 @@ extension DirectELM327Manager: CBCentralManagerDelegate {
             self.status = "Disconnected"
             self.emit("ELM CONN", "DISCONNECTED device=\(peripheral.name ?? peripheral.identifier.uuidString) error=\(error?.localizedDescription ?? "none") hudOBD=\((self.hudOBDConnectedProvider?() ?? false) ? 1 : 0) mapModeOwnership=\(self.mapModeOwnershipRequested ? 1 : 0)", event: "disconnected", fields: ["error": error?.localizedDescription ?? "none"])
             if self.mapModeOwnershipRequested {
-                self.ownershipStatus = "OBD disconnected • GPS fallback"
-                self.beginScan(duration: 6, productionAutoConnect: true)
+                self.ownershipStatus = "OBD disconnected • reconnecting (GPS backup)"
+                self.ensureProductionRecoveryLoop(reason: "BLE disconnected")
             } else {
                 self.ownershipStatus = "HUD may reclaim OBD"
             }

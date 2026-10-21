@@ -283,6 +283,10 @@ final class HudMapModeSettings {
     private static let activePresetKey = "HUD.MapMode.Designer.activePreset"
     private static let presetMigrationKey = "HUD.MapMode.Designer.v1Migrated"
     private static let importedBaselineKey = "HUD.MapMode.Designer.importedBaseline"
+    private static func resetUndoKey(_ index: Int) -> String {
+        "HUD.MapMode.Designer.presetUndo.v1.\(index)"
+    }
+    private(set) var resetUndoAvailable = false
 
     var activePresetIndex: Int {
         didSet { defaults.set(activePresetIndex, forKey: Self.activePresetKey) }
@@ -592,6 +596,7 @@ final class HudMapModeSettings {
         } else {
             saveCurrentPreset()
         }
+        resetUndoAvailable = loadResetUndo(activePresetIndex) != nil
     }
 
     private enum DesignerAxis { case x, y }
@@ -632,6 +637,29 @@ final class HudMapModeSettings {
         defaults.set(data, forKey: Self.presetKey(index))
     }
 
+    private func loadResetUndo(_ index: Int) -> HudMapModePresetSnapshot? {
+        guard let data = defaults.data(forKey: Self.resetUndoKey(index)) else { return nil }
+        return try? JSONDecoder().decode(HudMapModePresetSnapshot.self, from: data)
+    }
+
+    /// Full visual-preset snapshot saved BEFORE each destructive reset. Kept in
+    /// UserDefaults across app restarts, not only in volatile SwiftUI @State.
+    private func saveBeforeReset() {
+        guard let data = try? JSONEncoder().encode(HudMapModePresetSnapshot(settings: self)) else { return }
+        defaults.set(data, forKey: Self.resetUndoKey(activePresetIndex))
+        resetUndoAvailable = true
+    }
+
+    func undoLastReset() {
+        guard let previous = loadResetUndo(activePresetIndex) else { return }
+        // Make undo one-shot; otherwise an old snapshot could unexpectedly
+        // overwrite later deliberate edits.
+        defaults.removeObject(forKey: Self.resetUndoKey(activePresetIndex))
+        resetUndoAvailable = false
+        apply(previous)
+        saveCurrentPreset()
+    }
+
     func saveCurrentPreset() {
         guard presetSystemReady, !isApplyingPreset else { return }
         save(HudMapModePresetSnapshot(settings: self), to: activePresetIndex)
@@ -645,6 +673,7 @@ final class HudMapModeSettings {
         saveCurrentPreset()
         let previous = HudMapModePresetSnapshot(settings: self)
         activePresetIndex = index
+        resetUndoAvailable = loadResetUndo(index) != nil
         if let target = loadPreset(index) {
             apply(target)
         } else {
@@ -658,6 +687,7 @@ final class HudMapModeSettings {
         let snapshot = HudMapModePresetSnapshot(settings: self)
         save(snapshot, to: index)
         activePresetIndex = index
+        resetUndoAvailable = loadResetUndo(index) != nil
         apply(snapshot)
     }
 
@@ -667,6 +697,7 @@ final class HudMapModeSettings {
         guard let data = defaults.data(forKey: Self.importedBaselineKey),
               let snapshot = try? JSONDecoder().decode(HudMapModePresetSnapshot.self, from: data)
         else { return }
+        saveBeforeReset()
         apply(snapshot)
         saveCurrentPreset()
     }
@@ -852,10 +883,12 @@ final class HudMapModeSettings {
     }
 
     func resetDesignerOffset(_ component: HudMapDesignerComponent) {
+        saveBeforeReset()
         setDesignerOffset(component, x: 0, y: 0)
     }
 
     func resetAllDesignerOffsets() {
+        saveBeforeReset()
         for component in HudMapDesignerComponent.allCases {
             setDesignerOffset(component, x: 0, y: 0)
         }

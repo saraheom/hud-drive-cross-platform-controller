@@ -7,6 +7,9 @@ struct HudMapModeCanvas: View {
     let snapshot: HudMapModeSnapshot
     let settings: HudMapModeSettings
     var sourceMapImage: UIImage? = nil
+    // Opt-in, editor-only schematic. Never enabled by the live HUD JPEG renderer
+    // or the main phone preview when CarPlay video is unavailable.
+    var showsCustomizationSampleMap = false
     var previewLanePlaceholder = false
     var suppressCustomSpeedForNativeOBDProbe = false
     // Kept for source compatibility with older preview/renderer call sites.
@@ -190,9 +193,17 @@ struct HudMapModeCanvas: View {
                     offsetX: settings.sourceMapOffsetX,
                     offsetY: settings.sourceMapOffsetY
                 )
+            } else if showsCustomizationSampleMap {
+                // Offline-only map placement reference: keep the schematic in the
+                // customization editor without leaking it to the real HUD.
+                HudMapModeSchematic(
+                    snapshot: snapshot,
+                    appearance: settings.mapAppearance,
+                    routeBlue: routeBlue
+                )
             } else {
-                // v24.33: no invented/sample map on physical HUD or phone preview.
-                // Speed/route overlays are intentionally independent of the source.
+                // Physical HUD + main phone preview must remain black without
+                // a fresh CarPlay source frame; never fabricate live-map content.
                 Color.black
             }
         }

@@ -1,0 +1,11 @@
+HUD Controller v90.35.3.24.36.1 local verification
+Full repository baseline: v90.35.3.24.36
+Python regression tests: 587 passed, 1 skipped (4 new tests)
+Swift syntax: 220/220 parsed
+GitHub Actions YAML: 8/8 parsed
+U2W source/firmware: 478/478 unchanged
+H264MainVideoSanitizer, U2WMainVideoClient, U2WHUDFrameRelayClient: unchanged
+DirectELM327Manager and HudMapModeSettings: unchanged
+Physical HUD/normal preview dummy-map fallback: still disabled by default
+Preset 2 and reset/undo storage: unchanged
+Full Xcode build and device run: NOT performed locally; GitHub CI required

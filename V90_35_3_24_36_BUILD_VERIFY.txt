@@ -1,0 +1,14 @@
+HUD Controller v90.35.3.24.36 local verification
+Full GitHub repo baseline: v90.35.3.24.35
+Python tests: 583 passed, 1 skipped
+New source regression tests: 7
+Swift syntax: 220/220 parsed
+GitHub workflow YAML: 8/8 parsed
+U2W payload/source: 478/478 byte-identical to v24.35
+H264MainVideoSanitizer.swift: unchanged
+U2WMainVideoClient.swift: unchanged
+U2WHUDFrameRelayClient.swift: unchanged
+Physical stock HUD info rendering: NOT verified; parked test button available
+Full iOS Xcode compilation/XCTest: not run locally; CI required
+Recovery on real ELM327 BLE hardware: not yet field-tested
+Historical pre-reset Preset 2: cannot be recovered from the available app log

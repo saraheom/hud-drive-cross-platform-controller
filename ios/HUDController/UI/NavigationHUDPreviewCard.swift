@@ -21,6 +21,19 @@ struct NavigationHUDPreviewCard: View {
     @State private var selectedDesignerComponent: HudMapDesignerComponent = .map
     @State private var designerDragOrigin = CGSize.zero
     @State private var designerDragging = false
+    @State private var pendingDesignerReset: DesignerResetAction?
+
+    private enum DesignerResetAction: String, Identifiable {
+        case selected, all, imported
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .selected: return "Reset selected position"
+            case .all: return "Reset all component positions"
+            case .imported: return "Restore pre-designer layout"
+            }
+        }
+    }
 
     private let accent = HudTheme.accent
 
@@ -66,6 +79,32 @@ struct NavigationHUDPreviewCard: View {
                 .padding(10)
                 .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
             }
+        }
+        .confirmationDialog(
+            "Change \(state.mapModeSettings.presetTitle(state.mapModeSettings.activePresetIndex))?",
+            isPresented: Binding(
+                get: { pendingDesignerReset != nil },
+                set: { if !$0 { pendingDesignerReset = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let action = pendingDesignerReset {
+                Button(action.label, role: .destructive) {
+                    switch action {
+                    case .selected:
+                        state.mapModeSettings.resetDesignerOffset(selectedDesignerComponent)
+                    case .all:
+                        state.mapModeSettings.resetAllDesignerOffsets()
+                    case .imported:
+                        state.mapModeSettings.restoreImportedLayout()
+                        selectedDesignerComponent = .map
+                    }
+                    pendingDesignerReset = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingDesignerReset = nil }
+        } message: {
+            Text("This will change the active preset only. Its full previous layout will be saved for Undo Last Reset.")
         }
     }
 
@@ -134,6 +173,7 @@ struct NavigationHUDPreviewCard: View {
                 snapshot: .customizationDemo,
                 settings: state.mapModeSettings,
                 sourceMapImage: nil,
+                showsCustomizationSampleMap: true,
                 previewLanePlaceholder: false,
                 suppressCustomSpeedForNativeOBDProbe: false,
                 warningHiddenTarget: nil
@@ -159,7 +199,7 @@ struct NavigationHUDPreviewCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Map Mode layout designer")
                         .font(.subheadline.weight(.semibold))
-                    Text("480×240 physical HUD canvas • select a component, then drag")
+                    Text("480×240 physical HUD canvas • offline map reference • select a component, then drag")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -223,6 +263,7 @@ struct NavigationHUDPreviewCard: View {
                     snapshot: .customizationDemo,
                     settings: state.mapModeSettings,
                     sourceMapImage: nil,
+                    showsCustomizationSampleMap: true,
                     previewLanePlaceholder: false,
                     suppressCustomSpeedForNativeOBDProbe: false
                 )
@@ -345,32 +386,43 @@ struct NavigationHUDPreviewCard: View {
                     .frame(width: 42, alignment: .trailing)
             }
 
-            HStack(spacing: 8) {
-                Button("Reset selected position") {
-                    state.mapModeSettings.resetDesignerOffset(selectedDesignerComponent)
-                }
-                .buttonStyle(.bordered)
-
-                Button("Reset all component positions") {
-                    state.mapModeSettings.resetAllDesignerOffsets()
-                }
-                .buttonStyle(.bordered)
-
-                Spacer()
-            }
-            .font(.caption)
-
-            HStack(spacing: 8) {
-                Button("Restore pre-designer layout") {
-                    state.mapModeSettings.restoreImportedLayout()
-                    selectedDesignerComponent = .map
-                }
-                .buttonStyle(.bordered)
-
-                Text("Restores the exact Map Mode settings captured when this 3-preset designer was first installed, then saves them into the active preset.")
+            Divider().padding(.top, 12)
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Layout reset tools", systemImage: "arrow.counterclockwise")
+                    .font(.caption.weight(.semibold))
+                Text("Reset buttons require confirmation and are separated from the size slider to prevent accidental taps.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Button("Reset selected position") { pendingDesignerReset = .selected }
+                        .buttonStyle(.bordered)
+                    Button("Reset all positions") { pendingDesignerReset = .all }
+                        .buttonStyle(.bordered)
+                }
+                .font(.caption)
+
+                HStack(spacing: 8) {
+                    Button("Restore pre-designer layout") { pendingDesignerReset = .imported }
+                        .buttonStyle(.bordered)
+                    Spacer()
+                }
+                .font(.caption)
+
+                if state.mapModeSettings.resetUndoAvailable {
+                    Button {
+                        state.mapModeSettings.undoLastReset()
+                    } label: {
+                        Label("Undo last reset (\(state.mapModeSettings.presetTitle(state.mapModeSettings.activePresetIndex)))", systemImage: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .font(.caption)
+                    Text("Restores the complete layout saved just before the most recent reset of this preset, even after restarting the app.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .padding(.top, 6)
 
             Text("Drag positions snap to 2 physical HUD pixels and are bounded to the 480×240 design envelope. The renderer still clips the final frame at the physical HUD edge. Existing detailed crop, spacing, boldness, visibility, and calibration controls remain available below and are stored independently in each preset.")
                 .font(.caption2)
@@ -452,6 +504,15 @@ struct NavigationHUDPreviewCard: View {
             Toggle("Show startup message on stock HUD", isOn: $nativeMapStartupMessageEnabled)
                 .tint(accent)
             Text("Experimental native informational message during automatic initialization on Free Ride/Navigation only. No message is drawn on the Map Mode screen.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Button("Test stock HUD message (parked)") {
+                state.testNativeMapModeStartupMessage()
+            }
+            .buttonStyle(.bordered)
+            .disabled(state.bluetooth.state != .connected || state.hudU2WLiveRelayActive)
+            Text("Use only while parked with the stock Free Ride or Navigation screen showing. This verifies whether the HUD firmware actually renders the native message packet.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
