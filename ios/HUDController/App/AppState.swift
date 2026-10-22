@@ -943,7 +943,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.35 — auto Map Mode adapter readiness retries + stock HUD startup info + simplified OBD UI
+            HUD Controller v90.35.3.24.37 — approved U-turn and exit-number roundabout + Current/Nav speed limits
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -2311,7 +2311,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.35",
+                "appVersion=v90.35.3.24.37",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -3423,6 +3423,7 @@ final class AppState {
             turningStreet: navigation.current.streetName,
             maneuver: navigation.current.maneuver,
             maneuverText: navigation.current.sourceDescription ?? navigation.current.primaryText,
+            exitNumber: navigation.current.exitNumber,
             distanceText: distance,
             distanceToManeuverMeters: routeGuidance.distanceToManeuverMeters > 0 ? routeGuidance.distanceToManeuverMeters : max(0, navigation.current.distanceMeters),
             destination: routeGuidance.destination,

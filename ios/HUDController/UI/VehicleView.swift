@@ -108,7 +108,7 @@ struct VehicleView: View {
                                 set: { state.speedEngine.sourceMode = $0 }
                             )) {
                                 ForEach(SpeedLimitSourceMode.allCases) { source in
-                                    Text(source == .improvedTracePhilly ? "Improved + Philly" : source.rawValue).tag(source)
+                                    Text(source.rawValue).tag(source)
                                 }
                             }
                             .pickerStyle(.segmented)

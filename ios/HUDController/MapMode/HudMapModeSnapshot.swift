@@ -9,6 +9,8 @@ struct HudMapModeSnapshot: Equatable {
     /// Source maneuver text retained so Map Mode can distinguish merge graphics
     /// even when the stock HUD maneuver vocabulary collapses them to straight.
     var maneuverText: String
+    /// Exit number from the CarPlay maneuver type (28...46), when available.
+    var exitNumber: Int? = nil
     var distanceText: String
     var distanceToManeuverMeters: Int
     var destination: String

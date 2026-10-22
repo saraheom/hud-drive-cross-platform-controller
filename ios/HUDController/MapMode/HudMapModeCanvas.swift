@@ -245,13 +245,33 @@ struct HudMapModeCanvas: View {
                     lineWidth: CGFloat(max(1.0, min(3.0, settings.maneuverArrowThickness * 1.05)))
                 )
                 .frame(width: 34, height: 38)
+            } else if snapshot.maneuver == .uTurn {
+                // Exact artwork supplied/approved by the user on 2026-10-22.
+                // Use the bundled SVG rasterization: not an SF Symbol rotation.
+                Image(approvedUTurnAssetName)
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .frame(width: 37, height: 40)
+            } else if snapshot.maneuver == .roundabout,
+                      let exitNumber = snapshot.exitNumber, exitNumber > 0 {
+                RoundaboutRouteGlyph(exitNumber: exitNumber)
+                    .frame(width: 61, height: 59)
             } else {
+                // Generic roundabout maneuvers have no exit number; do not
+                // invent one. All other stock symbols remain unchanged.
                 Image(systemName: snapshot.maneuver.symbol)
                     .font(.system(size: 34, weight: symbolWeight(settings.maneuverArrowThickness)))
             }
         }
         .foregroundStyle(.white)
         .scaleEffect(settings.maneuverArrowScale)
+    }
+
+    private var approvedUTurnAssetName: String {
+        if settings.maneuverArrowThickness < 1.45 { return "MapModeApprovedUTurnThin" }
+        if settings.maneuverArrowThickness > 2.10 { return "MapModeApprovedUTurnBold" }
+        return "MapModeApprovedUTurnRegular"
     }
 
     private var distanceBlock: some View {
@@ -951,5 +971,92 @@ private struct HudMapModeSchematic: View {
         default:
             return width * 0.51
         }
+    }
+}
+
+
+// MARK: - Exit-specific roundabout diagram (Map Mode only)
+
+/// Schematic, intentionally *not* a claim about the real intersection geometry:
+/// 0x5201 gives the exit ordinal but does not provide all road arm bearings.
+/// No small exit labels or the word "EXIT" are drawn, by user request.
+private struct RoundaboutRouteGlyph: View {
+    let exitNumber: Int
+
+    private var schematicBranches: Int { max(3, min(exitNumber, 7)) }
+
+    var body: some View {
+        ZStack {
+            RoundaboutRoadArms(count: schematicBranches)
+                .stroke(Color.white.opacity(0.42), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+            RoundaboutHighlightedExit(count: schematicBranches, selected: min(exitNumber, schematicBranches))
+                .stroke(.white, style: StrokeStyle(lineWidth: 5.5, lineCap: .round, lineJoin: .round))
+            Text(String(exitNumber))
+                .font(.system(size: exitNumber < 10 ? 25 : 21, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 31, height: 31)
+                .background(Circle().fill(.black))
+        }
+        .accessibilityLabel("Roundabout, take exit \(exitNumber)")
+    }
+}
+
+private struct RoundaboutRoadArms: Shape {
+    let count: Int
+
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 100
+        let center = CGPoint(x: rect.midX, y: rect.midY - 2 * scale)
+        let radius = 27 * scale
+        var p = Path()
+        p.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius,
+                                width: radius * 2, height: radius * 2))
+        p.move(to: CGPoint(x: center.x, y: center.y + radius))
+        p.addLine(to: CGPoint(x: center.x, y: center.y + 49 * scale))
+        for index in 0..<count {
+            let angle = -Double.pi * Double(index) / Double(max(1, count - 1))
+            let ux = cos(angle)
+            let uy = sin(angle)
+            p.move(to: CGPoint(x: center.x + radius * ux, y: center.y + radius * uy))
+            p.addLine(to: CGPoint(x: center.x + (radius + 17 * scale) * ux,
+                                  y: center.y + (radius + 17 * scale) * uy))
+        }
+        return p
+    }
+}
+
+private struct RoundaboutHighlightedExit: Shape {
+    let count: Int
+    let selected: Int
+
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 100
+        let center = CGPoint(x: rect.midX, y: rect.midY - 2 * scale)
+        let radius = 27 * scale
+        let endAngle = -Double.pi * Double(max(0, selected - 1)) / Double(max(1, count - 1))
+        var p = Path()
+        p.move(to: CGPoint(x: center.x, y: center.y + 49 * scale))
+        p.addLine(to: CGPoint(x: center.x, y: center.y + radius))
+        // Interpolate the route from the 6-o'clock approach through the
+        // successive exits. This avoids relying on Core Graphics arc direction.
+        let startAngle = Double.pi / 2
+        let steps = max(16, Int(abs(endAngle - startAngle) * 18))
+        for step in 1...steps {
+            let a = startAngle + (endAngle - startAngle) * Double(step) / Double(steps)
+            p.addLine(to: CGPoint(x: center.x + radius * cos(a),
+                                  y: center.y + radius * sin(a)))
+        }
+        let ux = cos(endAngle)
+        let uy = sin(endAngle)
+        let arrow = CGPoint(x: center.x + (radius + 17 * scale) * ux,
+                            y: center.y + (radius + 17 * scale) * uy)
+        p.addLine(to: arrow)
+        let base = CGPoint(x: arrow.x - 10 * scale * ux, y: arrow.y - 10 * scale * uy)
+        let nx = -uy
+        let ny = ux
+        p.move(to: CGPoint(x: base.x + 6 * scale * nx, y: base.y + 6 * scale * ny))
+        p.addLine(to: arrow)
+        p.addLine(to: CGPoint(x: base.x - 6 * scale * nx, y: base.y - 6 * scale * ny))
+        return p
     }
 }

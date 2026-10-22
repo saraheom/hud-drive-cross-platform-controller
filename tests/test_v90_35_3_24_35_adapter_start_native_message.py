@@ -72,4 +72,4 @@ def test_no_regression_in_existing_apple_metadata_and_firmware():
     shortcuts = (ROOT / 'ios/HUDController/Shortcuts/HudShortcuts.swift').read_text()
     assert 'Toggle the saved automatic Map Mode preference using the Action Button or Back Tap.' in shortcuts
     assert 'using the iPhone Action Button' not in shortcuts
-    assert 'appVersion=v90.35.3.24.35' in APP
+    assert 'appVersion=v90.35.3.24.37' in APP

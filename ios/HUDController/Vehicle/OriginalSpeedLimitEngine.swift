@@ -4,8 +4,13 @@ import Observation
 
 enum SpeedLimitSourceMode: String, CaseIterable, Identifiable {
     case current = "Current"
+    case currentNav = "Current + Nav"
+    // Retained for archived diagnostic code/tests; no longer user-selectable.
     case traceOSM = "OSM Trace"
     case improvedTracePhilly = "Improved + Philly GIS"
+
+    /// Only the two supported production modes appear in any mode selector.
+    static var allCases: [SpeedLimitSourceMode] { [.current, .currentNav] }
 
     var id: String { rawValue }
 
@@ -13,6 +18,8 @@ enum SpeedLimitSourceMode: String, CaseIterable, Identifiable {
         switch self {
         case .current:
             return "Original decompiled HUDWAY OSM matcher"
+        case .currentNav:
+            return "Original HUDWAY OSM matcher with GPS-confirmed CarPlay current-road assistance"
         case .traceOSM:
             return "Current rolling GPS-trace matcher using explicit OSM speed tags"
         case .improvedTracePhilly:
@@ -75,6 +82,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     struct Segment {
+        let name: String?
+        let reference: String?
         let speedKmh: Int
         let sourceWasMph: Bool
         let points: [CLLocationCoordinate2D]
@@ -217,6 +226,17 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     // semantic road identity; it never supplies or overrides a legal speed.
     // OSM/Philadelphia GIS remain the sole sources of posted-speed values.
     private var carPlayRouteContext: CarPlayRouteContext?
+
+    // Current + Nav extends the original matcher; none of this state is consulted
+    // by the unchanged Current branch. A continuity hold cannot refresh warnings.
+    private var currentNavLastMatchedRoad: String?
+    private var currentNavLastMatchedLimitMph: Int = 0
+    private var currentNavLastMatchedLocation: CLLocation?
+    private var currentNavLastMatchedAt: Date?
+    private var currentNavMatchFresh = false
+    private var currentNavDisplayHold = false
+    private let currentNavHoldMaxSeconds: TimeInterval = 12.0
+    private let currentNavHoldMaxDistanceMeters: CLLocationDistance = 150.0
     private let carPlayRouteFreshnessSeconds: TimeInterval = 5.0
 
     // v90.34: when Route Guidance has already identified the current road but
@@ -344,15 +364,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             : d.bool(forKey: "HUD.Speed.showLimit")
         self.currentSpeedLimitMph = max(0, d.integer(forKey: "HUD.Speed.lastKnownLimitMph"))
         let storedSource = d.string(forKey: "HUD.Speed.limitSource") ?? ""
-        // v90.18 removes the obsolete Enhanced OSM UI mode. Existing installs that
-        // had selected it migrate to the current OSM Trace comparison mode.
-        if storedSource == "Enhanced OSM" {
-            self.sourceMode = .traceOSM
-        } else if storedSource == "Improved Trace + Philly GIS" {
-            // Migration from the short-lived development label used before v90.18.
-            self.sourceMode = .improvedTracePhilly
+        // Only Current and Current + Nav are selectable starting with v24.37.
+        // Legacy experiment selections migrate to the proven Current baseline.
+        if storedSource == SpeedLimitSourceMode.currentNav.rawValue {
+            self.sourceMode = .currentNav
         } else {
-            self.sourceMode = SpeedLimitSourceMode(rawValue: storedSource) ?? .current
+            self.sourceMode = .current
+            if storedSource != SpeedLimitSourceMode.current.rawValue {
+                d.set(SpeedLimitSourceMode.current.rawValue, forKey: "HUD.Speed.limitSource")
+            }
         }
 
         super.init()
@@ -792,6 +812,12 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         philadelphiaDatasetAvailable = false
         lastQueryLocation = nil
         requestInFlight = false
+        currentNavLastMatchedRoad = nil
+        currentNavLastMatchedLimitMph = 0
+        currentNavLastMatchedLocation = nil
+        currentNavLastMatchedAt = nil
+        currentNavMatchFresh = false
+        currentNavDisplayHold = false
         currentSpeedLimitMph = 0
         currentLimitWarningEligible = false
         lastResolvedLimitAt = nil
@@ -876,6 +902,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         case .current:
             limit = bestSpeedLimit(at: location)
             sourceDetail = "Current • original OSM"
+        case .currentNav:
+            limit = bestCurrentNavSpeedLimit(at: location)
+            sourceDetail = currentNavDisplayHold
+                ? "Current + Nav • same-road display hold; warning off"
+                : currentNavMatchFresh ? "Current + Nav • GPS + CarPlay/OSM" : "Current + Nav • original GPS/OSM fallback"
         case .traceOSM:
             logger.log(
                 "OSM TRACE GPS",
@@ -963,11 +994,14 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 resolutionIsFresh = improvedLastResolutionFresh
             case .current:
                 resolutionIsFresh = true
+            case .currentNav:
+                // A same-road continuity hold is display-only, never warning-eligible.
+                resolutionIsFresh = true
             }
             if resolutionIsFresh {
                 let warningEligible = sourceMode == .improvedTracePhilly
                     ? improvedLastResolutionWarningEligible
-                    : true
+                    : sourceMode == .currentNav ? currentNavMatchFresh : true
                 applyResolvedLimit(limit, warningEligible: warningEligible)
             }
             status = resolutionIsFresh
@@ -975,6 +1009,14 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 : "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • holding prior limit \(limit) mph"
         } else {
             status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
+        }
+
+        if sourceMode == .currentNav,
+           limit == nil,
+           currentSpeedLimitMph > 0,
+           let lastResolvedLimitAt,
+           Date().timeIntervalSince(lastResolvedLimitAt) > currentNavHoldMaxSeconds {
+            clearDisplayedLimit(reason: "Current + Nav road identity no longer confirmed")
         }
 
         if sourceMode == .improvedTracePhilly,
@@ -1085,7 +1127,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     private func updateProviderDataIfNeeded(at location: CLLocation, force: Bool) async {
         switch sourceMode {
-        case .current:
+        case .current, .currentNav:
             await updateOriginalSegmentsIfNeeded(at: location, force: force)
         case .traceOSM:
             await updateEnhancedSegmentsIfNeeded(at: location, force: force)
@@ -1145,6 +1187,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         let parts = makeParts(points)
         return Segment(
+            name: element.tags?.name,
+            reference: element.tags?.ref,
             speedKmh: parsed.kmh,
             sourceWasMph: parsed.sourceWasMph,
             points: points,
@@ -1195,6 +1239,68 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         guard let kmh = best?.kmh, kmh >= 0 else { return nil }
         return Int((Double(kmh) / 1.609344).rounded())
+    }
+
+    /// Current + Nav: the Current matcher remains the fallback, with a bounded
+    /// semantic bonus applied only inside its original GPS/heading corridor.
+    /// No speed is ever inferred from CarPlay: values still come from OSM maxspeed.
+    private func bestCurrentNavSpeedLimit(at location: CLLocation) -> Int? {
+        currentNavMatchFresh = false
+        currentNavDisplayHold = false
+        let direction = location.course >= 0 ? location.course : 0
+        let route = freshCarPlayRouteContext()
+        let routeUsable = route != nil && !(route?.isRouteTransition ?? true)
+        let road = routeUsable ? (route?.currentRoad ?? "") : ""
+
+        var best: (score: Double, mph: Int, road: String?, semantic: Bool)?
+        for segment in segments {
+            for part in segment.parts where Self.originalPolygonContains(part, location: location.coordinate) {
+                let angle = Self.angularDifference(part.direction, direction)
+                let distance = Self.distanceFrom(location.coordinate, toSegmentA: part.start, b: part.end)
+                let baseline = (angle < 45 ? angle / 45 : 2) + (distance < 15 ? distance / 15 : 2)
+                // The original geometry corridor is a hard requirement; the
+                // street name only breaks ties between plausible nearby roads.
+                let named = !road.isEmpty && Self.routeRoadMatches(road, name: segment.name, reference: segment.reference)
+                let bonus = named && distance <= 30 && (location.speed < 2 || angle <= 65) ? 0.6 : 0.0
+                let score = baseline - bonus
+                let mph = Int((Double(segment.speedKmh) / 1.609344).rounded())
+                if best == nil || score < best!.score {
+                    best = (score, mph, segment.name ?? segment.reference, named && bonus > 0)
+                }
+            }
+        }
+        if let best {
+            currentNavMatchFresh = true
+            if let matchedRoad = best.road, !matchedRoad.isEmpty {
+                currentNavLastMatchedRoad = Self.normalizedRoadPhrase(matchedRoad)
+                currentNavLastMatchedLimitMph = best.mph
+                currentNavLastMatchedAt = Date()
+                currentNavLastMatchedLocation = location
+            } else {
+                currentNavLastMatchedRoad = nil
+                currentNavLastMatchedAt = nil
+            }
+            logger.log("SPEED CURRENT NAV", "OSM=\(best.mph)mph matchedRoad=\(best.road ?? "-") navCurrent=\(road.isEmpty ? "-" : road) nameBonus=\(best.semantic ? 1 : 0) score=\(String(format: "%.2f", best.score))")
+            return best.mph
+        }
+        // Preserve the last confirmed OSM speed across short holes only if
+        // fresh navigation still identifies the same road and GPS stayed near
+        // the previous fix. This is DISPLAY ONLY (overspeed warning off).
+        if let previous = currentNavLastMatchedRoad,
+           let matchedAt = currentNavLastMatchedAt,
+           let matchedLocation = currentNavLastMatchedLocation,
+           currentNavLastMatchedLimitMph > 0,
+           !road.isEmpty,
+           Self.normalizedRoadPhrase(road) == previous,
+           Date().timeIntervalSince(matchedAt) <= currentNavHoldMaxSeconds,
+           location.distance(from: matchedLocation) <= currentNavHoldMaxDistanceMeters {
+            currentNavDisplayHold = true
+            logger.log("SPEED CURRENT NAV", "display-only same-road continuity speed=\(currentNavLastMatchedLimitMph)mph road=\(road) age=\(Int(Date().timeIntervalSince(matchedAt)))s")
+            return currentNavLastMatchedLimitMph
+        }
+        // No CarPlay match required: the baseline matcher is used when the
+        // route feed is absent or stale, and retains its original selection.
+        return nil
     }
 
     // MARK: - Enhanced OSM matcher
