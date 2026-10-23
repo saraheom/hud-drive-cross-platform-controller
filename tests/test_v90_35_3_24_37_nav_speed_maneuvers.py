@@ -21,11 +21,12 @@ def test_baseline_current_remains_original_method():
     engine = (SRC / "Vehicle/OriginalSpeedLimitEngine.swift").read_text()
     assert 'case .current:\n            limit = bestSpeedLimit(at: location)' in engine
     assert 'case .currentNav:\n            limit = bestCurrentNavSpeedLimit(at: location)' in engine
-    assert 'case .current, .currentNav:\n            await updateOriginalSegmentsIfNeeded' in engine
+    assert 'case .current:\n            await updateOriginalSegmentsIfNeeded' in engine
+    assert 'case .currentNav:\n            await updateCurrentNavRoadsIfNeeded' in engine
     assert 'way[maxspeed][highway](around:400' in engine
-    assert 'Self.originalPolygonContains(part, location: location.coordinate)' in engine
-    assert 'Self.routeRoadMatches(road, name: segment.name, reference: segment.reference)' in engine
-    assert 'let bonus = named && distance <= 30' in engine
+    assert 'Self.originalPolygonContains(' in engine
+    assert 'Self.routeRoadMatches(navRoad, name: candidate.name, reference: candidate.reference)' in engine
+    assert 'CurrentNavRoadMatchPolicy.eligible(' in engine
     assert 'currentNavDisplayHold = true' in engine
     assert 'sourceMode == .currentNav ? currentNavMatchFresh : true' in engine
     assert 'currentNavHoldMaxSeconds: TimeInterval = 12.0' in engine

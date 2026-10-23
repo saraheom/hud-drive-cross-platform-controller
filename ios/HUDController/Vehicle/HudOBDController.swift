@@ -239,6 +239,14 @@ final class HudOBDController {
         disconnect()
     }
 
+    /// Offline HUD shutdown: clear the session-only suspension without sending
+    /// any HUD packets. The normal HUD readiness/rehydration callback will
+    /// resume the persisted OBD auto-connect preference after BLE returns.
+    func clearDirectELMOwnershipSuspensionAfterHUDDisconnect(reason: String) {
+        directELMOwnershipSuspended = false
+        logger.log("OBD OWNERSHIP", "HUD offline suspension cleared (no BLE command); reason=\(reason)")
+    }
+
     /// Returns OBD ownership to the HUD after the iPhone has released the BLE peripheral.
     /// One connect is sent immediately; the normal retry/health policy resumes only if
     /// the user's existing Auto-connect preference is enabled.

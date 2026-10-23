@@ -1,0 +1,22 @@
+HUD Controller v90.35.3.24.38 — BUILD VERIFICATION
+Source base: v90.35.3.24.37 full ZIP
+Scope: Current + Nav identity/geometry/query/speed continuity; BLE HUD-disconnect ELM ownership cleanup.
+
+PASS Python regression suite: 598 passed, 1 skipped.
+PASS Native Swift (Linux swiftc) geometry policy compiled and executed:
+     - MLK way accepted, closer differently named Schuylkill Expressway rejected;
+     - wrong road 85m away rejected despite long segment;
+     - perpendicular heading rejected at speed;
+     - near-stationary heading tolerance with correct road name accepted.
+PASS Historical Oct 22 log regression fixtures identified source mismatch:
+     Schuylkill Expressway 50mph wrongly selected with Sweetbriar Dr / MLK current street and nameBonus=0.
+PASS All 221 Swift files: swiftc -frontend -parse (syntax; NOT iOS SDK typecheck).
+PASS All 8 GitHub Actions YAML files: PyYAML parser.
+PASS U2W firmware/source files: 478/478 byte-for-byte unchanged.
+PASS Critical video relay, decoder, original U-turn/roundabout artwork/UI: byte-for-byte unchanged.
+PASS Direct ELM327 production polling/reconnect implementation unchanged.
+PASS New full ZIP integrity: zipfile.testzip() no errors.
+
+Not run/NOT CLAIMED: Apple Xcode/iOS SDK compile; CI jobs; physical HUD test;
+real-time OSM/Overpass request; full candidate-level replay of recorded Oct 22 trip.
+Physical/log verification required to establish real-world speed limit accuracy.

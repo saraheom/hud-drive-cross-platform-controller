@@ -509,6 +509,15 @@ final class AppState {
             self.hudU2WRelayFrameTask?.cancel()
             self.hudU2WRelayFrameTask = nil
             self.hudU2WFrameRelay.stop(reason: "HUD BLE transport disconnected")
+            // v24.38: A HUD BLE disconnect ends physical Map Mode ownership.
+            // Invalidate the direct ELM generation synchronously so its production
+            // watchdog never keeps scanning for hours after the car/HUD is gone.
+            self.mapModeDirectOBDOwnershipTask?.cancel()
+            self.mapModeDirectOBDOwnershipTask = nil
+            self.directELM.releaseMapModeOwnership()
+            self.obd.clearDirectELMOwnershipSuspensionAfterHUDDisconnect(reason: "HUD BLE disconnected")
+            self.mapModeDirectOBDOwnershipStatus = "HUD offline • iPhone OBD released"
+            self.logger.log("OBD OWNERSHIP", "HUD BLE disconnect: direct ELM ownership and recovery cancelled; stock HUD OBD will rehydrate on reconnect")
             self.hudU2WLiveRelayActive = false
             self.updateMapModeIdleTimerPolicy(reason: "HUD BLE disconnected")
             self.hudU2WSTAConnected = false
@@ -943,7 +952,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.37 — approved U-turn and exit-number roundabout + Current/Nav speed limits
+            HUD Controller v90.35.3.24.38 — verified Current + Nav road identity / bounded OBD shutdown
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -2311,7 +2320,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.37",
+                "appVersion=v90.35.3.24.38",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

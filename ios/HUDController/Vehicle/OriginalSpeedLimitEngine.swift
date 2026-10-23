@@ -235,6 +235,27 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var currentNavLastMatchedAt: Date?
     private var currentNavMatchFresh = false
     private var currentNavDisplayHold = false
+    private var currentNavStatusReason = "waiting for current road"
+    // Road identity is determined independently of posted-speed availability.
+    // Current (without Nav) NEVER reads this cache or these constraints.
+    private struct CurrentNavRoad {
+        let id: Int64
+        let highway: String
+        let name: String?
+        let reference: String?
+        let speedKmh: Int?
+        let parts: [SegmentPart]
+    }
+    private var currentNavRoads: [CurrentNavRoad] = []
+    private var currentNavQueryLocation: CLLocation?
+    private var currentNavQueryAt: Date?
+    private var currentNavRequestInFlight = false
+    private var currentNavLastFailureAt: Date?
+    private var currentNavObservedStreet: String?
+    private var currentNavLastReportedStreet: String?
+    private var currentNavLastReportedAt: Date?
+    private let currentNavQueryRadiusMeters = 430
+    private let currentNavFailureBackoffSeconds: TimeInterval = 18
     private let currentNavHoldMaxSeconds: TimeInterval = 12.0
     private let currentNavHoldMaxDistanceMeters: CLLocationDistance = 150.0
     private let carPlayRouteFreshnessSeconds: TimeInterval = 5.0
@@ -748,6 +769,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     func updateCarPlayRouteContext(_ context: CarPlayRouteContext?) {
         let previous = carPlayRouteContext
         carPlayRouteContext = context
+        if let context, context.routeState != 0,
+           !context.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            currentNavLastReportedStreet = Self.normalizedRoadPhrase(context.currentRoad)
+            currentNavLastReportedAt = context.receivedAt
+        } else if context?.routeState == 0 {
+            // A positively ended route should not retain the old road identity.
+            currentNavLastReportedStreet = nil
+            currentNavLastReportedAt = nil
+        }
 
         let previousKey = previous.map { "\($0.source)|\($0.routeState)|\($0.currentRoad)|\($0.nextRoad)" } ?? "none"
         let nextKey = context.map { "\($0.source)|\($0.routeState)|\($0.currentRoad)|\($0.nextRoad)" } ?? "none"
@@ -766,6 +796,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     func refreshNow() {
         if let location = locationManager.location {
             lastQueryLocation = nil
+            currentNavQueryLocation = nil
             Task { await updateProviderDataIfNeeded(at: location, force: true) }
         }
     }
@@ -818,6 +849,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         currentNavLastMatchedAt = nil
         currentNavMatchFresh = false
         currentNavDisplayHold = false
+        currentNavStatusReason = "waiting for current road"
+        currentNavRoads.removeAll()
+        currentNavQueryLocation = nil
+        currentNavQueryAt = nil
+        currentNavRequestInFlight = false
+        currentNavLastFailureAt = nil
+        currentNavObservedStreet = nil
+        currentNavLastReportedStreet = nil
+        currentNavLastReportedAt = nil
         currentSpeedLimitMph = 0
         currentLimitWarningEligible = false
         lastResolvedLimitAt = nil
@@ -904,9 +944,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             sourceDetail = "Current • original OSM"
         case .currentNav:
             limit = bestCurrentNavSpeedLimit(at: location)
-            sourceDetail = currentNavDisplayHold
-                ? "Current + Nav • same-road display hold; warning off"
-                : currentNavMatchFresh ? "Current + Nav • GPS + CarPlay/OSM" : "Current + Nav • original GPS/OSM fallback"
+            sourceDetail = "Current + Nav • \(currentNavStatusReason)"
         case .traceOSM:
             logger.log(
                 "OSM TRACE GPS",
@@ -1011,12 +1049,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
         }
 
-        if sourceMode == .currentNav,
-           limit == nil,
-           currentSpeedLimitMph > 0,
-           let lastResolvedLimitAt,
-           Date().timeIntervalSince(lastResolvedLimitAt) > currentNavHoldMaxSeconds {
-            clearDisplayedLimit(reason: "Current + Nav road identity no longer confirmed")
+        if sourceMode == .currentNav, limit == nil, currentSpeedLimitMph > 0 {
+            // An incompatible road must never retain the previous road's warning
+            // threshold. Clearing a stale sign is safer than showing motorway 50
+            // on MLK Drive while waiting for a compatible OSM speed tag.
+            clearDisplayedLimit(reason: "Current + Nav has no verified posted speed: \(currentNavStatusReason)")
         }
 
         if sourceMode == .improvedTracePhilly,
@@ -1127,8 +1164,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     private func updateProviderDataIfNeeded(at location: CLLocation, force: Bool) async {
         switch sourceMode {
-        case .current, .currentNav:
+        case .current:
             await updateOriginalSegmentsIfNeeded(at: location, force: force)
+        case .currentNav:
+            await updateCurrentNavRoadsIfNeeded(at: location, force: force)
         case .traceOSM:
             await updateEnhancedSegmentsIfNeeded(at: location, force: force)
         case .improvedTracePhilly:
@@ -1241,66 +1280,262 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         return Int((Double(kmh) / 1.609344).rounded())
     }
 
-    /// Current + Nav: the Current matcher remains the fallback, with a bounded
-    /// semantic bonus applied only inside its original GPS/heading corridor.
-    /// No speed is ever inferred from CarPlay: values still come from OSM maxspeed.
+    // MARK: - Current + Nav: identify the road FIRST; resolve speed SECOND
+
+    /// Unlike Current, query all motor-vehicle roads, including untagged ways.
+    /// One request replaces the legacy maxspeed-only request in Current + Nav;
+    /// Current still uses its original HTTP query and original geometry scorer.
+    private func updateCurrentNavRoadsIfNeeded(at location: CLLocation, force: Bool) async {
+        if !force, let last = currentNavQueryLocation, let queried = currentNavQueryAt,
+           location.distance(from: last) <= 230, Date().timeIntervalSince(queried) < 75 { return }
+        if !force, let lastFailure = currentNavLastFailureAt,
+           Date().timeIntervalSince(lastFailure) < currentNavFailureBackoffSeconds { return }
+        guard !currentNavRequestInFlight else { return }
+        currentNavRequestInFlight = true
+        defer { currentNavRequestInFlight = false }
+
+        let latitude = location.coordinate.latitude
+        let longitude = location.coordinate.longitude
+        let query = "[out:json][timeout:14];way[highway~\"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|road)$\"](around:\(currentNavQueryRadiusMeters),\(latitude),\(longitude));out tags geom;"
+        guard var components = URLComponents(string: "https://overpass-api.de/api/interpreter") else { return }
+        components.queryItems = [URLQueryItem(name: "data", value: query)]
+        guard let url = components.url else { return }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 17
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(http.statusCode) roads=unchanged retryBackoff=\(Int(currentNavFailureBackoffSeconds))s")
+                throw URLError(.badServerResponse)
+            }
+            let result = try JSONDecoder().decode(Response.self, from: data)
+            let roads = result.elements.compactMap(Self.makeCurrentNavRoad)
+            guard sourceMode == .currentNav else { return }
+            currentNavRoads = roads
+            // Current + Nav's no-navigation fallback reuses the same tagged roads;
+            // it does NOT issue a duplicate Overpass query.
+            segments = result.elements.compactMap(Self.makeSegment)
+            currentNavQueryLocation = location
+            currentNavQueryAt = Date()
+            currentNavLastFailureAt = nil
+            logger.log("SPEED CURRENT NAV QUERY", "SUCCESS allMotorRoads=\(roads.count) explicitlyTagged=\(segments.count) radius=\(currentNavQueryRadiusMeters)m (untagged roads preserved)")
+            // Refresh at a stop after the asynchronous data arrives (CoreLocation
+            // may not deliver another fix while parked).
+            process(location)
+        } catch {
+            currentNavLastFailureAt = Date()
+            logger.log("SPEED CURRENT NAV QUERY", "FAILED error=\(error.localizedDescription); keeping bounded prior data / no guessed speed")
+        }
+    }
+
+    private static func makeCurrentNavRoad(_ element: Element) -> CurrentNavRoad? {
+        guard let tags = element.tags,
+              let highway = tags.highway?.lowercased(),
+              let geometry = element.geometry, geometry.count >= 2 else { return nil }
+        // Pedestrian, cycling, paths, proposed and construction ways must never
+        // supply vehicle speed limits in a navigation road-identity lookup.
+        let motorRoadClasses: Set<String> = [
+            "motorway", "motorway_link", "trunk", "trunk_link",
+            "primary", "primary_link", "secondary", "secondary_link",
+            "tertiary", "tertiary_link", "unclassified", "residential",
+            "living_street", "service", "road"
+        ]
+        guard motorRoadClasses.contains(highway) else { return nil }
+        let coords = geometry.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        return CurrentNavRoad(
+            id: element.id,
+            highway: highway,
+            name: tags.name,
+            reference: tags.ref,
+            speedKmh: tags.maxspeed.flatMap { parseOriginalMaxSpeed($0)?.kmh },
+            parts: makeParts(coords)
+        )
+    }
+
+    private static func endpointDistance(_ lhs: CurrentNavRoad, _ rhs: CurrentNavRoad) -> Double {
+        guard let la = lhs.parts.first?.start,
+              let lb = lhs.parts.last?.end,
+              let ra = rhs.parts.first?.start,
+              let rb = rhs.parts.last?.end else { return .infinity }
+        let endsLeft = [la, lb]
+        let endsRight = [ra, rb]
+        return endsLeft.flatMap { left in
+            endsRight.map { right in
+                CLLocation(latitude: left.latitude, longitude: left.longitude).distance(
+                    from: CLLocation(latitude: right.latitude, longitude: right.longitude))
+            }
+        }.min() ?? .infinity
+    }
+
+    /// Only use explicitly tagged OSM pieces geometrically connected to the
+    /// confirmed same-name way. Different/conflicting values => unknown, not an
+    /// inferred residential or Philadelphia default. This is display-only.
+    private func connectedCurrentNavLimit(for selected: CurrentNavRoad, road: String,
+                                          location: CLLocation) -> Int? {
+        var visited: Set<Int64> = [selected.id]
+        var frontier = [selected]
+        var posted: Set<Int> = []
+        for _ in 0..<9 {
+            if frontier.isEmpty { break }
+            var next: [CurrentNavRoad] = []
+            for node in frontier {
+                if let speed = node.speedKmh, speed > 0 { posted.insert(speed) }
+                for candidate in currentNavRoads where !visited.contains(candidate.id) &&
+                    Self.routeRoadMatches(road, name: candidate.name, reference: candidate.reference) {
+                    let minDistance = candidate.parts.map {
+                        Self.distanceFrom(location.coordinate, toSegmentA: $0.start, b: $0.end)
+                    }.min() ?? .infinity
+                    guard minDistance <= 200,
+                          Self.endpointDistance(node, candidate) <= 12 else { continue }
+                    visited.insert(candidate.id)
+                    next.append(candidate)
+                }
+            }
+            frontier = next
+        }
+        guard posted.count == 1, let kmh = posted.first else { return nil }
+        return Int((Double(kmh) / 1.609344).rounded())
+    }
+
     private func bestCurrentNavSpeedLimit(at location: CLLocation) -> Int? {
         currentNavMatchFresh = false
         currentNavDisplayHold = false
-        let direction = location.course >= 0 ? location.course : 0
-        let route = freshCarPlayRouteContext()
-        let routeUsable = route != nil && !(route?.isRouteTransition ?? true)
-        let road = routeUsable ? (route?.currentRoad ?? "") : ""
+        let freshRoute = freshCarPlayRouteContext()
+        let navRoad = freshRoute?.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        var best: (score: Double, mph: Int, road: String?, semantic: Bool)?
-        for segment in segments {
-            for part in segment.parts where Self.originalPolygonContains(part, location: location.coordinate) {
-                let angle = Self.angularDifference(part.direction, direction)
-                let distance = Self.distanceFrom(location.coordinate, toSegmentA: part.start, b: part.end)
-                let baseline = (angle < 45 ? angle / 45 : 2) + (distance < 15 ? distance / 15 : 2)
-                // The original geometry corridor is a hard requirement; the
-                // street name only breaks ties between plausible nearby roads.
-                let named = !road.isEmpty && Self.routeRoadMatches(road, name: segment.name, reference: segment.reference)
-                let bonus = named && distance <= 30 && (location.speed < 2 || angle <= 65) ? 0.6 : 0.0
-                let score = baseline - bonus
-                let mph = Int((Double(segment.speedKmh) / 1.609344).rounded())
-                if best == nil || score < best!.score {
-                    best = (score, mph, segment.name ?? segment.reference, named && bonus > 0)
+        // With NO reliable current-street information the original algorithm is
+        // the user's chosen baseline. Never use this fallback just because an
+        // ACTIVE current street has no tagged speed: that caused Schuylkill 50.
+        guard let route = freshRoute, !navRoad.isEmpty, navRoad != "—" else {
+            // A brief Route Guidance network dropout is not permission to switch
+            // from a previously confirmed MLK road to an adjacent 50mph freeway.
+            // After ten seconds without Current Street, return to the unchanged
+            // original geometry matcher as requested when navigation is absent.
+            if let road = currentNavLastReportedStreet,
+               let received = currentNavLastReportedAt,
+               Date().timeIntervalSince(received) >= 0,
+               Date().timeIntervalSince(received) <= 10 {
+                currentNavStatusReason = "navigation heartbeat gap; no cross-road fallback"
+                return heldCurrentNavSpeed(road: road, location: location)
+            }
+            currentNavObservedStreet = nil
+            currentNavStatusReason = "original fallback (no fresh navigation street)"
+            let limit = bestSpeedLimit(at: location)
+            currentNavMatchFresh = limit != nil
+            return limit
+        }
+
+        let identity = Self.normalizedRoadPhrase(navRoad)
+        if currentNavObservedStreet != identity {
+            logger.log("SPEED CURRENT NAV ROAD", "CHANGE old=\(currentNavObservedStreet ?? "none") new=\(identity); revoke inherited sign and warning")
+            currentNavObservedStreet = identity
+            currentNavLastMatchedRoad = nil
+            currentNavLastMatchedAt = nil
+            currentNavLastMatchedLocation = nil
+            currentNavLastMatchedLimitMph = 0
+            if currentSpeedLimitMph > 0 {
+                clearDisplayedLimit(reason: "CarPlay street changed to \(navRoad)")
+            }
+        }
+
+        if route.isRouteTransition {
+            currentNavStatusReason = "turn/reroute in progress; no cross-road match"
+            logger.log("SPEED CURRENT NAV", "HOLD transition current=\(navRoad) (no geometric highway fallback)")
+            return heldCurrentNavSpeed(road: identity, location: location)
+        }
+
+        // Never mistake a long-segment endpoint circle for a real roadway
+        // corridor. This is true point-to-POLYLINE distance in meters.
+        let moving = location.speed >= 2.0 && location.course >= 0
+        var scored: [(segment: CurrentNavRoad, distance: Double, angle: Double, score: Double)] = []
+        var nearby: [(name: String, speed: String, distance: Double, accepted: Bool)] = []
+        let radius = min(CurrentNavRoadMatchPolicy.maximumCorridorMeters,
+                         max(20, location.horizontalAccuracy * 1.4))
+        for candidate in currentNavRoads {
+            var closestDistance = Double.infinity
+            var closestAngle = Double.infinity
+            for part in candidate.parts {
+                let distance = CurrentNavRoadMatchPolicy.distanceToSegmentMeters(
+                    latitude: location.coordinate.latitude,
+                    longitude: location.coordinate.longitude,
+                    startLatitude: part.start.latitude,
+                    startLongitude: part.start.longitude,
+                    endLatitude: part.end.latitude,
+                    endLongitude: part.end.longitude
+                )
+                if distance < closestDistance {
+                    closestDistance = distance
+                    closestAngle = moving ? min(
+                        Self.angularDifference(part.direction, location.course),
+                        Self.angularDifference(fmod(part.direction + 180, 360), location.course)
+                    ) : 0
                 }
             }
-        }
-        if let best {
-            currentNavMatchFresh = true
-            if let matchedRoad = best.road, !matchedRoad.isEmpty {
-                currentNavLastMatchedRoad = Self.normalizedRoadPhrase(matchedRoad)
-                currentNavLastMatchedLimitMph = best.mph
-                currentNavLastMatchedAt = Date()
-                currentNavLastMatchedLocation = location
-            } else {
-                currentNavLastMatchedRoad = nil
-                currentNavLastMatchedAt = nil
+            let semanticMatch = Self.routeRoadMatches(navRoad, name: candidate.name, reference: candidate.reference)
+            if closestDistance < 95 {
+                nearby.append((candidate.name ?? candidate.reference ?? "unnamed", candidate.speedKmh.map(String.init) ?? "none", closestDistance, semanticMatch))
             }
-            logger.log("SPEED CURRENT NAV", "OSM=\(best.mph)mph matchedRoad=\(best.road ?? "-") navCurrent=\(road.isEmpty ? "-" : road) nameBonus=\(best.semantic ? 1 : 0) score=\(String(format: "%.2f", best.score))")
-            return best.mph
+            guard CurrentNavRoadMatchPolicy.eligible(
+                semanticRoadNameMatch: semanticMatch,
+                distanceMeters: closestDistance,
+                gpsAccuracyMeters: location.horizontalAccuracy,
+                moving: moving,
+                headingErrorDegrees: closestAngle
+            ) else { continue }
+            scored.append((candidate, closestDistance, closestAngle, closestDistance + closestAngle * 0.2))
         }
-        // Preserve the last confirmed OSM speed across short holes only if
-        // fresh navigation still identifies the same road and GPS stayed near
-        // the previous fix. This is DISPLAY ONLY (overspeed warning off).
-        if let previous = currentNavLastMatchedRoad,
-           let matchedAt = currentNavLastMatchedAt,
-           let matchedLocation = currentNavLastMatchedLocation,
-           currentNavLastMatchedLimitMph > 0,
-           !road.isEmpty,
-           Self.normalizedRoadPhrase(road) == previous,
-           Date().timeIntervalSince(matchedAt) <= currentNavHoldMaxSeconds,
-           location.distance(from: matchedLocation) <= currentNavHoldMaxDistanceMeters {
-            currentNavDisplayHold = true
-            logger.log("SPEED CURRENT NAV", "display-only same-road continuity speed=\(currentNavLastMatchedLimitMph)mph road=\(road) age=\(Int(Date().timeIntervalSince(matchedAt)))s")
-            return currentNavLastMatchedLimitMph
+        scored.sort { $0.score < $1.score }
+        let alternatives = nearby.sorted { $0.distance < $1.distance }.prefix(5)
+            .map { "\($0.name):\(String(format: "%.0f", $0.distance))m:speed=\($0.speed):nameMatch=\($0.accepted ? 1 : 0)" }
+            .joined(separator: " | ")
+        guard let winner = scored.first else {
+            currentNavStatusReason = "nav road not geometrically confirmed"
+            logger.log("SPEED CURRENT NAV", "REJECT all current=\(navRoad) candidates=[\(alternatives)] corridor=\(Int(radius))m; no borrowed highway limit")
+            return heldCurrentNavSpeed(road: identity, location: location)
         }
-        // No CarPlay match required: the baseline matcher is used when the
-        // route feed is absent or stale, and retains its original selection.
-        return nil
+        let chosen = winner.segment
+        // Reject cache beyond the location where this road list was fetched.
+        if let queryLocation = currentNavQueryLocation,
+           location.distance(from: queryLocation) > 265 {
+            currentNavStatusReason = "OSM roads stale/outside query area"
+            logger.log("SPEED CURRENT NAV", "REJECT stale query area road=\(navRoad); no highway fallback")
+            return heldCurrentNavSpeed(road: identity, location: location)
+        }
+        let directMph = chosen.speedKmh.map { Int((Double($0) / 1.609344).rounded()) }
+        let connectedMph = directMph == nil
+            ? connectedCurrentNavLimit(for: chosen, road: navRoad, location: location) : nil
+        guard let mph = directMph ?? connectedMph, mph > 0 else {
+            currentNavStatusReason = "correct road identified; posted speed unavailable"
+            logger.log("SPEED CURRENT NAV", "UNKNOWN current=\(navRoad) matched=\(chosen.name ?? "-") distance=\(String(format: "%.1f", winner.distance))m untagged=\(chosen.speedKmh == nil ? 1 : 0) alternatives=[\(alternatives)]")
+            return heldCurrentNavSpeed(road: identity, location: location)
+        }
+        if directMph != nil {
+            currentNavMatchFresh = true  // direct current-way posted speed can warn
+            currentNavStatusReason = "verified current road + explicit OSM limit"
+        } else {
+            currentNavDisplayHold = true // connected-road value is display only
+            currentNavStatusReason = "connected same-road speed; warning off"
+        }
+        currentNavLastMatchedRoad = identity
+        currentNavLastMatchedLimitMph = mph
+        currentNavLastMatchedAt = Date()
+        currentNavLastMatchedLocation = location
+        logger.log("SPEED CURRENT NAV", "ACCEPT current=\(navRoad) matched=\(chosen.name ?? chosen.reference ?? "-") class=\(chosen.highway) distance=\(String(format: "%.1f", winner.distance))m headingError=\(String(format: "%.0f", winner.angle)) speed=\(mph)mph evidence=\(directMph != nil ? "direct_OSM" : "connected_same_road") warn=\(currentNavMatchFresh ? 1 : 0) alternatives=[\(alternatives)]")
+        return mph
+    }
+
+    private func heldCurrentNavSpeed(road identity: String, location: CLLocation) -> Int? {
+        guard let previous = currentNavLastMatchedRoad,
+              previous == identity,
+              let matchedAt = currentNavLastMatchedAt,
+              let matchedLocation = currentNavLastMatchedLocation,
+              currentNavLastMatchedLimitMph > 0,
+              Date().timeIntervalSince(matchedAt) <= currentNavHoldMaxSeconds,
+              location.distance(from: matchedLocation) <= currentNavHoldMaxDistanceMeters else { return nil }
+        currentNavDisplayHold = true
+        currentNavStatusReason = "same-road short display hold; warning off"
+        logger.log("SPEED CURRENT NAV", "HOLD DISPLAY ONLY road=\(identity) speed=\(currentNavLastMatchedLimitMph)mph age=\(Int(Date().timeIntervalSince(matchedAt)))s")
+        return currentNavLastMatchedLimitMph
     }
 
     // MARK: - Enhanced OSM matcher

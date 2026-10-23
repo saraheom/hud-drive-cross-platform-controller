@@ -39,6 +39,6 @@ def test_rgd_publish_is_fail_closed_and_diagnostics_bounded():
     assert 'legacy_bootstrap_temp_cleanup=YES' in INSTALL
 
 def test_release_pairs_v840_without_changing_proven_mirror_relay():
-    assert 'appVersion=v90.35.3.24.37' in APP
+    assert 'appVersion=v90.35.3.24.38' in APP
     assert 'paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery' in APP
     assert 'unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay' in VIDEO
