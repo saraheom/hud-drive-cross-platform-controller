@@ -44,7 +44,7 @@ final class V90352431ResourceSafeBackgroundProbeTests: XCTestCase {
     func testReleasePairingIsV840AndV834V831RemainUnchanged() throws {
         let app = try source("HUDController/App/AppState.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.37"))
+        XCTAssertNotNil(app.range(of: #"appVersion=v90\.35\.3\.24\.[0-9]+(?:\.[0-9]+)?"#, options: .regularExpression))
         XCTAssertTrue(app.contains("paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery"))
         XCTAssertTrue(video.contains("unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay"))
     }

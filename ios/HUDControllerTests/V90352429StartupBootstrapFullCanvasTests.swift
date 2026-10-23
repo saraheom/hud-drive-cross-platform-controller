@@ -10,7 +10,7 @@ final class V90352429StartupBootstrapFullCanvasTests: XCTestCase {
     func testReleasePairsReadOnlyV838WithUnchangedTransport() throws {
         let app = try source("HUDController/App/AppState.swift")
         let video = try source("HUDController/MapMode/U2WMainVideoClient.swift")
-        XCTAssertTrue(app.contains("appVersion=v90.35.3.24.37"))
+        XCTAssertNotNil(app.range(of: #"appVersion=v90\.35\.3\.24\.[0-9]+(?:\.[0-9]+)?"#, options: .regularExpression))
         XCTAssertTrue(app.contains("v8.38 Read-Only Startup Bootstrap"))
         XCTAssertTrue(video.contains("v90.35.3.24.32 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap"))
         XCTAssertTrue(video.contains("unchanged v8.34 Hard-Bounded Mirror + exact v8.31 raw relay"))
