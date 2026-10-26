@@ -1,0 +1,11 @@
+HUD Controller v90.35.3.24.40 local validation
+Python pytest tests: 609 PASSED, 1 SKIPPED
+Swift frontend syntax parser: 204 HUDController/HUDControllerTests .swift files parsed OK
+GitHub workflow YAML: 8 validated
+Network HTTP/1.1 parser: Swift executable passed (Content-Length, chunked, HTTP 502, truncated)
+Original Current matcher: byte-for-byte equivalent in unchanged function blocks
+U2W-related archive entries: 493 unchanged
+MainVideo, OBD and approved U-turn production files: unchanged
+Changed existing files: 18
+Added source/test files: 4
+Full Xcode compile / iOS networking / device test: NOT performed

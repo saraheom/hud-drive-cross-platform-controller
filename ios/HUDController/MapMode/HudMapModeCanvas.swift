@@ -256,7 +256,7 @@ struct HudMapModeCanvas: View {
             } else if snapshot.maneuver == .roundabout,
                       let exitNumber = snapshot.exitNumber, exitNumber > 0 {
                 RoundaboutRouteGlyph(exitNumber: exitNumber)
-                    .frame(width: 61, height: 59)
+                    .frame(width: 39, height: 39)
             } else {
                 // Generic roundabout maneuvers have no exit number; do not
                 // invent one. All other stock symbols remain unchanged.
@@ -988,13 +988,13 @@ private struct RoundaboutRouteGlyph: View {
     var body: some View {
         ZStack {
             RoundaboutRoadArms(count: schematicBranches)
-                .stroke(Color.white.opacity(0.42), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+                .stroke(Color.white.opacity(0.42), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
             RoundaboutHighlightedExit(count: schematicBranches, selected: min(exitNumber, schematicBranches))
-                .stroke(.white, style: StrokeStyle(lineWidth: 5.5, lineCap: .round, lineJoin: .round))
+                .stroke(.white, style: StrokeStyle(lineWidth: 3.2, lineCap: .round, lineJoin: .round))
             Text(String(exitNumber))
-                .font(.system(size: exitNumber < 10 ? 25 : 21, weight: .bold, design: .rounded))
+                .font(.system(size: exitNumber < 10 ? 16 : 13, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
-                .frame(width: 31, height: 31)
+                .frame(width: 22, height: 22)
                 .background(Circle().fill(.black))
         }
         .accessibilityLabel("Roundabout, take exit \(exitNumber)")

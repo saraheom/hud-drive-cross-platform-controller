@@ -274,8 +274,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     // overspeed warnings. A restored disk cache is display-only.
     private var currentNavNetworkVerifiedWayIDs: Set<Int64> = []
     private var currentNavActiveAreaKey: String?
-    private let currentNavQueryRadiusMeters = 260
-    private let currentNavActiveAreaRadiusMeters: CLLocationDistance = 165
+    private let currentNavQueryRadiusMeters = 260 // supplementary named-road search
+    private let currentNavPrimaryQueryRadiusMeters = 400 // proven stock HUDWAY speed-tag query
+    private let currentNavSupplementaryQueryRadiusMeters = 160
+    private let currentNavActiveAreaRadiusMeters: CLLocationDistance = 240
     private let currentNavCacheExpirySeconds: TimeInterval = 72 * 3600
     private let currentNavFreshWarningSeconds: TimeInterval = 30 * 60
     private let currentNavSuccessRefreshSeconds: TimeInterval = 30 * 60
@@ -287,8 +289,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         "https://overpass-api.de/api/interpreter"
     ]
     private var currentNavOverpassEndpointIndex = 0
-    private let currentNavInitialFailureBackoffSeconds: TimeInterval = 45
-    private let currentNavMaximumFailureBackoffSeconds: TimeInterval = 12 * 60
+    private let currentNavInitialFailureBackoffSeconds: TimeInterval = 20
+    private let currentNavMaximumFailureBackoffSeconds: TimeInterval = 5 * 60
     private let currentNavHoldMaxSeconds: TimeInterval = 12.0
     private let currentNavHoldMaxDistanceMeters: CLLocationDistance = 150.0
     private let carPlayRouteFreshnessSeconds: TimeInterval = 5.0
@@ -1425,17 +1427,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         saveCurrentNavCache()
     }
 
-    /// v24.39: Request only *identifiable* motor roads (name or route ref),
-    /// including those lacking maxspeed. Anonymous untagged ways can never
-    /// agree with CarPlay Current Street, so exporting them only inflated a
-    /// shared Overpass instance's payload and HTTP-502/timeout rate.
+    /// v24.40: Acquire posted limits FIRST with the same compact, familiar
+    /// query used by stock Current. Querying every named road in the same
+    /// Overpass request caused repeated timeouts and an empty 24.39 cache.
+    /// Never accept a speed until CarPlay road identity + GPS geometry agree.
     private func updateCurrentNavRoadsIfNeeded(at location: CLLocation, force: Bool) async {
         guard sourceMode == .currentNav else { return }
         activateCurrentNavCachedArea(at: location)
         let now = Date()
         let covered = currentNavQueryLocation.map { location.distance(from: $0) <= currentNavActiveAreaRadiusMeters } ?? false
-        // Previously downloaded cells remain useful offline. Refresh old cells
-        // opportunistically, not once every 230m/75s while driving.
         if !force && covered && currentNavQueryAt.map({ now.timeIntervalSince($0) < currentNavSuccessRefreshSeconds }) == true {
             return
         }
@@ -1446,33 +1446,46 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
         let latitude = location.coordinate.latitude
         let longitude = location.coordinate.longitude
-        let roadClasses = "^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|road)$"
-        let query = "[out:json][timeout:22];(way[highway~\"\(roadClasses)\"][name](around:\(currentNavQueryRadiusMeters),\(latitude),\(longitude));way[highway~\"\(roadClasses)\"][ref](around:\(currentNavQueryRadiusMeters),\(latitude),\(longitude)););out tags geom;"
+        // Stock Current query: this smaller tagged subset has worked much more
+        // reliably than the v24.38/39 all-roads-with-geometry request.
+        let primaryQuery = "[out:json];way[maxspeed][highway](around:\(currentNavPrimaryQueryRadiusMeters),\(latitude),\(longitude));out tags geom;"
         let endpoint = currentNavOverpassEndpoints[currentNavOverpassEndpointIndex]
-        guard var components = URLComponents(string: endpoint) else { return }
-        components.queryItems = [URLQueryItem(name: "data", value: query)]
-        guard let url = components.url else { return }
         do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 28
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(http.statusCode) endpoint=\(endpoint) roadCache=preserved")
-                throw URLError(.badServerResponse)
-            }
-            let result = try JSONDecoder().decode(Response.self, from: data)
-            let roads = result.elements.compactMap(Self.makeCurrentNavRoad)
+            let primary = try await fetchCurrentNavOSM(query: primaryQuery, endpoint: endpoint, purpose: "stock-speed-tagged")
             guard sourceMode == .currentNav else { return }
-            // Don't replace a good cache with a malformed/empty service reply.
-            guard !roads.isEmpty else { throw URLError(.cannotParseResponse) }
-            currentNavNetworkVerifiedWayIDs.formUnion(roads.map(\.id))
-            recordCurrentNavArea(at: location, elements: result.elements)
+            let tagged = primary.elements.compactMap(Self.makeCurrentNavRoad)
+            guard !tagged.isEmpty else { throw URLError(.cannotParseResponse) }
+            // Commit the verified, speed-tagged ways as soon as they arrive;
+            // the optional supplementary query must never delay this result.
+            currentNavNetworkVerifiedWayIDs.formUnion(tagged.map(\.id))
+            recordCurrentNavArea(at: location, elements: primary.elements)
             currentNavLastFailureAt = nil
             currentNavFailureCount = 0
             currentNavNextRequestAt = Date().addingTimeInterval(8)
-            logger.log("SPEED CURRENT NAV QUERY", "SUCCESS endpoint=\(endpoint) identifiableRoads=\(roads.count) tagged=\(roads.filter { $0.speedKmh != nil }.count) radius=\(currentNavQueryRadiusMeters)m cache=persisted")
-            // A new dataset should resolve the sign even when parked.
+            logger.log("SPEED CURRENT NAV QUERY", "SUCCESS primary=stock-speed-tagged endpoint=\(endpoint) ways=\(tagged.count) radius=\(currentNavPrimaryQueryRadiusMeters)m cache=persisted")
             process(location)
+
+            // Only look for untagged street geometry if the current CarPlay road
+            // was absent from the compact tagged set. Use a very small radius;
+            // even a failure leaves the already acquired tagged ways usable.
+            guard let context = freshCarPlayRouteContext(),
+                  !context.currentRoad.isEmpty,
+                  !tagged.contains(where: { Self.routeRoadMatches(context.currentRoad, name: $0.name, reference: $0.reference) }) else {
+                return
+            }
+            let supplemental = "[out:json][timeout:12];way[highway][name](around:\(currentNavSupplementaryQueryRadiusMeters),\(latitude),\(longitude));out tags geom;"
+            do {
+                let extra = try await fetchCurrentNavOSM(query: supplemental, endpoint: endpoint, purpose: "optional-nearby-streets")
+                guard sourceMode == .currentNav else { return }
+                let combined = Self.mergedCurrentNavOSMElements(primary.elements, extra.elements)
+                if combined.count > primary.elements.count {
+                    recordCurrentNavArea(at: location, elements: combined)
+                    logger.log("SPEED CURRENT NAV QUERY", "SUPPLEMENTARY OK nearbyWays=\(extra.elements.count) mergedWays=\(combined.count) no guessed speed")
+                    process(location)
+                }
+            } catch {
+                logger.log("SPEED CURRENT NAV QUERY", "SUPPLEMENTARY FAILED error=\(error.localizedDescription); primary speed-tagged cache retained")
+            }
         } catch {
             currentNavLastFailureAt = Date()
             currentNavFailureCount = min(8, currentNavFailureCount + 1)
@@ -1480,7 +1493,57 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                               currentNavInitialFailureBackoffSeconds * pow(2.0, Double(currentNavFailureCount - 1)))
             currentNavNextRequestAt = Date().addingTimeInterval(backoff)
             currentNavOverpassEndpointIndex = (currentNavOverpassEndpointIndex + 1) % currentNavOverpassEndpoints.count
-            logger.log("SPEED CURRENT NAV QUERY", "FAILED endpoint=\(endpoint) error=\(error.localizedDescription) attempt=\(currentNavFailureCount) retryBackoff=\(Int(backoff))s cachedAreas=\(currentNavDiskAreas.count) activeRoads=\(currentNavRoads.count) nextEndpoint=\(currentNavOverpassEndpoints[currentNavOverpassEndpointIndex])")
+            logger.log("SPEED CURRENT NAV QUERY", "FAILED primary=stock-speed-tagged endpoint=\(endpoint) error=\(error.localizedDescription) attempt=\(currentNavFailureCount) retryBackoff=\(Int(backoff))s cachedAreas=\(currentNavDiskAreas.count) activeRoads=\(currentNavRoads.count) nextEndpoint=\(currentNavOverpassEndpoints[currentNavOverpassEndpointIndex])")
+        }
+    }
+
+    private static func mergedCurrentNavOSMElements(_ first: [Element], _ second: [Element]) -> [Element] {
+        var byID: [Int64: Element] = [:]
+        for element in first { byID[element.id] = element }
+        for element in second { byID[element.id] = element }
+        return Array(byID.values)
+    }
+
+    /// Prefer standard URLSession, which preserves the stock Current behavior.
+    /// A CarPlay adapter may provide only local Wi-Fi, leaving iOS URLSession
+    /// without an internet route even while the adapter's HTTP works. In that
+    /// case explicitly try cellular TLS, when iOS offers a cellular interface.
+    /// No fabricated speed, HTTP proxy, or adapter firmware change is involved.
+    private func fetchCurrentNavOSM(query: String, endpoint: String, purpose: String) async throws -> Response {
+        guard var components = URLComponents(string: endpoint) else { throw URLError(.badURL) }
+        components.queryItems = [URLQueryItem(name: "data", value: query)]
+        guard let url = components.url else { throw URLError(.badURL) }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 11
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(http.statusCode) endpoint=\(endpoint) purpose=\(purpose) cache=preserved")
+                throw URLError(.badServerResponse)
+            }
+            return try JSONDecoder().decode(Response.self, from: data)
+        } catch {
+            // Do not retry malformed responses or HTTP 429/502 over a second
+            // transport: that would duplicate shared-server load. Limit the
+            // alternate path to actual connectivity/routing failures.
+            let code = (error as NSError).code
+            let isTransportFailure = [NSURLErrorNotConnectedToInternet,
+                                      NSURLErrorNetworkConnectionLost,
+                                      NSURLErrorTimedOut,
+                                      NSURLErrorCannotConnectToHost,
+                                      NSURLErrorCannotFindHost].contains(code)
+            guard isTransportFailure else { throw error }
+            logger.log("SPEED CURRENT NAV NETWORK", "URLSession unavailable purpose=\(purpose) error=\(error.localizedDescription); attempting cellular-only HTTPS")
+            do {
+                let data = try await CurrentNavCellularHTTPS.fetch(url: url, timeout: 12)
+                let result = try JSONDecoder().decode(Response.self, from: data)
+                logger.log("SPEED CURRENT NAV NETWORK", "CELLULAR SUCCESS purpose=\(purpose) bytes=\(data.count)")
+                return result
+            } catch {
+                logger.log("SPEED CURRENT NAV NETWORK", "CELLULAR UNAVAILABLE purpose=\(purpose) error=\(error.localizedDescription); no invented limit")
+                throw error
+            }
         }
     }
 

@@ -31,23 +31,24 @@ def test_disk_cache_contains_real_geometries_and_bounds():
     assert 'data.write(to: url, options: .atomic)' in ENGINE
     assert 'currentNavMaximumCachedAreas = 128' in ENGINE
     assert 'currentNavCacheExpirySeconds: TimeInterval = 72 * 3600' in ENGINE
-    assert 'currentNavActiveAreaRadiusMeters: CLLocationDistance = 165' in ENGINE
+    assert 'currentNavActiveAreaRadiusMeters: CLLocationDistance = 240' in ENGINE
     assert 'activateCurrentNavCachedArea(at: location)' in ENGINE
     assert 'currentNavRoads = elements.compactMap(Self.makeCurrentNavRoad)' in ENGINE
 
 
 def test_lightweight_query_and_respectful_retry():
     assert 'currentNavQueryRadiusMeters = 260' in ENGINE
-    assert '][name](around:' in ENGINE and '][ref](around:' in ENGINE
+    assert 'way[maxspeed][highway](around:' in ENGINE
+    assert 'way[highway][name](around:' in ENGINE
     assert 'out tags geom;' in ENGINE
     assert 'https://overpass.private.coffee/api/interpreter' in ENGINE
     assert 'https://overpass-api.de/api/interpreter' in ENGINE
     assert 'currentNavOverpassEndpointIndex = (currentNavOverpassEndpointIndex + 1)' in ENGINE
-    assert 'currentNavInitialFailureBackoffSeconds: TimeInterval = 45' in ENGINE
-    assert 'currentNavMaximumFailureBackoffSeconds: TimeInterval = 12 * 60' in ENGINE
+    assert 'currentNavInitialFailureBackoffSeconds: TimeInterval = 20' in ENGINE
+    assert 'currentNavMaximumFailureBackoffSeconds: TimeInterval = 5 * 60' in ENGINE
     assert 'pow(2.0, Double(currentNavFailureCount - 1))' in ENGINE
     assert 'currentNavSuccessRefreshSeconds: TimeInterval = 30 * 60' in ENGINE
-    assert 'guard !roads.isEmpty else { throw URLError(.cannotParseResponse) }' in ENGINE
+    assert 'guard !tagged.isEmpty else { throw URLError(.cannotParseResponse) }' in ENGINE
 
 
 def test_no_highway_borrowing_no_stale_warning():
