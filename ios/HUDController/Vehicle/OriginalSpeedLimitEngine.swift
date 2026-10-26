@@ -31,12 +31,12 @@ enum SpeedLimitSourceMode: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
-    struct Coordinate: Decodable {
+    struct Coordinate: Codable {
         let lat: Double
         let lon: Double
     }
 
-    struct Tags: Decodable {
+    struct Tags: Codable {
         let highway: String?
         let maxspeed: String?
         let maxspeedForward: String?
@@ -62,7 +62,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    struct Element: Decodable {
+    struct Element: Codable {
         let type: String
         let id: Int64
         let geometry: [Coordinate]?
@@ -251,11 +251,44 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var currentNavQueryAt: Date?
     private var currentNavRequestInFlight = false
     private var currentNavLastFailureAt: Date?
+    private var currentNavNextRequestAt = Date.distantPast
+    private var currentNavFailureCount = 0
     private var currentNavObservedStreet: String?
     private var currentNavLastReportedStreet: String?
     private var currentNavLastReportedAt: Date?
-    private let currentNavQueryRadiusMeters = 430
-    private let currentNavFailureBackoffSeconds: TimeInterval = 18
+    // v24.39: cached Overpass responses are carried across trips. Cache entries
+    // represent real OSM features, NEVER an inferred/guessed speed limit.
+    private struct CurrentNavDiskArea: Codable {
+        let latitude: Double
+        let longitude: Double
+        let fetchedAt: Date
+        let elements: [Element]
+    }
+    private var currentNavDiskAreas: [CurrentNavDiskArea] = []
+    // A serial, utility-QoS queue keeps JSON serialization off the UI/render
+    // actor and guarantees older saves cannot overwrite newer snapshots.
+    private let currentNavCacheWriteQueue = DispatchQueue(
+        label: "HUDController.CurrentNavRoadCache", qos: .utility)
+    private var currentNavDiskLoaded = false
+    // Only server-validated OSM ways fetched during THIS app session may arm
+    // overspeed warnings. A restored disk cache is display-only.
+    private var currentNavNetworkVerifiedWayIDs: Set<Int64> = []
+    private var currentNavActiveAreaKey: String?
+    private let currentNavQueryRadiusMeters = 260
+    private let currentNavActiveAreaRadiusMeters: CLLocationDistance = 165
+    private let currentNavCacheExpirySeconds: TimeInterval = 72 * 3600
+    private let currentNavFreshWarningSeconds: TimeInterval = 30 * 60
+    private let currentNavSuccessRefreshSeconds: TimeInterval = 30 * 60
+    private let currentNavMaximumCachedAreas = 128
+    // Two independently operated public Overpass instances. Rotate only after
+    // a FAILED attempt; never flood multiple public hosts for one GPS update.
+    private let currentNavOverpassEndpoints = [
+        "https://overpass.private.coffee/api/interpreter",
+        "https://overpass-api.de/api/interpreter"
+    ]
+    private var currentNavOverpassEndpointIndex = 0
+    private let currentNavInitialFailureBackoffSeconds: TimeInterval = 45
+    private let currentNavMaximumFailureBackoffSeconds: TimeInterval = 12 * 60
     private let currentNavHoldMaxSeconds: TimeInterval = 12.0
     private let currentNavHoldMaxDistanceMeters: CLLocationDistance = 150.0
     private let carPlayRouteFreshnessSeconds: TimeInterval = 5.0
@@ -855,6 +888,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         currentNavQueryAt = nil
         currentNavRequestInFlight = false
         currentNavLastFailureAt = nil
+        currentNavNextRequestAt = Date.distantPast
+        currentNavFailureCount = 0
+        currentNavActiveAreaKey = nil
         currentNavObservedStreet = nil
         currentNavLastReportedStreet = nil
         currentNavLastReportedAt = nil
@@ -1282,49 +1318,169 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     // MARK: - Current + Nav: identify the road FIRST; resolve speed SECOND
 
-    /// Unlike Current, query all motor-vehicle roads, including untagged ways.
-    /// One request replaces the legacy maxspeed-only request in Current + Nav;
-    /// Current still uses its original HTTP query and original geometry scorer.
+    /// Persistent (on-device) cache of observed OSM geometry, not an assertion
+    /// of current legal speed. Responses are reused only near their real query
+    /// center; after expiry we reject the dataset instead of inventing a sign.
+    private var currentNavCacheFileURL: URL? {
+        guard let directory = FileManager.default.urls(for: .applicationSupportDirectory,
+                                                       in: .userDomainMask).first else { return nil }
+        return directory.appendingPathComponent("CurrentNavOSMRoadCache-v1.json")
+    }
+
+    private func loadCurrentNavCacheIfNeeded() {
+        guard !currentNavDiskLoaded else { return }
+        currentNavDiskLoaded = true
+        guard let url = currentNavCacheFileURL,
+              let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([CurrentNavDiskArea].self, from: data) else {
+            logger.log("SPEED CURRENT NAV CACHE", "cold start: no persisted OSM road snapshot")
+            return
+        }
+        let now = Date()
+        currentNavDiskAreas = Array(decoded.filter {
+            now.timeIntervalSince($0.fetchedAt) >= -60 &&
+            now.timeIntervalSince($0.fetchedAt) <= currentNavCacheExpirySeconds &&
+            $0.latitude.isFinite && $0.longitude.isFinite && !$0.elements.isEmpty
+        }.sorted { $0.fetchedAt > $1.fetchedAt }.prefix(currentNavMaximumCachedAreas))
+        logger.log("SPEED CURRENT NAV CACHE", "restored areas=\(currentNavDiskAreas.count) bytes=\(data.count) maxAge=72h")
+    }
+
+    private func saveCurrentNavCache() {
+        guard let url = currentNavCacheFileURL else { return }
+        let snapshots = currentNavDiskAreas // immutable snapshot for the worker
+        logger.log("SPEED CURRENT NAV CACHE", "queue disk write areas=\(snapshots.count)")
+        currentNavCacheWriteQueue.async {
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                let data = try JSONEncoder().encode(snapshots)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                // In-memory road data remains usable if storage is temporarily
+                // unavailable (e.g., disk quota or iOS file protection).
+            }
+        }
+    }
+
+    private func activateCurrentNavCachedArea(at location: CLLocation) {
+        loadCurrentNavCacheIfNeeded()
+        let now = Date()
+        guard let nearest = currentNavDiskAreas
+            .filter({ now.timeIntervalSince($0.fetchedAt) <= currentNavCacheExpirySeconds })
+            .map({ area in (area, CLLocation(latitude: area.latitude, longitude: area.longitude)
+                               .distance(from: location)) })
+            .filter({ $0.1 <= currentNavActiveAreaRadiusMeters })
+            .min(by: { $0.1 < $1.1 }) else {
+            // Never match stale geometry from the last successfully queried area
+            // after the car has left its geographic coverage.
+            if currentNavActiveAreaKey != nil {
+                currentNavRoads.removeAll()
+                segments.removeAll()
+                currentNavActiveAreaKey = nil
+                currentNavQueryLocation = nil
+                currentNavQueryAt = nil
+                logger.log("SPEED CURRENT NAV CACHE", "MISS outside cached query areas; new OSM data needed")
+            }
+            return
+        }
+        let area = nearest.0
+        let key = "\(area.latitude),\(area.longitude),\(area.fetchedAt.timeIntervalSince1970)"
+        guard key != currentNavActiveAreaKey else { return }
+        // Combine overlapping nearby snapshots for road continuity, but only
+        // from already downloaded data at geographically plausible distances.
+        var elementsByID: [Int64: Element] = [:]
+        let nearbyAreas = currentNavDiskAreas.filter {
+            now.timeIntervalSince($0.fetchedAt) <= currentNavCacheExpirySeconds &&
+            CLLocation(latitude: $0.latitude, longitude: $0.longitude)
+                .distance(from: location) <= 340
+        }.sorted { $0.fetchedAt < $1.fetchedAt }
+        for nearbyArea in nearbyAreas {
+            for element in nearbyArea.elements { elementsByID[element.id] = element }
+        }
+        let elements = Array(elementsByID.values)
+        currentNavRoads = elements.compactMap(Self.makeCurrentNavRoad)
+        segments = elements.compactMap(Self.makeSegment)
+        currentNavQueryLocation = CLLocation(latitude: area.latitude, longitude: area.longitude)
+        currentNavQueryAt = area.fetchedAt
+        currentNavActiveAreaKey = key
+        logger.log("SPEED CURRENT NAV CACHE", "HIT nearest=\(Int(nearest.1))m age=\(Int(now.timeIntervalSince(area.fetchedAt)))s areas=\(nearbyAreas.count) ways=\(currentNavRoads.count) tagged=\(segments.count)")
+    }
+
+    private func recordCurrentNavArea(at location: CLLocation, elements: [Element]) {
+        loadCurrentNavCacheIfNeeded()
+        let now = Date()
+        currentNavDiskAreas.removeAll { area in
+            now.timeIntervalSince(area.fetchedAt) > currentNavCacheExpirySeconds ||
+            CLLocation(latitude: area.latitude, longitude: area.longitude).distance(from: location) < 95
+        }
+        currentNavDiskAreas.insert(CurrentNavDiskArea(
+            latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
+            fetchedAt: now, elements: elements), at: 0)
+        if currentNavDiskAreas.count > currentNavMaximumCachedAreas {
+            currentNavDiskAreas.removeLast(currentNavDiskAreas.count - currentNavMaximumCachedAreas)
+        }
+        // Rebuild a snapshot even if we received an update at the same location.
+        currentNavActiveAreaKey = nil
+        activateCurrentNavCachedArea(at: location)
+        saveCurrentNavCache()
+    }
+
+    /// v24.39: Request only *identifiable* motor roads (name or route ref),
+    /// including those lacking maxspeed. Anonymous untagged ways can never
+    /// agree with CarPlay Current Street, so exporting them only inflated a
+    /// shared Overpass instance's payload and HTTP-502/timeout rate.
     private func updateCurrentNavRoadsIfNeeded(at location: CLLocation, force: Bool) async {
-        if !force, let last = currentNavQueryLocation, let queried = currentNavQueryAt,
-           location.distance(from: last) <= 230, Date().timeIntervalSince(queried) < 75 { return }
-        if !force, let lastFailure = currentNavLastFailureAt,
-           Date().timeIntervalSince(lastFailure) < currentNavFailureBackoffSeconds { return }
+        guard sourceMode == .currentNav else { return }
+        activateCurrentNavCachedArea(at: location)
+        let now = Date()
+        let covered = currentNavQueryLocation.map { location.distance(from: $0) <= currentNavActiveAreaRadiusMeters } ?? false
+        // Previously downloaded cells remain useful offline. Refresh old cells
+        // opportunistically, not once every 230m/75s while driving.
+        if !force && covered && currentNavQueryAt.map({ now.timeIntervalSince($0) < currentNavSuccessRefreshSeconds }) == true {
+            return
+        }
+        if !force && now < currentNavNextRequestAt { return }
         guard !currentNavRequestInFlight else { return }
         currentNavRequestInFlight = true
         defer { currentNavRequestInFlight = false }
 
         let latitude = location.coordinate.latitude
         let longitude = location.coordinate.longitude
-        let query = "[out:json][timeout:14];way[highway~\"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|road)$\"](around:\(currentNavQueryRadiusMeters),\(latitude),\(longitude));out tags geom;"
-        guard var components = URLComponents(string: "https://overpass-api.de/api/interpreter") else { return }
+        let roadClasses = "^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|road)$"
+        let query = "[out:json][timeout:22];(way[highway~\"\(roadClasses)\"][name](around:\(currentNavQueryRadiusMeters),\(latitude),\(longitude));way[highway~\"\(roadClasses)\"][ref](around:\(currentNavQueryRadiusMeters),\(latitude),\(longitude)););out tags geom;"
+        let endpoint = currentNavOverpassEndpoints[currentNavOverpassEndpointIndex]
+        guard var components = URLComponents(string: endpoint) else { return }
         components.queryItems = [URLQueryItem(name: "data", value: query)]
         guard let url = components.url else { return }
         do {
             var request = URLRequest(url: url)
-            request.timeoutInterval = 17
+            request.timeoutInterval = 28
             let (data, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(http.statusCode) roads=unchanged retryBackoff=\(Int(currentNavFailureBackoffSeconds))s")
+                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(http.statusCode) endpoint=\(endpoint) roadCache=preserved")
                 throw URLError(.badServerResponse)
             }
             let result = try JSONDecoder().decode(Response.self, from: data)
             let roads = result.elements.compactMap(Self.makeCurrentNavRoad)
             guard sourceMode == .currentNav else { return }
-            currentNavRoads = roads
-            // Current + Nav's no-navigation fallback reuses the same tagged roads;
-            // it does NOT issue a duplicate Overpass query.
-            segments = result.elements.compactMap(Self.makeSegment)
-            currentNavQueryLocation = location
-            currentNavQueryAt = Date()
+            // Don't replace a good cache with a malformed/empty service reply.
+            guard !roads.isEmpty else { throw URLError(.cannotParseResponse) }
+            currentNavNetworkVerifiedWayIDs.formUnion(roads.map(\.id))
+            recordCurrentNavArea(at: location, elements: result.elements)
             currentNavLastFailureAt = nil
-            logger.log("SPEED CURRENT NAV QUERY", "SUCCESS allMotorRoads=\(roads.count) explicitlyTagged=\(segments.count) radius=\(currentNavQueryRadiusMeters)m (untagged roads preserved)")
-            // Refresh at a stop after the asynchronous data arrives (CoreLocation
-            // may not deliver another fix while parked).
+            currentNavFailureCount = 0
+            currentNavNextRequestAt = Date().addingTimeInterval(8)
+            logger.log("SPEED CURRENT NAV QUERY", "SUCCESS endpoint=\(endpoint) identifiableRoads=\(roads.count) tagged=\(roads.filter { $0.speedKmh != nil }.count) radius=\(currentNavQueryRadiusMeters)m cache=persisted")
+            // A new dataset should resolve the sign even when parked.
             process(location)
         } catch {
             currentNavLastFailureAt = Date()
-            logger.log("SPEED CURRENT NAV QUERY", "FAILED error=\(error.localizedDescription); keeping bounded prior data / no guessed speed")
+            currentNavFailureCount = min(8, currentNavFailureCount + 1)
+            let backoff = min(currentNavMaximumFailureBackoffSeconds,
+                              currentNavInitialFailureBackoffSeconds * pow(2.0, Double(currentNavFailureCount - 1)))
+            currentNavNextRequestAt = Date().addingTimeInterval(backoff)
+            currentNavOverpassEndpointIndex = (currentNavOverpassEndpointIndex + 1) % currentNavOverpassEndpoints.count
+            logger.log("SPEED CURRENT NAV QUERY", "FAILED endpoint=\(endpoint) error=\(error.localizedDescription) attempt=\(currentNavFailureCount) retryBackoff=\(Int(backoff))s cachedAreas=\(currentNavDiskAreas.count) activeRoads=\(currentNavRoads.count) nextEndpoint=\(currentNavOverpassEndpoints[currentNavOverpassEndpointIndex])")
         }
     }
 
@@ -1342,12 +1498,19 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         ]
         guard motorRoadClasses.contains(highway) else { return nil }
         let coords = geometry.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        let posted = tags.maxspeed.flatMap { parseOriginalMaxSpeed($0)?.kmh }
+        let forwardPosted = tags.maxspeedForward.flatMap { parseOriginalMaxSpeed($0)?.kmh }
+        let backwardPosted = tags.maxspeedBackward.flatMap { parseOriginalMaxSpeed($0)?.kmh }
+        // Directional-only tags are safe without a direction inference ONLY
+        // when both directions explicitly agree. Never borrow one side's limit.
+        let symmetricDirectionalSpeed = forwardPosted != nil && forwardPosted == backwardPosted
+            ? forwardPosted : nil
         return CurrentNavRoad(
             id: element.id,
             highway: highway,
             name: tags.name,
             reference: tags.ref,
-            speedKmh: tags.maxspeed.flatMap { parseOriginalMaxSpeed($0)?.kmh },
+            speedKmh: posted ?? symmetricDirectionalSpeed,
             parts: makeParts(coords)
         )
     }
@@ -1386,7 +1549,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                         Self.distanceFrom(location.coordinate, toSegmentA: $0.start, b: $0.end)
                     }.min() ?? .infinity
                     guard minDistance <= 200,
-                          Self.endpointDistance(node, candidate) <= 12 else { continue }
+                          Self.endpointDistance(node, candidate) <= 20 else { continue }
                     visited.insert(candidate.id)
                     next.append(candidate)
                 }
@@ -1398,6 +1561,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     private func bestCurrentNavSpeedLimit(at location: CLLocation) -> Int? {
+        // The current GPS position chooses the correct persistent area before
+        // road matching; another area's geometry is never a substitute.
+        activateCurrentNavCachedArea(at: location)
         currentNavMatchFresh = false
         currentNavDisplayHold = false
         let freshRoute = freshCarPlayRouteContext()
@@ -1417,6 +1583,18 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                Date().timeIntervalSince(received) <= 10 {
                 currentNavStatusReason = "navigation heartbeat gap; no cross-road fallback"
                 return heldCurrentNavSpeed(road: road, location: location)
+            }
+            if let context = carPlayRouteContext,
+               context.routeState != 0,
+               Date().timeIntervalSince(context.receivedAt) >= 0,
+               Date().timeIntervalSince(context.receivedAt) <= 45,
+               let knownStreet = currentNavLastReportedStreet {
+                // The adapter can pause mid-navigation. Do not borrow an
+                // adjacent motorway's limit just because guidance stopped
+                // updating for 11 seconds. Resume Current only after route
+                // ending is confirmed or this bounded active-route grace expires.
+                currentNavStatusReason = "stale active navigation; no cross-road fallback"
+                return heldCurrentNavSpeed(road: knownStreet, location: location)
             }
             currentNavObservedStreet = nil
             currentNavStatusReason = "original fallback (no fresh navigation street)"
@@ -1447,8 +1625,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         // Never mistake a long-segment endpoint circle for a real roadway
         // corridor. This is true point-to-POLYLINE distance in meters.
         let moving = location.speed >= 2.0 && location.course >= 0
+        let priorMovingFix = traceLocations.dropLast().reversed().first {
+            $0.course >= 0 && abs(location.timestamp.timeIntervalSince($0.timestamp)) < 8 &&
+            location.distance(from: $0) <= 60
+        }
+        let activelyTurning = moving && priorMovingFix.map {
+            Self.angularDifference($0.course, location.course) >= 18
+        } == true
         var scored: [(segment: CurrentNavRoad, distance: Double, angle: Double, score: Double)] = []
-        var nearby: [(name: String, speed: String, distance: Double, accepted: Bool)] = []
+        var nearby: [(name: String, speed: String, distance: Double, angle: Double, accepted: Bool)] = []
         let radius = min(CurrentNavRoadMatchPolicy.maximumCorridorMeters,
                          max(20, location.horizontalAccuracy * 1.4))
         for candidate in currentNavRoads {
@@ -1473,24 +1658,29 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             }
             let semanticMatch = Self.routeRoadMatches(navRoad, name: candidate.name, reference: candidate.reference)
             if closestDistance < 95 {
-                nearby.append((candidate.name ?? candidate.reference ?? "unnamed", candidate.speedKmh.map(String.init) ?? "none", closestDistance, semanticMatch))
+                nearby.append((candidate.name ?? candidate.reference ?? "unnamed", candidate.speedKmh.map(String.init) ?? "none", closestDistance, closestAngle, semanticMatch))
             }
             guard CurrentNavRoadMatchPolicy.eligible(
                 semanticRoadNameMatch: semanticMatch,
                 distanceMeters: closestDistance,
                 gpsAccuracyMeters: location.horizontalAccuracy,
                 moving: moving,
-                headingErrorDegrees: closestAngle
+                headingErrorDegrees: closestAngle,
+                activelyTurning: activelyTurning
             ) else { continue }
             scored.append((candidate, closestDistance, closestAngle, closestDistance + closestAngle * 0.2))
         }
         scored.sort { $0.score < $1.score }
         let alternatives = nearby.sorted { $0.distance < $1.distance }.prefix(5)
-            .map { "\($0.name):\(String(format: "%.0f", $0.distance))m:speed=\($0.speed):nameMatch=\($0.accepted ? 1 : 0)" }
+            .map { "\($0.name):\(String(format: "%.0f", $0.distance))m:heading=\(String(format: "%.0f", $0.angle)):speed=\($0.speed):nameMatch=\($0.accepted ? 1 : 0)" }
             .joined(separator: " | ")
         guard let winner = scored.first else {
-            currentNavStatusReason = "nav road not geometrically confirmed"
-            logger.log("SPEED CURRENT NAV", "REJECT all current=\(navRoad) candidates=[\(alternatives)] corridor=\(Int(radius))m; no borrowed highway limit")
+            currentNavStatusReason = currentNavRoads.isEmpty
+                ? "no cached OSM roads at this location"
+                : nearby.contains(where: { $0.accepted })
+                    ? "named road geometry/heading rejected"
+                    : "CarPlay street absent from cached OSM road names"
+            logger.log("SPEED CURRENT NAV", "REJECT all current=\(navRoad) reason=\(currentNavStatusReason) candidates=[\(alternatives)] corridor=\(Int(radius))m gpsAccuracy=\(Int(location.horizontalAccuracy))m roads=\(currentNavRoads.count); no borrowed highway limit")
             return heldCurrentNavSpeed(road: identity, location: location)
         }
         let chosen = winner.segment
@@ -1510,8 +1700,13 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             return heldCurrentNavSpeed(road: identity, location: location)
         }
         if directMph != nil {
-            currentNavMatchFresh = true  // direct current-way posted speed can warn
-            currentNavStatusReason = "verified current road + explicit OSM limit"
+            currentNavMatchFresh = currentNavQueryAt.map {
+                Date().timeIntervalSince($0) >= 0 &&
+                Date().timeIntervalSince($0) <= currentNavFreshWarningSeconds
+            } == true && currentNavNetworkVerifiedWayIDs.contains(chosen.id)
+            currentNavStatusReason = currentNavMatchFresh
+                ? "verified current road + explicit OSM limit"
+                : "cached explicit OSM limit; warning off until refreshed"
         } else {
             currentNavDisplayHold = true // connected-road value is display only
             currentNavStatusReason = "connected same-road speed; warning off"

@@ -73,8 +73,8 @@ def test_current_is_verbatim_original_algorithm_with_independent_nav_query():
     assert 'Self.originalPolygonContains(' in ENGINE
     assert 'case .currentNav:\n            await updateCurrentNavRoadsIfNeeded' in ENGINE
     assert 'way[highway~' in ENGINE
-    assert 'currentNavRoads = roads' in ENGINE
-    assert 'tags.maxspeed.flatMap' in ENGINE
+    assert 'currentNavRoads = elements.compactMap(Self.makeCurrentNavRoad)' in ENGINE
+    assert 'let posted = tags.maxspeed.flatMap' in ENGINE
 
 
 def test_nav_street_identity_is_required_before_applying_speed():
@@ -84,7 +84,7 @@ def test_nav_street_identity_is_required_before_applying_speed():
     assert 'let directMph = chosen.speedKmh.map' in ENGINE
     assert 'connectedCurrentNavLimit(for: chosen, road: navRoad, location: location)' in ENGINE
     assert 'guard let mph = directMph ?? connectedMph, mph > 0 else {' in ENGINE
-    assert 'currentNavMatchFresh = true  // direct current-way posted speed can warn' in ENGINE
+    assert 'currentNavMatchFresh = currentNavQueryAt.map {' in ENGINE
     assert 'currentNavDisplayHold = true // connected-road value is display only' in ENGINE
     assert 'no borrowed highway limit' in ENGINE
 
@@ -96,7 +96,7 @@ def test_road_change_and_untagged_road_fail_closed():
     assert 'return heldCurrentNavSpeed(road: identity, location: location)' in ENGINE
     assert 'Set<Int> = []' in ENGINE
     assert 'posted.count == 1' in ENGINE
-    assert 'Self.endpointDistance(node, candidate) <= 12' in ENGINE
+    assert 'Self.endpointDistance(node, candidate) <= 20' in ENGINE
     assert 'SPEED CURRENT NAV QUERY' in ENGINE
 
 

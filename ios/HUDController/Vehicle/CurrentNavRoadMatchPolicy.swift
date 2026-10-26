@@ -6,6 +6,8 @@ import Foundation
 enum CurrentNavRoadMatchPolicy {
     static let maximumCorridorMeters = 34.0
     static let maximumMovingHeadingErrorDegrees = 65.0
+    static let maximumNearRoadHeadingErrorDegrees = 82.0
+    static let maximumTurningHeadingErrorDegrees = 105.0
 
     /// True perpendicular distance to a finite OSM polyline segment. The local
     /// equirectangular projection is appropriate for the <=430m Overpass slice.
@@ -35,11 +37,22 @@ enum CurrentNavRoadMatchPolicy {
         distanceMeters: Double,
         gpsAccuracyMeters: Double,
         moving: Bool,
-        headingErrorDegrees: Double
+        headingErrorDegrees: Double,
+        activelyTurning: Bool = false
     ) -> Bool {
         guard semanticRoadNameMatch, distanceMeters.isFinite, distanceMeters >= 0 else { return false }
         let corridor = min(maximumCorridorMeters, max(20.0, max(0, gpsAccuracyMeters) * 1.4))
-        return distanceMeters <= corridor &&
-            (!moving || (headingErrorDegrees >= 0 && headingErrorDegrees <= maximumMovingHeadingErrorDegrees))
+        guard distanceMeters <= corridor else { return false }
+        if !moving { return true }
+        guard headingErrorDegrees.isFinite && headingErrorDegrees >= 0 else { return false }
+        if headingErrorDegrees <= maximumMovingHeadingErrorDegrees { return true }
+        // Close to the SAME CarPlay-named road, accept moderate GPS course
+        // fluctuations. Never relax distance or the semantic road-name gate.
+        if distanceMeters <= 14 &&
+           headingErrorDegrees <= maximumNearRoadHeadingErrorDegrees { return true }
+        // Only when recent measured course actually changed: tolerate the
+        // transient heading mismatch during an intersection/curve.
+        return activelyTurning && distanceMeters <= 16 &&
+            headingErrorDegrees <= maximumTurningHeadingErrorDegrees
     }
 }

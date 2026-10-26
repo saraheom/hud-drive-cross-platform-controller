@@ -1,0 +1,16 @@
+HUD Controller v90.35.3.24.39 validation record
+Source: v24.38 CI FIX1 complete repo ZIP
+Date: 2026-10-25
+
+Python regression suite: 604 passed, 1 skipped
+Swift syntax validation: 221/221 parsed using Linux Swift frontend
+GitHub Actions YAML: 8/8 parsed
+U2W v8.40 directory: 478/478 byte-for-byte identical to v24.38 CI FIX1
+MainVideo application/firmware non-test assets: byte-for-byte unchanged
+Original Current speed-limit matching core: byte-for-byte unchanged
+Current + Nav matching policy: standalone Swift compiled/executed successfully
+New offline-cache query, fallback, failure-backoff and identity safeguards: source-contract tests passed
+
+No Xcode SDK / full iOS target compile performed locally.
+No live Overpass network request or physical HUD verification performed locally.
+No GitHub push was performed.
