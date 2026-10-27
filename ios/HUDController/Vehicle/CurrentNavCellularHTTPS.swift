@@ -16,7 +16,7 @@ enum CurrentNavCellularHTTPS {
         let parameters = NWParameters(tls: NWProtocolTLS.Options(), tcp: NWProtocolTCP.Options())
         parameters.requiredInterfaceType = .cellular
         let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: parameters)
-        let request = "GET \(target.isEmpty ? "/" : target) HTTP/1.1\r\nHost: \(host)\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\nUser-Agent: HUDController-CurrentNav/24.41\r\n\r\n"
+        let request = "GET \(target.isEmpty ? "/" : target) HTTP/1.1\r\nHost: \(host)\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\nUser-Agent: HUDController-CurrentNav/24.42\r\n\r\n"
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
             let transaction = Transaction(connection: connection, request: Data(request.utf8), continuation: continuation)
             transaction.start(timeout: timeout)

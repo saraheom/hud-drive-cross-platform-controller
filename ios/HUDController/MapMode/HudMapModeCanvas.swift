@@ -247,7 +247,8 @@ struct HudMapModeCanvas: View {
                 .frame(width: 34, height: 38)
             } else if snapshot.maneuver == .uTurn {
                 // Exact artwork supplied/approved by the user on 2026-10-22.
-                // Use the bundled SVG rasterization: not an SF Symbol rotation.
+                // Use the bundled approved SVG silhouette with v24.42 bolder raster
+                // strokes/arrowhead. Orientation and 37×40 layout are unchanged.
                 Image(approvedUTurnAssetName)
                     .resizable()
                     .renderingMode(.template)

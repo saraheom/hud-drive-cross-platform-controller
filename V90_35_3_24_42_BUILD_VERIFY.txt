@@ -1,0 +1,17 @@
+See external verification report for final ZIP SHA256.
+HUD Controller v90.35.3.24.42 — release verification
+Date: 2026-10-27
+Base: v24.41 + CI FIX1
+Full Python tests: 616 passed, 1 skipped
+All Swift source parsing: 227/227 passed (not iOS SDK typecheck)
+Native Swift production planner + road policy test: PASS
+Existing v24.41 road replay tests: PASS
+Workflow YAML syntax: 8/8 valid
+Stock Current query+makeSegment+scorer functions: byte identical
+U2W/video files byte identical: 489 protected paths
+Direct OBD files byte identical: 2 files
+Modified source and assets: 10
+Added new files (before docs): 126
+Removed: 0
+ZIP file count: 1289
+ZIP CRC: PASS

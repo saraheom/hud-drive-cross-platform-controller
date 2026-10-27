@@ -21,8 +21,8 @@ def test_request_uses_original_current_timeout_semantics():
     assert 'request.timeoutInterval = 11' not in ENGINE
     assert 'URLSession.shared.data(for: request)' not in ENGINE
     assert 'URLSESSION SUCCESS duration=' in ENGINE
-    assert 'recordCurrentNavArea(at: location, elements: primary.elements)' in ENGINE
-    assert 'currentNavNetworkVerifiedWayIDs.formUnion(tagged.map(\\.id))' in ENGINE
+    assert 'recordCurrentNavArea(at: target, elements: primary.elements)' in ENGINE
+    assert 'currentNavNetworkVerifiedWayIDs.formUnion(tagged.map(\.id))' in ENGINE
     assert 'no borrowed highway limit' in ENGINE
 
 

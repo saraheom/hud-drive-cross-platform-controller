@@ -18,8 +18,8 @@ def test_main_current_nav_query_is_the_original_small_speed_tagged_query():
     assert 'let primaryQuery = "[out:json];way[maxspeed][highway](around:' in ENGINE
     assert 'currentNavPrimaryQueryRadiusMeters = 400' in ENGINE
     assert 'fetchCurrentNavOSM(query: primaryQuery' in ENGINE
-    assert 'currentNavNetworkVerifiedWayIDs.formUnion(tagged.map(\\.id))' in ENGINE
-    assert 'recordCurrentNavArea(at: location, elements: primary.elements)' in ENGINE
+    assert 'currentNavNetworkVerifiedWayIDs.formUnion(tagged.map(\.id))' in ENGINE
+    assert 'recordCurrentNavArea(at: target, elements: primary.elements)' in ENGINE
     # The original Current path stays independently available.
     assert 'case .current:\n            await updateOriginalSegmentsIfNeeded(at: location, force: force)' in ENGINE
 
@@ -29,7 +29,7 @@ def test_untagged_road_query_is_optional_and_cannot_erase_valid_data():
     assert 'currentNavSupplementaryQueryRadiusMeters = 160' in ENGINE
     assert 'SUPPLEMENTARY FAILED' in ENGINE
     assert 'primary speed-tagged cache retained' in ENGINE
-    assert 'Self.mergedCurrentNavOSMElements(primary.elements, extra.elements)' in ENGINE
+    assert 'recordCurrentNavArea(at: live, elements: extra.elements)' in ENGINE
     assert 'guard let context = freshCarPlayRouteContext()' in ENGINE
 
 

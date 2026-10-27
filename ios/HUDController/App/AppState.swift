@@ -952,7 +952,7 @@ final class AppState {
             }
 
             let stateText = """
-            HUD Controller v90.35.3.24.41 — verified Current + Nav road identity / bounded OBD shutdown
+            HUD Controller v90.35.3.24.42 — verified Current + Nav road identity / bounded OBD shutdown
             timestamp=\(ISO8601DateFormatter().string(from: Date()))
             paired_u2w=v8.40 Resource-Safe Bootstrap + v8.39 Session Boundary Recovery + v8.38 Read-Only Startup Bootstrap + v8.37 Forensic Seam Capture + unchanged v8.35 helper (injection deferred) + unchanged v8.34 Hard-Bounded Mirror + exact v8.31 Raw Relay
             map_mode_active=\(self.mapModeActive)
@@ -2320,7 +2320,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.41",
+                "appVersion=v90.35.3.24.42",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
