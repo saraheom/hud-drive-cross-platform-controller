@@ -23,7 +23,27 @@ final class V9033FieldRefinementTests: XCTestCase {
         XCTAssertTrue(speed.contains("match.currentDistance <= 40, match.currentAngle <= 45"))
         XCTAssertTrue(speed.contains("match.currentDistance <= 50, match.currentAngle <= 70"))
         XCTAssertTrue(speed.contains("rgdCurrent="))
-        XCTAssertTrue(speed.contains("martin luther king junior"))
+        // v24.41 moved the actual road-name normalization into the reusable
+        // CurrentNavRoadIdentity helper. Verify its behavior instead of pinning
+        // this regression to a literal string in the older engine source file.
+        XCTAssertEqual(
+            CurrentNavRoadIdentity.normalizedRoadPhrase("Martin Luther King Jr Dr"),
+            CurrentNavRoadIdentity.normalizedRoadPhrase("Martin Luther King Drive")
+        )
+        XCTAssertTrue(
+            CurrentNavRoadIdentity.routeRoadMatches(
+                "Martin Luther King Jr Dr",
+                name: "Martin Luther King Drive",
+                reference: nil
+            )
+        )
+        XCTAssertFalse(
+            CurrentNavRoadIdentity.routeRoadMatches(
+                "Martin Luther King Jr Dr",
+                name: "Schuylkill Expressway",
+                reference: nil
+            )
+        )
     }
 
     func testOverspeedWarningSeparatesDayNightBrightnessAndSmoothlyRestores() throws {
