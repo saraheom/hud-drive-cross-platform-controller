@@ -28,8 +28,9 @@ def test_carplay_speed_bonus_is_geometry_gated_and_logs_raw_current_road():
     assert "match.currentDistance <= 50, match.currentAngle <= 70" in speed
     assert "return 0" in speed
     assert r'"rgdCurrent=\(routeRoad.isEmpty ? "-" : routeRoad)' in speed
-    assert 'of: "martin luther king junior "' in speed
-    assert 'with: "martin luther king "' in speed
+    identity = read("ios/HUDController/Vehicle/CurrentNavRoadIdentity.swift")
+    assert 'of: "martin luther king junior "' in identity
+    assert 'with: "martin luther king "' in identity
 
 
 def test_state6_weakens_route_semantics_for_speed_matching():

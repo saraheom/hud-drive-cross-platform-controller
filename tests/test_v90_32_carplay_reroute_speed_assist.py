@@ -54,7 +54,7 @@ def test_carplay_speed_assist_is_semantic_only_and_reroute_weakened():
 
 
 def test_carplay_road_normalization_handles_direction_and_street_abbreviations():
-    speed = read("ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift")
+    speed = read("ios/HUDController/Vehicle/CurrentNavRoadIdentity.swift")
     assert '"n": "north"' in speed
     assert '"s": "south"' in speed
     assert '"e": "east"' in speed

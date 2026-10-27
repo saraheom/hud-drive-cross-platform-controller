@@ -34,7 +34,9 @@ def test_untagged_road_query_is_optional_and_cannot_erase_valid_data():
 
 
 def test_offline_carplay_wifi_does_not_force_unsafe_geometry_fallback():
-    assert 'URLSession.shared.data(for: request)' in ENGINE
+    assert 'CurrentNavOSMTransport.download(url: url)' in ENGINE
+    assert 'session.data(from: url)' in (SRC / 'Vehicle/CurrentNavOSMTransport.swift').read_text()
+    assert 'request.timeoutInterval = 11' not in ENGINE
     assert 'CurrentNavCellularHTTPS.fetch(url: url, timeout: 12)' in ENGINE
     assert 'NSURLErrorNotConnectedToInternet' in ENGINE
     assert 'NSURLErrorTimedOut' in ENGINE

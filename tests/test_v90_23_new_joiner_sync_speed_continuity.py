@@ -56,7 +56,7 @@ def test_v9022_sync_migration_is_retained_in_v9024():
 
 def test_same_named_road_explicit_limit_hands_off_without_stale_gap():
     assert "private static func normalizedRoadIdentity" in SPEED
-    assert '"jr": "junior"' in SPEED
+    assert '"jr": "junior"' in (Path(__file__).resolve().parents[1] / 'ios/HUDController/Vehicle/CurrentNavRoadIdentity.swift').read_text()
     matcher = SPEED.split("private func bestImprovedTraceSpeedLimit", 1)[1].split("private func acceptImprovedLimit", 1)[0]
     assert "strongSameRoadCandidates" in matcher
     assert "$0.speedMph == currentSpeedLimitMph" in matcher

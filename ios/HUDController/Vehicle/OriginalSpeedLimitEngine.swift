@@ -285,8 +285,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     // Two independently operated public Overpass instances. Rotate only after
     // a FAILED attempt; never flood multiple public hosts for one GPS update.
     private let currentNavOverpassEndpoints = [
-        "https://overpass.private.coffee/api/interpreter",
-        "https://overpass-api.de/api/interpreter"
+        // Match the successfully field-tested original Current endpoint first.
+        // Private.coffee remains an independent backup after a failed request.
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter"
     ]
     private var currentNavOverpassEndpointIndex = 0
     private let currentNavInitialFailureBackoffSeconds: TimeInterval = 20
@@ -1513,16 +1515,22 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         guard var components = URLComponents(string: endpoint) else { throw URLError(.badURL) }
         components.queryItems = [URLQueryItem(name: "data", value: query)]
         guard let url = components.url else { throw URLError(.badURL) }
+        let startedAt = Date()
         do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 11
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(http.statusCode) endpoint=\(endpoint) purpose=\(purpose) cache=preserved")
+            // v24.41: Use EXACTLY the original Current transport semantics:
+            // URLSession.shared.data(from:), without the v24.40 11-second
+            // URLRequest timeout that consistently cut off Overpass requests.
+            // The shared session's normal resource/request timeout policy applies.
+            let network = try await CurrentNavOSMTransport.download(url: url)
+            let data = network.data
+            let seconds = Date().timeIntervalSince(startedAt)
+            if !(200..<300).contains(network.statusCode) {
+                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(network.statusCode) duration=\(String(format: "%.1f", seconds))s endpoint=\(endpoint) purpose=\(purpose) bytes=\(data.count) cache=preserved")
                 throw URLError(.badServerResponse)
             }
-            return try JSONDecoder().decode(Response.self, from: data)
+            let result = try JSONDecoder().decode(Response.self, from: data)
+            logger.log("SPEED CURRENT NAV NETWORK", "URLSESSION SUCCESS duration=\(String(format: "%.1f", seconds))s purpose=\(purpose) ways=\(result.elements.count) bytes=\(data.count) endpoint=\(endpoint) transport=original-current")
+            return result
         } catch {
             // Do not retry malformed responses or HTTP 429/502 over a second
             // transport: that would duplicate shared-server load. Limit the
@@ -1534,7 +1542,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                                       NSURLErrorCannotConnectToHost,
                                       NSURLErrorCannotFindHost].contains(code)
             guard isTransportFailure else { throw error }
-            logger.log("SPEED CURRENT NAV NETWORK", "URLSession unavailable purpose=\(purpose) error=\(error.localizedDescription); attempting cellular-only HTTPS")
+            logger.log("SPEED CURRENT NAV NETWORK", "URLSession failed duration=\(String(format: "%.1f", Date().timeIntervalSince(startedAt)))s purpose=\(purpose) error=\(error.localizedDescription); attempting cellular-only HTTPS")
             do {
                 let data = try await CurrentNavCellularHTTPS.fetch(url: url, timeout: 12)
                 let result = try JSONDecoder().decode(Response.self, from: data)
@@ -2527,28 +2535,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// vocabulary. Direction abbreviations are expanded specifically for CarPlay
     /// strings such as "N 33rd St" versus OSM "North 33rd Street".
     private static func normalizedRoadPhrase(_ raw: String) -> String {
-        let aliases: [String: String] = [
-            "n": "north", "s": "south", "e": "east", "w": "west",
-            "nb": "northbound", "sb": "southbound", "eb": "eastbound", "wb": "westbound",
-            "mlk": "martin luther king", "jr": "junior", "dr": "drive", "rd": "road", "st": "street",
-            "ave": "avenue", "av": "avenue", "blvd": "boulevard",
-            "hwy": "highway", "pkwy": "parkway", "ln": "lane",
-            "ct": "court", "pl": "place", "ter": "terrace"
-        ]
-        let normalized = raw
-            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-            .map { aliases[$0] ?? $0 }
-            .joined(separator: " ")
-        // Apple commonly reports "Martin Luther King Dr" while OSM in
-        // Philadelphia uses "Martin Luther King Junior Drive". Canonicalize the
-        // optional honorific so Route Guidance can reinforce the same physical road.
-        return normalized.replacingOccurrences(
-            of: "martin luther king junior ",
-            with: "martin luther king "
-        )
+        CurrentNavRoadIdentity.normalizedRoadPhrase(raw)
     }
 
     /// OSM way IDs are implementation details, not road identities. Normalize the
@@ -2597,22 +2584,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     }
 
     private static func routeRoadMatches(_ rawRouteRoad: String, name: String?, reference: String?) -> Bool {
-        let route = normalizedRoadPhrase(rawRouteRoad)
-        guard !route.isEmpty else { return false }
-        if let name {
-            let candidate = normalizedRoadPhrase(name)
-            if !candidate.isEmpty, candidate == route { return true }
-        }
-        if let reference {
-            let ref = normalizedRoadPhrase(reference)
-            if !ref.isEmpty {
-                if route == ref { return true }
-                // Route Guidance sometimes adds a cardinal suffix to a highway ref
-                // (e.g. "US 1 North") while OSM stores only ref="US 1".
-                if route.hasPrefix(ref + " ") || route.hasSuffix(" " + ref) { return true }
-            }
-        }
-        return false
+        CurrentNavRoadIdentity.routeRoadMatches(rawRouteRoad, name: name, reference: reference)
     }
 
     /// Negative values improve a candidate's score. This is deliberately a
