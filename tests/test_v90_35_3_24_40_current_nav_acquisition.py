@@ -25,12 +25,15 @@ def test_main_current_nav_query_is_the_original_small_speed_tagged_query():
 
 
 def test_untagged_road_query_is_optional_and_cannot_erase_valid_data():
-    assert 'let supplemental = "[out:json][timeout:12];way[highway][name](around:' in ENGINE
-    assert 'currentNavSupplementaryQueryRadiusMeters = 160' in ENGINE
-    assert 'SUPPLEMENTARY FAILED' in ENGINE
-    assert 'primary speed-tagged cache retained' in ENGINE
-    assert 'recordCurrentNavArea(at: live, elements: extra.elements)' in ENGINE
-    assert 'guard let context = freshCarPlayRouteContext()' in ENGINE
+    # v24.43 fixes the old optional branch that was permanently unreachable
+    # whenever forward prefetch set originalDistance=270m (>80m guard).
+    assert 'auditCurrentNavNamedRoadIfNeeded(at: location, roadName: road)' in ENGINE
+    assert 'way[highway][name](around:' in ENGINE
+    assert 'way[highway][ref](around:' in ENGINE
+    assert 'SPEED CURRENT NAV AUDIT' in ENGINE
+    assert 'CurrentNavRoadAuditPolicy.classification(' in ENGINE
+    assert 'REQUEST_FAILED_INDETERMINATE' in (SRC / 'Vehicle/CurrentNavRoadAuditPolicy.swift').read_text()
+    assert 'recordCurrentNavArea(at: center, elements: response.elements)' in ENGINE
 
 
 def test_offline_carplay_wifi_does_not_force_unsafe_geometry_fallback():

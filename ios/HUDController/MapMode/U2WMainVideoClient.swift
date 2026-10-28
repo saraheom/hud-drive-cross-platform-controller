@@ -145,6 +145,12 @@ final class U2WMainVideoClient {
     private let bootstrapPreviousEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-bootstrap-previous.cgi")!
     private let bootstrapCurrentEndpoint = URL(string: "http://192.168.50.2/cgi-bin/u2wvideo-bootstrap-current.cgi")!
 
+    // v24.43: one read-only adapter-history bootstrap per actual mid-drive
+    // -8969/WAITING_FRESH_IDR outage. It does NOT request an unsafe CarPlay
+    // renegotiation, inject iAP2 messages, or restart the U2W firmware.
+    private var midDriveCodecFailureAt: Date?
+    private var midDriveRecoveryAttempted = false
+    private let midDriveRecoveryWaitSeconds: TimeInterval = 8.0
     private let decoderStaleFrameInterval: TimeInterval = 3.0
     private let startupDecoderGraceFrameCount = 10
     private let startupDecoderGraceInterval: TimeInterval = 8.0
@@ -191,6 +197,8 @@ final class U2WMainVideoClient {
         lastDecoderStaleDiagnosticAt = nil
         lastDecoderSoftFlushAt = nil
         lastDecoderReseedAt = nil
+        midDriveCodecFailureAt = nil
+        midDriveRecoveryAttempted = false
         preflightStableSince = nil
         preflightPassLogged = false
         decoderRecoveryPending = false
@@ -691,6 +699,9 @@ final class U2WMainVideoClient {
                 self.frameCount += 1
                 self.transportPhase = "LIVE"
                 self.decoderRecoveryPending = false
+                // A genuine decoded frame proves this recovery episode ended.
+                self.midDriveCodecFailureAt = nil
+                self.midDriveRecoveryAttempted = false
                 if self.preflightStableSince == nil ||
                     previousFrameAt.map({ now.timeIntervalSince($0) > 1.5 }) == true {
                     self.preflightStableSince = now
@@ -721,6 +732,10 @@ final class U2WMainVideoClient {
                     "decoder": self.decoderSummary,
                     "phase": self.transportPhase
                 ])
+                if message.contains("CODEC_BAD_DATA_GRACE_EXHAUSTED") ||
+                    message.contains("codecBadDataErr (-8969) reset VideoToolbox") {
+                    self.midDriveCodecFailureAt = self.midDriveCodecFailureAt ?? Date()
+                }
                 if message.contains("FOREIGN_REF_IDC_REJECT") {
                     self.diagnosticRecorder.record("parser_decoder_fingerprint", "foreign_reference_rejected", fields: [
                         "message": message,
@@ -847,6 +862,18 @@ final class U2WMainVideoClient {
                 // bootstrap. Never convert an expected decoder-wait state into reconnect churn;
                 // a real socket EOF/NWConnection failure or explicit manual restart still
                 // recovers the transport.
+                if self.transportPhase == "WAITING_FRESH_IDR",
+                   let faultAt = self.midDriveCodecFailureAt,
+                   !self.midDriveRecoveryAttempted,
+                   self.frameCount > 100,
+                   bytesAreFresh,
+                   now.timeIntervalSince(faultAt) >= self.midDriveRecoveryWaitSeconds {
+                    self.midDriveRecoveryAttempted = true
+                    self.logger.log("U2W VIDEO RECOVERY", "MID_DRIVE_8969 one-shot passive history bootstrap after \(Int(now.timeIntervalSince(faultAt)))s waiting for IDR; preserving U2W relay and physical HUD; no CarPlay screen switch")
+                    self.diagnosticRecorder.record("mainvideo", "mid_drive_8969_bounded_history_rebootstrap", fields: ["wait_seconds": now.timeIntervalSince(faultAt), "frame_count": self.frameCount, "relay": self.adapterRelayVersion])
+                    self.restartWorkerWithReadOnlyBootstrap(reason: "mid-drive -8969, no fresh IDR")
+                    continue
+                }
                 if self.transportPhase == "WAITING_LIVE_IDR" || self.transportPhase == "WAITING_FRESH_IDR" {
                     let shouldRefresh = connectedAge >= self.initialIDRWaitDiagnosticInterval &&
                         (self.lastDecoderStaleDiagnosticAt.map({ now.timeIntervalSince($0) >= self.initialIDRWaitDiagnosticInterval }) ?? true)

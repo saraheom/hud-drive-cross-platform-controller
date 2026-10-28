@@ -270,6 +270,14 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private let currentNavCacheWriteQueue = DispatchQueue(
         label: "HUDController.CurrentNavRoadCache", qos: .utility)
     private var currentNavDiskLoaded = false
+    // v24.43: independent, rate-limited nearby-name query. A query restricted to
+    // [maxspeed] CANNOT establish that an untagged neighborhood road has no data.
+    // Do not rely on the 270m forward-prefetch result for this question.
+    private var currentNavRoadAuditInFlight = false
+    private var currentNavRoadAuditNextAt = Date.distantPast
+    private var currentNavRoadAuditLastCenter: CLLocation?
+    private var currentNavRoadAuditLastSuccessAt: Date?
+    private let currentNavRoadAuditRadiusMeters = 170
     // Most recent valid GPS sample; an Overpass response may take 40–60 seconds.
     // Refresh the display for the CURRENT position, never the old request location.
     private var currentNavLatestValidLocation: CLLocation?
@@ -1097,6 +1105,16 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
         }
 
+        if sourceMode == .currentNav, limit == nil,
+           let route = freshCarPlayRouteContext(),
+           !route.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !currentNavRoadAuditInFlight, Date() >= currentNavRoadAuditNextAt {
+            let road = route.currentRoad
+            Task { @MainActor [weak self] in
+                await self?.auditCurrentNavNamedRoadIfNeeded(at: location, roadName: road)
+            }
+        }
+
         if sourceMode == .currentNav, limit == nil, currentSpeedLimitMph > 0 {
             // An incompatible road must never retain the previous road's warning
             // threshold. Clearing a stale sign is safer than showing motorway 50
@@ -1427,13 +1445,23 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         // Keep all geographically distinct areas. When a center is refreshed,
         // replace only that center (within 55m), retaining existing OSM ways
         // from overlapping OTHER areas. No destructive whole-route replacement.
+        // When an independent name-only audit lands near an earlier speed-tag
+        // request, merge instead of replacing the already verified geometry.
+        // Newer elements overwrite the same OSM IDs; this cannot invent speeds.
+        let prior = currentNavDiskAreas.filter { area in
+            now.timeIntervalSince(area.fetchedAt) >= 0 &&
+            now.timeIntervalSince(area.fetchedAt) <= currentNavCacheExpirySeconds &&
+            CLLocation(latitude: area.latitude, longitude: area.longitude).distance(from: location) < 55
+        }
+        var mergedElements = elements
+        for area in prior { mergedElements = Self.mergedCurrentNavOSMElements(area.elements, mergedElements) }
         currentNavDiskAreas.removeAll { area in
             now.timeIntervalSince(area.fetchedAt) > currentNavCacheExpirySeconds ||
             CLLocation(latitude: area.latitude, longitude: area.longitude).distance(from: location) < 55
         }
         currentNavDiskAreas.insert(CurrentNavDiskArea(
             latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
-            fetchedAt: now, elements: elements), at: 0)
+            fetchedAt: now, elements: mergedElements), at: 0)
         if currentNavDiskAreas.count > currentNavMaximumCachedAreas {
             currentNavDiskAreas.removeLast(currentNavDiskAreas.count - currentNavMaximumCachedAreas)
         }
@@ -1508,33 +1536,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             if let live = currentNavLatestValidLocation,
                abs(live.timestamp.timeIntervalSinceNow) < 7 { process(live) }
 
-            // An untagged road does not prevent continuing the tagged-data
-            // prefetch pipeline. This optional acquisition is targeted at the
-            // LIVE position, not a now-stale prefetch origin 40 seconds ago.
-            guard let context = freshCarPlayRouteContext(),
-                  !context.currentRoad.isEmpty,
-                  !tagged.contains(where: { Self.routeRoadMatches(context.currentRoad, name: $0.name, reference: $0.reference) }),
-                  let live = currentNavLatestValidLocation,
-                  abs(live.timestamp.timeIntervalSinceNow) < 7,
-                  originalDistance <= 80 else { return }
-            // A 270m forward prefetch must not launch a second, slower all-road
-            // request that holds the next speed-tagged query for another minute.
-            // Only enrich a non-forward (stationary) point near the live GPS.
-            let supplementalPoint = live.coordinate
-            let supplemental = "[out:json][timeout:12];way[highway][name](around:\(currentNavSupplementaryQueryRadiusMeters),\(supplementalPoint.latitude),\(supplementalPoint.longitude));out tags geom;"
-            do {
-                let extra = try await fetchCurrentNavOSM(query: supplemental, endpoint: endpoint, purpose: "optional-nearby-streets")
-                guard sourceMode == .currentNav else { return }
-                // Save the supplemental area independently at its REAL center;
-                // a single prefetch target and a real GPS position are not the
-                // same location and must not be silently conflated.
-                if !extra.elements.isEmpty {
-                    recordCurrentNavArea(at: live, elements: extra.elements)
-                    logger.log("SPEED CURRENT NAV QUERY", "SUPPLEMENTARY OK nearbyWays=\(extra.elements.count) independentCache=1 no guessed speed")
-                }
-            } catch {
-                logger.log("SPEED CURRENT NAV QUERY", "SUPPLEMENTARY FAILED error=\(error.localizedDescription); primary speed-tagged cache retained")
-            }
+            // The nearby all-named-road audit runs INDEPENDENTLY from GPS
+            // updates. Never hold this primary/prefetch request open for a slow
+            // second Overpass query (v24.42's old branch was unreachable when
+            // originalDistance=270m and it required <=80m).
+
         } catch {
             currentNavLastFailureAt = Date()
             currentNavFailureCount = min(8, currentNavFailureCount + 1)
@@ -1551,6 +1557,69 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         for element in first { byID[element.id] = element }
         for element in second { byID[element.id] = element }
         return Array(byID.values)
+    }
+
+    /// Independent query to prove whether a specific nearby named OSM segment
+    /// actually has a supported posted-speed tag. A successful [maxspeed] query
+    /// does NOT prove absence: it omits every untagged way by construction.
+    /// Only a successful HTTP 200 with real named geometry can establish
+    /// ROAD_MATCHED_WITHOUT_MAXSPEED. This is not an inferred legal limit.
+    private func auditCurrentNavNamedRoadIfNeeded(at location: CLLocation, roadName: String) async {
+        guard sourceMode == .currentNav, !roadName.isEmpty,
+              !currentNavRoadAuditInFlight,
+              Date() >= currentNavRoadAuditNextAt else { return }
+        // Don't launch a second shared-server request before the first primary
+        // lookup has succeeded or failed once. Cached coverage can be used.
+        guard !currentNavDiskAreas.isEmpty || currentNavFailureCount > 0 else { return }
+        if let center = currentNavRoadAuditLastCenter,
+           let succeededAt = currentNavRoadAuditLastSuccessAt,
+           Date().timeIntervalSince(succeededAt) < 6 * 60,
+           location.distance(from: center) < 125 { return }
+        currentNavRoadAuditInFlight = true
+        defer { currentNavRoadAuditInFlight = false }
+        let center = CLLocation(latitude: location.coordinate.latitude,
+                                longitude: location.coordinate.longitude)
+        // Throttle even after failures; this is a diagnostic/coverage supplement,
+        // not another unbounded poll loop on public Overpass infrastructure.
+        currentNavRoadAuditNextAt = Date().addingTimeInterval(120)
+        let query = "[out:json][timeout:25];(way[highway][name](around:\(currentNavRoadAuditRadiusMeters),\(center.coordinate.latitude),\(center.coordinate.longitude));way[highway][ref](around:\(currentNavRoadAuditRadiusMeters),\(center.coordinate.latitude),\(center.coordinate.longitude)));out tags geom;"
+        let endpoint = currentNavOverpassEndpoints[currentNavOverpassEndpointIndex]
+        logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_START street=\(roadName) radius=\(currentNavRoadAuditRadiusMeters)m endpoint=\(endpoint) primaryInFlight=\(currentNavRequestInFlight ? 1 : 0)")
+        do {
+            let response = try await fetchCurrentNavOSM(query: query, endpoint: endpoint, purpose: "named-road-identity-audit")
+            guard sourceMode == .currentNav else { return }
+            let nearby = response.elements.compactMap(Self.makeCurrentNavRoad)
+            let named = nearby.filter { Self.routeRoadMatches(roadName, name: $0.name, reference: $0.reference) }
+            let aligned = named.filter { candidate in
+                candidate.parts.contains { part in
+                    CurrentNavRoadMatchPolicy.distanceToSegmentMeters(
+                        latitude: center.coordinate.latitude, longitude: center.coordinate.longitude,
+                        startLatitude: part.start.latitude, startLongitude: part.start.longitude,
+                        endLatitude: part.end.latitude, endLongitude: part.end.longitude
+                    ) <= max(20, min(CurrentNavRoadMatchPolicy.maximumCorridorMeters,
+                                        center.horizontalAccuracy > 0 ? center.horizontalAccuracy * 1.4 : 20))
+                }
+            }
+            let tagged = aligned.filter { $0.speedKmh != nil }
+            let classification = CurrentNavRoadAuditPolicy.classification(
+                httpSucceeded: true, namedRoadCount: named.count,
+                nearbyNamedRoadCount: aligned.count,
+                explicitlyTaggedNearbyCount: tagged.count)
+            currentNavRoadAuditLastCenter = center
+            currentNavRoadAuditLastSuccessAt = Date()
+            // Genuine geometry, including untagged roads, is useful for the
+            // SAME road's matcher. Keep it in the persistent multi-area cache.
+            if !response.elements.isEmpty { recordCurrentNavArea(at: center, elements: response.elements) }
+            logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_HTTP_200 street=\(roadName) classification=\(classification) ways=\(nearby.count) nameMatches=\(named.count) corridorMatches=\(aligned.count) taggedCorridorMatches=\(tagged.count) center=\(center.coordinate.latitude),\(center.coordinate.longitude); OSM does NOT imply legal default 25mph")
+            currentNavRoadAuditNextAt = Date().addingTimeInterval(90)
+            if let live = currentNavLatestValidLocation,
+               abs(live.timestamp.timeIntervalSinceNow) < 7 { process(live) }
+        } catch {
+            let classification = CurrentNavRoadAuditPolicy.classification(
+                httpSucceeded: false, namedRoadCount: 0,
+                nearbyNamedRoadCount: 0, explicitlyTaggedNearbyCount: 0)
+            logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_\(classification) street=\(roadName) error=\(error.localizedDescription); cannot conclude whether OSM contains a speed tag")
+        }
     }
 
     /// Prefer standard URLSession, which preserves the stock Current behavior.

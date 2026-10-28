@@ -35,7 +35,8 @@ def test_multi_tile_cache_and_prefetch_are_wired_without_single_center_rejection
     assert 'currentNavCacheExpirySeconds: TimeInterval = 72 * 3600' in ENGINE
     assert 'sourceMode == .currentNav { currentNavLatestValidLocation = location }' in ENGINE
     # When moving, optional slow secondary query cannot hold primary acquisition.
-    assert 'originalDistance <= 80 else { return }' in ENGINE
+    assert 'auditCurrentNavNamedRoadIfNeeded(at location: CLLocation, roadName: String)' in ENGINE
+    assert 'currentNavRoadAuditInFlight = true' in ENGINE
 
 
 def test_posted_limit_needs_same_road_and_real_geometry():
