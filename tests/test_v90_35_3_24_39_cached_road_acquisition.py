@@ -39,7 +39,7 @@ def test_disk_cache_contains_real_geometries_and_bounds():
 def test_lightweight_query_and_respectful_retry():
     assert 'currentNavQueryRadiusMeters = 260' in ENGINE
     assert 'way[maxspeed][highway](around:' in ENGINE
-    assert 'way[highway][name](around:' in ENGINE
+    assert 'CurrentNavOSMQuery.namedRoadAudit(' in ENGINE
     assert 'out tags geom;' in ENGINE
     assert 'https://overpass.private.coffee/api/interpreter' in ENGINE
     assert 'https://overpass-api.de/api/interpreter' in ENGINE

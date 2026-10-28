@@ -28,7 +28,7 @@ def test_multi_tile_cache_and_prefetch_are_wired_without_single_center_rejection
     assert 'CurrentNavCoveragePlanner.fetchCenter(' in ENGINE
     assert 'currentNavAheadUncoveredThresholdMeters: CLLocationDistance = 190' in ENGINE
     assert 'nearestCenterMeters <= currentNavAheadUncoveredThresholdMeters' in ENGINE
-    assert 'recordCurrentNavArea(at: target, elements: primary.elements)' in ENGINE
+    assert 'recordCurrentNavArea(at: target, elements: primary.elements,' in ENGINE
     assert 'if let live = currentNavLatestValidLocation' in ENGINE
     assert 'location.distance(from: queryLocation) > 265' not in ENGINE
     assert 'currentNavDiskAreas.count > currentNavMaximumCachedAreas' in ENGINE

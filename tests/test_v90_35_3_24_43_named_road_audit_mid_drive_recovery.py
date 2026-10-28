@@ -16,12 +16,15 @@ VIDEO = (ROOT / 'ios/HUDController/MapMode/U2WMainVideoClient.swift').read_text(
 def test_audit_is_independent_and_records_real_named_roads():
     assert 'way[maxspeed][highway](around:' in ENGINE
     assert 'auditCurrentNavNamedRoadIfNeeded(at location: CLLocation, roadName: String)' in ENGINE
-    assert 'let query = "[out:json][timeout:25];(way[highway][name]' in ENGINE
-    assert 'way[highway][ref](around:' in ENGINE
+    assert 'CurrentNavOSMQuery.namedRoadAudit(' in ENGINE
+    query_source = (VEH / 'CurrentNavOSMQuery.swift').read_text()
+    assert '[timeout:50]' in query_source
+    assert '[name~' in query_source
+    assert 'way[highway][ref](around:' not in ENGINE
     assert 'currentNavRoadAuditInFlight = true' in ENGINE
     assert 'currentNavRoadAuditNextAt = Date().addingTimeInterval(120)' in ENGINE
     assert 'CURRENT NAV AUDIT' in ENGINE
-    assert 'recordCurrentNavArea(at: center, elements: response.elements)' in ENGINE
+    assert 'recordCurrentNavArea(at: center, elements: response.elements,' in ENGINE
     assert 'mergedCurrentNavOSMElements(area.elements, mergedElements)' in ENGINE
     assert 'CurrentNavRoadAuditPolicy.classification(' in ENGINE
     assert 'no borrowed highway limit' in ENGINE

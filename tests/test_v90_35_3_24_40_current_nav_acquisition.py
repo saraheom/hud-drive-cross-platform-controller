@@ -19,7 +19,7 @@ def test_main_current_nav_query_is_the_original_small_speed_tagged_query():
     assert 'currentNavPrimaryQueryRadiusMeters = 400' in ENGINE
     assert 'fetchCurrentNavOSM(query: primaryQuery' in ENGINE
     assert 'currentNavNetworkVerifiedWayIDs.formUnion(tagged.map(\.id))' in ENGINE
-    assert 'recordCurrentNavArea(at: target, elements: primary.elements)' in ENGINE
+    assert 'recordCurrentNavArea(at: target, elements: primary.elements,' in ENGINE
     # The original Current path stays independently available.
     assert 'case .current:\n            await updateOriginalSegmentsIfNeeded(at: location, force: force)' in ENGINE
 
@@ -28,12 +28,12 @@ def test_untagged_road_query_is_optional_and_cannot_erase_valid_data():
     # v24.43 fixes the old optional branch that was permanently unreachable
     # whenever forward prefetch set originalDistance=270m (>80m guard).
     assert 'auditCurrentNavNamedRoadIfNeeded(at: location, roadName: road)' in ENGINE
-    assert 'way[highway][name](around:' in ENGINE
-    assert 'way[highway][ref](around:' in ENGINE
+    assert 'CurrentNavOSMQuery.namedRoadAudit(' in ENGINE
+    assert '[name~' in (ROOT / 'ios/HUDController/Vehicle/CurrentNavOSMQuery.swift').read_text()
     assert 'SPEED CURRENT NAV AUDIT' in ENGINE
     assert 'CurrentNavRoadAuditPolicy.classification(' in ENGINE
     assert 'REQUEST_FAILED_INDETERMINATE' in (SRC / 'Vehicle/CurrentNavRoadAuditPolicy.swift').read_text()
-    assert 'recordCurrentNavArea(at: center, elements: response.elements)' in ENGINE
+    assert 'recordCurrentNavArea(at: center, elements: response.elements,' in ENGINE
 
 
 def test_offline_carplay_wifi_does_not_force_unsafe_geometry_fallback():

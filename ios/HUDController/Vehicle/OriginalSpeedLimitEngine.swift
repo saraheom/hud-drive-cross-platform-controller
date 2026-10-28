@@ -71,6 +71,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
 
     struct Response: Decodable {
         let elements: [Element]
+        let remark: String?
     }
 
     struct SegmentPart {
@@ -263,6 +264,9 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let longitude: Double
         let fetchedAt: Date
         let elements: [Element]
+        // nil is the legacy v24.39–43 cache format (400m primary query).
+        // A 170m audit MUST NOT be treated as 400m of map coverage.
+        let coverageRadiusMeters: Double?
     }
     private var currentNavDiskAreas: [CurrentNavDiskArea] = []
     // A serial, utility-QoS queue keeps JSON serialization off the UI/render
@@ -277,6 +281,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var currentNavRoadAuditNextAt = Date.distantPast
     private var currentNavRoadAuditLastCenter: CLLocation?
     private var currentNavRoadAuditLastSuccessAt: Date?
+    private var currentNavRoadAuditFailures = 0
     private let currentNavRoadAuditRadiusMeters = 170
     // Most recent valid GPS sample; an Overpass response may take 40–60 seconds.
     // Refresh the display for the CURRENT position, never the old request location.
@@ -1406,7 +1411,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 .distance(from: location)
             // A 400m query can contain a way intersecting the current position
             // even when its center is farther than the old 240m cache threshold.
-            guard distance <= currentNavActiveAreaRadiusMeters else { return nil }
+            guard CurrentNavCacheCoverage.contains(queryRadiusMeters: area.coverageRadiusMeters,
+                                                   distanceMeters: distance) else { return nil }
             return (area, distance)
         }.sorted { $0.area.fetchedAt < $1.area.fetchedAt }
         guard let nearest = nearbyAreas.min(by: { $0.distance < $1.distance }) else {
@@ -1439,7 +1445,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         logger.log("SPEED CURRENT NAV CACHE", "HIT nearest=\(Int(nearest.distance))m age=\(Int(now.timeIntervalSince(nearest.area.fetchedAt)))s areas=\(nearbyAreas.count) ways=\(currentNavRoads.count) tagged=\(segments.count) merged=1")
     }
 
-    private func recordCurrentNavArea(at location: CLLocation, elements: [Element]) {
+    private func recordCurrentNavArea(at location: CLLocation, elements: [Element], radiusMeters: Double) {
         loadCurrentNavCacheIfNeeded()
         let now = Date()
         // Keep all geographically distinct areas. When a center is refreshed,
@@ -1455,13 +1461,17 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         }
         var mergedElements = elements
         for area in prior { mergedElements = Self.mergedCurrentNavOSMElements(area.elements, mergedElements) }
+        let effectiveRadius = CurrentNavCacheCoverage.mergedRadius(
+            incomingRadiusMeters: radiusMeters,
+            priorRadii: prior.map { $0.coverageRadiusMeters })
         currentNavDiskAreas.removeAll { area in
             now.timeIntervalSince(area.fetchedAt) > currentNavCacheExpirySeconds ||
             CLLocation(latitude: area.latitude, longitude: area.longitude).distance(from: location) < 55
         }
         currentNavDiskAreas.insert(CurrentNavDiskArea(
             latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
-            fetchedAt: now, elements: mergedElements), at: 0)
+            fetchedAt: now, elements: mergedElements,
+            coverageRadiusMeters: effectiveRadius), at: 0)
         if currentNavDiskAreas.count > currentNavMaximumCachedAreas {
             currentNavDiskAreas.removeLast(currentNavDiskAreas.count - currentNavMaximumCachedAreas)
         }
@@ -1497,8 +1507,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let currentlyCovered = currentNavDiskAreas.contains { area in
             now.timeIntervalSince(area.fetchedAt) >= 0 &&
             now.timeIntervalSince(area.fetchedAt) <= currentNavCacheExpirySeconds &&
-            CLLocation(latitude: area.latitude, longitude: area.longitude).distance(from: location)
-                <= currentNavActiveAreaRadiusMeters
+            CurrentNavCacheCoverage.contains(
+                queryRadiusMeters: area.coverageRadiusMeters,
+                distanceMeters: CLLocation(latitude: area.latitude,
+                                           longitude: area.longitude).distance(from: location))
         }
         // A fresh tile near the AHEAD target makes another request redundant.
         // Once the target moves >190m from ALL recent request centers, start
@@ -1528,7 +1540,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             currentNavNetworkVerifiedWayIDs.formUnion(tagged.map(\.id))
             let verifiedAt = Date()
             for road in tagged { currentNavVerifiedWayAt[road.id] = verifiedAt }
-            recordCurrentNavArea(at: target, elements: primary.elements)
+            recordCurrentNavArea(at: target, elements: primary.elements,
+                                 radiusMeters: Double(currentNavPrimaryQueryRadiusMeters))
             currentNavLastFailureAt = nil
             currentNavFailureCount = 0
             currentNavNextRequestAt = Date().addingTimeInterval(8)
@@ -1568,9 +1581,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         guard sourceMode == .currentNav, !roadName.isEmpty,
               !currentNavRoadAuditInFlight,
               Date() >= currentNavRoadAuditNextAt else { return }
-        // Don't launch a second shared-server request before the first primary
-        // lookup has succeeded or failed once. Cached coverage can be used.
-        guard !currentNavDiskAreas.isEmpty || currentNavFailureCount > 0 else { return }
+        // The targeted name query can now run on the FIRST missing-limit
+        // sample, even during a slow first 400m speed-tagged download. Keeping
+        // a separate rate limit and a small 170m radius bounds public API load.
+        // The broad stock query still runs independently and is unchanged.
         if let center = currentNavRoadAuditLastCenter,
            let succeededAt = currentNavRoadAuditLastSuccessAt,
            Date().timeIntervalSince(succeededAt) < 6 * 60,
@@ -1582,9 +1596,15 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         // Throttle even after failures; this is a diagnostic/coverage supplement,
         // not another unbounded poll loop on public Overpass infrastructure.
         currentNavRoadAuditNextAt = Date().addingTimeInterval(120)
-        let query = "[out:json][timeout:25];(way[highway][name](around:\(currentNavRoadAuditRadiusMeters),\(center.coordinate.latitude),\(center.coordinate.longitude));way[highway][ref](around:\(currentNavRoadAuditRadiusMeters),\(center.coordinate.latitude),\(center.coordinate.longitude)));out tags geom;"
+        guard let query = CurrentNavOSMQuery.namedRoadAudit(
+            roadName: roadName, latitude: center.coordinate.latitude,
+            longitude: center.coordinate.longitude,
+            radiusMeters: currentNavRoadAuditRadiusMeters) else {
+            logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_QUERY_UNSUPPORTED street=\(roadName); no tag-absence conclusion")
+            return
+        }
         let endpoint = currentNavOverpassEndpoints[currentNavOverpassEndpointIndex]
-        logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_START street=\(roadName) radius=\(currentNavRoadAuditRadiusMeters)m endpoint=\(endpoint) primaryInFlight=\(currentNavRequestInFlight ? 1 : 0)")
+        logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_START street=\(roadName) token=\(CurrentNavOSMQuery.auditSearchToken(roadName) ?? "none") radius=\(currentNavRoadAuditRadiusMeters)m endpoint=\(endpoint) primaryInFlight=\(currentNavRequestInFlight ? 1 : 0)")
         do {
             let response = try await fetchCurrentNavOSM(query: query, endpoint: endpoint, purpose: "named-road-identity-audit")
             guard sourceMode == .currentNav else { return }
@@ -1607,9 +1627,13 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                 explicitlyTaggedNearbyCount: tagged.count)
             currentNavRoadAuditLastCenter = center
             currentNavRoadAuditLastSuccessAt = Date()
+            currentNavRoadAuditFailures = 0
             // Genuine geometry, including untagged roads, is useful for the
             // SAME road's matcher. Keep it in the persistent multi-area cache.
-            if !response.elements.isEmpty { recordCurrentNavArea(at: center, elements: response.elements) }
+            if !response.elements.isEmpty {
+                recordCurrentNavArea(at: center, elements: response.elements,
+                                     radiusMeters: Double(currentNavRoadAuditRadiusMeters))
+            }
             logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_HTTP_200 street=\(roadName) classification=\(classification) ways=\(nearby.count) nameMatches=\(named.count) corridorMatches=\(aligned.count) taggedCorridorMatches=\(tagged.count) center=\(center.coordinate.latitude),\(center.coordinate.longitude); OSM does NOT imply legal default 25mph")
             currentNavRoadAuditNextAt = Date().addingTimeInterval(90)
             if let live = currentNavLatestValidLocation,
@@ -1618,7 +1642,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             let classification = CurrentNavRoadAuditPolicy.classification(
                 httpSucceeded: false, namedRoadCount: 0,
                 nearbyNamedRoadCount: 0, explicitlyTaggedNearbyCount: 0)
-            logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_\(classification) street=\(roadName) error=\(error.localizedDescription); cannot conclude whether OSM contains a speed tag")
+            currentNavRoadAuditFailures = min(6, currentNavRoadAuditFailures + 1)
+            let delay = min(10 * 60, 120 * pow(2.0, Double(currentNavRoadAuditFailures - 1)))
+            currentNavRoadAuditNextAt = Date().addingTimeInterval(delay)
+            currentNavOverpassEndpointIndex = (currentNavOverpassEndpointIndex + 1) % currentNavOverpassEndpoints.count
+            logger.log("SPEED CURRENT NAV AUDIT", "AUDIT_\(classification) street=\(roadName) error=\(error.localizedDescription) retry=\(Int(delay))s nextEndpoint=\(currentNavOverpassEndpoints[currentNavOverpassEndpointIndex]); cannot conclude whether OSM contains a speed tag")
         }
     }
 
@@ -1641,10 +1669,18 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             let data = network.data
             let seconds = Date().timeIntervalSince(startedAt)
             if !(200..<300).contains(network.statusCode) {
-                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(network.statusCode) duration=\(String(format: "%.1f", seconds))s endpoint=\(endpoint) purpose=\(purpose) bytes=\(data.count) cache=preserved")
+                let detail = CurrentNavOSMTransport.errorSummary(data: data)
+                logger.log("SPEED CURRENT NAV QUERY", "HTTP=\(network.statusCode) duration=\(String(format: "%.1f", seconds))s endpoint=\(endpoint) purpose=\(purpose) bytes=\(data.count) serverDetail=\(detail) cache=preserved")
                 throw URLError(.badServerResponse)
             }
+            // Overpass may return HTTP 200 with a JSON remark about timeout
+            // or resource exhaustion. Never record such a partial response as
+            // successful geographic coverage.
             let result = try JSONDecoder().decode(Response.self, from: data)
+            if let remark = result.remark, !remark.isEmpty {
+                logger.log("SPEED CURRENT NAV QUERY", "OVERPASS_REMARK purpose=\(purpose) detail=\(remark.prefix(240)); cache=preserved")
+                throw URLError(.cannotParseResponse)
+            }
             logger.log("SPEED CURRENT NAV NETWORK", "URLSESSION SUCCESS duration=\(String(format: "%.1f", seconds))s purpose=\(purpose) ways=\(result.elements.count) bytes=\(data.count) endpoint=\(endpoint) transport=original-current")
             return result
         } catch {
@@ -1662,6 +1698,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             do {
                 let data = try await CurrentNavCellularHTTPS.fetch(url: url, timeout: 12)
                 let result = try JSONDecoder().decode(Response.self, from: data)
+                if let remark = result.remark, !remark.isEmpty { throw URLError(.cannotParseResponse) }
                 logger.log("SPEED CURRENT NAV NETWORK", "CELLULAR SUCCESS purpose=\(purpose) bytes=\(data.count)")
                 return result
             } catch {
