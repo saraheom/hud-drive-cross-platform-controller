@@ -43,7 +43,7 @@ def test_posted_limit_needs_same_road_and_real_geometry():
     assert 'let semanticMatch = Self.routeRoadMatches(navRoad, name: candidate.name, reference: candidate.reference)' in ENGINE
     assert 'CurrentNavRoadMatchPolicy.eligible(' in ENGINE
     assert 'no borrowed highway limit' in ENGINE
-    assert 'guard let mph = directMph ?? connectedMph, mph > 0 else' in ENGINE
+    assert 'guard let mph = directMph ?? conflictSafeConnectedMph, mph > 0 else' in ENGINE
     assert 'cached explicit OSM limit; warning off until refreshed' in ENGINE
     assert 'sourceMode == .currentNav, limit == nil, currentSpeedLimitMph > 0' in ENGINE
     assert 'case .current:\n            limit = bestSpeedLimit(at: location)' in ENGINE

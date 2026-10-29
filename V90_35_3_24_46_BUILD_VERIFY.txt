@@ -1,0 +1,18 @@
+HUD Controller v90.35.3.24.46 — verification
+Python regression: 628 passed, 1 skipped, 3 warnings
+Native Swift continuity replay: PASSED (included in pytest)
+iOS Swift syntax parse: 233/233 passed
+Workflow YAML parse: 8/8 passed
+ZIP integrity: PASS, 1185 files, 6,390,199 bytes
+Archive SHA256: Refer to external V90_35_3_24_46_BUILD_VERIFY.txt
+Changed previous-release files (5):
+  README.md
+  ios/HUDController/App/AppState.swift
+  ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift
+  tests/test_v90_35_3_24_38_road_identity.py
+  tests/test_v90_35_3_24_42_coverage_prefetch.py
+Protected original Current matching functions: byte-identical substrings
+Protected U2W files: 478 unchanged
+Protected OBD, MapMode, and approved maneuver assets: unchanged
+Offline dataset: fetched in GitHub TestFlight workflow; NOT included in ZIP
+macOS/Xcode full build and iPhone physical drive: not run; required

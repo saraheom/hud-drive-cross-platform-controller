@@ -236,6 +236,11 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private var currentNavLastMatchedAt: Date?
     private var currentNavMatchFresh = false
     private var currentNavDisplayHold = false
+    // Only direct tagged OSM evidence arms this anchor; continued navigation
+    // on a geometrically matched untagged segment may extend its display, not
+    // its original verification age or overspeed-warning eligibility.
+    private var currentNavContinuityAnchor: CurrentNavSameRoadContinuity.Anchor?
+    private var currentNavContinuityCarried = false
     private var currentNavStatusReason = "waiting for current road"
     // Road identity is determined independently of posted-speed availability.
     // Current (without Nav) NEVER reads this cache or these constraints.
@@ -910,6 +915,8 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         currentNavLastMatchedAt = nil
         currentNavMatchFresh = false
         currentNavDisplayHold = false
+        currentNavContinuityAnchor = nil
+        currentNavContinuityCarried = false
         currentNavStatusReason = "waiting for current road"
         currentNavRoads.removeAll()
         currentNavQueryLocation = nil
@@ -1114,7 +1121,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             status = "\(sourceMode.rawValue) • GPS \(currentSpeedMph) mph • finding speed limit…"
         }
 
-        if sourceMode == .currentNav, limit == nil,
+        // A carried sign does not mean the posted-speed gap has been resolved.
+        // Continue targeted OSM audits in the background for a better explicit
+        // value, even when continuity keeps the displayed sign nonzero.
+        if sourceMode == .currentNav, (limit == nil || currentNavContinuityCarried),
            let route = freshCarPlayRouteContext(),
            !route.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            !currentNavRoadAuditInFlight, Date() >= currentNavRoadAuditNextAt {
@@ -1840,6 +1850,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         activateCurrentNavCachedArea(at: location)
         currentNavMatchFresh = false
         currentNavDisplayHold = false
+        currentNavContinuityCarried = false
         let freshRoute = freshCarPlayRouteContext()
         let navRoad = freshRoute?.currentRoad.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -1885,6 +1896,7 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
             currentNavLastMatchedAt = nil
             currentNavLastMatchedLocation = nil
             currentNavLastMatchedLimitMph = 0
+            currentNavContinuityAnchor = nil
             if currentSpeedLimitMph > 0 {
                 clearDisplayedLimit(reason: "CarPlay street changed to \(navRoad)")
             }
@@ -1964,10 +1976,70 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
         let directMph = chosen.speedKmh.map { Int((Double($0) / 1.609344).rounded()) }
         let connectedMph = directMph == nil
             ? connectedCurrentNavLimit(for: chosen, road: navRoad, location: location) : nil
-        guard let mph = directMph ?? connectedMph, mph > 0 else {
-            currentNavStatusReason = "correct road identified; posted speed unavailable"
-            logger.log("SPEED CURRENT NAV", "UNKNOWN current=\(navRoad) matched=\(chosen.name ?? "-") distance=\(String(format: "%.1f", winner.distance))m untagged=\(chosen.speedKmh == nil ? 1 : 0) alternatives=[\(alternatives)]")
-            return heldCurrentNavSpeed(road: identity, location: location)
+        // Explicit tags always win, including a different posted speed on the
+        // SAME road. Never carry an old 25mph past a plausible 35mph segment.
+        // If the winner is untagged, nearby competing tagged same-road segments
+        // can veto continuity; they cannot supply a guessed replacement value.
+        let contradictoryPostedSpeed = currentNavContinuityAnchor.map { anchor in
+            scored.contains { option in
+                guard let kmh = option.segment.speedKmh else { return false }
+                let candidateMph = Int((Double(kmh) / 1.609344).rounded())
+                return candidateMph != anchor.speedMph &&
+                    option.distance <= max(15, winner.distance + 8) &&
+                    option.angle <= max(35, winner.angle + 20)
+            }
+        } ?? false
+        if directMph == nil, connectedMph == nil,
+           let advanced = CurrentNavSameRoadContinuity.advance(
+               currentNavContinuityAnchor, roadIdentity: identity,
+               latitude: location.coordinate.latitude,
+               longitude: location.coordinate.longitude, now: Date(),
+               matchedSameRoadGeometry: true,
+               contradictoryPostedLimitNearby: contradictoryPostedSpeed) {
+            currentNavContinuityAnchor = advanced
+            currentNavContinuityCarried = true
+            currentNavDisplayHold = true
+            currentNavMatchFresh = false
+            currentNavStatusReason = "confirmed same-road continuity from explicit OSM; warning off"
+            currentNavLastMatchedRoad = identity
+            currentNavLastMatchedLimitMph = advanced.speedMph
+            currentNavLastMatchedLocation = location
+            currentNavLastMatchedAt = Date() // brief GPS-gap hold, NOT anchor refresh
+            logger.log("SPEED CURRENT NAV", "CONTINUITY_DISPLAY_ONLY road=\(identity) speed=\(advanced.speedMph)mph matched=\(chosen.name ?? "-") way=\(chosen.id) gap=untagged age=\(Int(Date().timeIntervalSince(advanced.explicitlyVerifiedAt)))s travel=\(Int(advanced.travelledMeters))m distance=\(String(format: "%.1f", winner.distance))m warn=0")
+            return advanced.speedMph
+        }
+        // A conflicting nearby explicit same-road tag prevents accepting an
+        // inferred connected-way value as well as the old carried value.
+        let conflictSafeConnectedMph = contradictoryPostedSpeed ? nil : connectedMph
+        guard let mph = directMph ?? conflictSafeConnectedMph, mph > 0 else {
+            // A conflicting tagged road is positive evidence against reusing
+            // the older limit. Disarm both long and short holds in this case.
+            if contradictoryPostedSpeed {
+                currentNavContinuityAnchor = nil
+                currentNavLastMatchedAt = nil
+            }
+            currentNavStatusReason = contradictoryPostedSpeed
+                ? "same-road speed evidence conflicts; waiting for direct match"
+                : "correct road identified; posted speed unavailable"
+            logger.log("SPEED CURRENT NAV", "UNKNOWN current=\(navRoad) matched=\(chosen.name ?? "-") distance=\(String(format: "%.1f", winner.distance))m untagged=\(chosen.speedKmh == nil ? 1 : 0) conflict=\(contradictoryPostedSpeed ? 1 : 0) alternatives=[\(alternatives)]")
+            return contradictoryPostedSpeed ? nil : heldCurrentNavSpeed(road: identity, location: location)
+        }
+        if directMph != nil {
+            currentNavContinuityAnchor = CurrentNavSameRoadContinuity.verified(
+                identity: identity, speedMph: mph,
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude, now: Date())
+        } else if let anchor = currentNavContinuityAnchor, anchor.speedMph != mph {
+            // A connected-road consensus disagrees with the previous explicit
+            // anchor; do not allow that anchor to be reused later.
+            currentNavContinuityAnchor = nil
+        } else {
+            currentNavContinuityAnchor = CurrentNavSameRoadContinuity.advance(
+                currentNavContinuityAnchor, roadIdentity: identity,
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude, now: Date(),
+                matchedSameRoadGeometry: true,
+                contradictoryPostedLimitNearby: contradictoryPostedSpeed)
         }
         if directMph != nil {
             currentNavMatchFresh = currentNavQueryAt.map {

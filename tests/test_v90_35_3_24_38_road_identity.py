@@ -83,7 +83,7 @@ def test_nav_street_identity_is_required_before_applying_speed():
     assert 'guard let winner = scored.first else {' in ENGINE
     assert 'let directMph = chosen.speedKmh.map' in ENGINE
     assert 'connectedCurrentNavLimit(for: chosen, road: navRoad, location: location)' in ENGINE
-    assert 'guard let mph = directMph ?? connectedMph, mph > 0 else {' in ENGINE
+    assert 'guard let mph = directMph ?? conflictSafeConnectedMph, mph > 0 else {' in ENGINE
     assert 'currentNavMatchFresh = currentNavQueryAt.map {' in ENGINE
     assert 'currentNavDisplayHold = true // connected-road value is display only' in ENGINE
     assert 'no borrowed highway limit' in ENGINE

@@ -1,3 +1,5 @@
+> **v90.35.3.24.46 (Current + Nav):** A verified explicit OSM speed limit now remains visible across *geometrically confirmed* untagged portions of the same CarPlay-named road. Carry is display-only (never triggers overspeed warning), bounded to 12 minutes/6 km of actual travel since last directly tagged road evidence, and stops on road changes or conflicting posted speeds. Background named-road audits continue while a limit is carried. Original Current, OBD, U2W, U-turn and roundabout are unchanged. See `V90_35_3_24_46_RELEASE.md`.
+
 > **v90.35.3.24.45 (Current + Nav):** The iOS TestFlight workflow now builds and embeds an OSM-derived Philadelphia road snapshot before generating the Xcode project. This source ZIP intentionally includes only an empty placeholder; the release job must fetch, validate, and embed the real geometry. Offline limits still require CarPlay street/GPS verification, and no 25 mph legal default is inferred. See `V90_35_3_24_45_RELEASE.md`.
 
 # HUD Controller v90.35.3.24.29 + U2W v8.38 — read-only startup bootstrap + background continuity + full-canvas Map Mode
