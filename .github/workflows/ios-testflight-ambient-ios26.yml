@@ -49,6 +49,13 @@ jobs:
           brew install xcodegen
           sudo gem install fastlane
 
+      - name: Build verified offline Philadelphia OSM road snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_philadelphia_osm_bundle.py
+          python3 -c 'import json; p=json.load(open("ios/HUDController/OfflineOSM/PhiladelphiaOSMRoads.json")); assert len(p["roads"]) >= 2000; assert sum(r["maxspeedKmh"] is not None for r in p["roads"]) >= 100'
+
       - name: Generate project
         working-directory: ios
         run: |
@@ -135,6 +142,22 @@ jobs:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             archive
+
+      - name: Verify real offline OSM snapshot is embedded in the app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/HUDController.xcarchive/Products/Applications/HUDController.app"
+          BUNDLE="$(find "$APP" -type f -name 'PhiladelphiaOSMRoads.json' -print -quit)"
+          test -n "$BUNDLE" || { echo "ERROR: Offline OSM asset not embedded in archive"; exit 1; }
+          python3 - "$BUNDLE" <<'PY_VERIFY'
+          import json, sys
+          p=json.load(open(sys.argv[1]))
+          n=len(p.get('roads', []))
+          tagged=sum(r.get('maxspeedKmh') is not None for r in p['roads'])
+          print(f'Embedded Philadelphia OSM map: {n} roads / {tagged} explicit speed limits')
+          assert n >= 2000 and tagged >= 100, 'missing or empty offline map in archive'
+          PY_VERIFY
 
       - name: Verify archived bundle version
         run: |

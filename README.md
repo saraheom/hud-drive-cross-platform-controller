@@ -1,3 +1,5 @@
+> **v90.35.3.24.45 (Current + Nav):** The iOS TestFlight workflow now builds and embeds an OSM-derived Philadelphia road snapshot before generating the Xcode project. This source ZIP intentionally includes only an empty placeholder; the release job must fetch, validate, and embed the real geometry. Offline limits still require CarPlay street/GPS verification, and no 25 mph legal default is inferred. See `V90_35_3_24_45_RELEASE.md`.
+
 # HUD Controller v90.35.3.24.29 + U2W v8.38 — read-only startup bootstrap + background continuity + full-canvas Map Mode
 
 This paired release keeps v24.28's successful mid-drive H.264 continuity guard intact and adds three focused improvements: a read-only startup bootstrap using v8.38's rotation-stable current + retained previous MainVideo generations joined to an already-attached exact v8.31 live TCP stream by byte-overlap and generation-coherence proof; a bounded iOS background-continuity task for short app switching; and a canonical 480×240 Map Mode renderer where every major UI component is independently positionable. It also adds the optional ETA-at-lane-guidance-position fallback.

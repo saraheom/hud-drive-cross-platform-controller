@@ -274,6 +274,10 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     private let currentNavCacheWriteQueue = DispatchQueue(
         label: "HUDController.CurrentNavRoadCache", qos: .utility)
     private var currentNavDiskLoaded = false
+    // v24.45: CI/TestFlight bundles a geographically indexed OSM-derived
+    // Philadelphia snapshot. Never use it for the unchanged Current mode.
+    private var currentNavOfflineLoaded = false
+    private var currentNavOfflineIndex: CurrentNavOfflineOSMIndex?
     // v24.43: independent, rate-limited nearby-name query. A query restricted to
     // [maxspeed] CANNOT establish that an untagged neighborhood road has no data.
     // Do not rely on the 270m forward-prefetch result for this question.
@@ -1401,48 +1405,94 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// The primary request obtains real OSM geometry within 400m of its
     /// center. We keep a 15m edge margin for GPS drift. ALL overlapping
     /// snapshots contribute; no last-writer-wins replacement of other tiles.
+    private func loadCurrentNavOfflineIfNeeded() {
+        guard !currentNavOfflineLoaded else { return }
+        currentNavOfflineLoaded = true
+        // Disk read, JSON decode, and spatial grid construction must not block
+        // the main actor: the HUD's live JPEG/map pipeline needs it for frames.
+        let url = Bundle.main.url(forResource: "PhiladelphiaOSMRoads", withExtension: "json")
+        Task.detached(priority: .utility) { [weak self] in
+            let result: (CurrentNavOfflineOSMIndex, Int)? = {
+                guard let url,
+                      let data = try? Data(contentsOf: url),
+                      let index = try? CurrentNavOfflineOSMIndex.load(data: data),
+                      index.roadCount > 0 else { return nil }
+                return (index, data.count)
+            }()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard let result else {
+                    self.logger.log("SPEED CURRENT NAV OFFLINE", "OFFLINE_BUNDLE_UNAVAILABLE (no validated Philadelphia dataset in this app build); online OSM remains active")
+                    return
+                }
+                self.currentNavOfflineIndex = result.0
+                // Force activation even if the GPS stayed inside one small tile.
+                self.currentNavActiveAreaKey = nil
+                self.logger.log("SPEED CURRENT NAV OFFLINE", "OFFLINE_BUNDLE_READY roads=\(result.0.roadCount) tagged=\(result.0.speedTaggedCount) bytes=\(result.1)")
+                if self.sourceMode == .currentNav,
+                   let latest = self.currentNavLatestValidLocation,
+                   abs(latest.timestamp.timeIntervalSinceNow) < 7 {
+                    self.process(latest)
+                }
+            }
+        }
+    }
+
+    private static func offlineElement(_ road: CurrentNavOfflineOSMIndex.Road) -> Element {
+        Element(type: "way", id: road.id,
+                geometry: road.coordinates.map { Coordinate(lat: $0[0], lon: $0[1]) },
+                tags: Tags(highway: road.highway,
+                           maxspeed: road.maxspeedKmh.map(String.init),
+                           maxspeedForward: nil, maxspeedBackward: nil,
+                           maxspeedConditional: nil,
+                           maxspeedForwardConditional: nil,
+                           maxspeedBackwardConditional: nil,
+                           oneway: nil, name: road.name, ref: road.reference))
+    }
+
+    /// Union the versioned offline tile with valid online snapshots. Live
+    /// Overpass observations take precedence for duplicate OSM IDs, but a
+    /// network failure never deletes the local road index. Offline data is
+    /// display-only; warning eligibility still requires live verified ways.
     private func activateCurrentNavCachedArea(at location: CLLocation) {
         loadCurrentNavCacheIfNeeded()
+        loadCurrentNavOfflineIfNeeded()
         let now = Date()
         let nearbyAreas = currentNavDiskAreas.compactMap { area -> (area: CurrentNavDiskArea, distance: Double)? in
             let age = now.timeIntervalSince(area.fetchedAt)
             guard age >= -60, age <= currentNavCacheExpirySeconds else { return nil }
-            let distance = CLLocation(latitude: area.latitude, longitude: area.longitude)
-                .distance(from: location)
-            // A 400m query can contain a way intersecting the current position
-            // even when its center is farther than the old 240m cache threshold.
+            let distance = CLLocation(latitude: area.latitude, longitude: area.longitude).distance(from: location)
             guard CurrentNavCacheCoverage.contains(queryRadiusMeters: area.coverageRadiusMeters,
                                                    distanceMeters: distance) else { return nil }
             return (area, distance)
         }.sorted { $0.area.fetchedAt < $1.area.fetchedAt }
-        guard let nearest = nearbyAreas.min(by: { $0.distance < $1.distance }) else {
-            if currentNavActiveAreaKey != nil {
-                currentNavRoads.removeAll()
-                segments.removeAll()
-                currentNavActiveAreaKey = nil
-                currentNavQueryLocation = nil
-                currentNavQueryAt = nil
-                logger.log("SPEED CURRENT NAV CACHE", "MISS outside all cached OSM coverage areas; awaiting request")
-            }
-            return
-        }
-        // Stable key changes only when a tile joins/leaves the set or was
-        // refreshed, not on every GPS sample. Newest data wins duplicate IDs.
-        let key = nearbyAreas.map {
+
+        let offline = currentNavOfflineIndex?.nearby(
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude) ?? []
+        let tile = CurrentNavOfflineOSMIndex.cellKey(
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude)
+        let key = "offline:\(tile)|" + nearbyAreas.map {
             "\($0.area.latitude),\($0.area.longitude),\($0.area.fetchedAt.timeIntervalSince1970)"
         }.joined(separator: "|")
         guard key != currentNavActiveAreaKey else { return }
-        var elementsByID: [Int64: Element] = [:]
-        for nearbyArea in nearbyAreas {
-            for element in nearbyArea.area.elements { elementsByID[element.id] = element }
+        var byID: [Int64: Element] = [:]
+        for road in offline { byID[road.id] = Self.offlineElement(road) }
+        // Online data is authoritative when a way is present in both feeds.
+        for area in nearbyAreas { for element in area.area.elements { byID[element.id] = element } }
+        let combined = Array(byID.values)
+        currentNavRoads = combined.compactMap(Self.makeCurrentNavRoad)
+        // IMPORTANT: the original Current fallback uses only original/network
+        // road segments. Never feed the offline dataset to the old matcher.
+        let online = nearbyAreas.flatMap { $0.area.elements }
+        segments = online.compactMap(Self.makeSegment)
+        currentNavQueryLocation = nearbyAreas.min(by: { $0.distance < $1.distance }).map {
+            CLLocation(latitude: $0.area.latitude, longitude: $0.area.longitude)
         }
-        let elements = Array(elementsByID.values)
-        currentNavRoads = elements.compactMap(Self.makeCurrentNavRoad)
-        segments = elements.compactMap(Self.makeSegment)
-        currentNavQueryLocation = CLLocation(latitude: nearest.area.latitude, longitude: nearest.area.longitude)
         currentNavQueryAt = nearbyAreas.map(\.area.fetchedAt).max()
         currentNavActiveAreaKey = key
-        logger.log("SPEED CURRENT NAV CACHE", "HIT nearest=\(Int(nearest.distance))m age=\(Int(now.timeIntervalSince(nearest.area.fetchedAt)))s areas=\(nearbyAreas.count) ways=\(currentNavRoads.count) tagged=\(segments.count) merged=1")
+        logger.log("SPEED CURRENT NAV CACHE", "OFFLINE_MERGED tile=\(tile) offline=\(offline.count) onlineAreas=\(nearbyAreas.count) candidates=\(currentNavRoads.count) posted=\(currentNavRoads.filter { $0.speedKmh != nil }.count)")
     }
 
     private func recordCurrentNavArea(at location: CLLocation, elements: [Element], radiusMeters: Double) {

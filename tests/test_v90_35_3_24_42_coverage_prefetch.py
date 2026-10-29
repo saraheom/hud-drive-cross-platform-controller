@@ -22,8 +22,8 @@ CANVAS = (ROOT / 'ios/HUDController/MapMode/HudMapModeCanvas.swift').read_text()
 def test_multi_tile_cache_and_prefetch_are_wired_without_single_center_rejection():
     assert 'currentNavActiveAreaRadiusMeters: CLLocationDistance = 385' in ENGINE
     assert 'let nearbyAreas = currentNavDiskAreas.compactMap' in ENGINE
-    assert 'for nearbyArea in nearbyAreas {' in ENGINE
-    assert 'currentNavRoads = elements.compactMap(Self.makeCurrentNavRoad)' in ENGINE
+    assert 'for area in nearbyAreas { for element in area.area.elements' in ENGINE
+    assert 'currentNavRoads = combined.compactMap(Self.makeCurrentNavRoad)' in ENGINE
     assert 'currentNavDiskAreas.insert(CurrentNavDiskArea(' in ENGINE
     assert 'CurrentNavCoveragePlanner.fetchCenter(' in ENGINE
     assert 'currentNavAheadUncoveredThresholdMeters: CLLocationDistance = 190' in ENGINE

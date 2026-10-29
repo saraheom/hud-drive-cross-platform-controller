@@ -73,7 +73,7 @@ def test_current_is_verbatim_original_algorithm_with_independent_nav_query():
     assert 'Self.originalPolygonContains(' in ENGINE
     assert 'case .currentNav:\n            await updateCurrentNavRoadsIfNeeded' in ENGINE
     assert 'way[highway~' in ENGINE
-    assert 'currentNavRoads = elements.compactMap(Self.makeCurrentNavRoad)' in ENGINE
+    assert 'currentNavRoads = combined.compactMap(Self.makeCurrentNavRoad)' in ENGINE
     assert 'let posted = tags.maxspeed.flatMap' in ENGINE
 
 

@@ -23,6 +23,13 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Build verified offline Philadelphia OSM road snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_philadelphia_osm_bundle.py
+          python3 -c 'import json; p=json.load(open("ios/HUDController/OfflineOSM/PhiladelphiaOSMRoads.json")); assert len(p["roads"]) >= 2000; assert sum(r["maxspeedKmh"] is not None for r in p["roads"]) >= 100'
+
       - name: Generate project
         working-directory: ios
         run: |

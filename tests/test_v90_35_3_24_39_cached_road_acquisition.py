@@ -33,7 +33,7 @@ def test_disk_cache_contains_real_geometries_and_bounds():
     assert 'currentNavCacheExpirySeconds: TimeInterval = 72 * 3600' in ENGINE
     assert 'currentNavActiveAreaRadiusMeters: CLLocationDistance = 385' in ENGINE
     assert 'activateCurrentNavCachedArea(at: location)' in ENGINE
-    assert 'currentNavRoads = elements.compactMap(Self.makeCurrentNavRoad)' in ENGINE
+    assert 'currentNavRoads = combined.compactMap(Self.makeCurrentNavRoad)' in ENGINE
 
 
 def test_lightweight_query_and_respectful_retry():
