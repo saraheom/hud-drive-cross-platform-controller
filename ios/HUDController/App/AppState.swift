@@ -2320,7 +2320,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.46",
+                "appVersion=v90.35.3.24.47",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",

@@ -11,6 +11,11 @@ import Foundation
 enum CurrentNavSameRoadContinuity {
     static let maximumAgeSeconds: TimeInterval = 12 * 60
     static let maximumTravelMeters: Double = 6_000
+    // Only for temporarily missing OSM geometry between two confirmed pieces
+    // of the SAME CarPlay-named road. This is intentionally much shorter than
+    // the independently geometry-verified 12 minute / 6 km limit.
+    static let maximumUnmappedGapSeconds: TimeInterval = 30
+    static let maximumUnmappedGapMeters: Double = 550
 
     struct Anchor {
         let identity: String
@@ -31,6 +36,37 @@ enum CurrentNavSameRoadContinuity {
                       explicitlyVerifiedAt: now, lastLatitude: latitude,
                       lastLongitude: longitude, lastConfirmedAt: now,
                       travelledMeters: 0)
+    }
+
+    /// A very short, display-only bridge across a missing offline tile or an
+    /// unusable GPS geometry sample. The independent geometry confirmation
+    /// timestamp does NOT move: repeated calls cannot extend the grace period.
+    /// Caller must have fresh CarPlay current-street metadata, no active turn,
+    /// no geometrically plausible different road, and no conflicting posted tag.
+    static func bridgeUnmappedGap(_ anchor: Anchor?, roadIdentity: String,
+                                  latitude: Double, longitude: Double, now: Date,
+                                  freshNavigationStreet: Bool,
+                                  routeTransition: Bool,
+                                  differentRoadGeometryNearby: Bool,
+                                  contradictoryPostedLimitNearby: Bool) -> Anchor? {
+        guard let anchor, !roadIdentity.isEmpty,
+              anchor.identity == roadIdentity, freshNavigationStreet,
+              !routeTransition, !differentRoadGeometryNearby,
+              !contradictoryPostedLimitNearby,
+              latitude.isFinite, longitude.isFinite,
+              (-90...90).contains(latitude), (-180...180).contains(longitude) else { return nil }
+        let gap = now.timeIntervalSince(anchor.lastConfirmedAt)
+        let originalAge = now.timeIntervalSince(anchor.explicitlyVerifiedAt)
+        guard gap >= 0, gap <= maximumUnmappedGapSeconds,
+              originalAge >= 0, originalAge <= maximumAgeSeconds else { return nil }
+        let distance = distanceMeters(latitudeA: anchor.lastLatitude,
+                                      longitudeA: anchor.lastLongitude,
+                                      latitudeB: latitude, longitudeB: longitude)
+        guard distance <= maximumUnmappedGapMeters,
+              anchor.travelledMeters + distance <= maximumTravelMeters else { return nil }
+        // Crucial: do not refresh lastConfirmedAt or position; this must expire
+        // unless we regain an independently matching same-road OSM geometry.
+        return anchor
     }
 
     static func distanceMeters(latitudeA: Double, longitudeA: Double,

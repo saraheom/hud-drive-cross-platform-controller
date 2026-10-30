@@ -1,0 +1,12 @@
+HUD Controller v90.35.3.24.47 — local verification
+
+Source base: v90.35.3.24.46 full repository.
+
+Python tests: 631 passed, 1 skipped.
+Swift parsing: 234/234 passed with swiftc -frontend -parse; iOS SDK compilation not run.
+Native Swift test: MLK missing geometry 16-second bridge and geometric reacquisition pass; no-unbounded hold, conflicting posted speed, alternative road, new street, stale nav, route transition, distance expiry, no anchor all pass.
+GitHub workflows: 8/8 YAML parsed.
+Compared with v24.46: Original Current's bestSpeedLimit() and updateOriginalSegmentsIfNeeded() methods byte-for-byte unchanged; 516 protected OBD/video/U2W/graphic asset paths unchanged.
+Only modified production files: CurrentNavSameRoadContinuity.swift and OriginalSpeedLimitEngine.swift plus diagnostic appVersion string in AppState.swift.
+No Philadelphia municipal GIS added; offline Philadelphia OSM compilation continues in TestFlight workflow.
+Full Xcode compilation, TestFlight and real-world effectiveness still unverified.

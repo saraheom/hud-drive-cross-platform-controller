@@ -1967,6 +1967,37 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                     ? "named road geometry/heading rejected"
                     : "CarPlay street absent from cached OSM road names"
             logger.log("SPEED CURRENT NAV", "REJECT all current=\(navRoad) reason=\(currentNavStatusReason) candidates=[\(alternatives)] corridor=\(Int(radius))m gpsAccuracy=\(Int(location.horizontalAccuracy))m roads=\(currentNavRoads.count); no borrowed highway limit")
+            // v24.47: a new offline tile can momentarily omit the *previously
+            // verified* MLK road entirely. A full geometry-based long hold is
+            // impossible in that instant. Bridge briefly only while the live
+            // CarPlay current-street identity is unchanged; never use a nearby
+            // expressway as the speed source or allow repeated holds to extend
+            // the bridge lifetime.
+            if let anchor = currentNavContinuityAnchor {
+                let otherRoadNearby = nearby.contains { option in
+                    !option.accepted && option.distance <= 10 && option.angle <= 30
+                }
+                let conflictingNamedTag = nearby.contains { option in
+                    guard option.accepted, option.distance <= 45,
+                          option.angle <= 55, let kmh = Int(option.speed) else { return false }
+                    return Int((Double(kmh) / 1.609344).rounded()) != anchor.speedMph
+                }
+                if let bridged = CurrentNavSameRoadContinuity.bridgeUnmappedGap(
+                    anchor, roadIdentity: identity,
+                    latitude: location.coordinate.latitude,
+                    longitude: location.coordinate.longitude, now: Date(),
+                    freshNavigationStreet: true,
+                    routeTransition: route.isRouteTransition,
+                    differentRoadGeometryNearby: otherRoadNearby,
+                    contradictoryPostedLimitNearby: conflictingNamedTag) {
+                    currentNavContinuityCarried = true
+                    currentNavDisplayHold = true
+                    currentNavMatchFresh = false
+                    currentNavStatusReason = "brief missing-geometry same-road continuity; warning off"
+                    logger.log("SPEED CURRENT NAV", "CONTINUITY_GAP_DISPLAY_ONLY road=\(identity) speed=\(bridged.speedMph)mph geometryGap=\(Int(Date().timeIntervalSince(bridged.lastConfirmedAt)))s reason=\(currentNavRoads.isEmpty ? "empty_tile" : "no_eligible_way") warn=0")
+                    return bridged.speedMph
+                }
+            }
             return heldCurrentNavSpeed(road: identity, location: location)
         }
         let chosen = winner.segment
