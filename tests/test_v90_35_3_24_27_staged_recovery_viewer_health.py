@@ -38,5 +38,5 @@ def test_current_hud_viewer_requires_live_socket_not_historical_latches():
     assert "sessionScoped ? (established && clientSeen && liveFrameSent) : established" in APP
     assert "hudU2WReadySessionID" in APP
     assert "current HUD MJPEG viewer no longer established/session-ready" in APP
-    assert "consecutiveViewerFailures >= 2" in APP
+    assert "consecutiveViewerFailures >= 3" in APP and "statusUnavailable" in APP
     assert "let relay = await self.u2wHUDRelayStatus()" in APP

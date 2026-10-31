@@ -34,8 +34,8 @@ def test_map_mode_ui_is_production_compact_but_diagnostics_remain_collectable():
     assert 'Optional MainVideo diagnostics' not in UI
     assert 'Run 90 s OBD deep probe v3' not in UI
     assert 'Collect OBD Drive Diagnostic ZIP (parked)' not in UI
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
-    assert 'Map Mode FPS' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
+    assert 'Map Mode FPS' not in UI
     assert 'state.mainVideo.transportPhase' in UI
 
 

@@ -29,7 +29,7 @@ def test_keep_decoder_bg_task_is_fixed_production_mode_with_lock_rebootstrap():
     assert 'mainVideo.configureBackgroundProbe(mode: .keepDecoderBackgroundTask)' in APP
     assert 'Map Mode Background Continuity Probe' not in UI
     assert 'Apply for next Map Mode session' not in UI
-    assert 'Keep decoder + BG task' in UI
+    assert 'Keep decoder + BG task' not in UI
     assert 'lock-time -12903 detected' in VIDEO
     assert 'restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")' in VIDEO
     assert 'readOnlyRebootstrapCooldown' in VIDEO and 'startupSnapshotFetchTask' in VIDEO

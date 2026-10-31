@@ -36,12 +36,12 @@ def test_one_shot_mid_drive_8969_preserves_carplay_and_adapter():
     assert 'midDriveRecoveryWaitSeconds: TimeInterval = 8.0' in VIDEO
     assert 'self.transportPhase == "WAITING_FRESH_IDR"' in VIDEO
     assert 'self.midDriveCodecFailureAt' in VIDEO
-    assert '!self.midDriveRecoveryAttempted' in VIDEO
+    assert 'self.midDriveRecoveryAttemptCount < 2' in VIDEO
     assert 'self.frameCount > 100' in VIDEO
     assert 'bytesAreFresh' in VIDEO
-    assert 'self.midDriveRecoveryAttempted = true' in VIDEO
-    assert 'restartWorkerWithReadOnlyBootstrap(reason: "mid-drive -8969, no fresh IDR")' in VIDEO
-    assert 'self.midDriveRecoveryAttempted = false' in VIDEO
+    assert 'self.midDriveRecoveryAttemptCount += 1' in VIDEO
+    assert 'restartWorkerWithReadOnlyBootstrap(reason: "mid-drive -8969 read-only attempt' in VIDEO
+    assert 'self.midDriveRecoveryAttemptCount = 0' in VIDEO
     assert 'self.midDriveCodecFailureAt = nil' in VIDEO
     assert 'worker?.stop()' in VIDEO   # only iPhone's worker; U2W firmware untouched
 

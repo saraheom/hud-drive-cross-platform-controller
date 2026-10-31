@@ -28,7 +28,7 @@ final class V90352431ResourceSafeBackgroundProbeTests: XCTestCase {
         XCTAssertFalse(app.contains("applyMapModeBackgroundProbeModeForNextSession"))
         XCTAssertFalse(ui.contains("Apply for next Map Mode session"))
         XCTAssertTrue(ui.contains(#"Decoder: \(state.mainVideo.decoderSummary)"#))
-        XCTAssertTrue(ui.contains("Keep decoder + BG task"))
+        XCTAssertFalse(ui.contains("Keep decoder + BG task"))
         XCTAssertTrue(video.contains("lock-time -12903 detected"))
         XCTAssertTrue(video.contains(#"restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")"#))
     }

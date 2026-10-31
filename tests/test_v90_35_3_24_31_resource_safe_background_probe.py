@@ -26,7 +26,7 @@ def test_bootstrap_is_single_flight_and_cooldown_gated():
 def test_resource_safe_bootstrap_is_used_by_fixed_production_background_mode():
     assert 'selectMapModeBackgroundProbeMode' not in APP
     assert 'applyMapModeBackgroundProbeModeForNextSession' not in APP
-    assert 'Keep decoder + BG task' in UI
+    assert 'Keep decoder + BG task' not in UI
     assert 'lock-time -12903 detected' in VIDEO
     assert 'restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")' in VIDEO
 

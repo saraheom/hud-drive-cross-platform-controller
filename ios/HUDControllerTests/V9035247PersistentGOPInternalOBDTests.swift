@@ -54,6 +54,6 @@ final class V9035247PersistentGOPInternalOBDTests: XCTestCase {
         XCTAssertFalse(ui.contains("Collect OBD Drive Diagnostic ZIP (parked)"))
         XCTAssertFalse(ui.contains("does not open a second OBD connection"))
         XCTAssertFalse(ui.contains("Run 90 s HUD-internal OBD probe v4"))
-        XCTAssertTrue(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
+        XCTAssertFalse(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
     }
 }

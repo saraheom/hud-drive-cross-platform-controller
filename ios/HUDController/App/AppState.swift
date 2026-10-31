@@ -1572,6 +1572,7 @@ final class AppState {
             defer { self.hudU2WDisplayHealthTask = nil }
             var fallbackAnnounced = false
             var consecutiveViewerFailures = 0
+            var inconclusiveStatusFailures = 0
             while !Task.isCancelled, self.hudU2WLiveRelayActive {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, self.hudU2WLiveRelayActive else { return }
@@ -1583,17 +1584,28 @@ final class AppState {
                 // HUD socket. Two consecutive misses bound transient CGI/netstat
                 // races without allowing a dead viewer to remain falsely READY.
                 let relay = await self.u2wHUDRelayStatus()
+                // A timed-out CGI request is *indeterminate*, not evidence
+                // that the HUD actually disconnected. The Oct-30 startup
+                // reverted to Freeride after two relay status timeouts.
+                let statusUnavailable = relay.sessionID == "—"
+                if statusUnavailable {
+                    inconclusiveStatusFailures += 1
+                    self.logger.log("MAP MODE HEALTH", "RELAY_STATUS_UNAVAILABLE count=\(inconclusiveStatusFailures); keep current Map Mode while probing")
+                    if inconclusiveStatusFailures < 5 { continue }
+                } else {
+                    inconclusiveStatusFailures = 0
+                }
                 let sameSession = self.hudU2WReadySessionID == "—" || relay.sessionID == self.hudU2WReadySessionID
-                let viewerHealthy = sameSession && relay.currentSessionReady
+                let viewerHealthy = !statusUnavailable && sameSession && relay.currentSessionReady
                 if viewerHealthy {
                     consecutiveViewerFailures = 0
                 } else {
                     consecutiveViewerFailures += 1
                     self.logger.log(
                         "MAP MODE HEALTH",
-                        "HUD viewer unhealthy check=\(consecutiveViewerFailures)/2 expectedSession=\(self.hudU2WReadySessionID) observedSession=\(relay.sessionID) established=\(relay.established ? 1 : 0) client=\(relay.clientSeen ? 1 : 0) liveFrame=\(relay.liveFrameSent ? 1 : 0)"
+                        "HUD viewer unhealthy check=\(consecutiveViewerFailures)/3 expectedSession=\(self.hudU2WReadySessionID) observedSession=\(relay.sessionID) established=\(relay.established ? 1 : 0) client=\(relay.clientSeen ? 1 : 0) liveFrame=\(relay.liveFrameSent ? 1 : 0)"
                     )
-                    if consecutiveViewerFailures >= 2 {
+                    if consecutiveViewerFailures >= 3 {
                         self.hudU2WCurrentSessionWasReady = false
                         self.hudU2WReadySessionID = "—"
                         self.hudU2WSTAStatus = "HUD map viewer disconnected — rebuilding once…"
@@ -1637,6 +1649,26 @@ final class AppState {
             "HUD/U2W HEALTH",
             "Physical Map Mode fail-safe → stock dashboard reason=\(reason); MainVideo + iPhone JPEG relay intentionally kept alive"
         )
+    }
+
+    /// Retry a failed automatic HUD viewer rejoin once the adapter has had
+    /// time to recover. The existing per-session two-attempt budget bounds
+    /// this task; ordinary healthy sessions are never restarted here.
+    private func retryAutomaticHUDViewerAfterFailure(reason: String) {
+        guard automaticMapModeEnabled, hudU2WLiveRelayActive,
+              hudU2WDisplayRecoveryCount < 2 else { return }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard let self, !Task.isCancelled,
+                  self.automaticMapModeEnabled,
+                  self.hudU2WLiveRelayActive,
+                  self.bluetooth.state == .connected,
+                  self.hudU2WDisplayRecoveryTask == nil,
+                  !self.hudU2WCurrentSessionWasReady,
+                  self.hudU2WDisplayRecoveryCount < 2 else { return }
+            self.logger.log("HUD/U2W HEALTH", "AUTOMATIC_REJOIN_RETRY after transient failure reason=\(reason)")
+            self.scheduleHUDU2WDisplayHealthRecovery(reason: "automatic retry: \(reason)")
+        }
     }
 
     private func scheduleHUDU2WDisplayHealthRecovery(reason: String) {
@@ -1688,12 +1720,14 @@ final class AppState {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 self.logger.log("HUD/U2W HEALTH", "viewer recovery #\(recoveryNumber) fresh relay session HTTP=\(code)")
                 guard (200...299).contains(code) else {
-                    self.hudU2WSTAStatus = "HUD viewer restart failed — staying on stock dashboard"
+                    self.hudU2WSTAStatus = "HUD viewer restart failed — retrying if adapter recovers"
+                    self.retryAutomaticHUDViewerAfterFailure(reason: "relay HTTP \(code)")
                     return
                 }
             } catch {
                 self.logger.log("HUD/U2W HEALTH", "viewer recovery #\(recoveryNumber) relay start failed: \(error.localizedDescription)")
-                self.hudU2WSTAStatus = "HUD viewer restart unreachable — staying on stock dashboard"
+                self.hudU2WSTAStatus = "HUD viewer restart unreachable — retrying if adapter recovers"
+                self.retryAutomaticHUDViewerAfterFailure(reason: "relay start network failure")
                 return
             }
 
@@ -1734,6 +1768,7 @@ final class AppState {
             self.failSafeHUDU2WDisplayToStock(reason: "viewer recovery #\(recoveryNumber) did not establish a fresh current session")
             self.hudU2WSTAStatus = "HUD map viewer did not recover — staying on stock dashboard"
             self.logger.log("HUD/U2W HEALTH", "viewer recovery #\(recoveryNumber) exhausted; stock dashboard retained")
+            self.retryAutomaticHUDViewerAfterFailure(reason: "viewer not ready after rejoin")
         }
     }
 
@@ -1974,7 +2009,7 @@ final class AppState {
                 ) {
                     renderCount += 1
                     self.hudU2WFrameRelay.sendFrame(frame)
-                    let targetFPS = HudMapModeSettings.normalizedHUDFrameRate(self.mapModeSettings.hudFrameRate)
+                    let targetFPS = HudMapModeSettings.supportedHUDFrameRates.max() ?? 15
                     let heartbeatEvery = max(1, targetFPS * 5)
                     if renderCount == 1 || renderCount % heartbeatEvery == 0 {
                         let etaShown = self.mapModeSettings.showETA && snapshot.hasLiveRoute &&
@@ -1990,7 +2025,7 @@ final class AppState {
                         )
                     }
                 }
-                let targetFPS = HudMapModeSettings.normalizedHUDFrameRate(self.mapModeSettings.hudFrameRate)
+                let targetFPS = HudMapModeSettings.supportedHUDFrameRates.max() ?? 15
                 let intervalMS = Int64(max(1, Int((1000.0 / Double(targetFPS)).rounded())))
                 try? await Task.sleep(for: .milliseconds(intervalMS))
             }
@@ -2320,7 +2355,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.47",
+                "appVersion=v90.35.3.24.48",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -3346,7 +3381,7 @@ final class AppState {
                 ) {
                     self.mapModeCastServer.updateFrame(frame)
                 }
-                let targetFPS = HudMapModeSettings.normalizedHUDFrameRate(self.mapModeSettings.hudFrameRate)
+                let targetFPS = HudMapModeSettings.supportedHUDFrameRates.max() ?? 15
                 let intervalMS = Int64(max(1, Int((1000.0 / Double(targetFPS)).rounded())))
                 try? await Task.sleep(for: .milliseconds(intervalMS))
             }

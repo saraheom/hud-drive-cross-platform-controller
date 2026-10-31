@@ -52,7 +52,7 @@ final class V90352429StartupBootstrapFullCanvasTests: XCTestCase {
         XCTAssertTrue(settings.contains("case hardwareDecoderBackgroundTask"))
         XCTAssertTrue(settings.contains("case suspendDecodePreserveStream"))
         XCTAssertTrue(ui.contains("Background continuity"))
-        XCTAssertTrue(ui.contains("Keep decoder + BG task"))
+        XCTAssertFalse(ui.contains("Keep decoder + BG task"))
         XCTAssertFalse(ui.contains("Apply for next Map Mode session"))
         XCTAssertTrue(ui.contains("Prevent Auto-Lock while Map Mode is active"))
         XCTAssertTrue(video.contains("VTSessionCopyProperty"))

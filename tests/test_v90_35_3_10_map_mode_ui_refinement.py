@@ -41,8 +41,8 @@ def test_map_mode_ui_is_compact_and_legacy_mode5_block_removed():
     assert 'setAutomaticMapModeEnabled($0, reason: "main-tab switch")' in UI
     assert 'CarPlay adapter Wi-Fi name' in UI
     assert 'CarPlay adapter Wi-Fi password' in UI
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
-    assert 'Map Mode FPS' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
+    assert 'Map Mode FPS' not in UI
     assert 'Status & diagnostics' not in UI
     assert 'Map Mode image customization' in UI
     assert 'Legacy mode-5 physical HUD test' not in UI

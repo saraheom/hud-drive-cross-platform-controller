@@ -36,7 +36,8 @@ final class V90352427StagedRecoveryViewerHealthTests: XCTestCase {
         let app = try source("HUDController/App/AppState.swift")
         XCTAssertTrue(app.contains("sessionScoped ? (established && clientSeen && liveFrameSent) : established"))
         XCTAssertTrue(app.contains("hudU2WReadySessionID"))
-        XCTAssertTrue(app.contains("consecutiveViewerFailures >= 2"))
+        XCTAssertTrue(app.contains("consecutiveViewerFailures >= 3"))
+        XCTAssertTrue(app.contains("statusUnavailable"))
         XCTAssertTrue(app.contains("current HUD MJPEG viewer no longer established/session-ready"))
         XCTAssertTrue(app.contains("let relay = await self.u2wHUDRelayStatus()"))
     }

@@ -58,8 +58,8 @@ def test_obd_flight_recorder_is_automatic_passive_and_file_backed():
     assert 'obd_state_timeline.csv' in BT
     assert 'for attempt in 1...18' in APP  # legacy v4 retained for compatibility only
     assert 'Collect OBD Drive Diagnostic ZIP (parked)' not in UI
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
 
 
 def test_parked_obd_bundle_keeps_stock_transfer_separate_and_times_out_safely():

@@ -1817,12 +1817,17 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
     /// Only use explicitly tagged OSM pieces geometrically connected to the
     /// confirmed same-name way. Different/conflicting values => unknown, not an
     /// inferred residential or Philadelphia default. This is display-only.
+    private static func isIncompatibleHighwayClass(_ left: String, _ right: String) -> Bool {
+        let controlledAccess: Set<String> = ["motorway", "motorway_link", "trunk", "trunk_link"]
+        return controlledAccess.contains(left) != controlledAccess.contains(right)
+    }
+
     private func connectedCurrentNavLimit(for selected: CurrentNavRoad, road: String,
                                           location: CLLocation) -> Int? {
         var visited: Set<Int64> = [selected.id]
         var frontier = [selected]
         var posted: Set<Int> = []
-        for _ in 0..<9 {
+        for _ in 0..<30 {
             if frontier.isEmpty { break }
             var next: [CurrentNavRoad] = []
             for node in frontier {
@@ -1832,8 +1837,13 @@ final class OriginalSpeedLimitEngine: NSObject, CLLocationManagerDelegate {
                     let minDistance = candidate.parts.map {
                         Self.distanceFrom(location.coordinate, toSegmentA: $0.start, b: $0.end)
                     }.min() ?? .infinity
-                    guard minDistance <= 200,
-                          Self.endpointDistance(node, candidate) <= 20 else { continue }
+                    // Search ahead/behind on the *same connected road* before
+                    // dismissing an initially untagged segment. The entire
+                    // traversed component must agree on one explicit limit.
+                    // This is display-only evidence, not a warning source.
+                    guard minDistance <= 850,
+                          Self.endpointDistance(node, candidate) <= 20,
+                          !Self.isIncompatibleHighwayClass(selected.highway, candidate.highway) else { continue }
                     visited.insert(candidate.id)
                     next.append(candidate)
                 }

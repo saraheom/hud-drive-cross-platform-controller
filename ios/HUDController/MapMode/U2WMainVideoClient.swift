@@ -149,7 +149,7 @@ final class U2WMainVideoClient {
     // -8969/WAITING_FRESH_IDR outage. It does NOT request an unsafe CarPlay
     // renegotiation, inject iAP2 messages, or restart the U2W firmware.
     private var midDriveCodecFailureAt: Date?
-    private var midDriveRecoveryAttempted = false
+    private var midDriveRecoveryAttemptCount = 0
     private let midDriveRecoveryWaitSeconds: TimeInterval = 8.0
     private let decoderStaleFrameInterval: TimeInterval = 3.0
     private let startupDecoderGraceFrameCount = 10
@@ -198,7 +198,7 @@ final class U2WMainVideoClient {
         lastDecoderSoftFlushAt = nil
         lastDecoderReseedAt = nil
         midDriveCodecFailureAt = nil
-        midDriveRecoveryAttempted = false
+        midDriveRecoveryAttemptCount = 0
         preflightStableSince = nil
         preflightPassLogged = false
         decoderRecoveryPending = false
@@ -701,7 +701,7 @@ final class U2WMainVideoClient {
                 self.decoderRecoveryPending = false
                 // A genuine decoded frame proves this recovery episode ended.
                 self.midDriveCodecFailureAt = nil
-                self.midDriveRecoveryAttempted = false
+                self.midDriveRecoveryAttemptCount = 0
                 if self.preflightStableSince == nil ||
                     previousFrameAt.map({ now.timeIntervalSince($0) > 1.5 }) == true {
                     self.preflightStableSince = now
@@ -862,16 +862,20 @@ final class U2WMainVideoClient {
                 // bootstrap. Never convert an expected decoder-wait state into reconnect churn;
                 // a real socket EOF/NWConnection failure or explicit manual restart still
                 // recovers the transport.
-                if self.transportPhase == "WAITING_FRESH_IDR",
+                if (self.transportPhase == "WAITING_FRESH_IDR" ||
+                    (self.transportPhase == "WAITING_LIVE_IDR" && self.midDriveRecoveryAttemptCount > 0)),
                    let faultAt = self.midDriveCodecFailureAt,
-                   !self.midDriveRecoveryAttempted,
+                   self.midDriveRecoveryAttemptCount < 2,
                    self.frameCount > 100,
                    bytesAreFresh,
-                   now.timeIntervalSince(faultAt) >= self.midDriveRecoveryWaitSeconds {
-                    self.midDriveRecoveryAttempted = true
-                    self.logger.log("U2W VIDEO RECOVERY", "MID_DRIVE_8969 one-shot passive history bootstrap after \(Int(now.timeIntervalSince(faultAt)))s waiting for IDR; preserving U2W relay and physical HUD; no CarPlay screen switch")
-                    self.diagnosticRecorder.record("mainvideo", "mid_drive_8969_bounded_history_rebootstrap", fields: ["wait_seconds": now.timeIntervalSince(faultAt), "frame_count": self.frameCount, "relay": self.adapterRelayVersion])
-                    self.restartWorkerWithReadOnlyBootstrap(reason: "mid-drive -8969, no fresh IDR")
+                   now.timeIntervalSince(faultAt) >= (self.midDriveRecoveryAttemptCount == 0 ? self.midDriveRecoveryWaitSeconds : 25.0) {
+                    // Attempt at most twice, only if actual decoded video has
+                    // not returned. Retained history is read-only and cannot
+                    // force a missing CarPlay source IDR.
+                    self.midDriveRecoveryAttemptCount += 1
+                    self.logger.log("U2W VIDEO RECOVERY", "MID_DRIVE_8969 bounded passive history attempt=\(self.midDriveRecoveryAttemptCount)/2 waiting=\(Int(now.timeIntervalSince(faultAt)))s; no adapter reset or CarPlay intervention")
+                    self.diagnosticRecorder.record("mainvideo", "mid_drive_8969_bounded_history_rebootstrap", fields: ["wait_seconds": now.timeIntervalSince(faultAt), "attempt": self.midDriveRecoveryAttemptCount, "frame_count": self.frameCount, "relay": self.adapterRelayVersion])
+                    self.restartWorkerWithReadOnlyBootstrap(reason: "mid-drive -8969 read-only attempt \(self.midDriveRecoveryAttemptCount)")
                     continue
                 }
                 if self.transportPhase == "WAITING_LIVE_IDR" || self.transportPhase == "WAITING_FRESH_IDR" {

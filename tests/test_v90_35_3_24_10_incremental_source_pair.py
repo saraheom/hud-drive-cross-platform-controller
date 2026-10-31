@@ -27,5 +27,5 @@ def test_v2413_passive_codec_probe_is_optional_and_shareable():
     assert 'u2wvideo-diag-start.cgi' in DIAG
     assert 'u2wvideo-diag-bundle.cgi' in DIAG
     assert 'Collect passive codec diagnostic bundle' not in UI
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
     assert 'u2wvideo-diag-start.cgi' in DIAG and 'u2wvideo-diag-bundle.cgi' in DIAG

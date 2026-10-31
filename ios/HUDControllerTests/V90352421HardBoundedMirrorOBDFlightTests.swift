@@ -30,6 +30,6 @@ final class V90352421HardBoundedMirrorOBDFlightTests: XCTestCase {
         // v24.28 hides the legacy whole-drive OBD probe controls from the Map Mode card.
         XCTAssertFalse(ui.contains("Collect OBD Drive Diagnostic ZIP (parked)"))
         XCTAssertFalse(ui.contains("sends no repeated hidden-item stimulus"))
-        XCTAssertTrue(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
+        XCTAssertFalse(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
     }
 }

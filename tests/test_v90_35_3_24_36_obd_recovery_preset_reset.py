@@ -64,6 +64,6 @@ def test_destructive_buttons_use_confirmation():
 def test_native_message_remains_stock_only_and_has_parked_test():
     assert 'testNativeMapModeStartupMessage()' in APP
     assert '"Parked stock HUD INFO display test"' in APP
-    assert 'state.testNativeMapModeStartupMessage()' in VIEW
-    assert '.disabled(state.bluetooth.state != .connected || state.hudU2WLiveRelayActive)' in VIEW
+    assert 'state.testNativeMapModeStartupMessage()' not in VIEW
+    assert '.disabled(state.bluetooth.state != .connected || state.hudU2WLiveRelayActive)' not in VIEW
     assert '"Initializing... (test)"' in APP

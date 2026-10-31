@@ -57,8 +57,8 @@ def test_minus8969_burst_uses_fresh_epoch_quarantine_instead_of_poisoned_wait():
 def test_passive_codec_probe_auto_ensure_is_diagnostic_only_in_v2416():
     assert 'mainVideoDiagnostic?.ensureStarted(reason: "v24.18 one-drive live-map diagnostic")' not in APP
     assert 'passive v8.27.2 source/topology observer' not in UI
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
     assert 'v90.35.3.24.32 MainVideo client for U2W v8.40 resource-safe read-only startup bootstrap + v8.37 forensic seam capture' in VIDEO
     assert 'no adapter parser/cache/GOP replay' in VIDEO
 

@@ -20,9 +20,9 @@ def test_v9022_removes_strategy_picker_and_preview_uses_production_minimal():
     assert "previewEnabledBLEDIMBreathNow" in MONITOR
     assert "bledimStrategyOverride: override" not in MONITOR
     assert "BLEDIM ANIMATION TEST LAB" not in VIEW
-    assert "BLEDIM PRODUCTION ANIMATION" in VIEW
-    assert "Already-On Minimal" in VIEW
-    assert "Preview BLEDIM Only" in VIEW
+    assert "BLEDIM PRODUCTION ANIMATION" not in VIEW
+    assert "Already-On Minimal" not in VIEW
+    assert "Preview BLEDIM Only" not in VIEW
     assert "Apply selected strategy to automatic BLEDIM power-on" not in VIEW
 
 

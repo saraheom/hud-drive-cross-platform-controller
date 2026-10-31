@@ -13,7 +13,7 @@ final class V9023NewJoinerSyncSpeedContinuityTests: XCTestCase {
         XCTAssertTrue(monitor.contains("requiresExplicitBLEDIMPrime ? .v90172Baseline : .alreadyOnMinimal"))
         XCTAssertTrue(monitor.contains("case .alreadyOnMinimal:"))
         XCTAssertFalse(view.contains("BLEDIM ANIMATION TEST LAB"))
-        XCTAssertTrue(view.contains("BLEDIM PRODUCTION ANIMATION"))
+        XCTAssertFalse(view.contains("BLEDIM PRODUCTION ANIMATION"))
     }
 
     func testLaterHeadlightBarrierIsStrictNewJoinerCohort() throws {

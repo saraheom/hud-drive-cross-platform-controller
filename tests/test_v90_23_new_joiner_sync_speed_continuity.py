@@ -16,8 +16,8 @@ def test_production_bledim_is_already_on_minimal_and_lab_ui_is_gone():
     terminal = MONITOR.split("private func finalizeBreathSteadyState", 1)[1].split("private func runStartupAnimationIfNeeded", 1)[0]
     assert "case .brightnessOnlyFinish, .alreadyOnMinimal, .v9018NoFlash:" in terminal
     assert "BLEDIM ANIMATION TEST LAB" not in VIEW
-    assert "BLEDIM PRODUCTION ANIMATION" in VIEW
-    assert "Already-On Minimal" in VIEW
+    assert "BLEDIM PRODUCTION ANIMATION" not in VIEW
+    assert "Already-On Minimal" not in VIEW
 
 
 def test_headlight_barrier_admits_only_newly_joining_lights():

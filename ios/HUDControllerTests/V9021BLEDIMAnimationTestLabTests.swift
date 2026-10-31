@@ -23,8 +23,8 @@ final class V9021BLEDIMAnimationTestLabTests: XCTestCase {
         }
         XCTAssertTrue(monitor.contains("previewEnabledBLEDIMBreathNow"))
         XCTAssertFalse(view.contains("BLEDIM ANIMATION TEST LAB"))
-        XCTAssertTrue(view.contains("BLEDIM PRODUCTION ANIMATION"))
-        XCTAssertTrue(view.contains("Already-On Minimal"))
+        XCTAssertFalse(view.contains("BLEDIM PRODUCTION ANIMATION"))
+        XCTAssertFalse(view.contains("Already-On Minimal"))
         XCTAssertTrue(view.contains("Preview BLEDIM Only"))
     }
 

@@ -16,7 +16,7 @@ def test_background_continuity_is_fixed_to_field_validated_production_mode():
     assert 'backgroundProbeMode = .keepDecoderBackgroundTask' in SETTINGS
     assert 'Map Mode Background Continuity Probe' not in UI
     assert 'Apply for next Map Mode session' not in UI
-    assert 'Keep decoder + BG task' in UI
+    assert 'Keep decoder + BG task' not in UI
     assert 'selectMapModeBackgroundProbeMode' not in APP
     assert 'applyMapModeBackgroundProbeModeForNextSession' not in APP
     assert 'setMapModePreventAutoLock' in APP

@@ -33,8 +33,8 @@ final class V90353U2WLiveFrameRelayTests: XCTestCase {
         // v24.28 removes the disclosure block entirely and keeps only production controls.
         XCTAssertTrue(ui.contains("CarPlay adapter Wi-Fi name"))
         XCTAssertTrue(ui.contains("Toggle(\"Automatic Map Mode\""))
-        XCTAssertTrue(ui.contains("Map Mode FPS"))
-        XCTAssertTrue(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
+        XCTAssertFalse(ui.contains("Map Mode FPS"))
+        XCTAssertFalse(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
         XCTAssertTrue(ui.contains("state.mainVideo.transportPhase"))
         XCTAssertTrue(ui.contains("Not active"))
         XCTAssertFalse(ui.contains("Status & diagnostics"))

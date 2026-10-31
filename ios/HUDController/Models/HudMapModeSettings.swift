@@ -388,7 +388,9 @@ final class HudMapModeSettings {
     }
 
     static func normalizedHUDFrameRate(_ value: Int) -> Int {
-        supportedHUDFrameRates.min(by: { abs($0 - value) < abs($1 - value) }) ?? 5
+        // Fixed to the fastest field-validated HUD JPEG presentation rate.
+        // Older saved FPS preferences cannot reduce the production renderer.
+        supportedHUDFrameRates.max() ?? 15
     }
 
     var mapAppearance: HudMapAppearance {

@@ -53,9 +53,9 @@ def test_native_stock_info_not_music_or_custom_frame_and_can_be_disabled():
     assert 'widgetsMiniState' not in native
     assert 'notificationTimeout' not in native
     assert 'static func pushMessage(' in CMD
-    assert 'Toggle("Show startup message on stock HUD"' in UI
-    assert '@AppStorage("HUD.MapMode.nativeStartupMessageEnabled")' in UI
-    assert 'No message is drawn on the Map Mode screen' in UI
+    assert 'Toggle("Show startup message on stock HUD"' not in UI
+    assert '@AppStorage("HUD.MapMode.nativeStartupMessageEnabled")' not in UI
+    assert 'Test stock HUD message (parked)' not in UI
 
 
 def test_vehicle_obd_ui_simplified_without_removing_widgets_or_underlying_capture():

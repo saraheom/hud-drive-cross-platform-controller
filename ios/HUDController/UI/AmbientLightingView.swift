@@ -85,22 +85,6 @@ struct AmbientLightingView: View {
                         }
                     }
 
-                    section("BLEDIM PRODUCTION ANIMATION") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Door + Dashboard")
-                                Spacer()
-                                Text("Already-On Minimal")
-                                    .font(.subheadline.weight(.semibold))
-                            }
-
-                            HudDescription("BLEDIM now uses the field-validated minimal sequence for automatic and Preview Breaths: no routine Power/RGB/baseline preparation writes, then a brightness-only final commit. This avoids the start/end blink seen with the experimental sequences while keeping the same synchronized Breath timeline.")
-
-                            Button("Preview BLEDIM Only") { monitor.previewEnabledBLEDIMBreathNow() }
-                                .buttonStyle(.bordered)
-                        }
-                    }
-
                     section("VEHICLE-AWARE LIGHTING") {
                         VStack(alignment: .leading, spacing: 12) {
                             Toggle("Automatic Door day/night brightness", isOn: Binding(

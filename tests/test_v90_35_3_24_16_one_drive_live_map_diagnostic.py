@@ -48,7 +48,7 @@ def test_fault_and_recovery_boundaries_trigger_evidence_windows():
 
 
 def test_one_tap_bundle_includes_cross_layer_evidence():
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
     assert 'HUD_app_session.log' in REC
     assert 'iphone_state.txt' in REC
     assert 'timeline.jsonl' in REC

@@ -37,7 +37,7 @@ def test_parked_preflight_remains_internal_while_ui_is_compact():
         assert token in VIDEO
     assert 'Parked MainVideo preflight' not in UI
     assert 'Last map frame' not in UI
-    assert 'Collect Live Map Diagnostic ZIP (parked)' in UI
+    assert 'Collect Live Map Diagnostic ZIP (parked)' not in UI
     assert 'LIVE • 5m continuity verified' in VIDEO
     assert 'source_generation_changes' in VIDEO
     assert 'pre_idr_slices_dropped' in VIDEO

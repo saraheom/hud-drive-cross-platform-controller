@@ -11,7 +11,6 @@ struct NavigationHUDPreviewCard: View {
     @Bindable var state: AppState
     @AppStorage("HUD.U2WHomeProbe.ssid") private var u2wSSID = HUDU2WAdapterWiFiCredentials.defaultSSID
     @AppStorage("HUD.U2WHomeProbe.password") private var u2wPassword = ""
-    @AppStorage("HUD.MapMode.nativeStartupMessageEnabled") private var nativeMapStartupMessageEnabled = true
     @FocusState private var editingAdapterWiFiField: AdapterWiFiField?
 
     private enum AdapterWiFiField: Hashable {
@@ -115,7 +114,7 @@ struct NavigationHUDPreviewCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Custom Map Mode")
                     .font(.headline)
-                Text("Full-canvas 480×240 layout • preview matches physical HUD coordinates")
+                Text("Customize the HUD map layout")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -149,7 +148,7 @@ struct NavigationHUDPreviewCard: View {
             .tint(accent)
 
             if state.mapModeSettings.activePresetIndex == 0 {
-                Text("Preset 1 was initialized from the Map Mode customization already stored on this phone. Updating to this repo does not replace that layout.")
+                Text("Your original layout is preserved.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -185,7 +184,7 @@ struct NavigationHUDPreviewCard: View {
                     .stroke(.white.opacity(0.10), lineWidth: 1)
             }
 
-            Text("This sample uses the same canonical 480×240 coordinates as the physical HUD. Every component can move across the full canvas. When ETA shares the lane position, sample lanes take priority and ETA is intentionally hidden.")
+            Text("Offline design preview; not the live map.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -199,7 +198,7 @@ struct NavigationHUDPreviewCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Map Mode layout designer")
                         .font(.subheadline.weight(.semibold))
-                    Text("480×240 physical HUD canvas • offline map reference • select a component, then drag")
+                    Text("Select and drag a component")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -390,7 +389,7 @@ struct NavigationHUDPreviewCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 Label("Layout reset tools", systemImage: "arrow.counterclockwise")
                     .font(.caption.weight(.semibold))
-                Text("Reset buttons require confirmation and are separated from the size slider to prevent accidental taps.")
+                Text("Reset requires confirmation.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
@@ -417,14 +416,14 @@ struct NavigationHUDPreviewCard: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .font(.caption)
-                    Text("Restores the complete layout saved just before the most recent reset of this preset, even after restarting the app.")
+                    Text("Restore the last preset layout.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
             .padding(.top, 6)
 
-            Text("Drag positions snap to 2 physical HUD pixels and are bounded to the 480×240 design envelope. The renderer still clips the final frame at the physical HUD edge. Existing detailed crop, spacing, boldness, visibility, and calibration controls remain available below and are stored independently in each preset.")
+            Text("Positions are saved per preset.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -501,102 +500,27 @@ struct NavigationHUDPreviewCard: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            Toggle("Show startup message on stock HUD", isOn: $nativeMapStartupMessageEnabled)
-                .tint(accent)
-            Text("Experimental native informational message during automatic initialization on Free Ride/Navigation only. No message is drawn on the Map Mode screen.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-            Button("Test stock HUD message (parked)") {
-                state.testNativeMapModeStartupMessage()
+            // Daily controls only. Test buttons, decoder telemetry, the legacy
+            // FPS picker and manual diagnostic ZIP capture are intentionally
+            // absent from the main Map Mode card; app logging remains active.
+            HStack {
+                Text("Map stream")
+                    .font(.caption)
+                Spacer()
+                Text(state.hudU2WLiveRelayActive ? state.mainVideo.transportPhase : "Not active")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.bordered)
-            .disabled(state.bluetooth.state != .connected || state.hudU2WLiveRelayActive)
-            Text("Use only while parked with the stock Free Ride or Navigation screen showing. This verifies whether the HUD firmware actually renders the native message packet.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
 
-            LabeledContent(
-                "Stream",
-                value: state.hudU2WLiveRelayActive
-                    ? state.mainVideo.transportPhase
-                    : "Not active"
+            Toggle(
+                "Prevent Auto-Lock during Map Mode",
+                isOn: Binding(
+                    get: { state.mapModeSettings.preventAutoLockWhileMapMode },
+                    set: { state.setMapModePreventAutoLock($0) }
+                )
             )
             .font(.caption)
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Map Mode FPS")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Text("\(state.mapModeSettings.hudFrameRate) fps")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-                Picker(
-                    "Map Mode FPS",
-                    selection: Binding(
-                        get: { state.mapModeSettings.hudFrameRate },
-                        set: { state.mapModeSettings.hudFrameRate = HudMapModeSettings.normalizedHUDFrameRate($0) }
-                    )
-                ) {
-                    ForEach(HudMapModeSettings.supportedHUDFrameRates, id: \.self) { fps in
-                        Text("\(fps)").tag(fps)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            Button(state.liveMapDiagnosticCollecting ? "Collecting Live Map Diagnostic ZIP…" : "Collect Live Map Diagnostic ZIP (parked)") {
-                state.collectLiveMapDiagnosticBundle()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(accent)
-            .disabled(state.liveMapDiagnosticCollecting)
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label("Background continuity", systemImage: "lock.shield")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Text("Keep decoder + BG task")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                LabeledContent("Status", value: state.mainVideo.backgroundProbeStatus)
-                    .font(.caption2)
-
-                Text("Decoder: \(state.mainVideo.decoderSummary)")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-
-                Toggle(
-                    "Prevent Auto-Lock while Map Mode is active",
-                    isOn: Binding(
-                        get: { state.mapModeSettings.preventAutoLockWhileMapMode },
-                        set: { state.setMapModePreventAutoLock($0) }
-                    )
-                )
-                .font(.caption)
-
-                Text("When iOS invalidates VideoToolbox during a lock transition, Map Mode automatically attempts a resource-safe v8.40 retained-history bootstrap before falling back to waiting for a fresh live IDR.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(8)
-            .background(.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
-
-            if let url = state.liveMapDiagnosticBundleURL {
-                ShareLink(item: url) {
-                    Label("Share Live Map Diagnostic ZIP", systemImage: "square.and.arrow.up")
-                }
-            }
-
-            Text("Detailed MainVideo, decoder, adapter-seam, and OBD ownership telemetry remains in the diagnostic ZIP but is hidden from the everyday Map Mode controls. Frame-rate choices remain capped at the proven 15 fps maximum.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
         }
         .onChange(of: editingAdapterWiFiField) { previous, next in
             // Save on keyboard dismissal too; do not start mid-password entry.
@@ -628,7 +552,7 @@ struct NavigationHUDPreviewCard: View {
             .tint(accent)
 
             if state.mapModeSettings.mapAppearance == .followSource {
-                Text("Follow source preserves the actual Google Maps / Apple Maps / Waze light or dark appearance carried by MainVideo. Dark HUD and Light HUD are optional post-processing filters on those same pixels.")
+                Text("Follow source uses the CarPlay map appearance.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -692,11 +616,11 @@ struct NavigationHUDPreviewCard: View {
                 format: { String(format: "%.0f%%", $0 * 100) }
             )
 
-            Text("Fade controls adjust how far the center map dissolves into black from the horizontal and vertical edges. 0% disables that axis; larger values widen the fade boundary.")
+            Text("Adjust horizontal and vertical edge fading.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            Text("The crop is intentionally content-blind: the exact same configured rectangle is taken from every live 800×480 CarPlay frame, whether the head unit is showing Dashboard, Google Maps, Apple Maps, Music, or another CarPlay screen.")
+            Text("Crop is applied to all CarPlay video.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -771,7 +695,7 @@ struct NavigationHUDPreviewCard: View {
                 format: { String(format: "%.0f%%", $0 * 100) }
             )
 
-            Text("The sign width, white fill, black border, and black numeral remain fixed. Only vertical height and numeral size are adjustable.")
+            Text("Adjust sign height and numeral size.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -792,7 +716,7 @@ struct NavigationHUDPreviewCard: View {
                 .buttonStyle(.bordered)
             }
 
-            Text("Each arrow moves the selected 480×240 region by 2 pixels. Whole-widget movement is bounded to ±20 px horizontally and ±12 px vertically so a widget cannot be lost off-screen.")
+            Text("Position changes by 2 pixels.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
@@ -985,7 +909,7 @@ struct NavigationHUDPreviewCard: View {
 
             Divider().opacity(0.35)
 
-            Text("Position is controlled only by the full-canvas layout designer above. Legacy block spacing and fine-position controls are retired so the preview and physical HUD use one coordinate source.")
+            Text("Move components in the layout designer.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -1023,7 +947,7 @@ struct NavigationHUDPreviewCard: View {
             ))
             .font(.caption)
 
-            Text("When enabled, lane arrows have priority. If no actual lane data is available, ETA appears at the Lane Guidance position instead. ETA is removed from the position selector because it no longer has an independent location. Time Left remains independent.")
+            Text("ETA occupies the lane area when no lanes are displayed.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -1261,7 +1185,7 @@ struct MapModeSpeedWarningCard: View {
                     ColorPicker("Warning text color", selection: numberColorBinding, supportsOpacity: false)
                 }
 
-                Text("Map Mode only • turn distance changes to the shared warning text color at or below the threshold (default 500 ft) • overspeed number color uses the same color when enabled • speed background remains independent")
+                Text("Optional turn-distance and speed warning colors.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -30,7 +30,7 @@ def test_canvas_applies_visual_tuning_on_absolute_component_positions():
 
 def test_ui_uses_full_canvas_designer_and_keeps_styling_controls():
     for token in [
-        "Full-canvas 480×240 layout", "Navigation component styling",
+        "Customize the HUD map layout", "Navigation component styling",
         "Turn arrow boldness", "Lane arrow thickness", "Active lane emphasis",
         "setDesignerCanvasPosition", "Use lane-guidance position for ETA when lanes are unavailable",
     ]:
