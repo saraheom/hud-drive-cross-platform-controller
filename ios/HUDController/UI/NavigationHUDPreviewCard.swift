@@ -943,21 +943,21 @@ struct NavigationHUDPreviewCard: View {
                 }
                 .pickerStyle(.segmented)
 
-                musicSettingSlider("First line width", value: binding(\.musicTitleWidth), range: 65...320, suffix: "px")
-                musicSettingSlider("First line font", value: binding(\.musicTitleFontSize), range: 9...30, suffix: "pt")
+                musicSettingSlider("First line width", value: doubleBinding(\.musicTitleWidth), range: 65...320, suffix: "px")
+                musicSettingSlider("First line font", value: doubleBinding(\.musicTitleFontSize), range: 9...30, suffix: "pt")
                 if music.musicTwoLines {
-                    musicSettingSlider("Artist line width", value: binding(\.musicArtistWidth), range: 65...320, suffix: "px")
-                    musicSettingSlider("Artist font", value: binding(\.musicArtistFontSize), range: 8...28, suffix: "pt")
+                    musicSettingSlider("Artist line width", value: doubleBinding(\.musicArtistWidth), range: 65...320, suffix: "px")
+                    musicSettingSlider("Artist font", value: doubleBinding(\.musicArtistFontSize), range: 8...28, suffix: "pt")
                 }
 
-                musicSettingSlider("Marquee speed", value: binding(\.musicMarqueeSpeed), range: 8...60, suffix: "px/s")
+                musicSettingSlider("Marquee speed", value: doubleBinding(\.musicMarqueeSpeed), range: 8...60, suffix: "px/s")
                 ColorPicker("Text and symbol color", selection: musicColorBinding(isProgress: false), supportsOpacity: false)
                     .font(.caption)
 
                 Toggle("Playback progress", isOn: binding(\.musicShowProgress))
                     .font(.caption)
                 if music.musicShowProgress {
-                    musicSettingSlider("Bar thickness", value: binding(\.musicBarHeight), range: 2...10, suffix: "px")
+                    musicSettingSlider("Bar thickness", value: doubleBinding(\.musicBarHeight), range: 2...10, suffix: "px")
                     ColorPicker("Progress color", selection: musicColorBinding(isProgress: true), supportsOpacity: false)
                         .font(.caption)
                     Text("The progress bar always matches the first line's width.")
@@ -1206,6 +1206,15 @@ struct NavigationHUDPreviewCard: View {
         Binding(
             get: { state.mapModeSettings[keyPath: keyPath] },
             set: { state.mapModeSettings[keyPath: keyPath] = $0 }
+        )
+    }
+
+    /// Use the numeric binding helper for Music Overlay sliders. The existing
+    /// `binding(_:)` is Boolean-only and cannot accept Double key paths.
+    private func doubleBinding(_ keyPath: ReferenceWritableKeyPath<HudMapModeSettings, Double>) -> Binding<Double> {
+        Binding(
+            get: { self.state.mapModeSettings[keyPath: keyPath] },
+            set: { self.state.mapModeSettings[keyPath: keyPath] = $0 }
         )
     }
 }

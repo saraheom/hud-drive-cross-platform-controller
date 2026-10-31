@@ -1,0 +1,11 @@
+HUD Controller v90.35.3.24.49 CI FIX1 verification
+Original failing CI run: 111565919019
+Root cause: NavigationHUDPreviewCard.swift:946 Boolean helper used for Double Slider binding
+Modified production files: ['ios/HUDController/UI/NavigationHUDPreviewCard.swift']
+Additional tests: tests/test_v90_35_3_24_49_ci_fix1.py
+Python: 645 passed, 1 skipped
+Native Swift keypath helper typecheck: PASSED, all 6 Double music properties
+Swift -frontend -parse: 235 files passed
+Workflow YAML: 8 valid
+Protected original files: U2W, Vehicle/OBD, Ambient, graphics unchanged
+Limit: No full Xcode SDK compilation executed in current Linux environment
