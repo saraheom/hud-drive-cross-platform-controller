@@ -1,0 +1,21 @@
+HUD Controller v90.35.3.24.49 — Build verification
+Source: v24.48 full GitHub ZIP
+Python regressions: 643 passed, 1 skipped
+Swift parse: 235 Swift files passed (syntax only, not iOS SDK compilation)
+Native Swift policy replay: 13 assertions passed
+GitHub workflows YAML: 8 valid
+Immutable original files (U2W firmware/scripts, OBD/Vehicle sources, Ambient subtree, approved U-turn graphics): 500 byte-for-byte identical
+Changed preexisting files (7):
+  README.md
+  ios/HUDController/App/AppState.swift
+  ios/HUDController/MapMode/HudMapModeCanvas.swift
+  ios/HUDController/MapMode/HudMapModeSnapshot.swift
+  ios/HUDController/Media/CarPlayNowPlayingClient.swift
+  ios/HUDController/Models/HudMapModeSettings.swift
+  ios/HUDController/UI/NavigationHUDPreviewCard.swift
+New feature/test/docs files:
+  V90_35_3_24_49_RELEASE.md
+  tools/replay_music_overlay.swift
+  tests/test_v90_35_3_24_49_music_overlay.py
+  ios/HUDController/MapMode/HudMapMusicBehavior.swift
+Caveat: Xcode/TestFlight archive and real HUD output not yet tested here.

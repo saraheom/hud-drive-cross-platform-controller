@@ -79,6 +79,7 @@ enum HudMapDesignerComponent: String, CaseIterable, Identifiable {
     case lanes
     case eta
     case timeLeft
+    case music
 
     var id: String { rawValue }
 
@@ -93,6 +94,7 @@ enum HudMapDesignerComponent: String, CaseIterable, Identifiable {
         case .lanes: return "Lanes"
         case .eta: return "ETA"
         case .timeLeft: return "Time left"
+        case .music: return "Music"
         }
     }
 
@@ -107,6 +109,7 @@ enum HudMapDesignerComponent: String, CaseIterable, Identifiable {
         case .lanes: return "arrow.triangle.branch"
         case .eta: return "clock"
         case .timeLeft: return "timer"
+        case .music: return "music.note"
         }
     }
 }
@@ -169,6 +172,25 @@ private struct HudMapModePresetSnapshot: Codable {
     var showTimeLeft: Bool
     // Optional so presets saved before v90.35.3.24.29 still decode.
     var etaUsesLanePositionWhenNoLanes: Bool?
+    // New music customization fields are optional to decode pre-v24.49 presets.
+    var showMusicOverlay: Bool?
+    var musicTwoLines: Bool?
+    var musicShowProgress: Bool?
+    var musicTitleWidth: Double?
+    var musicArtistWidth: Double?
+    var musicTitleFontSize: Double?
+    var musicArtistFontSize: Double?
+    var musicBarHeight: Double?
+    var musicMarqueeSpeed: Double?
+    var musicTextRed: Double?
+    var musicTextGreen: Double?
+    var musicTextBlue: Double?
+    var musicBarRed: Double?
+    var musicBarGreen: Double?
+    var musicBarBlue: Double?
+    var musicBarTrackOpacity: Double?
+    var musicOffsetX: Double?
+    var musicOffsetY: Double?
     var nativeOBDSpeedOverlayExperiment: Bool
     var mapAppearanceRaw: String
 
@@ -244,6 +266,24 @@ private struct HudMapModePresetSnapshot: Codable {
         showETA = settings.showETA
         showTimeLeft = settings.showTimeLeft
         etaUsesLanePositionWhenNoLanes = settings.etaUsesLanePositionWhenNoLanes
+        showMusicOverlay = settings.showMusicOverlay
+        musicTwoLines = settings.musicTwoLines
+        musicShowProgress = settings.musicShowProgress
+        musicTitleWidth = settings.musicTitleWidth
+        musicArtistWidth = settings.musicArtistWidth
+        musicTitleFontSize = settings.musicTitleFontSize
+        musicArtistFontSize = settings.musicArtistFontSize
+        musicBarHeight = settings.musicBarHeight
+        musicMarqueeSpeed = settings.musicMarqueeSpeed
+        musicTextRed = settings.musicTextRed
+        musicTextGreen = settings.musicTextGreen
+        musicTextBlue = settings.musicTextBlue
+        musicBarRed = settings.musicBarRed
+        musicBarGreen = settings.musicBarGreen
+        musicBarBlue = settings.musicBarBlue
+        musicBarTrackOpacity = settings.musicBarTrackOpacity
+        musicOffsetX = settings.designerMusicOffsetX
+        musicOffsetY = settings.designerMusicOffsetY
         nativeOBDSpeedOverlayExperiment = settings.nativeOBDSpeedOverlayExperiment
         mapAppearanceRaw = settings.mapAppearance.rawValue
         speedScale = settings.speedScale
@@ -366,6 +406,27 @@ final class HudMapModeSettings {
     var etaUsesLanePositionWhenNoLanes: Bool {
         didSet { persist(etaUsesLanePositionWhenNoLanes, key: "HUD.MapMode.etaUsesLanePositionWhenNoLanes") }
     }
+
+    // Music is visual-preset state, including position, widths, colors and row layout.
+    // Runtime visibility is additionally gated by fresh CarPlay playback metadata.
+    var showMusicOverlay: Bool { didSet { persist(showMusicOverlay, key: "HUD.MapMode.Music.visible") } }
+    var musicTwoLines: Bool { didSet { persist(musicTwoLines, key: "HUD.MapMode.Music.twoLines") } }
+    var musicShowProgress: Bool { didSet { persist(musicShowProgress, key: "HUD.MapMode.Music.progress") } }
+    var musicTitleWidth: Double { didSet { persist(musicTitleWidth, key: "HUD.MapMode.Music.titleWidth") } }
+    var musicArtistWidth: Double { didSet { persist(musicArtistWidth, key: "HUD.MapMode.Music.artistWidth") } }
+    var musicTitleFontSize: Double { didSet { persist(musicTitleFontSize, key: "HUD.MapMode.Music.titleFontSize") } }
+    var musicArtistFontSize: Double { didSet { persist(musicArtistFontSize, key: "HUD.MapMode.Music.artistFontSize") } }
+    var musicBarHeight: Double { didSet { persist(musicBarHeight, key: "HUD.MapMode.Music.barHeight") } }
+    var musicMarqueeSpeed: Double { didSet { persist(musicMarqueeSpeed, key: "HUD.MapMode.Music.marqueeSpeed") } }
+    var musicTextRed: Double { didSet { persist(musicTextRed, key: "HUD.MapMode.Music.textRed") } }
+    var musicTextGreen: Double { didSet { persist(musicTextGreen, key: "HUD.MapMode.Music.textGreen") } }
+    var musicTextBlue: Double { didSet { persist(musicTextBlue, key: "HUD.MapMode.Music.textBlue") } }
+    var musicBarRed: Double { didSet { persist(musicBarRed, key: "HUD.MapMode.Music.barRed") } }
+    var musicBarGreen: Double { didSet { persist(musicBarGreen, key: "HUD.MapMode.Music.barGreen") } }
+    var musicBarBlue: Double { didSet { persist(musicBarBlue, key: "HUD.MapMode.Music.barBlue") } }
+    var musicBarTrackOpacity: Double { didSet { persist(musicBarTrackOpacity, key: "HUD.MapMode.Music.barTrackOpacity") } }
+    var designerMusicOffsetX: Double { didSet { persist(designerMusicOffsetX, key: "HUD.MapMode.Designer.music.x") } }
+    var designerMusicOffsetY: Double { didSet { persist(designerMusicOffsetY, key: "HUD.MapMode.Designer.music.y") } }
 
     var nativeOBDSpeedOverlayExperiment: Bool {
         didSet { persist(nativeOBDSpeedOverlayExperiment, key: "HUD.MapMode.nativeOBDSpeedOverlayExperiment") }
@@ -526,6 +587,22 @@ final class HudMapModeSettings {
         showETAAMPM = bool("HUD.MapMode.showETAAMPM", default: true)
         showTimeLeft = bool("HUD.MapMode.showTimeLeft", default: true)
         etaUsesLanePositionWhenNoLanes = bool("HUD.MapMode.etaUsesLanePositionWhenNoLanes", default: false)
+        showMusicOverlay = bool("HUD.MapMode.Music.visible", default: true)
+        musicTwoLines = bool("HUD.MapMode.Music.twoLines", default: true)
+        musicShowProgress = bool("HUD.MapMode.Music.progress", default: true)
+        musicTitleWidth = min(320, max(65, double("HUD.MapMode.Music.titleWidth", default: 165)))
+        musicArtistWidth = min(320, max(65, double("HUD.MapMode.Music.artistWidth", default: 165)))
+        musicTitleFontSize = min(30, max(9, double("HUD.MapMode.Music.titleFontSize", default: 15)))
+        musicArtistFontSize = min(28, max(8, double("HUD.MapMode.Music.artistFontSize", default: 12)))
+        musicBarHeight = min(10, max(2, double("HUD.MapMode.Music.barHeight", default: 4)))
+        musicMarqueeSpeed = min(60, max(8, double("HUD.MapMode.Music.marqueeSpeed", default: 24)))
+        musicTextRed = min(1, max(0, double("HUD.MapMode.Music.textRed", default: 1)))
+        musicTextGreen = min(1, max(0, double("HUD.MapMode.Music.textGreen", default: 1)))
+        musicTextBlue = min(1, max(0, double("HUD.MapMode.Music.textBlue", default: 1)))
+        musicBarRed = min(1, max(0, double("HUD.MapMode.Music.barRed", default: 0.25)))
+        musicBarGreen = min(1, max(0, double("HUD.MapMode.Music.barGreen", default: 0.70)))
+        musicBarBlue = min(1, max(0, double("HUD.MapMode.Music.barBlue", default: 1)))
+        musicBarTrackOpacity = min(1, max(0.12, double("HUD.MapMode.Music.barTrackOpacity", default: 0.30)))
         nativeOBDSpeedOverlayExperiment = bool("HUD.MapMode.nativeOBDSpeedOverlayExperiment", default: false)
         // v24.32 retires the experimental selector. Always migrate to the
         // field-validated Keep Decoder + BG Task production behavior.
@@ -575,6 +652,8 @@ final class HudMapModeSettings {
         designerETAOffsetY = Self.clampDesigner(double("HUD.MapMode.Designer.eta.y", default: 0), axis: .y)
         designerTimeLeftOffsetX = Self.clampDesigner(double("HUD.MapMode.Designer.timeLeft.x", default: 0), axis: .x)
         designerTimeLeftOffsetY = Self.clampDesigner(double("HUD.MapMode.Designer.timeLeft.y", default: 0), axis: .y)
+        designerMusicOffsetX = Self.clampDesigner(double("HUD.MapMode.Designer.music.x", default: 0), axis: .x)
+        designerMusicOffsetY = Self.clampDesigner(double("HUD.MapMode.Designer.music.y", default: 0), axis: .y)
 
         activePresetIndex = min(2, max(0, store.integer(forKey: Self.activePresetKey)))
 
@@ -758,6 +837,26 @@ final class HudMapModeSettings {
         showETA = preset.showETA
         showTimeLeft = preset.showTimeLeft
         etaUsesLanePositionWhenNoLanes = preset.etaUsesLanePositionWhenNoLanes ?? false
+        // Older presets lack these optional keys; preserve their existing music
+        // customization rather than resetting it when the preset is selected.
+        if let value = preset.showMusicOverlay { showMusicOverlay = value }
+        if let value = preset.musicTwoLines { musicTwoLines = value }
+        if let value = preset.musicShowProgress { musicShowProgress = value }
+        if let value = preset.musicTitleWidth { musicTitleWidth = value }
+        if let value = preset.musicArtistWidth { musicArtistWidth = value }
+        if let value = preset.musicTitleFontSize { musicTitleFontSize = value }
+        if let value = preset.musicArtistFontSize { musicArtistFontSize = value }
+        if let value = preset.musicBarHeight { musicBarHeight = value }
+        if let value = preset.musicMarqueeSpeed { musicMarqueeSpeed = value }
+        if let value = preset.musicTextRed { musicTextRed = value }
+        if let value = preset.musicTextGreen { musicTextGreen = value }
+        if let value = preset.musicTextBlue { musicTextBlue = value }
+        if let value = preset.musicBarRed { musicBarRed = value }
+        if let value = preset.musicBarGreen { musicBarGreen = value }
+        if let value = preset.musicBarBlue { musicBarBlue = value }
+        if let value = preset.musicBarTrackOpacity { musicBarTrackOpacity = value }
+        if let value = preset.musicOffsetX { designerMusicOffsetX = value }
+        if let value = preset.musicOffsetY { designerMusicOffsetY = value }
         nativeOBDSpeedOverlayExperiment = preset.nativeOBDSpeedOverlayExperiment
         mapAppearance = HudMapAppearance(rawValue: preset.mapAppearanceRaw) ?? .followSource
         speedScale = preset.speedScale
@@ -825,6 +924,7 @@ final class HudMapModeSettings {
         case .lanes: return (427, 154)
         case .eta: return (427, 190)
         case .timeLeft: return (427, 208)
+        case .music: return (242, 204)
         }
     }
 
@@ -842,6 +942,8 @@ final class HudMapModeSettings {
             return (rightOffsetX + laneOffsetX, rightOffsetY + laneOffsetY)
         case .eta, .timeLeft:
             return (rightOffsetX + etaOffsetX, rightOffsetY + etaOffsetY)
+        case .music:
+            return (0, 0)
         }
     }
 
@@ -856,6 +958,7 @@ final class HudMapModeSettings {
         case .lanes: return (designerLaneOffsetX, designerLaneOffsetY)
         case .eta: return (designerETAOffsetX, designerETAOffsetY)
         case .timeLeft: return (designerTimeLeftOffsetX, designerTimeLeftOffsetY)
+        case .music: return (designerMusicOffsetX, designerMusicOffsetY)
         }
     }
 
@@ -881,6 +984,8 @@ final class HudMapModeSettings {
             designerETAOffsetX = safeX; designerETAOffsetY = safeY
         case .timeLeft:
             designerTimeLeftOffsetX = safeX; designerTimeLeftOffsetY = safeY
+        case .music:
+            designerMusicOffsetX = safeX; designerMusicOffsetY = safeY
         }
     }
 
@@ -907,6 +1012,7 @@ final class HudMapModeSettings {
         case .lanes: return laneScale
         case .eta: return etaScale
         case .timeLeft: return timeLeftScale
+        case .music: return 1.0 // Music sizes are independently adjustable in its own block.
         }
     }
 
@@ -921,6 +1027,7 @@ final class HudMapModeSettings {
         case .lanes: laneScale = min(1.70, max(0.60, value))
         case .eta: etaScale = min(1.60, max(0.60, value))
         case .timeLeft: timeLeftScale = min(1.80, max(0.50, value))
+        case .music: break // Music text and progress dimensions use their own controls.
         }
     }
 

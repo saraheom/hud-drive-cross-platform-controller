@@ -1,3 +1,5 @@
+> **v90.35.3.24.49:** Custom Map Mode Music Overlay (title/artist, marquee and progress). See [`V90_35_3_24_49_RELEASE.md`](V90_35_3_24_49_RELEASE.md).
+
 > **v90.35.3.24.48:** Simplified daily Custom Map Mode UI (diagnostics and test-era controls removed; 15 FPS production cap fixed); removed Ambient BLEDIM production-animation explanation. Preserved the existing light behavior. Added bounded viewer rejoin resilience, a second read-only mid-drive codec recovery opportunity, and limited look-ahead along connected same-road OSM segments for initially untagged roads. No Philadelphia municipal GIS or U2W firmware change. See `V90_35_3_24_48_RELEASE.md`.
 
 > **v90.35.3.24.47 (Current + Nav):** Retains the verified same-road speed-limit sign through short *missing-road-geometry* gaps (maximum 30 seconds / 550 meters from the last accepted same-road GPS match), in addition to the existing long geometrically verified untagged-road continuity. The bridge requires fresh CarPlay road identity; no different-road geometry or conflicting speed evidence; display only with warning off. No Philly municipal GIS. See `V90_35_3_24_47_RELEASE.md`.

@@ -109,10 +109,100 @@ struct HudMapModeCanvas: View {
                         .position(canvasPoint(.timeLeft))
                 }
             }
+            // Draw the music widget last so navigation elements cannot cover
+            // the user's independently positioned text/progress overlay.
+            if settings.showMusicOverlay && snapshot.musicPlaying {
+                musicOverlay
+                    .position(canvasPoint(.music))
+            }
         }
         .frame(width: 480, height: 240)
         .foregroundStyle(.white)
         .clipped()
+    }
+
+    /// Time-derived marquee (independent of frame count / actual MJPEG FPS).
+    /// Pauses at both ends to avoid flicker at the loop boundary.
+    private func musicMarqueeOffset(text: String, font: CGFloat, width: CGFloat) -> CGFloat {
+        let fullWidth = (text as NSString).size(withAttributes: [
+            .font: UIFont.systemFont(ofSize: font, weight: .medium)
+        ]).width + 4
+        return CGFloat(HudMapMusicBehavior.marqueeOffset(
+            contentWidth: Double(fullWidth), viewportWidth: Double(width),
+            trackAgeSeconds: snapshot.musicTrackAgeSeconds,
+            pixelsPerSecond: settings.musicMarqueeSpeed
+        ))
+    }
+
+    private func musicTextLine(_ text: String, width: CGFloat, fontSize: CGFloat) -> some View {
+        // Fixed-size content shifts underneath a clipping viewport. SwiftUI Text
+        // remains visible in the same renderer used by JPEG output and preview.
+        let fullWidth = max(width, (text as NSString).size(withAttributes: [
+            .font: UIFont.systemFont(ofSize: fontSize, weight: .medium)
+        ]).width + 5)
+        return Text(text)
+            .font(.system(size: fontSize, weight: .medium))
+            .foregroundStyle(musicTextColor)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(width: fullWidth, alignment: .leading)
+            .offset(x: musicMarqueeOffset(text: text, font: fontSize, width: width))
+            .frame(width: width, alignment: .leading)
+            .clipped()
+    }
+
+    private var musicTextColor: Color {
+        Color(red: settings.musicTextRed, green: settings.musicTextGreen, blue: settings.musicTextBlue)
+    }
+
+    private var musicOverlay: some View {
+        let titleWidth = CGFloat(max(65, min(320, settings.musicTitleWidth)))
+        let artistWidth = CGFloat(max(65, min(320, settings.musicArtistWidth)))
+        let fontSize = CGFloat(max(9, min(30, settings.musicTitleFontSize)))
+        let iconWidth: CGFloat = 18
+        let firstText = settings.musicTwoLines
+            ? snapshot.musicTitle
+            : [snapshot.musicTitle, snapshot.musicArtist].filter { !$0.isEmpty }.joined(separator: ", ")
+        let firstTextWidth = max(12, titleWidth - iconWidth)
+        let stackWidth = settings.musicTwoLines ? max(titleWidth, artistWidth) : titleWidth
+        let progress = snapshot.musicDurationMs > 0
+            ? min(1.0, max(0.0, Double(snapshot.musicElapsedMs) / Double(snapshot.musicDurationMs)))
+            : 0.0
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 3) {
+                Image(systemName: "music.note")
+                    .font(.system(size: max(10, fontSize - 1), weight: .semibold))
+                    .foregroundStyle(musicTextColor)
+                    .frame(width: iconWidth - 3)
+                musicTextLine(firstText, width: firstTextWidth, fontSize: fontSize)
+            }
+            .frame(width: titleWidth, alignment: .leading)
+
+            if settings.musicTwoLines && !snapshot.musicArtist.isEmpty {
+                musicTextLine(snapshot.musicArtist,
+                              width: artistWidth,
+                              fontSize: CGFloat(max(8, min(28, settings.musicArtistFontSize))))
+            }
+
+            if settings.musicShowProgress && snapshot.musicDurationMs > 0 {
+                // Progress bar always equals the first line's *total* width,
+                // including its music symbol; no independent width slider.
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(musicTextColor.opacity(settings.musicBarTrackOpacity))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color(red: settings.musicBarRed,
+                                        green: settings.musicBarGreen,
+                                        blue: settings.musicBarBlue))
+                            .frame(width: geometry.size.width * progress)
+                    }
+                }
+                .frame(width: titleWidth, height: CGFloat(max(2, min(10, settings.musicBarHeight))))
+            }
+        }
+        .frame(width: stackWidth, alignment: .leading)
+        .accessibilityLabel("Now playing: \(snapshot.musicTitle), \(snapshot.musicArtist)")
     }
 
     private func canvasPoint(_ component: HudMapDesignerComponent) -> CGPoint {

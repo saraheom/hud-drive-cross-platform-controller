@@ -2021,7 +2021,7 @@ final class AppState {
                         self.logger.log("MAP ETA", "showETA=\(self.mapModeSettings.showETA ? 1 : 0) route=\(snapshot.hasLiveRoute ? 1 : 0) showAtLane=\(self.mapModeSettings.etaUsesLanePositionWhenNoLanes ? 1 : 0) laneCount=\(snapshot.laneValues.count) visible=\(etaShown ? 1 : 0) text={\(snapshot.etaText)} position=(\(Int(etaPosition.x)),\(Int(etaPosition.y))) explicitForeground=white")
                         self.logger.log(
                             "MAP RENDER HEARTBEAT",
-                            "render=\(renderCount) targetFPS=\(targetFPS) speedSource=\(self.directELM.freshSpeedMph() != nil ? "OBD" : "GPS") actualFPS=\(String(format: "%.1f", self.hudU2WFrameRelay.actualFPS)) throughput=\(String(format: "%.1f", self.hudU2WFrameRelay.recentKilobytesPerSecond))KBps speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) lanesVisible=\(snapshot.laneGuidanceVisible ? 1 : 0) laneCount=\(snapshot.laneValues.count) etaShared=\(self.mapModeSettings.etaUsesLanePositionWhenNoLanes ? 1 : 0) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
+                            "render=\(renderCount) targetFPS=\(targetFPS) speedSource=\(self.directELM.freshSpeedMph() != nil ? "OBD" : "GPS") actualFPS=\(String(format: "%.1f", self.hudU2WFrameRelay.actualFPS)) throughput=\(String(format: "%.1f", self.hudU2WFrameRelay.recentKilobytesPerSecond))KBps speed=\(snapshot.speedMph)mph limit=\(snapshot.speedLimitMph) route=\(snapshot.hasLiveRoute ? 1 : 0) lanesVisible=\(snapshot.laneGuidanceVisible ? 1 : 0) laneCount=\(snapshot.laneValues.count) etaShared=\(self.mapModeSettings.etaUsesLanePositionWhenNoLanes ? 1 : 0) musicVisible=\(self.mapModeSettings.showMusicOverlay && snapshot.musicPlaying ? 1 : 0) musicProgress=\(snapshot.musicElapsedMs)/\(snapshot.musicDurationMs) musicLayout=\(self.mapModeSettings.musicTwoLines ? 2 : 1) maneuver=\(snapshot.maneuver.rawValue) street={\(snapshot.turningStreet)} mapFrames=\(self.mainVideo.frameCount) jpeg=\(frame.count) ingressConnected=\(self.hudU2WFrameRelay.connected ? 1 : 0) sent=\(self.hudU2WFrameRelay.sentFrameCount) dropped=\(self.hudU2WFrameRelay.droppedFrameCount) reconnects=\(self.hudU2WFrameRelay.reconnectCount)"
                         )
                     }
                 }
@@ -2355,7 +2355,7 @@ final class AppState {
             let ended = Date()
             let manifest = [
                 "HUD OBD internal probe v4",
-                "appVersion=v90.35.3.24.48",
+                "appVersion=v90.35.3.24.49",
                 "started=\(started.ISO8601Format())",
                 "ended=\(ended.ISO8601Format())",
                 "durationSeconds=\(String(format: "%.1f", ended.timeIntervalSince(started)))",
@@ -3460,6 +3460,22 @@ final class AppState {
                 : "\(feet) ft"
         }
 
+        // Hide music when paused, stopped, unavailable or stale. Derive progress
+        // from the last 750 ms media poll and the render clock (not from FPS).
+        let mediaAge = nowPlaying.lastUpdateAt.map { Date().timeIntervalSince($0) } ?? .infinity
+        let mediaVisible = HudMapMusicBehavior.isVisible(
+            polling: nowPlaying.running,
+            reachable: nowPlaying.reachable,
+            playing: nowPlaying.isPlaying,
+            title: nowPlaying.title,
+            ageSeconds: mediaAge
+        )
+        let mediaElapsed = mediaVisible
+            ? HudMapMusicBehavior.interpolatedElapsedMs(
+                nowPlaying.elapsedMs, durationMs: nowPlaying.durationMs, ageSeconds: mediaAge)
+            : 0
+        let musicAge = max(0, Date().timeIntervalSince(nowPlaying.lastTrackChangedAt ?? Date()))
+
         let current = HudMapModeSnapshot(
             speedMph: speed,
             speedLimitMph: limit,
@@ -3476,12 +3492,25 @@ final class AppState {
             laneValues: activeLaneGuidance.map { Int($0.wireValue) },
             laneGuidanceVisible: shouldDisplayActiveLanes(),
             routeRoads: routeGuidance.routeRoads,
-            hasLiveRoute: liveRoute
+            hasLiveRoute: liveRoute,
+            musicPlaying: mediaVisible,
+            musicTitle: mediaVisible ? nowPlaying.title : "",
+            musicArtist: mediaVisible ? nowPlaying.artist : "",
+            musicElapsedMs: mediaElapsed,
+            musicDurationMs: nowPlaying.durationMs,
+            musicTrackAgeSeconds: musicAge
         )
 
         if liveRoute { return current }
 
         if useFrozenRouteWhenUnavailable, var frozen = mapModeFrozenSnapshot {
+            // Route freezing must not freeze music when the track changes/stops.
+            frozen.musicPlaying = current.musicPlaying
+            frozen.musicTitle = current.musicTitle
+            frozen.musicArtist = current.musicArtist
+            frozen.musicElapsedMs = current.musicElapsedMs
+            frozen.musicDurationMs = current.musicDurationMs
+            frozen.musicTrackAgeSeconds = current.musicTrackAgeSeconds
             frozen.speedMph = speed
             frozen.speedLimitMph = limit
             frozen.distanceToManeuverMeters = routeGuidance.distanceToManeuverMeters > 0 ? routeGuidance.distanceToManeuverMeters : max(0, navigation.current.distanceMeters)

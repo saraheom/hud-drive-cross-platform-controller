@@ -54,6 +54,8 @@ final class CarPlayNowPlayingClient {
     private(set) var sourceApp = "—"
     private(set) var sourceBundleID = ""
     private(set) var playbackStatus = 0
+    private(set) var isPlaying = false
+    private(set) var lastTrackChangedAt: Date?
     private(set) var title = "No CarPlay media"
     private(set) var artist = ""
     private(set) var album = ""
@@ -137,6 +139,9 @@ final class CarPlayNowPlayingClient {
         sourceApp = snapshot.sourceApp.isEmpty ? "—" : snapshot.sourceApp
         sourceBundleID = snapshot.sourceBundleID
         playbackStatus = snapshot.playbackStatus
+        // A paused/stopped track is never eligible for the Map Mode overlay.
+        isPlaying = (snapshot.playbackStatus == 1 || snapshot.playing) &&
+            snapshot.playbackStatus != 2
         durationMs = max(0, snapshot.durationMs)
         elapsedMs = max(0, snapshot.elapsedMs)
         title = snapshot.title.isEmpty ? "No CarPlay media" : snapshot.title
@@ -147,8 +152,10 @@ final class CarPlayNowPlayingClient {
             : "\(playbackDescription) • \(sourceApp)"
 
         let trackSignature = "\(snapshot.sourceBundleID)|\(snapshot.title)|\(snapshot.artist)|\(snapshot.album)"
-        if !snapshot.title.isEmpty, trackSignature != lastTrackSignature {
-            lastTrackSignature = trackSignature
+        let trackChanged = trackSignature != lastTrackSignature
+        lastTrackSignature = trackSignature
+        if trackChanged { lastTrackChangedAt = Date() }
+        if !snapshot.title.isEmpty, trackChanged {
             logger.log("CARPLAY MEDIA", "Track \(snapshot.sourceApp): \(snapshot.artist) — \(snapshot.title)")
             onTrackChanged?(snapshot.artist, snapshot.title)
         }

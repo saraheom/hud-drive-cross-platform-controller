@@ -22,6 +22,13 @@ struct HudMapModeSnapshot: Equatable {
     var laneGuidanceVisible: Bool
     var routeRoads: [String]
     var hasLiveRoute: Bool
+    // Optional Now Playing data; independent of whether navigation is active.
+    var musicPlaying: Bool = false
+    var musicTitle: String = ""
+    var musicArtist: String = ""
+    var musicElapsedMs: Int = 0
+    var musicDurationMs: Int = 0
+    var musicTrackAgeSeconds: Double = 0
 
 
     /// Always-populated styling sample used only inside the customization panel.
@@ -48,7 +55,13 @@ struct HudMapModeSnapshot: Equatable {
             "Falls Bridge",
             "Ridge Ave"
         ],
-        hasLiveRoute: true
+        hasLiveRoute: true,
+        musicPlaying: true,
+        musicTitle: "A Long Song Title That Needs A Marquee",
+        musicArtist: "Sample Artist With A Long Name",
+        musicElapsedMs: 92000,
+        musicDurationMs: 220000,
+        musicTrackAgeSeconds: 5
     )
 
     static let previewFallback = HudMapModeSnapshot(

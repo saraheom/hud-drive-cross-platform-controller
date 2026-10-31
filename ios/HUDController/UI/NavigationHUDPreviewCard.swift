@@ -63,6 +63,7 @@ struct NavigationHUDPreviewCard: View {
                     VStack(alignment: .leading, spacing: 14) {
                         customizationSamplePreview
                         layoutDesignerControls
+                        musicOverlayControls
                         mapAppearanceControls
                         mapCropControls
                         speedLimitSignControls
@@ -364,6 +365,7 @@ struct NavigationHUDPreviewCard: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
 
+            if selectedDesignerComponent != .music {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .frame(width: 18)
@@ -383,6 +385,11 @@ struct NavigationHUDPreviewCard: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 42, alignment: .trailing)
+            }
+            } else {
+                Text("Set music text size and widths in Music Overlay below.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
             Divider().padding(.top, 12)
@@ -438,6 +445,7 @@ struct NavigationHUDPreviewCard: View {
         case .map: return 0.60...1.45
         case .turningStreet, .maneuver, .distance, .eta: return 0.60...1.60
         case .lanes: return 0.60...1.70
+        case .music: return 1.0...1.0
         }
     }
 
@@ -917,6 +925,98 @@ struct NavigationHUDPreviewCard: View {
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    private var musicOverlayControls: some View {
+        let music = state.mapModeSettings
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Music Overlay", systemImage: "music.note")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Toggle("Show", isOn: binding(\.showMusicOverlay))
+                    .labelsHidden()
+            }
+
+            if music.showMusicOverlay {
+                Picker("Layout", selection: binding(\.musicTwoLines)) {
+                    Text("One line").tag(false)
+                    Text("Two lines").tag(true)
+                }
+                .pickerStyle(.segmented)
+
+                musicSettingSlider("First line width", value: binding(\.musicTitleWidth), range: 65...320, suffix: "px")
+                musicSettingSlider("First line font", value: binding(\.musicTitleFontSize), range: 9...30, suffix: "pt")
+                if music.musicTwoLines {
+                    musicSettingSlider("Artist line width", value: binding(\.musicArtistWidth), range: 65...320, suffix: "px")
+                    musicSettingSlider("Artist font", value: binding(\.musicArtistFontSize), range: 8...28, suffix: "pt")
+                }
+
+                musicSettingSlider("Marquee speed", value: binding(\.musicMarqueeSpeed), range: 8...60, suffix: "px/s")
+                ColorPicker("Text and symbol color", selection: musicColorBinding(isProgress: false), supportsOpacity: false)
+                    .font(.caption)
+
+                Toggle("Playback progress", isOn: binding(\.musicShowProgress))
+                    .font(.caption)
+                if music.musicShowProgress {
+                    musicSettingSlider("Bar thickness", value: binding(\.musicBarHeight), range: 2...10, suffix: "px")
+                    ColorPicker("Progress color", selection: musicColorBinding(isProgress: true), supportsOpacity: false)
+                        .font(.caption)
+                    Text("The progress bar always matches the first line's width.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button {
+                    selectedDesignerComponent = .music
+                } label: {
+                    Label("Select music in layout designer", systemImage: "hand.draw")
+                }
+                .buttonStyle(.bordered)
+                .font(.caption)
+                Text("Automatically hidden when playback stops or metadata becomes unavailable. A sample track is shown in the designer.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func musicSettingSlider(_ name: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
+        HStack(spacing: 8) {
+            Text(name).font(.caption).frame(width: 104, alignment: .leading)
+            Slider(value: value, in: range, step: 1)
+            Text("\(Int(value.wrappedValue)) \(suffix)")
+                .font(.caption2.monospacedDigit())
+                .frame(width: 54, alignment: .trailing)
+        }
+    }
+
+    private func musicColorBinding(isProgress: Bool) -> Binding<Color> {
+        Binding(
+            get: {
+                let music = state.mapModeSettings
+                return Color(red: isProgress ? music.musicBarRed : music.musicTextRed,
+                             green: isProgress ? music.musicBarGreen : music.musicTextGreen,
+                             blue: isProgress ? music.musicBarBlue : music.musicTextBlue)
+            },
+            set: { selected in
+                let resolved = UIColor(selected).resolvedColor(with: .current)
+                var red: CGFloat = 1, green: CGFloat = 1, blue: CGFloat = 1, alpha: CGFloat = 1
+                guard resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return }
+                let music = state.mapModeSettings
+                if isProgress {
+                    music.musicBarRed = Double(red)
+                    music.musicBarGreen = Double(green)
+                    music.musicBarBlue = Double(blue)
+                } else {
+                    music.musicTextRed = Double(red)
+                    music.musicTextGreen = Double(green)
+                    music.musicTextBlue = Double(blue)
+                }
+            }
+        )
+    }
+
     private var componentControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Visible components")
@@ -932,6 +1032,7 @@ struct NavigationHUDPreviewCard: View {
                 componentToggle("Lane guidance", binding(\.showLaneGuidance))
                 componentToggle("ETA", binding(\.showETA))
                 componentToggle("Time left", binding(\.showTimeLeft))
+                componentToggle("Music overlay", binding(\.showMusicOverlay))
             }
 
             Divider().opacity(0.35)
