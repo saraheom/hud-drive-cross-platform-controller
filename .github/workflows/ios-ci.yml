@@ -20,6 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Source-text XCTest assertions must track the streamlined production UI.
+      # Catch stale literal checks before spending time on a simulator build.
+      - name: Validate Swift source-test contracts
+        run: python3 scripts/validate_swift_test_source_assertions.py
+
       - name: Select Xcode 26 toolchain
         shell: bash
         run: |

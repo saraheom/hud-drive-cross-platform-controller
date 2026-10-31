@@ -40,7 +40,7 @@ final class V90352410IncrementalSourceAcquireTests: XCTestCase {
         XCTAssertTrue(diagnostic.contains("u2wvideo-diag-bundle.cgi"))
         // v24.28 keeps the diagnostic endpoints underneath but retires the old probe-specific UI.
         XCTAssertFalse(ui.contains("Collect Live Map Diagnostic ZIP (parked)"))
-        XCTAssertTrue(ui.contains("Detailed MainVideo, decoder, adapter-seam, and OBD ownership telemetry remains in the diagnostic ZIP"))
+        XCTAssertTrue(ui.contains("Text(\"Map stream\")"))
         XCTAssertFalse(ui.contains("Collect passive codec diagnostic bundle"))
         XCTAssertFalse(ui.contains("passive v8.27.2 source/topology observer"))
     }

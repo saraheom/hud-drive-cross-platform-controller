@@ -25,7 +25,7 @@ final class V9021BLEDIMAnimationTestLabTests: XCTestCase {
         XCTAssertFalse(view.contains("BLEDIM ANIMATION TEST LAB"))
         XCTAssertFalse(view.contains("BLEDIM PRODUCTION ANIMATION"))
         XCTAssertFalse(view.contains("Already-On Minimal"))
-        XCTAssertTrue(view.contains("Preview BLEDIM Only"))
+        XCTAssertTrue(view.contains("Preview Enabled Lights"))
     }
 
     func testStrategiesCapturePerAnimationAndDoNotMutateInflightSequence() throws {

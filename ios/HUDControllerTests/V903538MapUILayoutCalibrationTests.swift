@@ -43,7 +43,7 @@ final class V903538MapUILayoutCalibrationTests: XCTestCase {
 
     func testNavigationUIExposesFullCanvasDesignerAndStylingControls() throws {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
-        XCTAssertTrue(ui.contains("Full-canvas 480×240 layout"))
+        XCTAssertTrue(ui.contains("Map Mode layout designer"))
         XCTAssertTrue(ui.contains("ForEach(designerComponents)"))
         XCTAssertTrue(ui.contains("setDesignerCanvasPosition"))
         XCTAssertTrue(ui.contains("Turn arrow boldness"))

@@ -1,0 +1,15 @@
+HUD v90.35.3.24.49 CI FIX2 — BUILD VERIFICATION
+Source: v24.49 CI FIX1 full GitHub repository
+User-provided CI log: logs_111567414187.zip; GH run 111567414187
+
+Xcode 26 iOS simulator build in uploaded log: SUCCEEDED
+Xcode 26 XCTest in uploaded log: FAILED (398 executed, seven stale source-text assertions)
+
+Fix scope: 6 existing XCTest Swift files; one CI workflow; 1 early preflight script; 1 new regression test.
+Python: 648 passed, 1 skipped
+Swift syntax parse: 235/235 passed
+YAML: 8/8 GitHub Actions workflows parsed
+Static XCTest source-string preflight: 1,173 checked, 4 dynamic deferred to XCTest, 0 mismatches
+Production source / U2W / ambient / OBD / music code: byte-for-byte unchanged compared to v24.49 CI FIX1
+Full iOS Xcode test run after FIX2: NOT run locally (requires Apple SDK)
+ZIP contents and CRC: checked at packaging

@@ -32,7 +32,7 @@ final class V903522LiveIDRLaneAmbientTests: XCTestCase {
         // Decoder detail stays in the diagnostic ZIP; the visible card is intentionally compact.
         XCTAssertTrue(ui.contains("state.mainVideo.transportPhase"))
         XCTAssertTrue(ui.contains("Not active"))
-        XCTAssertTrue(ui.contains("Detailed MainVideo, decoder, adapter-seam, and OBD ownership telemetry remains in the diagnostic ZIP"))
+        XCTAssertTrue(ui.contains("Text(\"Map stream\")"))
         XCTAssertFalse(ui.contains("VideoToolbox decoder"))
     }
 
