@@ -10,7 +10,8 @@ enum CurrentNavRoadIdentity {
             "nb": "northbound", "sb": "southbound", "eb": "eastbound", "wb": "westbound",
             "mlk": "martin luther king", "jr": "junior", "dr": "drive", "rd": "road", "st": "street",
             "ave": "avenue", "av": "avenue", "blvd": "boulevard",
-            "hwy": "highway", "pkwy": "parkway", "ln": "lane",
+            "hwy": "highway", "pkwy": "parkway", "expy": "expressway",
+            "expwy": "expressway", "expw": "expressway", "ln": "lane",
             "ct": "court", "pl": "place", "ter": "terrace"
         ]
         let normalized = raw
@@ -29,12 +30,31 @@ enum CurrentNavRoadIdentity {
         )
     }
 
+    /// CarPlay may include a leading cardinal that the OSM name omits.
+    /// Accept exactly one missing leading cardinal only; an explicit North/South
+    /// or East/West disagreement is never a semantic match. Geometry, heading,
+    /// and posted-tag confidence remain mandatory in the calling speed matcher.
+    private static func omittedDirectionalPrefixMatches(_ left: String, _ right: String) -> Bool {
+        let directions: Set<String> = ["north", "south", "east", "west"]
+        let a = left.split(separator: " ").map(String.init)
+        let b = right.split(separator: " ").map(String.init)
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        if directions.contains(a[0]), !directions.contains(b[0]) {
+            return Array(a.dropFirst()) == b
+        }
+        if directions.contains(b[0]), !directions.contains(a[0]) {
+            return Array(b.dropFirst()) == a
+        }
+        return false
+    }
+
     static func routeRoadMatches(_ rawRouteRoad: String, name: String?, reference: String?) -> Bool {
         let route = normalizedRoadPhrase(rawRouteRoad)
         guard !route.isEmpty else { return false }
         if let name {
             let candidate = normalizedRoadPhrase(name)
             if !candidate.isEmpty, candidate == route { return true }
+            if omittedDirectionalPrefixMatches(route, candidate) { return true }
         }
         if let reference {
             let ref = normalizedRoadPhrase(reference)
@@ -47,5 +67,4 @@ enum CurrentNavRoadIdentity {
         }
         return false
     }
-
 }
