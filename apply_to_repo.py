@@ -1,290 +1,340 @@
 #!/usr/bin/env python3
-"""Apply focused HUD v90.35.3.24.33 source changes to the existing GitHub repo.
-Requires Python 3; no external dependencies; backups created before modification.
+"""Apply gas-station/HUD restart robustness fix on reviewed HUD main source.
+
+Applies only to reviewed AppState blob, never to unknown revisions; atomic write.
+Does not update the firmware, music UI, speed engine, or MainVideo decoder.
 """
 from pathlib import Path
-import sys
+import hashlib
 import shutil
+import subprocess
+import sys
 
-BASE = Path(__file__).resolve().parent
-ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
-REPO = ROOT / 'ios/HUDController/MapMode/U2WMainVideoClient.swift'
-SPEED = ROOT / 'ios/HUDController/Vehicle/OriginalSpeedLimitEngine.swift'
-IDENTITY = ROOT / 'ios/HUDController/Vehicle/CurrentNavRoadIdentity.swift'
-VERSION = 'v90.35.3.24.33'
+PACKAGE = Path(__file__).resolve().parent
+TARGET_REL = 'ios/HUDController/App/AppState.swift'
+KNOWN_BLOB = '2b85f54e5917cc51a64e54cc66cb4bfb5c543066'
 
 
-def one(source: str, before: str, after: str, label: str) -> str:
-    count = source.count(before)
+def git_blob_sha(body: bytes) -> str:
+    return hashlib.sha1(f'blob {len(body)}\0'.encode() + body).hexdigest()
+
+
+def replace_once(text: str, needle: str, replacement: str, step: str) -> str:
+    count = text.count(needle)
     if count != 1:
-        raise RuntimeError(f'{label}: expected exactly one unmodified anchor, found {count}. No changes written.')
-    return source.replace(before, after, 1)
+        raise RuntimeError(f'{step}: expected one exact anchor; observed {count}. No source written.')
+    return text.replace(needle, replacement, 1)
 
 
-def plan_patches():
-    video = REPO.read_text()
-    speed = SPEED.read_text()
-    identity = IDENTITY.read_text()
-    # Retain the healthy raw relay and its exact-overlap startup snapshot mechanism.
-    # Do not make VT invalidation a reason to tear down an otherwise healthy TCP worker.
-    before = '''                // v24.32 lock-transition recovery: field evidence shows iOS may
-                // invalidate the current VT session (-12903) exactly when the phone
-                // locks, while TCP and the bounded background task remain alive.
-                // Instead of passively waiting for the head unit to emit another IDR,
-                // immediately try the v8.40 zero-copy retained-history bootstrap.
-                // Single-flight + cooldown guards in restartWorkerWithReadOnlyBootstrap
-                // prevent recovery fan-out. If retained history has no usable IDR, the
-                // normal WAITING_FRESH_IDR behavior remains as a safe fallback.
-                if reason.contains("kVTInvalidSessionErr (-12903)"),
-                   self.backgroundProbeMode == .keepDecoderBackgroundTask,
-                   self.backgroundProbeScene != "Active" {
-                    self.backgroundProbeEvent = "Lock recovery bootstrap"
-                    self.logger.log("U2W VIDEO BACKGROUND", "lock-time -12903 detected scene=\\(self.backgroundProbeScene); attempting v8.40 retained-history bootstrap")
-                    self.diagnosticRecorder.record("background_probe", "lock_invalid_session_rebootstrap", fields: ["scene": self.backgroundProbeScene, "phase": self.transportPhase, "generation": generation])
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        try? await Task.sleep(for: .milliseconds(120))
-                        guard self.running, self.workerGeneration == generation, self.backgroundProbeScene != "Active" else { return }
-                        self.restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")
-                    }
-                }
-'''
-    after = '''                // An invalid VideoToolbox session does NOT invalidate the raw TCP
-                // stream. No worker/connection restart on background lock events.
-                // Foreground recovery uses the existing read-only snapshot join on
-                // the same connection, then only falls back to a restart if needed.
-                if reason.contains("kVTInvalidSessionErr (-12903)") {
-                    if self.backgroundProbeScene == "Active" {
-                        self.requestInPlaceReadOnlyBootstrap(reason: "foreground VT invalid session -12903")
-                    } else {
-                        self.backgroundProbeEvent = "Lock invalidated VT; raw TCP preserved"
-                        self.logger.log("U2W VIDEO BACKGROUND", "lock-time -12903 scene=\\(self.backgroundProbeScene); no TCP restart; defer read-only decoder repair until stable foreground")
-                        self.diagnosticRecorder.record("background_probe", "lock_invalid_session_tcp_preserved", fields: ["scene": self.backgroundProbeScene, "phase": self.transportPhase, "generation": generation])
-                    }
-                }
-'''
-    video = one(video, before, after, 'video lock recovery')
-    video = one(video,
-        '    private func restartWorkerWithReadOnlyBootstrap(reason: String) {',
-        '''    // Single-flight, bounded, same-TCP decoder bootstrap. Uses the existing
-    // overlap-verified adapter snapshot fetch; never injects CarPlay commands.
-    private var lastInPlaceReadOnlyBootstrapAt: Date?
+def apply(source: str) -> str:
+    x = source
+    x = replace_once(x,
+        '''    private var hudU2WJoinRecoveryTask: Task<Void, Never>?
+    private var hudU2WLastManualDisplayRetryAt = Date.distantPast''',
+        '''    private var hudU2WJoinRecoveryTask: Task<Void, Never>?
+    // v24.35: automatic desired-state reconciliation is separate from MainVideo.
+    // A HUD power cycle may never produce a successful STA status callback, so
+    // watch the current adapter MJPEG session even before the first READY event.
+    private var hudU2WAutoReconcileTask: Task<Void, Never>?
+    private var hudU2WAutoReconcileGeneration: UInt64 = 0
+    private var hudU2WAutoReconcileSince = Date.distantPast
+    private var hudU2WAutoReconcileLastRetryAt = Date.distantPast
+    private var hudU2WAutoReconcileRetries = 0
+    private var hudU2WAutoReconcileMissingViewerSamples = 0
+    private var hudU2WLastManualDisplayRetryAt = Date.distantPast''', 'add auto-rejoin state')
 
-    private func requestInPlaceReadOnlyBootstrap(reason: String) {
-        guard running, let worker else { return }
-        let now = Date()
-        if let prior = lastInPlaceReadOnlyBootstrapAt,
-           now.timeIntervalSince(prior) < 18.0 {
-            logger.log("U2W VIDEO RECOVERY", "INPLACE_BOOTSTRAP cooldown reason=\\(reason)")
-            return
-        }
-        lastInPlaceReadOnlyBootstrapAt = now
-        backgroundProbeEvent = "Same-TCP decoder bootstrap"
-        logger.log("U2W VIDEO RECOVERY", "INPLACE_BOOTSTRAP request reason=\\(reason); raw TCP and adapter untouched")
-        diagnosticRecorder.record("decoder", "inplace_bootstrap_requested", fields: ["reason": reason, "generation": workerGeneration])
-        worker.beginInPlaceReadOnlyBootstrap(reason: reason)
-    }
+    x = replace_once(x,
+        '''            self.scheduleHUDRehydration(reason: "BLE transport ready")
+            self.scheduleAutomaticMapModeStart(reason: "HUD BLE transport ready")''',
+        '''            self.scheduleHUDRehydration(reason: "BLE transport ready")
+            self.scheduleAutomaticMapModeStart(reason: "HUD BLE transport ready")
+            self.startHUDU2WAutoReconciliation(reason: "BLE transport ready")''',
+        'BLE connection callback')
 
-    private func restartWorkerWithReadOnlyBootstrap(reason: String) {''',
-        'video in-place coordinator')
-    before = '''                if !healthy {
-                    self.backgroundProbeEvent = "Foreground fallback rebootstrap"
-                    self.logger.log("U2W VIDEO BACKGROUND", "probe foreground health failed phase=\\(self.transportPhase) frameAge=\\(frameAge.isFinite ? String(format: "%.1f", frameAge) : "none")s; restarting iPhone worker with read-only bootstrap")
-                    self.diagnosticRecorder.record("background_probe", "foreground_rebootstrap", fields: ["mode": self.backgroundProbeMode.rawValue, "phase": self.transportPhase, "frame_age": frameAge])
-                    self.restartWorkerWithReadOnlyBootstrap(reason: "background probe foreground fallback")
-                } else {
-'''
-    after = '''                if !healthy {
-                    self.backgroundProbeEvent = "Foreground same-TCP bootstrap"
-                    self.logger.log("U2W VIDEO BACKGROUND", "foreground stale/invalid decoder phase=\\(self.transportPhase) age=\\(frameAge.isFinite ? String(format: "%.1f", frameAge) : "none")s; requesting same-TCP read-only bootstrap first")
-                    self.diagnosticRecorder.record("background_probe", "foreground_inplace_bootstrap", fields: ["mode": self.backgroundProbeMode.rawValue, "phase": self.transportPhase, "frame_age": frameAge])
-                    self.requestInPlaceReadOnlyBootstrap(reason: "stable foreground decoder restoration")
-                    // Let the bounded snapshot fetch and VideoToolbox decode complete
-                    // before considering the old worker-restart fallback.
-                    try? await Task.sleep(for: .seconds(12))
-                    guard !Task.isCancelled, self.running, self.lifecycleActive,
-                          self.lifecycleGeneration == generation else { return }
-                    let recoveredAge = self.lastDecodedFrameAt.map { Date().timeIntervalSince($0) } ?? .infinity
-                    if recoveredAge >= 2.0 && self.startupSnapshotFetchTask == nil {
-                        self.logger.log("U2W VIDEO BACKGROUND", "INPLACE_BOOTSTRAP no recent frames after bounded grace; invoking legacy worker fallback")
-                        self.restartWorkerWithReadOnlyBootstrap(reason: "same-TCP snapshot join did not restore frames")
-                    }
-                } else {
-'''
-    video = one(video, before, after, 'video foreground recovery')
-    # The worker already provides exact current-snapshot vs live-buffer overlap.
-    # Reuse that mechanism on the existing socket rather than re-opening it.
-    video = one(video,
-      '    fileprivate func applyStartupBootstrapSnapshots(_ snapshots: [U2WMainVideoBootstrapSnapshot]) {',
-      '''    func beginInPlaceReadOnlyBootstrap(reason: String) {
-        queue.async { [weak self] in
-            guard let self else { return }
-            guard self.running, self.connection != nil,
-                  self.rawNavigationPriorityMode, !self.startupBootstrapBuffering else {
-                self.onDiagnostic?("INPLACE_BOOTSTRAP unavailable or already active; continuing bounded live-IDR fallback")
+    x = replace_once(x,
+        '''            self.scheduleHUDRehydration(reason: "HUD firmware hello / physical session reset")
+            // Mode 6 can emit a firmware hello. The guarded reconciler will not
+            // restart a live/current attempt or issue duplicate enable requests.
+            self.scheduleAutomaticMapModeStart(reason: "HUD physical session reset")''',
+        '''            // Mode 6 itself can generate a firmware hello. Never send stock
+            // dashboard rehydration while an established Map Mode relay is active.
+            // A real physical HUD reset is reconciled against the CURRENT adapter
+            // MJPEG viewer, without touching the iPhone H.264 decoder.
+            if self.hudU2WLiveRelayActive {
+                self.logger.log("MAP AUTO REJOIN", "HUD session hello with relay active; verify current MJPEG viewer, preserve MainVideo")
+                self.startHUDU2WAutoReconciliation(reason: "HUD physical session reset")
+            } else {
+                self.scheduleHUDRehydration(reason: "HUD firmware hello / physical session reset")
+                self.scheduleAutomaticMapModeStart(reason: "HUD physical session reset")
+                self.startHUDU2WAutoReconciliation(reason: "HUD physical session reset")
+            }''', 'physical reset callback')
+
+    x = replace_once(x,
+        '''            self.hudU2WJoinRecoveryTask?.cancel()
+            self.hudU2WJoinRecoveryTask = nil
+            self.hudSTAPersistenceTestTask?.cancel()''',
+        '''            self.hudU2WJoinRecoveryTask?.cancel()
+            self.hudU2WJoinRecoveryTask = nil
+            self.hudU2WAutoReconcileGeneration &+= 1
+            self.hudU2WAutoReconcileTask?.cancel()
+            self.hudU2WAutoReconcileTask = nil
+            self.hudU2WAutoReconcileSince = .distantPast
+            self.hudU2WAutoReconcileLastRetryAt = .distantPast
+            self.hudU2WAutoReconcileRetries = 0
+            self.hudU2WAutoReconcileMissingViewerSamples = 0
+            self.hudU2WDisplayHealthTask?.cancel()
+            self.hudU2WDisplayHealthTask = nil
+            self.hudU2WDisplayRecoveryTask?.cancel()
+            self.hudU2WDisplayRecoveryTask = nil
+            self.hudU2WKivicKickTask?.cancel()
+            self.hudU2WKivicKickTask = nil
+            self.hudSTAPersistenceTestTask?.cancel()''', 'physical BLE disconnect cleanup')
+
+    x = replace_once(x,
+        '''            scheduleAutomaticMapModeStart(reason: reason)
+        } else {
+            automaticMapModeAttemptedOnThisConnection = false''',
+        '''            scheduleAutomaticMapModeStart(reason: reason)
+            startHUDU2WAutoReconciliation(reason: "auto setting enabled: \\(reason)")
+        } else {
+            hudU2WAutoReconcileGeneration &+= 1
+            hudU2WAutoReconcileTask?.cancel()
+            hudU2WAutoReconcileTask = nil
+            automaticMapModeAttemptedOnThisConnection = false''', 'automatic preference ON/OFF',)
+
+    x = replace_once(x,
+        '''        } else if saved && !hudU2WLiveRelayActive {
+            scheduleAutomaticMapModeStart(reason: reason)
+        }''',
+        '''        } else if saved {
+            if !hudU2WLiveRelayActive { scheduleAutomaticMapModeStart(reason: reason) }
+            startHUDU2WAutoReconciliation(reason: "preference sync: \\(reason)")
+        }''', 'foreground preference reconciliation')
+
+    x = replace_once(x,
+        '''            self.hudU2WFrameRelay.start()
+            self.hudU2WLiveRelayActive = true
+            self.updateMapModeIdleTimerPolicy(reason: "Map Mode relay active")''',
+        '''            self.hudU2WFrameRelay.start()
+            self.hudU2WLiveRelayActive = true
+            self.hudU2WAutoReconcileSince = Date()
+            self.hudU2WAutoReconcileLastRetryAt = .distantPast
+            self.hudU2WAutoReconcileRetries = 0
+            self.hudU2WAutoReconcileMissingViewerSamples = 0
+            self.startHUDU2WAutoReconciliation(reason: "fresh physical Map Mode attempt")
+            self.updateMapModeIdleTimerPolicy(reason: "Map Mode relay active")''', 'new relay lifecycle arm')
+
+    x = replace_once(x,
+        '''                self.hudU2WSTAStatus = "HUD frame relay unavailable — Navigation retained"
+                self.hudU2WLiveRelayActive = false''',
+        '''                self.hudU2WSTAStatus = "HUD frame relay unavailable — Navigation retained"
+                automaticStartFailure = "iPhone JPEG relay prewarm failed"
+                self.hudU2WLiveRelayActive = false''', 'prewarm auto-retry unlock')
+
+    # The legacy one-shot recovery can run before this monitor's cooldown.
+    # Recheck the CURRENT viewer before issuing mode4/mode6; read-only CGI
+    # unavailable is inconclusive, never a reason to disrupt a live display.
+    x = replace_once(x,
+        '''            guard self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else { return }
+
+            self.hudU2WKivicKickTask?.cancel()''',
+        '''            guard self.hudU2WLiveRelayActive, self.bluetooth.state == .connected else { return }
+
+            let currentViewer = await self.u2wHUDRelayStatus()
+            guard !Task.isCancelled, self.hudU2WLiveRelayActive,
+                  self.bluetooth.state == .connected else { return }
+            if currentViewer.currentSessionReady {
+                self.hudU2WSTAConnected = true
+                self.hudU2WCurrentSessionWasReady = true
+                self.hudU2WReadySessionID = currentViewer.sessionID
+                self.startHUDU2WDisplayHealthMonitor()
+                self.logger.log("MAP AUTO REJOIN", "JOIN_ABORT current viewer already healthy session=\\(currentViewer.sessionID); MainVideo and HUD mode untouched")
                 return
             }
-            self.startupBridgeBuffer.removeAll(keepingCapacity: true)
-            self.startupBootstrapBuffering = true
-            self.startupBootstrapApplied = false
-            self.startupBootstrapReadyNotified = true
-            self.onPhase?("DECODER_RECOVERY")
-            self.onStatus?("Same-TCP read-only decoder bootstrap in progress", true)
-            self.onDiagnostic?("INPLACE_BOOTSTRAP_BEGIN reason=\\(reason); raw TCP stays attached, buffering fresh bytes until snapshot overlap is verified")
-            self.onStartupBootstrapBufferingReady?()
-        }
-    }
-
-    fileprivate func applyStartupBootstrapSnapshots(_ snapshots: [U2WMainVideoBootstrapSnapshot]) {''',
-      'video same-TCP worker bootstrap')
-    # Reset decode state only AFTER the snapshots prove an exact live overlap.
-    video = one(video,
-      '''            // PREVIOUS is safe only when its observer metadata proves it immediately
-            // precedes the exact CURRENT generation we just overlap-joined to live TCP.''',
-      '''            // The decoder may hold an invalid VT session or contaminated
-            // reference chain. Reconstruct it only after exact overlap was proven.
-            self.decoder.reset()
-            self.sanitizer.reset(clearParameterSets: true)
-            self.annexBParser.reset()
-            self.waitingForFreshLiveIDRAfterRejectedAnchor = true
-            self.onDiagnostic?("INPLACE_BOOTSTRAP_REBUILD verifiedOverlap=\\(overlap.anchorLength) rawTCP=preserved; resetting decoder/parser to replay coherent history")
-
-            // PREVIOUS is safe only when its observer metadata proves it immediately
-            // precedes the exact CURRENT generation we just overlap-joined to live TCP.''',
-      'video validated snapshot rebuild')
-
-    identity = one(identity,
-      '''            "hwy": "highway", "pkwy": "parkway", "ln": "lane",''',
-      '''            "hwy": "highway", "pkwy": "parkway", "expy": "expressway",
-            "expwy": "expressway", "expw": "expressway", "ln": "lane",''',
-      'road aliases')
-    identity = one(identity,
-      '''            if !candidate.isEmpty, candidate == route { return true }
-''',
-      '''            if !candidate.isEmpty, candidate == route { return true }
-            if omittedDirectionalPrefixMatches(route, candidate) { return true }
-''',
-      'missing directional name match')
-    identity = one(identity,
-      '''    static func routeRoadMatches(_ rawRouteRoad: String, name: String?, reference: String?) -> Bool {''',
-      '''    /// OSM sometimes omits a cardinal prefix that CarPlay includes (N Mascher
-    /// St vs Mascher Street). Accept only when exactly one side lacks a prefix.
-    /// Explicit North and South names must never match each other.
-    private static func omittedDirectionalPrefixMatches(_ a: String, _ b: String) -> Bool {
-        let cardinals: Set<String> = ["north", "south", "east", "west"]
-        let at = a.split(separator: " ").map(String.init)
-        let bt = b.split(separator: " ").map(String.init)
-        guard !at.isEmpty, !bt.isEmpty else { return false }
-        if cardinals.contains(at[0]), !cardinals.contains(bt[0]) {
-            return Array(at.dropFirst()) == bt
-        }
-        if cardinals.contains(bt[0]), !cardinals.contains(at[0]) {
-            return Array(bt.dropFirst()) == at
-        }
-        return false
-    }
-
-    static func routeRoadMatches(_ rawRouteRoad: String, name: String?, reference: String?) -> Bool {''',
-      'cardinal prefix matcher')
-
-    speed = one(speed,
-      '''    private var currentNavLastMatchedRoad: String?''',
-      '''    // Current+Nav only: stabilize two competing explicitly posted OSM ways.
-    private var currentNavPinnedPostedWay: Int64?
-    private var currentNavPendingPostedSwitch: (wayID: Int64, observations: Int)?
-    private var currentNavLastMatchedRoad: String?''',
-      'speed source state')
-    speed = one(speed,
-      '''            currentNavLastMatchedRoad = nil
-            currentNavLastMatchedAt = nil''',
-      '''            currentNavPinnedPostedWay = nil
-            currentNavPendingPostedSwitch = nil
-            currentNavLastMatchedRoad = nil
-            currentNavLastMatchedAt = nil''',
-      'speed state road transition')
-    speed = one(speed,
-      '''        scored.sort { $0.score < $1.score }
-        let alternatives = nearby.sorted''',
-      '''        scored.sort { $0.score < $1.score }
-        var speedChangePending = false
-        var selected = scored.first
-        if let proposed = selected,
-           let pinnedWay = currentNavPinnedPostedWay,
-           let previous = scored.first(where: { $0.segment.id == pinnedWay }),
-           CurrentNavSpeedSwitchPolicy.needsConfirmation(
-                previousWayID: pinnedWay, proposedWayID: proposed.segment.id,
-                previousKmh: previous.segment.speedKmh,
-                proposedKmh: proposed.segment.speedKmh,
-                previousDistanceMeters: previous.distance,
-                proposedDistanceMeters: proposed.distance,
-                previousHeadingErrorDegrees: previous.angle,
-                proposedHeadingErrorDegrees: proposed.angle) {
-            let previousCount = currentNavPendingPostedSwitch?.wayID == proposed.segment.id
-                ? currentNavPendingPostedSwitch!.observations : 0
-            let confirmations = previousCount + 1
-            if confirmations < CurrentNavSpeedSwitchPolicy.requiredConsecutiveObservations {
-                currentNavPendingPostedSwitch = (proposed.segment.id, confirmations)
-                speedChangePending = true
-                selected = previous
-                logger.log("SPEED CURRENT NAV", "AMBIGUOUS_TAG_CHANGE currentWay=\\(pinnedWay) proposedWay=\\(proposed.segment.id) confirmations=\\(confirmations)/3; keep previously posted display, warning off")
-            } else {
-                currentNavPendingPostedSwitch = nil
+            if currentViewer.sessionID == "—" {
+                self.logger.log("MAP AUTO REJOIN", "JOIN_DEFER CGI unavailable; preserving potentially healthy HUD viewer")
+                return
             }
-        } else {
-            currentNavPendingPostedSwitch = nil
+
+            self.hudU2WKivicKickTask?.cancel()''', 'one-shot join recovery recheck')
+
+    x = replace_once(x,
+        '''    private func startHUDU2WDisplayHealthMonitor() {''',
+        '''    /// Ongoing desired-state reconciliation. Only the HUD STA/viewer can be
+    /// bounced here: do NOT stop/restart MainVideo, its TCP worker, or the JPEG
+    /// ingress. Available current-session evidence (including ESTABLISHED socket)
+    /// outranks firmware STA status=4/6 and prevents a destructive mode switch.
+    /// HTTP failures are inconclusive, not evidence of viewer loss.
+    private func startHUDU2WAutoReconciliation(reason: String) {
+        guard automaticMapModeEnabled,
+              bluetooth.state == .connected,
+              !firmwareMaintenanceActive,
+              hudU2WAutoReconcileTask == nil else { return }
+        hudU2WAutoReconcileGeneration &+= 1
+        let generation = hudU2WAutoReconcileGeneration
+        logger.log("MAP AUTO REJOIN", "reconciler armed reason=\\(reason) generation=\\(generation)")
+        hudU2WAutoReconcileTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.hudU2WAutoReconcileGeneration == generation {
+                    self.hudU2WAutoReconcileTask = nil
+                }
+            }
+            while !Task.isCancelled,
+                  self.hudU2WAutoReconcileGeneration == generation,
+                  self.automaticMapModeEnabled,
+                  self.bluetooth.state == .connected {
+                try? await Task.sleep(for: .seconds(HUDMapModeAutoRejoinPolicy.pollSeconds))
+                guard !Task.isCancelled,
+                      self.hudU2WAutoReconcileGeneration == generation,
+                      self.automaticMapModeEnabled,
+                      self.bluetooth.state == .connected else { return }
+                guard !self.firmwareMaintenanceActive else { continue }
+                if !self.hudU2WLiveRelayActive {
+                    // Let the existing 90-second preflight handle a fresh HUD
+                    // connection; never open a video stream just for this poll.
+                    if !self.mapModeActive,
+                       self.hudU2WSTAStatusTask == nil,
+                       self.automaticMapModeStartTask == nil,
+                       !self.automaticMapModeAttemptedOnThisConnection {
+                        self.scheduleAutomaticMapModeStart(reason: "periodic BLE/adapter reconciliation")
+                    }
+                    continue
+                }
+                // Observe adapter viewer even while the initial HUD STA task
+                // is still running. Adopting real current-session readiness
+                // prevents a stale firmware status=4 from bouncing Map Mode.
+                let relay = await self.u2wHUDRelayStatus()
+                guard !Task.isCancelled,
+                      self.hudU2WAutoReconcileGeneration == generation,
+                      self.automaticMapModeEnabled,
+                      self.hudU2WLiveRelayActive,
+                      self.bluetooth.state == .connected else { return }
+                if relay.currentSessionReady {
+                    self.hudU2WAutoReconcileMissingViewerSamples = 0
+                    // Relay proof supersedes the unreliable status=4/6 and
+                    // is refreshed on every poll, even after an intervening
+                    // stale firmware status packet temporarily cleared STA.
+                    self.hudU2WSTAConnected = true
+                    // The current adapter session has actually sent a frame to
+                    // an ESTABLISHED viewer. Do not let a faulty STA status=4/6
+                    // cause a mode4/mode6 bounce or fail-safe display fallback.
+                    if !self.hudU2WCurrentSessionWasReady ||
+                       self.hudU2WReadySessionID != relay.sessionID {
+                        self.hudU2WCurrentSessionWasReady = true
+                        self.hudU2WReadySessionID = relay.sessionID
+                        self.hudU2WSTAConnected = true
+                        self.hudU2WSTAStatus = "Connected — adapter-confirmed HUD map frames"
+                        self.logger.log("MAP AUTO REJOIN", "ADOPT_CURRENT_VIEWER session=\\(relay.sessionID) established=1; no mode switch, MainVideo preserved")
+                    }
+                    self.startHUDU2WDisplayHealthMonitor()
+                    continue
+                }
+                if relay.sessionID == "—" {
+                    // No usable HTTP status: do not infer that a perfectly
+                    // healthy HUD display has disconnected.
+                    self.logger.log("MAP AUTO REJOIN", "CGI status unavailable; no recovery action, preserving current HUD mode")
+                    continue
+                }
+                self.hudU2WAutoReconcileMissingViewerSamples += 1
+                let elapsed = Date().timeIntervalSince(self.hudU2WAutoReconcileSince)
+                let sincePrevious = Date().timeIntervalSince(self.hudU2WAutoReconcileLastRetryAt)
+                let busy = self.hudU2WJoinRecoveryTask != nil ||
+                    self.hudU2WDisplayRecoveryTask != nil
+                let shouldRetry = HUDMapModeAutoRejoinPolicy.shouldRetry(
+                    desiredModeEnabled: self.automaticMapModeEnabled,
+                    bleConnected: self.bluetooth.state == .connected,
+                    relayActive: self.hudU2WLiveRelayActive,
+                    sessionStatusAvailable: true,
+                    currentViewerReady: relay.currentSessionReady,
+                    starterBusy: self.hudU2WSTAStatusTask != nil,
+                    recoveryBusy: busy || self.hudU2WCurrentSessionWasReady,
+                    healthRecoveryExhausted: self.hudU2WDisplayRecoveryCount >= 2,
+                    secondsSinceRelayStarted: elapsed,
+                    secondsSincePreviousRetry: sincePrevious,
+                    consecutiveMissingViewerChecks: self.hudU2WAutoReconcileMissingViewerSamples,
+                    attemptedRetries: self.hudU2WAutoReconcileRetries
+                )
+                guard shouldRetry else { continue }
+                self.hudU2WAutoReconcileRetries += 1
+                self.hudU2WAutoReconcileLastRetryAt = Date()
+                self.hudU2WAutoReconcileMissingViewerSamples = 0
+                // The legacy helper allowed only one recovery per relay. Its
+                // original single-flight guard remains, while this outer policy
+                // explicitly grants at most 3 cooled-down tries per BLE session.
+                self.hudU2WAutomaticJoinRecoveryCount = 0
+                self.logger.log("MAP AUTO REJOIN", "AUTO_REJOIN attempt=\\(self.hudU2WAutoReconcileRetries)/\\(HUDMapModeAutoRejoinPolicy.maximumAttemptsPerBLESession) viewerAbsent=1 session=\\(relay.sessionID) age=\\(Int(elapsed))s; mode4->6+credentials only; MainVideo preserved")
+                self.scheduleHUDU2WAutomaticJoinRecovery(
+                    reason: "persistent auto viewer reconciliation #\\(self.hudU2WAutoReconcileRetries)"
+                )
+            }
         }
-        let alternatives = nearby.sorted''',
-      'speed stable candidate selection')
-    speed = one(speed,
-      '''        guard let winner = scored.first else {''',
-      '''        guard let winner = selected else {''',
-      'speed selected way')
-    speed = one(speed,
-      '''        if directMph != nil {
-            currentNavContinuityAnchor = CurrentNavSameRoadContinuity.verified(''',
-      '''        if directMph != nil, !speedChangePending {
-            currentNavPinnedPostedWay = chosen.id
-        }
-        if directMph != nil {
-            currentNavContinuityAnchor = CurrentNavSameRoadContinuity.verified(''',
-      'speed pin exact tagged way')
-    speed = one(speed,
-      '''        currentNavLastMatchedRoad = identity
-        currentNavLastMatchedLimitMph = mph
-        currentNavLastMatchedAt = Date()''',
-      '''        if speedChangePending {
-            currentNavMatchFresh = false
-            currentNavDisplayHold = true
-            currentNavStatusReason = "ambiguous same-road speed change; warning off until confirmed"
-        }
-        currentNavLastMatchedRoad = identity
-        currentNavLastMatchedLimitMph = mph
-        currentNavLastMatchedAt = Date()''',
-      'speed disable uncertain warning')
-    return {REPO: video, SPEED: speed, IDENTITY: identity}
+    }
+
+    private func startHUDU2WDisplayHealthMonitor() {''', 'insert independent bounded viewer reconciliation')
+
+    x = replace_once(x,
+        '''        hudU2WJoinRecoveryTask?.cancel()
+        hudU2WJoinRecoveryTask = nil
+        hudU2WDisplayHealthTask?.cancel()''',
+        '''        hudU2WJoinRecoveryTask?.cancel()
+        hudU2WJoinRecoveryTask = nil
+        hudU2WAutoReconcileGeneration &+= 1
+        hudU2WAutoReconcileTask?.cancel()
+        hudU2WAutoReconcileTask = nil
+        hudU2WAutoReconcileSince = .distantPast
+        hudU2WAutoReconcileLastRetryAt = .distantPast
+        hudU2WAutoReconcileRetries = 0
+        hudU2WAutoReconcileMissingViewerSamples = 0
+        hudU2WDisplayHealthTask?.cancel()''', 'explicit Map Mode stop cancellation')
+
+    required = (
+        'ADOPT_CURRENT_VIEWER',
+        'AUTO_REJOIN attempt=',
+        'HUDMapModeAutoRejoinPolicy.shouldRetry(',
+        'self.hudU2WAutoReconcileGeneration == generation',
+        'automaticStartFailure = "iPhone JPEG relay prewarm failed"',
+        'JOIN_ABORT current viewer already healthy',
+    )
+    for marker in required:
+        if marker not in x:
+            raise RuntimeError(f'Patch postcondition absent: {marker}')
+    return x
 
 
 def main():
-    for f in [REPO, SPEED, IDENTITY]:
-        if not f.is_file():
-            raise SystemExit(f'Missing source {f}. Run from a full HUD repo checkout or pass its path.')
-    if 'INPLACE_BOOTSTRAP_REBUILD' in REPO.read_text():
-        raise SystemExit('Patch already applied. No files modified.')
-    new_files = ['ios/HUDController/Vehicle/CurrentNavSpeedSwitchPolicy.swift',
-                 'ios/HUDControllerTests/V90352433SpeedSwitchTests.swift']
-    for rel in new_files:
-        if (ROOT / rel).exists():
-            raise SystemExit(f'New policy/test file already exists: {rel}. No files modified.')
-    replacements = plan_patches()  # fail all anchors before modifying any file
-    for f, content in replacements.items():
-        shutil.copy2(f, f.with_suffix(f.suffix + '.pre2433.bak'))
-        f.write_text(content)
-    for rel in new_files:
-        destination = ROOT / rel
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(BASE / rel, destination)
-    print(f'Applied {VERSION} to {ROOT}')
-    print('Music UI and U2W adapter untouched. Now run iOS CI and on-device lock/unlock tests.')
+    if len(sys.argv) != 2:
+        raise SystemExit('Usage: python apply_to_repo.py <repo-root>')
+    repo = Path(sys.argv[1]).resolve()
+    target = repo / TARGET_REL
+    if not target.is_file():
+        raise RuntimeError(f'Missing {target}')
+    raw = target.read_bytes()
+    sha = git_blob_sha(raw)
+    if sha != KNOWN_BLOB:
+        raise RuntimeError(f'Unexpected AppState blob {sha}; requires {KNOWN_BLOB}; no write performed.')
+    if subprocess.run(['git', '-C', str(repo), 'status', '--porcelain'], capture_output=True, text=True, check=True).stdout.strip():
+        raise RuntimeError('Working tree is dirty; commit/stash before applying patch.')
+    modified = apply(raw.decode('utf-8'))
+    new_files = {
+        repo / TARGET_REL: modified.encode('utf-8'),
+        repo / 'ios/HUDController/App/HUDMapModeAutoRejoinPolicy.swift':
+            (PACKAGE / 'ios/HUDController/App/HUDMapModeAutoRejoinPolicy.swift').read_bytes(),
+        repo / 'ios/HUDControllerTests/V90352435AutoMapRejoinTests.swift':
+            (PACKAGE / 'ios/HUDControllerTests/V90352435AutoMapRejoinTests.swift').read_bytes(),
+    }
+    for path in list(new_files)[1:]:
+        if path.exists():
+            raise RuntimeError(f'Cannot overwrite pre-existing file: {path}')
+    for path, body in new_files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    print('Applied v90.35.3.24.35 source changes:')
+    for path in new_files:
+        print(' -', path.relative_to(repo))
+    subprocess.run(['git', '-C', str(repo), 'diff', '--check'], check=True)
+    print('PASS: git diff --check')
+
 
 if __name__ == '__main__':
     main()
