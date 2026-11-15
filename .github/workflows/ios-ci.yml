@@ -3,8 +3,6 @@ name: iOS CI — Ambient Test (Xcode 26)
 on:
   workflow_dispatch:
   push:
-    paths:
-      - "/**"
   pull_request:
     paths:
       - "ios/**"
