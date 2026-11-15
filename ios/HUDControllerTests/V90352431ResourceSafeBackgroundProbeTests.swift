@@ -29,8 +29,12 @@ final class V90352431ResourceSafeBackgroundProbeTests: XCTestCase {
         XCTAssertFalse(ui.contains("Apply for next Map Mode session"))
         XCTAssertTrue(ui.contains(#"state.mainVideo.transportPhase"#))
         XCTAssertFalse(ui.contains("Keep decoder + BG task"))
-        XCTAssertTrue(video.contains("lock-time -12903 detected"))
-        XCTAssertTrue(video.contains(#"restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")"#))
+        // v24.36 recovers -12903 and -8969 through the same bounded coordinator.
+        // When the TCP transport is healthy, retain it while rebootstrap runs.
+        XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
+        XCTAssertTrue(video.contains("codecBadDataErr (-8969)"))
+        XCTAssertTrue(video.contains("IN_PLACE_BOOTSTRAP requested"))
+        XCTAssertTrue(video.contains("worker.beginInPlaceReadOnlyBootstrap(reason: reason)"))
     }
 
     func testRouteGuidancePublicationPreservesLastGoodFileOnFailure() throws {

@@ -28,7 +28,10 @@ final class V90352429StartupBootstrapFullCanvasTests: XCTestCase {
         XCTAssertTrue(video.contains("bootstrapOverlap(currentSnapshot:"))
         XCTAssertTrue(video.contains("previousPairIsCoherent"))
         XCTAssertTrue(video.contains("pair=MISMATCH_OR_UNPROVEN"))
-        XCTAssertTrue(video.contains("continuous_join=YES"))
+        // An exact byte overlap does not itself prove that VideoToolbox decoded a frame.
+        XCTAssertTrue(video.contains("BYTE_OVERLAP_PROVEN=YES"))
+        XCTAssertTrue(video.contains("validated_idr="))
+        XCTAssertTrue(video.contains("display recovery requires a real decoded frame"))
     }
 
     func testShortBackgroundSwitchPreservesDecoderAndUsesBoundedTask() throws {

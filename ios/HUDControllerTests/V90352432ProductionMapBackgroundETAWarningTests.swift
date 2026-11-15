@@ -26,8 +26,12 @@ final class V90352432ProductionMapBackgroundETAWarningTests: XCTestCase {
         let ui = try source("HUDController/UI/NavigationHUDPreviewCard.swift")
         XCTAssertTrue(settings.contains("backgroundProbeMode = .keepDecoderBackgroundTask"))
         XCTAssertTrue(app.contains("mainVideo.configureBackgroundProbe(mode: .keepDecoderBackgroundTask)"))
-        XCTAssertTrue(video.contains("lock-time -12903 detected"))
-        XCTAssertTrue(video.contains(#"restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")"#))
+        // v24.36 recovers -12903 and -8969 through the same bounded coordinator.
+        // When the TCP transport is healthy, retain it while rebootstrap runs.
+        XCTAssertTrue(video.contains("kVTInvalidSessionErr (-12903)"))
+        XCTAssertTrue(video.contains("codecBadDataErr (-8969)"))
+        XCTAssertTrue(video.contains("IN_PLACE_BOOTSTRAP requested"))
+        XCTAssertTrue(video.contains("worker.beginInPlaceReadOnlyBootstrap(reason: reason)"))
         XCTAssertTrue(video.contains("startupSnapshotFetchTask"))
         XCTAssertTrue(video.contains("readOnlyRebootstrapCooldown"))
         XCTAssertFalse(ui.contains("Map Mode Background Continuity Probe"))
