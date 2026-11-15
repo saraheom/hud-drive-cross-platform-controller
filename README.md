@@ -1,61 +1,33 @@
-# HUD Controller v90.35.3.24.36 — November 15 CI integration hotfix
+# HUD Controller v90.35.3.24.36 — CI regression-contract hotfix
 
-## Confirmed CI failure
+**Confirmed from uploaded CI run:** `main@ae68a85c2ca15c1bcce484e88b0a4f5546c14866` failed at `Validate Swift source-test contracts`, **before iOS compilation**. The validator checked 1,173 assertions and found three stale expectations.
 
-The uploaded iOS CI log `logs_118452260624.zip` shows that the app target built, but the **unit-test target failed to compile** at `V90352436RouteSpotlightAndRecoveryTests.swift:39:59` because `HudMapAppearance` has no member `routeSpotlight`. Exit code 65. The log does not show a completed test run.
+- `V90352429StartupBootstrapFullCanvasTests.swift` expects the obsolete `continuous_join=YES` diagnostic. Production correctly distinguishes `BYTE_OVERLAP_PROVEN=YES` from actual successful decoding.
+- `V90352431ResourceSafeBackgroundProbeTests.swift` and `V90352432ProductionMapBackgroundETAWarningTests.swift` expect the old lock-specific log string and old literal restart argument. Production now handles -12903 and -8969 through a bounded same-TCP recovery path.
+- `.github/workflows/ios-ci.yml` filters out root-level-only pushes. The fix triggers CI on **every branch push** regardless of changed path. Manual `workflow_dispatch` and the existing PR policy remain.
 
-Current GitHub source at commit `70591ca535f0d8fd6e42aa2f6e83a46f339cfd8c` has the new spotlight processor + its tests, but the integration edits to the following three existing files are absent:
+## One-command application and push from Windows
 
-- `ios/HUDController/Models/HudMapModeSettings.swift`: appearance enum + title.
-- `ios/HUDController/MapMode/HudMapModeCanvas.swift`: rendering switch, active-route gate, and conservative Dark HUD fallback.
-- `ios/HUDController/MapMode/U2WMainVideoClient.swift`: previously planned same-TCP decoder recovery and diagnostic markers. The new regression test also requires these, so fixing the enum alone is insufficient.
-
-This package restores the missing source integrations, retaining the already committed spotlight processor and tests. No adapter image, music UI, speed-limit engine or ambient controls are changed.
-
-## Option A: patch your existing Windows repo (recommended)
-
-Extract the ZIP. Open PowerShell in the extracted `HUD_Controller_v90_35_3_24_36_CI_FIX` folder and run:
+Extract the ZIP to a temporary folder **outside your GitHub repository**, then open PowerShell in the extracted folder:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\apply_ci_fix.ps1 -RepoPath "C:\path\to\hud-drive-cross-platform-controller"
+powershell -ExecutionPolicy Bypass -File .\apply_and_push.ps1 -RepoPath "C:\path\to\hud-drive-cross-platform-controller" -Push
 ```
 
-The installer verifies the **exact Git blob hashes** of the three CI-failing sources and the existing two new files. It stages and validates the entire patch before replacing any source, so an unexpected checkout safely aborts rather than overwrites newer work. It does **not commit or push**.
+This script:
 
-In your repo:
+1. Verifies local `main` is clean and matches the correct GitHub remote.
+2. Fetches and fast-forwards `main` to the verified failing revision.
+3. Checks the exact source blobs and applies changes to **three existing Swift XCTest files and the actual `.github/workflows/ios-ci.yml`**.
+4. Runs **the repository's full `scripts/validate_swift_test_source_assertions.py`**. If it fails, the installer restores the original files and refuses to commit.
+5. Verifies exactly those four paths are modified, commits them, and optionally pushes them to `origin/main`.
 
-```powershell
-cd "C:\path\to\hud-drive-cross-platform-controller"
-git diff --check
-git diff -- ios/HUDController/Models/HudMapModeSettings.swift ios/HUDController/MapMode/HudMapModeCanvas.swift ios/HUDController/MapMode/U2WMainVideoClient.swift
-git add ios/HUDController/Models/HudMapModeSettings.swift ios/HUDController/MapMode/HudMapModeCanvas.swift ios/HUDController/MapMode/U2WMainVideoClient.swift
-git commit -m "Fix v24.36 Route Spotlight and decoder CI integration"
-git push
-```
+To apply and commit locally **without pushing**, omit the `-Push` flag, then run `git push origin main` when ready.
 
-If the branch has moved and exact hashes no longer match, the installer refuses to overwrite; reconcile changes manually or build from the pinned commit using Option B.
+**Do not add these installer scripts or ZIP to Git.** The PowerShell script commits the four actual source/workflow files, avoiding the incomplete-push mistake encountered previously.
 
-## Option B: generate a full source ZIP and optional GitHub feature branch
+## Scope and limitations
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build_full_repo.ps1
-```
+No production video/route-filter/music/speed-limit/ambient code changes or U2W firmware changes are made. Local patch transform checks pass. The complete static-test validator will run **on your local full checkout before a commit**. Xcode compilation and XCTest must then run through GitHub Actions on macOS and could reveal additional problems; this package resolves the failure present in the attached log, not unobserved downstream failures.
 
-This clones at the pinned CI-failing commit, applies the hotfix, creates a local feature branch and a **complete repository** archive under `build-output\HUD_Controller_v90_35_3_24_36_CI_FIXED_FULL_SOURCE.zip`.
-
-To also push the feature branch:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build_full_repo.ps1 -WorkDir "$PWD\build-output-push" -Push
-```
-
-The second command uses a fresh output directory to avoid clobbering the first clone. Open a PR against main and run the iOS CI workflow.
-
-## Validation and limitations
-
-- The CI compiler error and current GitHub source mismatch were confirmed.
-- All five relevant source-file Git blob SHAs were checked against the GitHub state.
-- The original v24.36 patcher's 22 source anchors and source integrity QA passed in isolation.
-- The hotfix checks nine cross-file integration requirements and stages all modifications before copying them into a repo.
-- Linux Swift frontend parsing detects syntax errors but **does not compile or type-check UIKit, SwiftUI, VideoToolbox, or XCTest against the iOS SDK**.
-- **iOS CI and device testing have not been rerun**, and Route Spotlight remains experimental.
+The unrestricted push trigger increases Actions usage. It does not trigger TestFlight or an App Store release.
