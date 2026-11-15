@@ -4,9 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "ios/**"
-      - ".github/workflows/ios-ci.yml"
-      - ".github/workflows/ios-testflight-ambient-ios26.yml"
+      - "/**"
   pull_request:
     paths:
       - "ios/**"
