@@ -1,108 +1,41 @@
-# HUD Controller v90.35.3.24.35 — Auto Map Mode physical HUD restart recovery
+# HUD Controller v90.35.3.24.36 — Video Recovery & Route Spotlight (experimental)
 
-**Source base:** `saraheom/hud-drive-cross-platform-controller`, commit
-`197741e9aaaf19d895a2994091e3971d665ff992` (the source reviewed on 2026-11-05).
+## Source base
 
-**Distribution:** This ZIP contains a verified source-update builder, the new
-Swift policy and XCTest cases. It is **not** itself a full repository clone.
-The PowerShell builder clones the pinned repository commit, applies the updates
-and creates `HUD_Controller_v90.35.3.24.35_FULL_SOURCE.zip` on your computer.
+`saraheom/hud-drive-cross-platform-controller`, `main` commit `4f7e2c030d8aacf5565ef81286ed52c8a363c439` (retrieved November 15, 2026). This distribution is a **patch plus a full-repository ZIP builder**. A GitHub App installation returned HTTP 403 on branch creation, so no remote commit or iOS build was made here.
 
-## Summary
+## Changes
 
-This is an iPhone-side recovery fix for the Nov 5 gas station test: BLE/HUD
-power cycling while U2W remains powered, status 4 DHCP timeout, a valid
-previously healthy MainVideo pipeline, and a HUD viewer that never completes
-its first MJPEG handshake. The app already persisted Auto Map Mode but its
-existing one-shot Wi-Fi join recovery could exhaust itself without entering
-ongoing display-health monitoring.
+- Adds `Route Spotlight (experimental)` to **Map appearance** next to Follow source / Dark HUD / Light HUD. It is saved by the same settings and preset machinery as the existing three options.
+- For a **high-confidence warm/yellow or saturated-blue continuous route candidate** in the CarPlay raster, suppresses other map detail and renders the selected path on black in electric cyan. Navigation, speed and music UI overlays are unaffected.
+- If that shape is not confidently identifiable (e.g. a low-contrast daytime route or a busy blue road network), it **falls back to the existing Dark HUD filter** instead of drawing a false line or hiding the route.
+- On decoder failure (`-12903` or sustained `-8969`), attempts read-only SPS/PPS/IDR history bootstrap **on the same healthy TCP/15332 connection**. Serializes the buffered live data to a validated snapshot/live overlap; rebuilds the decoder/reference state after overlap is proven while retaining previously validated SPS/PPS (to allow a clean IDR to recover without repeated parameter sets). Original TCP reconnect remains for real transport loss.
+- Labels a snapshot/live byte overlap as `BYTE_OVERLAP_PROVEN`, not successful video recovery. Only a subsequent real decoded image establishes `LIVE`.
+- Captures one post-continuity-warning decoded JPEG at most every 45s and a bounded raw H.264 evidence window. These improve root-cause comparisons with the adapter after the drive.
+- Does **not** modify adapter firmware, music, ambient, HUD join recovery or speed-limit matching.
 
-Changes:
+## Build full repository on Windows
 
-1. Add an independent desired-state HUD viewer reconciliation task while Auto
-   Map Mode is enabled and HUD BLE is connected. Poll the actual U2W current
-   MJPEG viewer session every six seconds, *including during startup*.
-2. Adopt `established && session_client_seen && session_live_frame_sent` as
-   actual current-session readiness, even if the stock Wi-Fi STA status reports
-   4 (`Address search timeout`) or 6 (`Empty network`).
-3. After a 34-second startup grace and two confirmed missing-viewer samples,
-   perform a bounded HUD-only mode4 → mode6 → saved credentials rejoin. At most
-   three outer retry attempts per BLE session, with a 42-second cooldown.
-   Recheck the real viewer immediately before the original one-shot mode change
-   too. An unavailable CGI response is treated as inconclusive, not a failure.
-4. Resume reconciliation after BLE transport-ready, physical HUD session hello,
-   Auto Map Mode ON, and foreground preference resynchronization. Cancel/reset
-   tasks on BLE disconnect, explicit Map Mode stop, or Auto Map Mode OFF.
-5. Prevent dashboard rehydration on a firmware hello while physical Map Mode
-   relay is active. A mode6 command can itself produce that hello.
-6. Fix an existing automatic prewarm fallback where a failed JPEG ingress
-   could permanently consume a one-time automatic attempt even though the
-   initial 90-second readiness window had not expired.
-7. Keep U2W v8.40, MainVideo H.264 handling, music UI, ambient lighting, and
-   Current+Nav speed-limit logic unchanged.
+1. Extract this ZIP to a directory on your Windows computer (Git for Windows and Python 3 required).
+2. Open PowerShell in the extracted `HUD_v90_35_3_24_36_VideoRouteSpotlight` directory.
+3. Run:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\build_full_repo.ps1
+   ```
+4. Find `build-output\HUD_Controller_v90_35_3_24_36_FULL_SOURCE.zip`. To push an actual feature branch to GitHub for iOS CI, use `-Push`. This does not alter `main` directly.
+5. Open a PR against `main`, run the iOS CI workflow, and only then run TestFlight.
 
-**Safety and boundaries:** This change only attempts recovery while the app
-actually runs and BLE is connected. iOS can suspend background execution. It
-cannot guarantee an immediate or continuous live H.264 CarPlay picture when
-Apple's source has not emitted a usable IDR. The existing fallback/stock
-navigation behavior remains, and the recovery budget avoids infinite mode
-churn. Do not use on-road manual interactions to test it.
+For an **existing checkout at exactly the base SHA**, instead run `python .\apply_to_repo.py --repo "C:\path\to\hud-drive-cross-platform-controller"` and commit the five changed/new Swift files.
 
-## Build the complete source ZIP
+## Test-drive plan
 
-Unzip this package. Open PowerShell inside the package directory, then run:
+1. First select Follow Source and verify live map baseline. Test phone lock/unlock, engine stop/accessory power, and restart of the physical HUD. Confirm auto Map Mode preserves the current HUD connection.
+2. Test the new `Route Spotlight (experimental)` style on a **parked** car with a live navigation route. Compare it with Dark HUD under daytime and nighttime palettes. If the route is low-contrast or visually ambiguous, the image should revert to ordinary Dark HUD automatically. Distinct blue routes are also detected experimentally.
+3. If map colors distort or the live map disappears again, capture the iOS diagnostic ZIP **and** the U2W `u2wvideo-relay-status.cgi`, `u2whud-status.cgi`, read-only forensic/bootstrap package, and mainvideo dump at approximately the same time. Note the time, phone lock state, navigation session and CarPlay screen changes.
+4. Never switch the physical dashboard screen while moving to debug a video issue; use the parked recovery procedure only.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build_full_repo.ps1
-```
+## Validation limitations
 
-Requires Git and Python 3 on Windows and an internet connection for cloning
-GitHub. The script creates a fresh local feature branch from the *reviewed*
-commit and produces a complete source ZIP. It does not push to GitHub or
-publish to TestFlight. To apply to an already clean local clone at the reviewed
-commit:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build_full_repo.ps1 -ExistingRepo 'C:\path\to\hud-drive-cross-platform-controller'
-```
-
-To create a local Git commit (still no push), add `-CommitLocally`.
-
-After inspection, push the created feature branch:
-
-```powershell
-git -C .\hud-drive-cross-platform-controller push -u origin fix/2026-11-05-auto-map-mode-hud-rejoin
-```
-
-Then open a PR against `main` and let `ios-ci` and the TestFlight workflows
-compile and validate on Apple's macOS runner. If you instead want the patch on
-`main`, merge the branch after CI passes.
-
-## Verification performed in this environment
-
-- `qa/check_policy.swift` with Foundation-only `HUDMapModeAutoRejoinPolicy.swift`:
-  **14/14 passing** on Swift for Linux.
-- `qa/static_verify.py`: Swift parser accepted injected full reconciling method;
-  checks no H.264 worker or adapter relay restart in this method.
-- `qa/check_patch_anchors.py`: **11 exact source transformations** and required
-  postconditions passed on a synthetic source assembled from patch anchors.
-- Current GitHub AppState blob and all anchor occurrences were independently
-  verified with repository reads before packaging.
-
-**Not performed:** macOS iOS app compilation, XCTest on iOS simulator, in-car
-field test, and GitHub push. Do not interpret this as a verified device build.
-
-## Field test (parked checks and passive observations)
-
-1. Enable Auto Map Mode, verify initial Map Mode live MJPEG viewer readiness.
-2. Park, turn engine off, leave U2W on accessory power, let HUD fully power down.
-3. Restart engine before adapter power disappears; do **not** open the app or
-   toggle Map Mode just to help it recover.
-4. After BLE reconnect, note whether Map Mode displays its fallback canvas
-   then live map. Driving observations should be passive.
-5. Export the iPhone app log and existing U2W HUD CGI status plus v8.40 passive
-   diagnostics. Check the `MAP AUTO REJOIN` markers, STA status 4/6, current
-   MJPEG session, and MainVideo phase independently.
-6. Repeat with a normal full shutdown (adapter power off), if safe and feasible.
-
-This package contains no personal log files, credentials, keys or firmware image.
+- The new Swift files passed Swift parser checks on Linux.
+- The source patch and its markers were exercised against a synthetic source fixture; exact anchors were independently checked against the GitHub files at the reviewed SHA.
+- iOS SDK / VideoToolbox rendering, real-car streaming and iOS CI **have not** been executed here. The route extractor is experimental and cannot guarantee reliable isolation of the route on every map color theme or provider.
