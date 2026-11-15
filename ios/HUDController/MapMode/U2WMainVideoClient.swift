@@ -120,6 +120,8 @@ final class U2WMainVideoClient {
     private var preflightStableSince: Date?
     private var preflightPassLogged = false
     private var decoderRecoveryPending = false
+    private var captureNextContinuityFrame = false
+    private var lastContinuityCaptureAt: Date?
     private var backgroundedAt: Date?
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var backgroundTaskExpired = false
@@ -653,17 +655,16 @@ final class U2WMainVideoClient {
                 // Single-flight + cooldown guards in restartWorkerWithReadOnlyBootstrap
                 // prevent recovery fan-out. If retained history has no usable IDR, the
                 // normal WAITING_FRESH_IDR behavior remains as a safe fallback.
-                if reason.contains("kVTInvalidSessionErr (-12903)"),
-                   self.backgroundProbeMode == .keepDecoderBackgroundTask,
-                   self.backgroundProbeScene != "Active" {
+                if reason.contains("kVTInvalidSessionErr (-12903)") ||
+                    reason.contains("codecBadDataErr (-8969)") {
                     self.backgroundProbeEvent = "Lock recovery bootstrap"
-                    self.logger.log("U2W VIDEO BACKGROUND", "lock-time -12903 detected scene=\(self.backgroundProbeScene); attempting v8.40 retained-history bootstrap")
+                    self.logger.log("U2W VIDEO BACKGROUND", "decoder failure detected scene=\(self.backgroundProbeScene); attempting same-TCP retained-history bootstrap")
                     self.diagnosticRecorder.record("background_probe", "lock_invalid_session_rebootstrap", fields: ["scene": self.backgroundProbeScene, "phase": self.transportPhase, "generation": generation])
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         try? await Task.sleep(for: .milliseconds(120))
-                        guard self.running, self.workerGeneration == generation, self.backgroundProbeScene != "Active" else { return }
-                        self.restartWorkerWithReadOnlyBootstrap(reason: "lock-time VideoToolbox invalid session -12903")
+                        guard self.running, self.workerGeneration == generation else { return }
+                        self.restartWorkerWithReadOnlyBootstrap(reason: "bounded codec recovery: \(reason)")
                     }
                 }
             }
@@ -686,6 +687,11 @@ final class U2WMainVideoClient {
                 self.latestFrame = image
                 self.lastDecodedFrameAt = now
                 self.lastFrameAgeSeconds = 0
+                if self.captureNextContinuityFrame {
+                    self.captureNextContinuityFrame = false
+                    self.diagnosticRecorder.captureImage(image, label: "decoded_continuity_probe_\(Int(now.timeIntervalSince1970))")
+                    self.diagnosticRecorder.record("frame", "decoded_continuity_probe", fields: ["generation": generation, "frame": self.frameCount + 1])
+                }
                 if self.frameCount == 0 {
                     self.diagnosticRecorder.captureImage(image, label: "decoded_first_frame")
                     self.diagnosticRecorder.triggerEvidenceWindow("first_decoded_frame", detail: "first VideoToolbox output")
@@ -735,6 +741,16 @@ final class U2WMainVideoClient {
                 if message.contains("CODEC_BAD_DATA_GRACE_EXHAUSTED") ||
                     message.contains("codecBadDataErr (-8969) reset VideoToolbox") {
                     self.midDriveCodecFailureAt = self.midDriveCodecFailureAt ?? Date()
+                }
+                if message.contains("AU_CONTINUITY_QUARANTINE") ||
+                    message.contains("REFERENCE CONTINUITY WARNING") ||
+                    message.contains("FOREIGN_REF_IDC_REJECT") {
+                    let now = Date()
+                    if self.lastContinuityCaptureAt.map({ now.timeIntervalSince($0) > 45 }) ?? true {
+                        self.lastContinuityCaptureAt = now
+                        self.captureNextContinuityFrame = true
+                        self.diagnosticRecorder.triggerEvidenceWindow("h264_continuity_suspect", detail: message)
+                    }
                 }
                 if message.contains("FOREIGN_REF_IDC_REJECT") {
                     self.diagnosticRecorder.record("parser_decoder_fingerprint", "foreign_reference_rejected", fields: [
@@ -1075,6 +1091,17 @@ final class U2WMainVideoClient {
         lastReadOnlyRebootstrapAt = now
         logger.log("U2W VIDEO BACKGROUND", "read-only bootstrap restart reason=\(reason); adapter mirror/relay untouched singleFlight=1 cooldown=\(readOnlyRebootstrapCooldown)s")
         diagnosticRecorder.record("background_probe", "readonly_rebootstrap", fields: ["reason": reason, "mode": backgroundProbeMode.rawValue, "single_flight": true])
+        // U2WH2648 raw transport survives an iOS VideoToolbox invalid-session
+        // error. Buffer live TCP on the existing worker while read-only snapshots
+        // are fetched. Never create an avoidable IDR drought by dropping a healthy
+        // socket just to recreate VideoToolbox.
+        if connected, let worker {
+            logger.log("U2W VIDEO BACKGROUND", "IN_PLACE_BOOTSTRAP requested reason=\(reason); preserving TCP/15332 and adapter mirror")
+            diagnosticRecorder.record("background_probe", "in_place_bootstrap", fields: ["reason": reason, "generation": workerGeneration])
+            worker.beginInPlaceReadOnlyBootstrap(reason: reason)
+            return
+        }
+        // Actual transport loss still requires the existing bounded TCP restart.
         worker?.stop()
         worker = nil
         connected = false
@@ -1374,6 +1401,7 @@ final class U2WMainVideoTCPWorker {
     private var startupBootstrapBuffering = false
     private var startupBootstrapApplied = false
     private var startupBootstrapReadyNotified = false
+    private var inPlaceBootstrapRequested = false
     var onStartupBootstrapBufferingReady: (() -> Void)?
 
     init(host: String, port: UInt16, startupBootstrapRequested: Bool = false, preferHardwareDecoder: Bool = false) {
@@ -1417,6 +1445,7 @@ final class U2WMainVideoTCPWorker {
         startupBootstrapBuffering = false
         startupBootstrapApplied = false
         startupBootstrapReadyNotified = false
+        inPlaceBootstrapRequested = false
         openConnection()
     }
 
@@ -1438,6 +1467,7 @@ final class U2WMainVideoTCPWorker {
         startupBootstrapBuffering = false
         startupBootstrapApplied = false
         startupBootstrapReadyNotified = false
+        inPlaceBootstrapRequested = false
         decoder.reset()
         onPhase?("IDLE")
     }
@@ -1516,6 +1546,30 @@ final class U2WMainVideoTCPWorker {
             self.decoder.armRebuildAtNextIDR(reason: reason)
             self.emitDecoderState()
             self.onDiagnostic?("stale-output watchdog: existing decoder/reference chain PRESERVED; atomic rebuild armed only for a future validated IDR")
+        }
+    }
+
+    /// Recovery-only, same-TCP read-only snapshot bridge. Called after the
+    /// codec has already become invalid. It never triggers on an ordinary scene
+    /// transition or a single H.264 continuity warning.
+    func beginInPlaceReadOnlyBootstrap(reason: String) {
+        queue.async { [weak self] in
+            guard let self, self.running else { return }
+            guard self.rawNavigationPriorityMode, self.connection != nil else {
+                self.onDiagnostic?("IN_PLACE_BOOTSTRAP unavailable on this relay; continuing existing WAIT_IDR safety gate")
+                return
+            }
+            guard !self.startupBootstrapBuffering else {
+                self.onDiagnostic?("IN_PLACE_BOOTSTRAP single flight already active")
+                return
+            }
+            self.inPlaceBootstrapRequested = true
+            self.startupBridgeBuffer.removeAll(keepingCapacity: true)
+            self.startupBootstrapApplied = false
+            self.startupBootstrapBuffering = true
+            self.onPhase?("DECODER_RECOVERY")
+            self.onDiagnostic?("IN_PLACE_BOOTSTRAP begin same raw TCP; buffering live Annex-B while fetching read-only snapshots reason=\(reason)")
+            self.onStartupBootstrapBufferingReady?()
         }
     }
 
@@ -1788,6 +1842,8 @@ final class U2WMainVideoTCPWorker {
             self.startupBridgeBuffer.removeAll(keepingCapacity: false)
             self.startupBootstrapBuffering = false
             self.startupBootstrapApplied = true
+            let inPlace = self.inPlaceBootstrapRequested
+            self.inPlaceBootstrapRequested = false
 
             guard !snapshots.isEmpty else {
                 self.onDiagnostic?("STARTUP_BOOTSTRAP_END no snapshots available; flushing \(bridge.count) buffered live bytes and preserving normal WAITING_LIVE_IDR fallback")
@@ -1817,6 +1873,15 @@ final class U2WMainVideoTCPWorker {
                       let currentGeneration = currentSnapshot?.generation else { return false }
                 return previousNext == currentGeneration
             }()
+            if inPlace {
+                // The old VideoToolbox reference epoch is invalid. A proven byte
+                // overlap is necessary but not sufficient: reset codec/parser and
+                // require a *real decoded output* before marking the recovery LIVE.
+                self.decoder.hardRecoverAwaitingIDR(reason: "same-TCP in-place read-only rebootstrap")
+                self.sanitizer.quarantineReferenceChainUntilIDR()
+                self.annexBParser.reset()
+                self.onDiagnostic?("IN_PLACE_BOOTSTRAP byte overlap proven; reference chain reset with validated SPS/PPS retained; waiting for IDR and real decoded output")
+            }
             if let previous, !previous.data.isEmpty, previousPairIsCoherent {
                 self.onDiagnostic?("STARTUP_BOOTSTRAP_SNAPSHOT label=previous-generation bytes=\(previous.data.count) generation=\(previous.generation.map { String($0) } ?? "?") next=\(previous.nextGeneration.map { String($0) } ?? "?") pair=COHERENT")
                 self.feedStartupBytes(previous.data, generation: 0, source: "previous-generation")
@@ -1830,7 +1895,7 @@ final class U2WMainVideoTCPWorker {
                 self.feedStartupBytes(tail, generation: self.connectionGeneration, source: "live-bridge-post-overlap")
             }
             self.emitSanitizerStats()
-            self.onDiagnostic?("STARTUP_BOOTSTRAP_END continuous_join=YES stats={\(self.sanitizer.stats.summary)}; exact v8.31 TCP remains live")
+            self.onDiagnostic?("STARTUP_BOOTSTRAP_END BYTE_OVERLAP_PROVEN=YES validated_idr=\(self.sanitizer.stats.acceptedIDR) waiting_idr=\(self.sanitizer.stats.waitingForReferenceIDR ? 1 : 0) stats={\(self.sanitizer.stats.summary)}; display recovery requires a real decoded frame; same TCP remains live")
         }
     }
 
@@ -1875,6 +1940,7 @@ final class U2WMainVideoTCPWorker {
                         self.onDiagnostic?("STARTUP_BOOTSTRAP_ABORT bridge_cap_exceeded cap=\(self.startupBridgeCapBytes) buffered=\(self.startupBridgeBuffer.count) incoming=\(data.count); processing buffered live bytes only")
                         self.startupBootstrapBuffering = false
                         self.startupBootstrapApplied = true
+                        self.inPlaceBootstrapRequested = false
                         let bridge = self.startupBridgeBuffer
                         self.startupBridgeBuffer.removeAll(keepingCapacity: false)
                         self.feedStartupBytes(bridge, generation: generation, source: "live-bridge-fallback")

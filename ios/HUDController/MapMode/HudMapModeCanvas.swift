@@ -279,6 +279,7 @@ struct HudMapModeCanvas: View {
                 HudMapModeSourceCrop(
                     image: sourceMapImage,
                     appearance: settings.mapAppearance,
+                    hasLiveRoute: snapshot.hasLiveRoute,
                     zoom: settings.sourceMapZoom,
                     offsetX: settings.sourceMapOffsetX,
                     offsetY: settings.sourceMapOffsetY
@@ -841,6 +842,7 @@ private struct MergeManeuverGlyph: View {
 private struct HudMapModeSourceCrop: View {
     let image: UIImage
     let appearance: HudMapAppearance
+    let hasLiveRoute: Bool
     let zoom: Double
     let offsetX: Double
     let offsetY: Double
@@ -878,6 +880,19 @@ private struct HudMapModeSourceCrop: View {
                 .saturation(0.90)
                 .brightness(0.08)
                 .contrast(1.05)
+        case .routeSpotlight:
+            if hasLiveRoute, let routeImage = HudRouteSpotlightProcessor.render(image) {
+                Image(uiImage: routeImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                // Route extraction is best-effort on a compressed *raster*.
+                // An ambiguous/unrecognizable route must not become invented geometry.
+                base
+                    .saturation(0.82)
+                    .brightness(-0.30)
+                    .contrast(1.18)
+            }
         }
     }
 }

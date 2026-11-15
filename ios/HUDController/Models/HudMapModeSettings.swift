@@ -5,6 +5,7 @@ enum HudMapAppearance: String, CaseIterable, Identifiable {
     case followSource
     case darkHUD
     case lightHUD
+    case routeSpotlight
 
     var id: String { rawValue }
 
@@ -13,6 +14,7 @@ enum HudMapAppearance: String, CaseIterable, Identifiable {
         case .followSource: return "Follow source"
         case .darkHUD: return "Dark HUD"
         case .lightHUD: return "Light HUD"
+        case .routeSpotlight: return "Route Spotlight (experimental)"
         }
     }
 }
